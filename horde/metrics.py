@@ -774,3 +774,53 @@ kudos_transfers_idempotent_replays = logfire.metric_counter(
     unit="1",
     description="transfer_kudos calls short-circuited as an idempotent replay",
 )
+moderation_evidence_captured = logfire.metric_counter(
+    "horde.moderation.evidence.captured",
+    unit="1",
+    description="Prompt moderation events recorded, by horde.reason and horde.text_state",
+)
+moderation_evidence_write_failures = logfire.metric_counter(
+    "horde.moderation.evidence.write_failures",
+    unit="1",
+    description="Prompt moderation evidence writes the database refused",
+)
+moderation_evidence_pending_rows = logfire.metric_gauge(
+    "horde.moderation.evidence.pending_rows",
+    unit="{event}",
+    description="Prompt moderation events whose text awaits upload to object storage",
+)
+moderation_evidence_oldest_pending_seconds = logfire.metric_gauge(
+    "horde.moderation.evidence.oldest_pending_seconds",
+    unit="s",
+    description="Age of the oldest prompt moderation event whose text awaits upload, or zero when none does",
+)
+moderation_evidence_uploads = logfire.metric_counter(
+    "horde.moderation.evidence.uploads",
+    unit="1",
+    description="Prompt moderation event texts moved to object storage",
+)
+moderation_evidence_upload_failures = logfire.metric_counter(
+    "horde.moderation.evidence.upload_failures",
+    unit="1",
+    description="Prompt moderation event text uploads the object store refused or could not take",
+)
+moderation_rejections_per_minute = logfire.metric_gauge(
+    "horde.moderation.rejections_per_minute",
+    unit="{event}/min",
+    description="Prompt rejection events per minute over the trailing five minutes",
+)
+moderation_rejecting_subjects = logfire.metric_gauge(
+    "horde.moderation.rejecting_subjects",
+    unit="{subject}",
+    description="Distinct IP subject pseudonyms among prompt rejections over the trailing five minutes",
+)
+moderation_observation_timestamp = logfire.metric_gauge(
+    "horde.moderation.observation_timestamp",
+    unit="s",
+    description="Unix time of the quorum node's latest moderation detection sample; recording rules select the live process by it",
+)
+moderation_countermeasures = logfire.metric_counter(
+    "horde.moderation.countermeasures",
+    unit="1",
+    description="Automatic countermeasures against a rejecting IP subject, by horde.action (text_capped, timeout)",
+)

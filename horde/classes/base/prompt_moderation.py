@@ -9,7 +9,8 @@ have no waiting row, and evidence must survive request expiry or account deletio
 Only notes reference evidence, so deleting an event removes its notes.
 
 Captured values never change. Retention removes text, address and identity on schedule and records each removal in
-a flag, so a null value reads as removed rather than never known.
+a flag, so a null value reads as removed rather than never known. Prompt text moves once from the row to object storage
+(``text_state``); the move empties the text columns without changing the captured text.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import column, false, text
+from sqlalchemy import CheckConstraint, column, false, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped
 
@@ -38,6 +39,23 @@ MAX_ORIGIN_TEXT_CHARACTERS: int = 255
 The origin can be a trusted proxy's ``Proxied-For`` header value, which the proxy controls, so it is bounded so
 garbage cannot grow the row.
 """
+
+
+TEXT_STATE_CHARACTERS: int = 8
+"""The width of ``text_state``, wide enough for every ``EvidenceTextState`` value."""
+TEXT_SHA256_CHARACTERS: int = 64
+"""The length of ``text_sha256``, a hexadecimal SHA-256 digest."""
+
+
+class EvidenceTextState(StrEnum):
+    """Represent where an event's prompt text is held."""
+
+    PENDING = "pending"
+    """The text is in the event's text columns, awaiting upload to object storage."""
+    STORED = "stored"
+    """The text is in object storage under the event's key, and the text columns are null."""
+    NONE = "none"
+    """No text is held anywhere: there was no stage at capture, capture withheld it, or retention removed it."""
 
 
 class PromptModerationReason(StrEnum):
@@ -100,6 +118,10 @@ class PromptModerationEvent(db.Model):
             "id",
             postgresql_where=column("worker_id").is_not(None),
         ),
+        # The upload job reads only events whose text awaits upload, a small share of the table at any time.
+        db.Index("ix_prompt_moderation_text_state_pending", "id", postgresql_where=text("text_state = 'pending'")),
+        # The expression text matches the migration's, so both DDL sources build the same constraint.
+        CheckConstraint("text_state IN ('pending', 'stored', 'none')", name="ck_prompt_moderation_text_state"),
     )
 
     id: Mapped[int] = db.Column(db.BigInteger().with_variant(db.Integer, "sqlite"), primary_key=True)
@@ -150,6 +172,23 @@ class PromptModerationEvent(db.Model):
     """The submission after style expansion, as moderation evaluated it."""
     effective_prompt: Mapped[str | None] = db.Column(db.Text)
     """The prompt a worker received; null for a rejection."""
+    text_state: Mapped[str] = db.Column(
+        db.String(TEXT_STATE_CHARACTERS),
+        nullable=False,
+        default=EvidenceTextState.PENDING.value,
+        server_default=EvidenceTextState.PENDING.value,
+    )
+    """Where the prompt text is held, an ``EvidenceTextState`` value.
+
+    The server default is ``pending``, so events captured before the column existed have their text uploaded.
+    """
+    text_sha256: Mapped[str | None] = db.Column(db.String(TEXT_SHA256_CHARACTERS))
+    """The hexadecimal SHA-256 digest of the canonical text object (``encode_evidence_text``).
+
+    It is recorded even when capture withholds the text, and checks the stored object against what was captured.
+    """
+    text_chars: Mapped[int | None] = db.Column(db.Integer)
+    """The total length of the clipped prompt stages, recorded even when capture withholds the text."""
     text_truncated: Mapped[bool] = db.Column(db.Boolean, nullable=False, default=False, server_default=false())
     """Whether a prompt stage exceeded the evidence length limit and was clipped."""
     text_redacted: Mapped[bool] = db.Column(db.Boolean, nullable=False, default=False, server_default=false())

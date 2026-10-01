@@ -51,6 +51,7 @@ TEST_GARAGE_TRANSIENT_BUCKET = "stable-horde"
 TEST_GARAGE_PERMANENT_BUCKET = "stable-horde"
 TEST_GARAGE_SOURCE_IMAGE_BUCKET = "stable-horde-source-images"
 TEST_GARAGE_PROMPTS_BUCKET = "prompts"
+TEST_GARAGE_EVIDENCE_BUCKET = "moderation-evidence"
 REQUIRED_OBJECT_STORE_ENV = (
     "R2_TRANSIENT_ACCOUNT",
     "R2_PERMANENT_ACCOUNT",
@@ -465,6 +466,7 @@ def start_managed_object_store(runtime: HordeTestRuntime) -> None:
             TEST_GARAGE_PERMANENT_BUCKET,
             TEST_GARAGE_SOURCE_IMAGE_BUCKET,
             TEST_GARAGE_PROMPTS_BUCKET,
+            TEST_GARAGE_EVIDENCE_BUCKET,
         },
     ):
         container_exec(garage, ["/garage", "-c", "/etc/garage.toml", "bucket", "create", bucket])
@@ -501,6 +503,11 @@ def start_managed_object_store(runtime: HordeTestRuntime) -> None:
     runtime.set_env("R2_TRANSIENT_BUCKET", TEST_GARAGE_TRANSIENT_BUCKET)
     runtime.set_env("R2_PERMANENT_BUCKET", TEST_GARAGE_PERMANENT_BUCKET)
     runtime.set_env("R2_SOURCE_IMAGE_BUCKET", TEST_GARAGE_SOURCE_IMAGE_BUCKET)
+    runtime.set_env("R2_EVIDENCE_ACCOUNT", f"http://{host}:{s3_port}")
+    runtime.set_env("R2_EVIDENCE_BUCKET", TEST_GARAGE_EVIDENCE_BUCKET)
+    runtime.set_env("R2_EVIDENCE_REGION", "garage")
+    runtime.set_env("EVIDENCE_AWS_ACCESS_KEY_ID", access_key_id)
+    runtime.set_env("EVIDENCE_AWS_SECRET_ACCESS_KEY", secret_key)
     runtime.object_store_available = True
 
 

@@ -47,13 +47,15 @@ UNLISTED_EVENT_COLUMNS = frozenset({"job_id"})
 """Event columns the listing omits; the job ID is internal deduplication state."""
 LISTING_ONLY_EVENT_KEYS = frozenset({"notes"})
 """Listed event keys that are not event columns."""
+API_ONLY_EVENT_KEYS = frozenset({"text_url"})
+"""Event keys the listing endpoint adds to what ``get_prompt_events`` returns; the signed text URL is built per request."""
 TEST_IP_SUBJECT_SECRET = b"integration-test deployment secret"
 """The private secret the tests key address pseudonyms with, since the test environment sets none."""
 
 
 @pytest.fixture(autouse=True)
 def _isolated_moderation(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    from horde import countermeasures
+    from horde import countermeasures, r2
     from horde.apis.v2 import base
     from horde.classes.base import user
     from horde.limiter import limiter
@@ -64,6 +66,8 @@ def _isolated_moderation(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(base, "upload_prompt", lambda *_: None)
     monkeypatch.setattr(base, "send_problem_user_notification", lambda *_: None)
     monkeypatch.setattr(user, "send_problem_user_notification", lambda *_: None)
+    # Without an evidence store, text stays in the row and retention needs no object deletion.
+    monkeypatch.setattr(r2, "evidence_client", None)
     yield
     limiter.enabled = previous
 
@@ -587,12 +591,18 @@ def test_event_listing_exposes_documented_fields_with_utc_offsets(client, app, a
         "submitted_prompt",
         "moderation_prompt",
         "effective_prompt",
+        "text_state",
+        "text_url",
+        "text_sha256",
+        "text_chars",
         "text_truncated",
         "text_redacted",
         "ipaddr_redacted",
         "anonymized",
         "notes",
     }
+    # Without an evidence store the text stays in the row, listed inline, with no signed URL.
+    assert (event["text_state"], event["text_url"], event["submitted_prompt"]) == ("pending", None, "synthetic")
     for value in (event["created"], event["notes"][0]["created"]):
         assert value.endswith(("+00:00", "Z")), value
         assert datetime.fromisoformat(value).utcoffset() == timedelta(0), value
@@ -613,7 +623,7 @@ def test_event_listing_and_api_model_carry_every_column_except_the_unlisted(app,
     with app.app_context():
         (listed,) = get_prompt_events(limit=1, user_id=submitter.id)["events"]
     assert set(listed) == expected
-    assert set(models.response_model_prompt_moderation_event) == expected
+    assert set(models.response_model_prompt_moderation_event) == expected | API_ONLY_EVENT_KEYS
 
 
 def test_worker_csam_submission_records_event(client, app, make_api_user, settle_kudos, monkeypatch) -> None:
@@ -677,6 +687,8 @@ def test_worker_csam_submission_records_event(client, app, make_api_user, settle
             event = db.session.execute(select(PromptModerationEvent).filter_by(user_id=submitter.id)).scalar_one()
             assert event.reason == "worker_csam"
             assert event.outcome == "censored"
+            # Worker reports always keep their text, whatever the per-subject cap on rejections.
+            assert event.text_state == "pending"
             assert event.job_id == job_id
             assert event.worker_id == worker_id
             assert event.request_id == request_id
@@ -791,6 +803,8 @@ def test_text_and_address_are_removed_after_their_windows(app, make_api_user) ->
 
     untouched = _stored(app, fresh)
     assert untouched.submitted_prompt == "submitted"
+    assert untouched.text_state == "pending"
+    assert untouched.text_sha256 is not None
     assert untouched.ipaddr is not None
     assert not (untouched.text_redacted or untouched.ipaddr_redacted or untouched.anonymized)
 
@@ -803,6 +817,7 @@ def test_text_and_address_are_removed_after_their_windows(app, make_api_user) ->
 
     both_removed = _stored(app, past_both)
     assert (both_removed.submitted_prompt, both_removed.moderation_prompt, both_removed.effective_prompt) == (None, None, None)
+    assert (both_removed.text_state, both_removed.text_sha256, both_removed.text_chars) == ("none", None, None)
     assert both_removed.ipaddr is None
     assert both_removed.text_redacted and both_removed.ipaddr_redacted
     for event in (address_removed, both_removed):
@@ -868,6 +883,8 @@ def test_anonymization_removes_identity_and_keeps_the_record_and_its_notes(clien
             assert getattr(after, column) is None, column
         elif fate == RetentionFate.KEPT:
             assert getattr(after, column) == getattr(before, column), column
+        elif fate == RetentionFate.TEXT_LOCATION:
+            assert getattr(after, column) == "none", column
         else:
             assert getattr(after, column) is True, column
     assert (after.reason, after.outcome, after.models, after.created, after.text_truncated, after.worker_id) == (
@@ -1412,6 +1429,20 @@ def test_privacy_document_links_the_source_code(client, monkeypatch, document_fo
     assert configured in document
     if document_format == "html":
         assert f'<a href="{configured}">{configured}</a>' in document
+
+
+@pytest.mark.parametrize("store_configured", [True, False])
+def test_privacy_document_states_where_the_prompt_text_is_held(client, monkeypatch, store_configured: bool) -> None:
+    """The object storage disclosure of moderation Prompt text follows whether an evidence store is configured."""
+    from horde import r2
+
+    monkeypatch.setattr(r2, "evidence_client", object() if store_configured else None)
+    document = client.get("/api/v2/documents/privacy", query_string={"format": "markdown"}).get_json()["markdown"]
+    held_in_storage = "The Prompt text of these records is held with Our object storage Service Provider" in document
+    assert held_in_storage is store_configured
+    assert ("The Prompt text is held with the record." in document) is not store_configured
+    assert "which holds generated images" in document
+    assert ("the Prompt text of moderation records" in document) is store_configured
 
 
 def test_database_failure_does_not_accept_rejected_prompt(client, app, make_api_user, settle_kudos, monkeypatch) -> None:

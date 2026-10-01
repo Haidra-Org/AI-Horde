@@ -4,6 +4,8 @@
 
 """Parse the moderation evidence retention settings, refusing any value that would weaken the ceiling.
 
+Also parse the per-subject countermeasure settings, which accept only positive whole numbers.
+
 Also check that every event column has a decided retention fate, and that the evidence tables build outside
 PostgreSQL with UTC capture-time defaults.
 """
@@ -17,13 +19,18 @@ import sqlalchemy
 
 from horde.classes.base.prompt_moderation import PromptModerationEvent, PromptModerationNote
 from horde.database.prompt_moderation import (
+    DEFAULT_MODEL_REJECTION_TIMEOUT_THRESHOLD,
+    DEFAULT_SUBJECT_TEXT_CAP_PER_HOUR,
     EVENT_COLUMN_RETENTION,
     EVIDENCE_CEILING_ENV,
     IPADDR_RETENTION_ENV,
+    MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV,
     REMOVAL_FLAGS,
+    SUBJECT_TEXT_CAP_PER_HOUR_ENV,
     TEXT_RETENTION_ENV,
     RetentionFate,
     RetentionPolicy,
+    load_positive_setting,
     load_retention_policy,
     validate_column_retention,
 )
@@ -166,3 +173,30 @@ def test_evidence_tables_build_on_sqlite_with_utc_capture_defaults() -> None:
     for value in (created, note_created):
         assert before <= datetime.fromisoformat(str(value)) <= after
     assert not anonymized
+
+
+@pytest.mark.parametrize(
+    ("variable", "default"),
+    [
+        (MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV, DEFAULT_MODEL_REJECTION_TIMEOUT_THRESHOLD),
+        (SUBJECT_TEXT_CAP_PER_HOUR_ENV, DEFAULT_SUBJECT_TEXT_CAP_PER_HOUR),
+    ],
+)
+def test_countermeasure_settings_default_when_absent_and_read_when_set(variable: str, default: int) -> None:
+    assert load_positive_setting({}, variable, default, "events") == default == 5
+    assert load_positive_setting({variable: " 12 "}, variable, default, "events") == 12
+
+
+@pytest.mark.parametrize("variable", [MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV, SUBJECT_TEXT_CAP_PER_HOUR_ENV])
+@pytest.mark.parametrize("raw", ["", "0", "-1", "2.5", "five", "none"])
+def test_malformed_countermeasure_settings_are_refused_with_the_variable_name(variable: str, raw: str) -> None:
+    with pytest.raises(ValueError, match=variable):
+        load_positive_setting({variable: raw}, variable, 5, "events")
+
+
+def test_text_location_is_reset_with_the_text_and_has_no_flag_of_its_own() -> None:
+    text_location = [column for column, fate in EVENT_COLUMN_RETENTION.items() if fate == RetentionFate.TEXT_LOCATION]
+
+    assert text_location == ["text_state"]
+    assert RetentionFate.TEXT_LOCATION not in REMOVAL_FLAGS
+    assert {"text_sha256", "text_chars"} <= {column for column, fate in EVENT_COLUMN_RETENTION.items() if fate == RetentionFate.TEXT}

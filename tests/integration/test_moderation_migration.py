@@ -101,6 +101,11 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
                 assert retention_index["column_names"] == ["created", "id"], index_name
                 retention_predicate = str(retention_index.get("dialect_options", {}).get("postgresql_where"))
                 assert f"NOT {flag}" in retention_predicate, (index_name, retention_predicate)
+            text_state_index = event_indexes["ix_prompt_moderation_text_state_pending"]
+            assert text_state_index["column_names"] == ["id"]
+            assert "'pending'" in str(text_state_index.get("dialect_options", {}).get("postgresql_where"))
+            assert not columns["text_state"]["nullable"]
+            assert columns["text_sha256"]["nullable"] and columns["text_chars"]["nullable"]
             assert "ix_prompt_moderation_notes_event_id" in {index["name"] for index in inspector.get_indexes("prompt_moderation_notes")}
             problem_job_columns = {column["name"]: column for column in inspector.get_columns("user_problem_jobs")}
             # Retention removes a worker report's address before it deletes the report.
@@ -114,6 +119,40 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
             assert "origin_text IS NOT NULL" in pending_predicate
             # Deleting a worker keeps the reports it made, which are evidence about other accounts.
             assert inspector.get_foreign_keys("user_problem_jobs") == []
+    finally:
+        engine.dispose()
+        drop_schema(pg_dsn, schema_name)
+
+
+def test_events_captured_before_the_text_location_columns_are_queued_for_upload(pg_dsn: str) -> None:
+    """Adding the text location to an existing events table marks each existing event pending, so its text is uploaded."""
+    schema_name = new_test_schema_name("horde_moderation_text_state")
+    create_schema(pg_dsn, schema_name)
+    engine = _schema_engine(pg_dsn, schema_name)
+    try:
+        with engine.connect() as connection:
+            connection.execute(sqlalchemy.text(WAITING_PROMPTS_STUB))
+            connection.execute(sqlalchemy.text(WORKERS_STUB))
+            connection.execute(sqlalchemy.text(USER_PROBLEM_JOBS_STUB))
+            _apply_migration(connection)
+            connection.execute(
+                sqlalchemy.text(
+                    "ALTER TABLE prompt_moderation_events DROP COLUMN text_state, DROP COLUMN text_sha256, DROP COLUMN text_chars",
+                ),
+            )
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO prompt_moderation_events (user_id, reason, outcome, submitted_prompt) "
+                    "VALUES (1, 'filter_rejection', 'rejected', 'captured earlier')",
+                ),
+            )
+            _apply_migration(connection)
+            row = connection.execute(
+                sqlalchemy.text("SELECT text_state, text_sha256, text_chars, submitted_prompt FROM prompt_moderation_events"),
+            ).one()
+            assert tuple(row) == ("pending", None, None, "captured earlier")
+            with pytest.raises(sqlalchemy.exc.IntegrityError):
+                connection.execute(sqlalchemy.text("UPDATE prompt_moderation_events SET text_state = 'other'"))
     finally:
         engine.dispose()
         drop_schema(pg_dsn, schema_name)
