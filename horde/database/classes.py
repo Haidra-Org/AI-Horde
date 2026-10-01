@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import hmac
 import uuid
 from datetime import datetime
 
@@ -34,11 +35,30 @@ class CachedPasskeys(PrimaryTimedFunction):
     def call_function(self):
         self.passkeys = self.function(*self.args, **self.kwargs)
 
-    def is_passkey_known(self, passkey) -> bool:
-        return bool(self.passkeys.values())
+    def is_passkey_known(self, passkey: str | None) -> bool:
+        """Return whether ``passkey`` is the proxy passkey of an account.
 
-    def get_passkey_owner(self, passkey):
-        for user_id, pk in self.passkeys.items():
-            if pk == passkey:
+        A request's ``Proxied-For`` header replaces its address only when this returns True, so the supplied value must
+        match a cached passkey; that some account has a passkey is not enough.
+
+        Args:
+            passkey: The request's ``Proxy-Authorization`` header value, or None when it sent none.
+        """
+        return self.get_passkey_owner(passkey) is not None
+
+    def get_passkey_owner(self, passkey: str | None) -> int | None:
+        """Return the id of the account whose proxy passkey is ``passkey``, or None when no account's is.
+
+        Each comparison takes the same time however much of the value matches, so response timing does not reveal a
+        partly correct guess.
+
+        Args:
+            passkey: The request's ``Proxy-Authorization`` header value, or None when it sent none.
+        """
+        if not passkey:
+            return None
+        supplied_passkey = passkey.encode("utf-8")
+        for user_id, known_passkey in self.passkeys.items():
+            if hmac.compare_digest(supplied_passkey, known_passkey.encode("utf-8")):
                 return user_id
         return None
