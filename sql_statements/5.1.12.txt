@@ -135,3 +135,14 @@ CREATE INDEX IF NOT EXISTS ix_worker_suspicion_events_worker_id
   ON worker_suspicion_events (worker_id, id);
 CREATE INDEX IF NOT EXISTS ix_worker_suspicion_events_user_id
   ON worker_suspicion_events (user_id, id);
+
+-- Queue priority copies the requester's kudos, which is a BIGINT; a balance above the 32-bit range made activation
+-- fail with "integer out of range". Widening rewrites each table and its indexes while holding an ACCESS EXCLUSIVE
+-- lock, so new requests wait for as long as the rewrite takes, which grows with the table: check
+-- pg_total_relation_size('waiting_prompts') first. The lock timeout fails rather than queueing behind a long
+-- transaction; rerun on failure. Rerunning on a widened column changes nothing. Code that still declares the column
+-- INTEGER reads and writes the widened column unchanged.
+SET lock_timeout = '5s';
+ALTER TABLE waiting_prompts ALTER COLUMN extra_priority TYPE BIGINT;
+ALTER TABLE interrogations ALTER COLUMN extra_priority TYPE BIGINT;
+RESET lock_timeout;

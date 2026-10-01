@@ -182,7 +182,8 @@ class WaitingPrompt(db.Model):
     jobs = db.Column(db.Integer, default=0, nullable=False)
     things = db.Column(db.BigInteger, default=0, nullable=False)
     total_usage = db.Column(db.Float, default=0, nullable=False)
-    extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
+    # Kudos-derived (activation sets it to the requester's kudos), so it is as wide as users.kudos.
+    extra_priority = db.Column(db.BigInteger, default=0, nullable=False, index=True)
     # TODO: Delete. Obsoleted.
     job_ttl = db.Column(db.Integer, default=150, nullable=False)
     disable_batching = db.Column(db.Boolean, default=False, nullable=False)

@@ -261,7 +261,8 @@ class Interrogation(db.Model):
     r2stored = db.Column(db.Boolean, default=False, nullable=False)
     expiry = db.Column(db.DateTime, default=get_expiry_date, index=True)
     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
-    extra_priority = db.Column(db.Integer, default=0, nullable=False, index=True)
+    # Kudos-derived (creation sets it to the requester's kudos), so it is as wide as users.kudos.
+    extra_priority = db.Column(db.BigInteger, default=0, nullable=False, index=True)
     webhook = db.Column(db.String(1024))
     forms = db.relationship(
         "InterrogationForms",
