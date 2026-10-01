@@ -55,7 +55,7 @@ class EvidenceTextState(StrEnum):
     STORED = "stored"
     """The text is in object storage under the event's key, and the text columns are null."""
     NONE = "none"
-    """No text is held anywhere: there was no stage at capture, capture withheld it, or retention removed it."""
+    """No text is held anywhere: there was no stage at capture, or retention removed it."""
 
 
 class PromptModerationReason(StrEnum):
@@ -185,10 +185,10 @@ class PromptModerationEvent(db.Model):
     text_sha256: Mapped[str | None] = db.Column(db.String(TEXT_SHA256_CHARACTERS))
     """The hexadecimal SHA-256 digest of the canonical text object (``encode_evidence_text``).
 
-    It is recorded even when capture withholds the text, and checks the stored object against what was captured.
+    It checks the stored object against what was captured.
     """
     text_chars: Mapped[int | None] = db.Column(db.Integer)
-    """The total length of the clipped prompt stages, recorded even when capture withholds the text."""
+    """The total length of the clipped prompt stages."""
     text_truncated: Mapped[bool] = db.Column(db.Boolean, nullable=False, default=False, server_default=false())
     """Whether a prompt stage exceeded the evidence length limit and was clipped."""
     text_redacted: Mapped[bool] = db.Column(db.Boolean, nullable=False, default=False, server_default=false())

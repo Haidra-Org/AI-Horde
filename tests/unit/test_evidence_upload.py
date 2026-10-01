@@ -155,26 +155,6 @@ class TestCapture:
         assert encoded is not None
         assert (event.text_sha256, event.text_chars) == (encoded[1], encoded[2])
 
-    def test_withheld_text_keeps_only_its_digest_and_length(self, db_session) -> None:
-        event_id = record_prompt_evidence(
-            PromptEvidence(
-                user_id=1,
-                reason=PromptModerationReason.MODEL_REJECTION,
-                submitted_prompt="submitted",
-                moderation_prompt="moderated",
-                effective_prompt=None,
-            ),
-            store_text=False,
-        )
-        assert event_id is not None
-        event = _event(db_session, event_id)
-
-        assert event.text_state == EvidenceTextState.NONE
-        assert (event.submitted_prompt, event.moderation_prompt, event.effective_prompt) == (None, None, None)
-        encoded = encode_evidence_text("submitted", "moderated", None)
-        assert encoded is not None
-        assert (event.text_sha256, event.text_chars) == (encoded[1], encoded[2])
-
     def test_event_without_a_stage_holds_no_text(self, db_session) -> None:
         event = _event(db_session, _record(submitted_prompt=None, moderation_prompt=None))
 

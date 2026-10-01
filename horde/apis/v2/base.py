@@ -549,77 +549,53 @@ class GenerateTemplate(Resource):
             #                        "Thank you for understanding.")
 
     def _handle_prompt_rejection(self, moderation_prompt: str, reason: PromptModerationReason) -> None:
-        """Count a prompt rejection against the request's IP subject, record its evidence and apply the countermeasures.
+        """Record a prompt rejection's evidence and apply the model-path timeout.
 
-        Past ``SUBJECT_TEXT_CAP_PER_HOUR`` rejections in the window, the subject's events keep a digest and character
-        count but no text. A model rejection past ``MODEL_REJECTION_TIMEOUT_THRESHOLD``, or any model rejection in raid mode,
-        times out the address. A moderator's rejections are exempt from both. A filter rejection's timeout stays with its
-        caller. The first time either countermeasure applies to a subject in the window, moderators get one notice.
+        A model rejection past ``MODEL_REJECTION_TIMEOUT_THRESHOLD`` in the window, or any model rejection in raid mode,
+        times out the address. A filter rejection's timeout stays with its caller, and a moderator's rejections are
+        exempt. The first timeout of a subject in the window sends moderators one notice.
 
         Args:
             moderation_prompt: Moderation input the rejection was decided on.
             reason: Why the prompt was rejected.
         """
-        rejection_count = CounterMeasures.count_rejection(self.user_ip)
-        text_cap = prompt_moderation.SUBJECT_TEXT_CAP_PER_HOUR
-        # Moderators probe the filter on purpose, and the evidence of their own probing is theirs to review in full.
-        text_capped = rejection_count > text_cap and not self.user.moderator
-        event_id = self._record_prompt_rejection(moderation_prompt, reason, store_text=not text_capped)
-        actions: list[str] = []
-        if text_capped:
-            actions.append("text_capped")
+        event_id = self._record_prompt_rejection(moderation_prompt, reason)
+        if reason is not PromptModerationReason.MODEL_REJECTION or self.user.moderator:
+            return
+        rejection_count = CounterMeasures.count_model_rejection(self.user_ip)
         timeout_threshold = prompt_moderation.MODEL_REJECTION_TIMEOUT_THRESHOLD
-        if reason is PromptModerationReason.MODEL_REJECTION and not self.user.moderator:
-            # Raid mode times out every model rejection, as the filter path always does; the flag is one
-            # single-row query on a path that is already refusing the request.
-            if settings.mode_raid():
-                timeout_threshold = 0
-            if rejection_count > timeout_threshold:
-                logger.info(f"IP Address {self.user_ip} from user {self.username} going into timeout!")
-                CounterMeasures.report_suspicion(self.user_ip)
-                actions.append("timeout")
-        self._notify_rejection_countermeasures(actions, rejection_count, reason, timeout_threshold, event_id)
+        # Raid mode times out every model rejection, as the filter path always does; the flag is one
+        # single-row query on a path that is already refusing the request.
+        if settings.mode_raid():
+            timeout_threshold = 0
+        if rejection_count <= timeout_threshold:
+            return
+        logger.info(f"IP Address {self.user_ip} from user {self.username} going into timeout!")
+        CounterMeasures.report_suspicion(self.user_ip)
+        if CounterMeasures.claim_model_rejection_notice(self.user_ip):
+            moderation_countermeasures.add(1, {"horde.action": "timeout"})
+            self._notify_model_rejection_timeout(rejection_count, timeout_threshold, event_id)
 
-    def _notify_rejection_countermeasures(
-        self,
-        actions: list[str],
-        rejection_count: int,
-        reason: PromptModerationReason,
-        timeout_threshold: int,
-        event_id: int | None,
-    ) -> None:
-        """Send moderators one notice for the countermeasures first applied to the request's IP subject in the window.
+    def _notify_model_rejection_timeout(self, rejection_count: int, timeout_threshold: int, event_id: int | None) -> None:
+        """Send moderators the notice that the request's IP subject was timed out for model rejections.
 
         Args:
-            actions: Countermeasures this rejection applied, as ``moderation_countermeasures`` actions.
-            rejection_count: The subject's rejections in the window.
-            reason: Why the latest prompt was rejected.
+            rejection_count: The subject's model rejections in the window.
             timeout_threshold: Model rejections the subject was allowed before the timeout.
             event_id: The evidence event of the latest rejection, or None when its write failed.
         """
-        due = [action for action in actions if CounterMeasures.claim_rejection_notice(self.user_ip, action)]
-        if not due:
-            return
-        for action in due:
-            moderation_countermeasures.add(1, {"horde.action": action})
         # A Discord message outlives evidence retention and cannot be redacted, so the notice carries no prompt or
         # address. The pseudonym prefix matches the subject's events in the moderation listing.
         subject_key = CounterMeasures.ip_subject_key(CounterMeasures.ip_subject(self.user_ip))
         subject = f"IP subject {subject_key[:12]}" if subject_key else "one IP subject"
         lines = [
             f"Prompt rejection countermeasures: {subject}",
-            f"{rejection_count} prompt rejections in the past hour; latest reason {reason.value}.",
+            f"{rejection_count} model rejections in the past hour.",
         ]
-        if "text_capped" in due:
-            lines.append(
-                f"Text capped: rejections past {prompt_moderation.SUBJECT_TEXT_CAP_PER_HOUR} per hour keep only a digest "
-                "and character count.",
-            )
-        if "timeout" in due:
-            if timeout_threshold == 0:
-                lines.append("IP timeout: every model rejection times out the address (raid mode).")
-            else:
-                lines.append(f"IP timeout: model rejections past {timeout_threshold} per hour time out the address.")
+        if timeout_threshold == 0:
+            lines.append("IP timeout: every model rejection times out the address (raid mode).")
+        else:
+            lines.append(f"IP timeout: model rejections past {timeout_threshold} per hour time out the address.")
         # The event carries the full pseudonym, so its review link is what lets a moderator list the subject's
         # events; the notice itself shows only a prefix.
         if event_id is None:
@@ -629,15 +605,13 @@ class GenerateTemplate(Resource):
             lines.append(f"Latest: event {event_id}.")
             lines.append(f"Review: {review_url}" if review_url else f"Review: event {event_id} in the frontpage Prompts tab.")
         mute_minutes = int(REJECTION_WINDOW.total_seconds() // 60)
-        lines.append(f"Muted for this subject and countermeasure for {mute_minutes} minutes.")
+        lines.append(f"Muted for this subject for {mute_minutes} minutes.")
         send_problem_user_notification("\n".join(lines))
 
     def _record_prompt_rejection(
         self,
         moderation_prompt: str,
         reason: PromptModerationReason,
-        *,
-        store_text: bool = True,
     ) -> int | None:
         # The effective prompt is text a worker would receive. Every rejection in validate() happens
         # either before any replacement ran or after a replacement emptied the prompt, so a rejection
@@ -653,7 +627,6 @@ class GenerateTemplate(Resource):
                 ipaddr=self.user_ip,
                 models=self.models,
             ),
-            store_text=store_text,
         )
 
     def get_size_too_big_message(self):
