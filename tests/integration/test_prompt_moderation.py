@@ -687,7 +687,6 @@ def test_worker_csam_submission_records_event(client, app, make_api_user, settle
             event = db.session.execute(select(PromptModerationEvent).filter_by(user_id=submitter.id)).scalar_one()
             assert event.reason == "worker_csam"
             assert event.outcome == "censored"
-            # Worker reports always keep their text, whatever the per-subject cap on rejections.
             assert event.text_state == "pending"
             assert event.job_id == job_id
             assert event.worker_id == worker_id

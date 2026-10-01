@@ -97,14 +97,14 @@ def load_ip_subject_key_secret(environ: Mapping[str, str] = os.environ) -> bytes
 IP_SUBJECT_KEY_SECRET: bytes | None = load_ip_subject_key_secret()
 """The secret keying ``CounterMeasures.ip_subject_key``, read from the environment at import, or None when unusable."""
 
-REJECTION_COUNT_KEY_PREFIX: str = "rejections:"
-"""Prefix of the per-subject prompt rejection counters in the suspicion Redis.
+MODEL_REJECTION_COUNT_KEY_PREFIX: str = "model_rejections:"
+"""Prefix of the per-subject model rejection counters in the suspicion Redis.
 
 ``report_suspicion`` and ``report_proxy_suspicion`` key that database by bare address, so the prefix keeps a counter
 from ever being read as a suspicion level.
 """
-REJECTION_NOTICE_KEY_PREFIX: str = "rejection_notice:"
-"""Prefix of the keys muting repeat moderator notices about one subject's rejection countermeasures."""
+MODEL_REJECTION_NOTICE_KEY_PREFIX: str = "model_rejection_notice:"
+"""Prefix of the keys muting repeat moderator notices about one subject's model rejection timeout."""
 REJECTION_WINDOW: timedelta = timedelta(hours=1)
 """How long a subject's rejection count and notice mute last.
 
@@ -237,22 +237,23 @@ class CounterMeasures:
         return int(current_suspicion)
 
     @staticmethod
-    def count_rejection(ipaddr: str | None) -> int:
-        """Count one prompt rejection against the address's IP subject and return the subject's count in the window.
+    def count_model_rejection(ipaddr: str | None) -> int:
+        """Count one model rejection against the address's IP subject and return the subject's count in the window.
 
-        Filter and model rejections share the counter. The window is ``REJECTION_WINDOW`` from the first rejection.
+        Only model rejections are counted, because a filter rejection times out the address on its own. The window is
+        ``REJECTION_WINDOW`` from the first counted rejection.
 
         Args:
             ipaddr: Request origin as the request reported it.
 
         Returns:
-            The rejections counted for the subject in the window, including this one; 0 when the suspicion Redis is
+            The model rejections counted for the subject in the window, including this one; 0 when the suspicion Redis is
             unavailable or fails, or the origin has no IP subject.
         """
         subject = CounterMeasures.ip_subject(ipaddr)
         if not ip_s_r or subject is None:
             return 0
-        key = f"{REJECTION_COUNT_KEY_PREFIX}{subject}"
+        key = f"{MODEL_REJECTION_COUNT_KEY_PREFIX}{subject}"
         # The rejection is answered whatever Redis does, so a Redis failure only skips the countermeasure. The
         # window is set before the increment, so a failure between the two can never leave a counter without an
         # expiry, which would count the subject's rejections forever.
@@ -260,19 +261,18 @@ class CounterMeasures:
             ip_s_r.set(key, 0, ex=REJECTION_WINDOW, nx=True)
             count = int(ip_s_r.incr(key))
         except redis.RedisError as error:
-            logger.warning(f"Rejection count failed ({type(error).__name__})")
+            logger.warning(f"Model rejection count failed ({type(error).__name__})")
             return 0
         return count
 
     @staticmethod
-    def claim_rejection_notice(ipaddr: str | None, action: str) -> bool:
-        """Return whether a moderator notice about this countermeasure on the address's IP subject is due.
+    def claim_model_rejection_notice(ipaddr: str | None) -> bool:
+        """Return whether a moderator notice about the model rejection timeout on the address's IP subject is due.
 
-        The first claim for a subject and action in ``REJECTION_WINDOW`` succeeds and mutes later ones.
+        The first claim for a subject in ``REJECTION_WINDOW`` succeeds and mutes later ones.
 
         Args:
             ipaddr: Request origin as the request reported it.
-            action: The countermeasure the notice reports.
 
         Returns:
             True for the first claim in the window; False after it, or when the suspicion Redis is unavailable or
@@ -282,9 +282,9 @@ class CounterMeasures:
         if not ip_s_r or subject is None:
             return False
         try:
-            return bool(ip_s_r.set(f"{REJECTION_NOTICE_KEY_PREFIX}{action}:{subject}", 1, ex=REJECTION_WINDOW, nx=True))
+            return bool(ip_s_r.set(f"{MODEL_REJECTION_NOTICE_KEY_PREFIX}{subject}", 1, ex=REJECTION_WINDOW, nx=True))
         except redis.RedisError as error:
-            logger.warning(f"Rejection notice claim failed ({type(error).__name__})")
+            logger.warning(f"Model rejection notice claim failed ({type(error).__name__})")
             return False
 
     @staticmethod

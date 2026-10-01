@@ -129,70 +129,69 @@ class TestBlockTimeouts:
 
 class TestRejectionCounting:
     def test_rejections_count_per_ip_subject(self, redis_caches):
-        """Rejections from addresses in one IPv6 /64 count as one subject, and another subject counts from one."""
-        assert [CounterMeasures.count_rejection("2001:db8:1:2::1") for _ in range(3)] == [1, 2, 3]
-        assert CounterMeasures.count_rejection("2001:db8:1:2::ff") == 4
-        assert CounterMeasures.count_rejection("203.0.113.20") == 1
+        """Model rejections from addresses in one IPv6 /64 count as one subject, and another subject counts from one."""
+        assert [CounterMeasures.count_model_rejection("2001:db8:1:2::1") for _ in range(3)] == [1, 2, 3]
+        assert CounterMeasures.count_model_rejection("2001:db8:1:2::ff") == 4
+        assert CounterMeasures.count_model_rejection("203.0.113.20") == 1
 
     def test_counter_is_kept_apart_from_the_suspicion_level(self, redis_caches):
         """Counting a rejection leaves the address's suspicion level, which shares the database, unchanged."""
         ip = "203.0.113.21"
-        CounterMeasures.count_rejection(ip)
-        CounterMeasures.count_rejection(ip)
+        CounterMeasures.count_model_rejection(ip)
+        CounterMeasures.count_model_rejection(ip)
         assert CounterMeasures.retrieve_suspicion(ip) == 0
 
     def test_window_starts_at_the_first_rejection(self, redis_caches):
         """The counter expires one window after the first rejection; later rejections do not extend it."""
         _, ip_s_r, _ = redis_caches
         ip = "203.0.113.22"
-        CounterMeasures.count_rejection(ip)
-        key = f"{cm.REJECTION_COUNT_KEY_PREFIX}{ip}"
+        CounterMeasures.count_model_rejection(ip)
+        key = f"{cm.MODEL_REJECTION_COUNT_KEY_PREFIX}{ip}"
         assert 0 < ip_s_r.ttl(key) <= cm.REJECTION_WINDOW.total_seconds()
         ip_s_r.expire(key, 100)
-        CounterMeasures.count_rejection(ip)
+        CounterMeasures.count_model_rejection(ip)
         assert 0 < ip_s_r.ttl(key) <= 100
 
     def test_nothing_is_counted_without_the_suspicion_redis(self, monkeypatch):
         """Without the suspicion Redis every rejection counts as 0."""
         monkeypatch.setattr(cm, "ip_s_r", None)
-        assert CounterMeasures.count_rejection("203.0.113.23") == 0
+        assert CounterMeasures.count_model_rejection("203.0.113.23") == 0
 
     def test_a_failing_suspicion_redis_counts_nothing(self, monkeypatch):
         """A Redis error while counting yields 0, so the rejection is answered without a countermeasure."""
         monkeypatch.setattr(cm, "ip_s_r", _UnreachableRedis())
-        assert CounterMeasures.count_rejection("203.0.113.24") == 0
+        assert CounterMeasures.count_model_rejection("203.0.113.24") == 0
 
     @pytest.mark.parametrize("origin", [None, "", "proxy-supplied text", "10.0.0.0/8"])
     def test_an_origin_without_a_subject_is_not_counted(self, redis_caches, origin):
         """An origin with no IP subject counts as 0 and writes no key."""
         _, ip_s_r, _ = redis_caches
-        assert CounterMeasures.count_rejection(origin) == 0
+        assert CounterMeasures.count_model_rejection(origin) == 0
         assert ip_s_r.keys() == []
 
 
 class TestRejectionNotice:
     def test_first_claim_in_the_window_is_due(self, redis_caches):
-        """Only the first claim per subject and action in the window is due, and the mute expires with the window."""
+        """Only the first claim per subject in the window is due, and the mute expires with the window."""
         _, ip_s_r, _ = redis_caches
         ip = "203.0.113.30"
-        assert CounterMeasures.claim_rejection_notice(ip, "timeout") is True
-        assert CounterMeasures.claim_rejection_notice(ip, "timeout") is False
-        assert CounterMeasures.claim_rejection_notice("::ffff:203.0.113.30", "timeout") is False
-        assert CounterMeasures.claim_rejection_notice(ip, "text_capped") is True
-        assert CounterMeasures.claim_rejection_notice("203.0.113.31", "timeout") is True
-        key = f"{cm.REJECTION_NOTICE_KEY_PREFIX}timeout:{ip}"
+        assert CounterMeasures.claim_model_rejection_notice(ip) is True
+        assert CounterMeasures.claim_model_rejection_notice(ip) is False
+        assert CounterMeasures.claim_model_rejection_notice("::ffff:203.0.113.30") is False
+        assert CounterMeasures.claim_model_rejection_notice("203.0.113.31") is True
+        key = f"{cm.MODEL_REJECTION_NOTICE_KEY_PREFIX}{ip}"
         assert 0 < ip_s_r.ttl(key) <= cm.REJECTION_WINDOW.total_seconds()
 
     def test_no_notice_is_due_without_the_suspicion_redis(self, monkeypatch):
-        """Without the suspicion Redis no notice is due, since no rejection is counted either."""
+        """Without the suspicion Redis no notice is due, since no model rejection is counted either."""
         monkeypatch.setattr(cm, "ip_s_r", None)
-        assert CounterMeasures.claim_rejection_notice("203.0.113.32", "timeout") is False
+        assert CounterMeasures.claim_model_rejection_notice("203.0.113.32") is False
 
     def test_no_notice_is_due_while_the_suspicion_redis_fails(self, monkeypatch):
         """A Redis error while claiming yields no notice and no exception."""
         monkeypatch.setattr(cm, "ip_s_r", _UnreachableRedis())
-        assert CounterMeasures.claim_rejection_notice("203.0.113.33", "timeout") is False
+        assert CounterMeasures.claim_model_rejection_notice("203.0.113.33") is False
 
     def test_no_notice_is_due_for_an_origin_without_a_subject(self, redis_caches):
         """An origin with no IP subject is never due a notice."""
-        assert CounterMeasures.claim_rejection_notice("proxy-supplied text", "timeout") is False
+        assert CounterMeasures.claim_model_rejection_notice("proxy-supplied text") is False

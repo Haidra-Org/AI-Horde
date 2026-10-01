@@ -822,7 +822,7 @@ moderation_observation_timestamp = logfire.metric_gauge(
 moderation_countermeasures = logfire.metric_counter(
     "horde.moderation.countermeasures",
     unit="1",
-    description="Automatic countermeasures against a rejecting IP subject, by horde.action (text_capped, timeout)",
+    description="IP subjects first timed out for model rejections within the hour, by horde.action (always timeout)",
 )
 moderation_retention_rows = logfire.metric_counter(
     "horde.moderation.retention.rows",

@@ -42,8 +42,8 @@ attach notes to them.
 | Rate limit key              | `horde/apis/limiter_api.py`                 | `get_request_api_key_per_method`     |
 | Evidence store              | `horde/r2.py`                               | `build_evidence_client`, `evidence_client`, `evidence_object_key`, `put_evidence_text`, `delete_evidence_texts`, `evidence_text_url` |
 | Text upload applier         | `horde/database/prompt_moderation.py`, `horde/database/threads.py` | `upload_pending_text`, `claim_pending_text`, `mark_text_stored`, `upload_moderation_evidence_text` |
-| Rejection countermeasures   | `horde/countermeasures.py`, `horde/apis/v2/base.py` | `CounterMeasures.count_rejection`, `CounterMeasures.claim_rejection_notice`, `GenerateTemplate._handle_prompt_rejection` |
-| Countermeasure policy       | `horde/database/prompt_moderation.py`       | `MODEL_REJECTION_TIMEOUT_THRESHOLD`, `SUBJECT_TEXT_CAP_PER_HOUR`, `load_positive_setting` |
+| Rejection countermeasures   | `horde/countermeasures.py`, `horde/apis/v2/base.py` | `CounterMeasures.count_model_rejection`, `CounterMeasures.claim_model_rejection_notice`, `GenerateTemplate._handle_prompt_rejection` |
+| Countermeasure policy       | `horde/database/prompt_moderation.py`       | `MODEL_REJECTION_TIMEOUT_THRESHOLD`, `load_positive_setting` |
 | Detection gauges            | `horde/metrics.py`, `horde/database/prompt_moderation.py` | `moderation_*` instruments, `pending_text_health`, `recent_rejection_activity` |
 
 The schema is `sql_statements/5.1.12.txt`. Tests build the tables from the models, so
@@ -106,10 +106,10 @@ is a separate row.
 
 The stages are held in the row only until the quorum node uploads them (see [Evidence store](#evidence-store)).
 `text_state` says where the text is: `pending` (in the row, awaiting upload), `stored` (in the evidence bucket at
-`evidence/<id>.json`, the row's stage columns null) or `none` (no text anywhere: no stage existed, the subject was
-past its text cap, or retention cleared it). `text_sha256` is the SHA-256 of the canonical object (the three clipped
-stages as compact JSON with sorted keys) and `text_chars` the sum of the clipped stage lengths; both are recorded
-whenever a stage existed, including past the cap, and leave with the text.
+`evidence/<id>.json`, the row's stage columns null) or `none` (no text anywhere: no stage existed, or retention
+cleared it). `text_sha256` is the SHA-256 of the canonical object (the three clipped stages as compact JSON with
+sorted keys) and `text_chars` the sum of the clipped stage lengths; both are recorded whenever a stage existed, and
+leave with the text.
 
 Captured values never change; retention removes text, address and identity on schedule (see [Retention](#retention)).
 A moderator can attach notes to an event, including an anonymized one; a note is a separate row that is never
@@ -305,24 +305,25 @@ and unchanged.
 
 A rejected submission costs the submitter nothing, so storage design cannot bound a flood; the countermeasures do.
 
-**Per subject.** `CounterMeasures.count_rejection` counts every rejection per IP subject per hour in the countermeasure
-Redis (key `rejections:<subject>`, so it never collides with the bare-address suspicion keys; without that Redis, or
-while it fails, the count is 0 and nothing below applies). `_handle_prompt_rejection` runs once per rejected request:
+**Per subject.** `CounterMeasures.count_model_rejection` counts model rejections per IP subject per hour in the
+countermeasure Redis (key `model_rejections:<subject>`, so it never collides with the bare-address suspicion keys;
+without that Redis, or while it fails, the count is 0 and only raid mode times out). Filter rejections are not
+counted, since the filter path times out the address on its first rejection. `_handle_prompt_rejection` records the
+evidence of every rejection, then for a model rejection:
 
-| Count in the hour | Effect | Setting |
-| ----------------- | ------ | ------- |
-| Above `SUBJECT_TEXT_CAP_PER_HOUR` | The event records digest, character count and identity but no text (`text_state` `none`) | `HORDE_MODERATION_SUBJECT_TEXT_CAP_PER_HOUR`, default 5 |
-| Above `MODEL_REJECTION_TIMEOUT_THRESHOLD`, model rejections only | The address enters the escalating IP timeout the filter path applies on its first rejection (`CounterMeasures.report_suspicion`) | `HORDE_MODEL_REJECTION_TIMEOUT_THRESHOLD`, default 5 |
+| Model rejections in the hour | Effect | Setting |
+| ---------------------------- | ------ | ------- |
+| Above `MODEL_REJECTION_TIMEOUT_THRESHOLD` | The address enters the escalating IP timeout the filter path applies on its first rejection (`CounterMeasures.report_suspicion`) | `HORDE_MODEL_REJECTION_TIMEOUT_THRESHOLD`, default 5 |
 | Any, in raid mode | Every model rejection times out the address | `HordeSettings.raid` via the admin endpoint |
 
-The filter path keeps its own timeout and account suspicion. Moderators are exempt from the timeout on both paths and
-from the text cap, since they probe the filter on purpose.
+The filter path keeps its own timeout and account suspicion. Moderators are exempt from the timeout on both paths,
+since they probe the filter on purpose, and their model rejections are not counted.
 The model path times out after a threshold rather than at once because its replacement is silent by design (a probe
 learns nothing from a rewritten prompt), and the rejection that this counts is the one case where the prompt was
-emptied, which the client already sees. Worker reports are never capped. The first time either countermeasure
-applies to a subject in an hour (`claim_rejection_notice`), moderators get one Discord notice with the pseudonym
-prefix, the count and the latest reason, and `horde.moderation.countermeasures` counts it by `horde.action`.
-Both thresholds are positive whole numbers read at startup; a malformed value stops startup.
+emptied, which the client already sees. Every event keeps its text until retention removes it. The first model-path
+timeout of a subject in an hour (`claim_model_rejection_notice`) sends moderators one Discord notice with the pseudonym
+prefix, the count, the latest event and its review link, and `horde.moderation.countermeasures` counts it with
+`horde.action` `timeout`. The threshold is a positive whole number read at startup; a malformed value stops startup.
 
 **Detection.** The applier samples, every tick, from the events table:
 
@@ -334,7 +335,7 @@ Both thresholds are positive whole numbers read at startup; a malformed value st
 | `horde.moderation.rejecting_subjects` | Distinct `ip_subject_key` values over the same window; one or a few means the per-subject countermeasures are containing it, many means a distributed flood |
 | `horde.moderation.evidence.pending_rows`, `horde.moderation.evidence.oldest_pending_seconds` | Upload backlog and its age |
 | `horde.moderation.evidence.uploads`, `horde.moderation.evidence.upload_failures` | Applier outcomes |
-| `horde.moderation.countermeasures` (`horde.action`) | Subjects first capped or timed out |
+| `horde.moderation.countermeasures` (`horde.action`) | Subjects first timed out for model rejections in the hour; `horde.action` is always `timeout` |
 | `horde.moderation.retention.rows` (`horde.step`) | Rows each retention step changed or deleted: `anonymized`, `text_redacted`, `ipaddr_redacted`, `problem_jobs_deleted`, `problem_job_ipaddr_redacted` |
 | `horde.moderation.retention.cycles` | Retention passes run; one tick runs between 1 and 20 |
 | `horde.moderation.retention.saturation` | Retention ticks that used every catch-up pass with a full final batch; sustained, rows are falling behind their windows |
@@ -345,7 +346,7 @@ by the per-subject countermeasures; the same rate from many subjects is a distri
 rate limit or raid mode answers. The retention tick, not the applier, records the `horde.moderation.retention.*`
 counters; a tick that saturates for hours means rows are falling behind their windows.
 
-**Levers, all manual.** Raid mode (timeout on every model rejection); the two thresholds; the IP timeout and block
+**Levers, all manual.** Raid mode (timeout on every model rejection); the threshold; the IP timeout and block
 endpoints under `/operations/ipaddr`; rate limits at the deployment's edge, which belong to the operator's own configuration; maintenance mode.
 
 ## Sharp edges
@@ -357,8 +358,8 @@ endpoints under `/operations/ipaddr`; rate limits at the deployment's edge, whic
   the shortest text window retention clears them without an upload, which the stalled-upload alert exists to catch.
 - **Presigned links are bearer capabilities** for 10 minutes and embed the signing access key id; the token is
   scoped to the evidence bucket, and the API response and the object response both carry `private, no-store`.
-- **The countermeasures need the countermeasure Redis.** Without it, or while it fails, the count is 0: no cap, no model-path timeout,
-  no notice, as with the existing IP timeouts.
+- **The model-path timeout needs the countermeasure Redis.** Without it, or while it fails, the count is 0: no
+  model-path timeout outside raid mode and no notice, as with the existing IP timeouts.
 
 - **Evidence can be lost.** The write uses a separate transaction on a second pooled connection, so rolling back a
   rejected submission cannot erase it. A pool or database failure logs the exception type alone, never the bound

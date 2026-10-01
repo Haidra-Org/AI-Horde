@@ -63,17 +63,16 @@ the store fails, rows whose text is `stored` wait for a later pass and the rest 
 outage never holds back removal of identity from rows without a stored object. The digest and character count leave with the text.
 There is no bucket lifecycle rule, because a rule cannot see the moderation-action exemption.
 
-**Per-subject countermeasures.** One counter per IP subject per hour counts every rejection. Past
-`HORDE_MODERATION_SUBJECT_TEXT_CAP_PER_HOUR` (default 5), the subject's further events record the digest, character
-count and identity but no text. Past `HORDE_MODEL_REJECTION_TIMEOUT_THRESHOLD` (default 5) model rejections, the
-subject's address enters the same escalating timeout the filter path applies on its first rejection; in raid mode
-every model rejection does. Moderators are exempt from the timeout as on the filter path, and from the text cap,
-since they probe the filter on purpose. The first time either countermeasure applies to a subject in an hour,
-moderators get one Discord notice naming the subject by its pseudonym prefix, never by prompt or address. Worker reports are never capped.
+**Per-subject countermeasures.** The filter path times out the address on its first rejection. On the model path,
+one counter per IP subject per hour counts model rejections only. Past `HORDE_MODEL_REJECTION_TIMEOUT_THRESHOLD`
+(default 5) of them, the subject's address enters the same escalating timeout the filter path applies; in raid mode
+every model rejection does. Moderators are exempt on both paths, since they probe the filter on purpose. The first
+timeout of a subject in an hour sends moderators one Discord notice naming the subject by its pseudonym prefix, never
+by prompt or address. Every event keeps its text until retention removes it.
 
 **Detection and levers.** The applier samples the capture rate and the number of distinct rejecting subjects over the
 last five minutes, the pending backlog and its oldest age, and the upload and write failures. Alerts on those gauges
-tell one contained abuser from a distributed flood. The levers are manual: raid mode, the two thresholds, the IP
+tell one contained abuser from a distributed flood. The levers are manual: raid mode, the threshold, the IP
 timeout endpoints, rate limits at the deployment's edge, and maintenance mode.
 
 ### Consequences
@@ -81,7 +80,8 @@ timeout endpoints, rate limits at the deployment's edge, and maintenance mode.
 - Good: Rejection text leaves the database within seconds under normal operation; a row keeps about 1 KB with its
   index entries.
 - Good: No request waits on the object store, and an outage delays uploads without losing text.
-- Good: A single abuser is contained after five rejections, and the evidence of their first five remains.
+- Good: A single abuser is timed out after five model rejections, or on the first filter rejection, and the evidence
+  of every attempt remains.
 - Good: The listing stays one query; signing is local and costs under a millisecond an event.
 - Bad: Every rejected prompt is still written to Postgres and its write-ahead log once; the countermeasures, not the
   store, bound a flood.
@@ -91,8 +91,6 @@ timeout endpoints, rate limits at the deployment's edge, and maintenance mode.
   deletes by id on schedule but that nothing lists until then.
 - Bad: A presigned link is a bearer capability for ten minutes; the signing token is scoped to the evidence bucket
   alone.
-- Bad: Attempts past the text cap are recorded without text, so a moderator sees that a subject kept trying but not
-  what with.
 
 ## Pros and Cons of the Options
 
@@ -111,11 +109,11 @@ timeout endpoints, rate limits at the deployment's edge, and maintenance mode.
 
 `tests/unit/test_evidence_upload.py` covers the applier cycle, the orphan delete and the store against Garage;
 `tests/integration/test_prompt_moderation.py` and `tests/integration/test_moderation_migration.py` cover the states,
-the retention deletes and the schema; `tests/integration/test_rejection_countermeasures.py` covers the cap, the
+the retention deletes and the schema; `tests/integration/test_rejection_countermeasures.py` covers the model-path
 timeout, raid mode, the moderator exemption and the notice.
 
 ## More Information
 
-The cap and threshold are env vars read at startup, like the retention windows. The detection instruments are listed in `docs/reference/moderation_operations.md`; alert thresholds and edge
+The threshold is an env var read at startup, like the retention windows. The detection instruments are listed in `docs/reference/moderation_operations.md`; alert thresholds and edge
 rate limits belong to each deployment. The disclosure in the privacy document states that prompt text in
 moderation records is held with the object storage provider.

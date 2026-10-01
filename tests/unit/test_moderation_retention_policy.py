@@ -20,13 +20,11 @@ import sqlalchemy
 from horde.classes.base.prompt_moderation import PromptModerationEvent, PromptModerationNote
 from horde.database.prompt_moderation import (
     DEFAULT_MODEL_REJECTION_TIMEOUT_THRESHOLD,
-    DEFAULT_SUBJECT_TEXT_CAP_PER_HOUR,
     EVENT_COLUMN_RETENTION,
     EVIDENCE_CEILING_ENV,
     IPADDR_RETENTION_ENV,
     MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV,
     REMOVAL_FLAGS,
-    SUBJECT_TEXT_CAP_PER_HOUR_ENV,
     TEXT_RETENTION_ENV,
     RetentionFate,
     RetentionPolicy,
@@ -179,7 +177,6 @@ def test_evidence_tables_build_on_sqlite_with_utc_capture_defaults() -> None:
     ("variable", "default"),
     [
         (MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV, DEFAULT_MODEL_REJECTION_TIMEOUT_THRESHOLD),
-        (SUBJECT_TEXT_CAP_PER_HOUR_ENV, DEFAULT_SUBJECT_TEXT_CAP_PER_HOUR),
     ],
 )
 def test_countermeasure_settings_default_when_absent_and_read_when_set(variable: str, default: int) -> None:
@@ -187,7 +184,7 @@ def test_countermeasure_settings_default_when_absent_and_read_when_set(variable:
     assert load_positive_setting({variable: " 12 "}, variable, default, "events") == 12
 
 
-@pytest.mark.parametrize("variable", [MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV, SUBJECT_TEXT_CAP_PER_HOUR_ENV])
+@pytest.mark.parametrize("variable", [MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV])
 @pytest.mark.parametrize("raw", ["", "0", "-1", "2.5", "five", "none"])
 def test_malformed_countermeasure_settings_are_refused_with_the_variable_name(variable: str, raw: str) -> None:
     with pytest.raises(ValueError, match=variable):

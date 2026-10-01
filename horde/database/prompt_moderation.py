@@ -24,7 +24,7 @@ Capture writes prompt text to the event row. The upload job (``upload_pending_te
 (``horde.r2``) and empties the text columns, so no request waits on object storage. A retention step that removes text
 deletes the stored object before it flags the event. When the delete fails, an event whose text is ``stored`` is left
 for the next pass and the others are flagged.
-``MODEL_REJECTION_TIMEOUT_THRESHOLD`` and ``SUBJECT_TEXT_CAP_PER_HOUR`` are read from the environment at import too.
+``MODEL_REJECTION_TIMEOUT_THRESHOLD`` is read from the environment at import too.
 """
 
 from __future__ import annotations
@@ -271,18 +271,10 @@ MODERATION_RETENTION_POLICY: RetentionPolicy = load_retention_policy()
 
 MODEL_REJECTION_TIMEOUT_THRESHOLD_ENV: str = "HORDE_MODEL_REJECTION_TIMEOUT_THRESHOLD"
 """The environment variable for ``MODEL_REJECTION_TIMEOUT_THRESHOLD``."""
-SUBJECT_TEXT_CAP_PER_HOUR_ENV: str = "HORDE_MODERATION_SUBJECT_TEXT_CAP_PER_HOUR"
-"""The environment variable for ``SUBJECT_TEXT_CAP_PER_HOUR``."""
 DEFAULT_MODEL_REJECTION_TIMEOUT_THRESHOLD: int = 5
-"""The default number of rejections per IP subject in an hour before a model rejection starts the IP timeout.
+"""The default number of model rejections per IP subject in an hour before the next one starts the IP timeout.
 
 A few rejections in an hour fit a person rewording a prompt; a subject past five is treated as probing the filter.
-"""
-DEFAULT_SUBJECT_TEXT_CAP_PER_HOUR: int = 5
-"""The default number of rejection events per IP subject in an hour that keep their prompt text.
-
-Five texts show a moderator what one subject attempted. Past them, one subject flooding rejections would fill the
-evidence store with near-identical text, so later events keep the digest and length only.
 """
 
 
@@ -310,19 +302,9 @@ MODEL_REJECTION_TIMEOUT_THRESHOLD: int = load_positive_setting(
     DEFAULT_MODEL_REJECTION_TIMEOUT_THRESHOLD,
     "rejections",
 )
-"""The rejections per IP subject in an hour after which a model rejection times out the IP subject.
+"""The model rejections per IP subject in an hour after which the next one times out the IP subject.
 
 Raid mode times out every model rejection. It is loaded from the environment at import, so an invalid value fails startup.
-"""
-SUBJECT_TEXT_CAP_PER_HOUR: int = load_positive_setting(
-    os.environ,
-    SUBJECT_TEXT_CAP_PER_HOUR_ENV,
-    DEFAULT_SUBJECT_TEXT_CAP_PER_HOUR,
-    "events",
-)
-"""The rejection events per IP subject in an hour that keep their prompt text; later ones keep digest and length only.
-
-It is loaded from the environment at import, so an invalid value fails startup.
 """
 
 
@@ -575,16 +557,14 @@ def encode_evidence_text(
     return body, hashlib.sha256(body).hexdigest(), sum(len(stage) for stage in stages if stage is not None)
 
 
-def record_prompt_evidence(evidence: PromptEvidence, *, store_text: bool = True) -> int | None:
+def record_prompt_evidence(evidence: PromptEvidence) -> int | None:
     """Persist evidence independently of the caller's transaction.
 
-    The text goes to the event row, ``pending`` upload to object storage; this makes no network call. The digest and
-    length of the clipped stages are recorded whether or not the text is kept.
+    The text goes to the event row, ``pending`` upload to object storage; this makes no network call. An event with no
+    stage has ``text_state`` ``none``.
 
     Args:
         evidence: Prompt stages and identifiers known at capture time.
-        store_text: Whether to keep the prompt text. When False the text columns stay null and the event's
-            ``text_state`` is ``none``.
 
     Returns:
         The event ID; for a job already reported, the existing event's ID; None when the write failed.
@@ -592,9 +572,7 @@ def record_prompt_evidence(evidence: PromptEvidence, *, store_text: bool = True)
     prompts = (evidence.submitted_prompt, evidence.moderation_prompt, evidence.effective_prompt)
     clipped = [prompt[:MAX_EVIDENCE_CHARACTERS] if prompt is not None else None for prompt in prompts]
     encoded = encode_evidence_text(*clipped)
-    keeps_text = store_text and encoded is not None
-    text_state = EvidenceTextState.PENDING if keeps_text else EvidenceTextState.NONE
-    stored_stages = clipped if keeps_text else [None, None, None]
+    text_state = EvidenceTextState.PENDING if encoded is not None else EvidenceTextState.NONE
     ip_subject = CounterMeasures.ip_subject(evidence.ipaddr)
     if evidence.reason == PromptModerationReason.WORKER_CSAM:
         outcome = PromptModerationOutcome.CENSORED
@@ -608,9 +586,9 @@ def record_prompt_evidence(evidence: PromptEvidence, *, store_text: bool = True)
             user_id=evidence.user_id,
             reason=evidence.reason.value,
             outcome=outcome.value,
-            submitted_prompt=stored_stages[0],
-            moderation_prompt=stored_stages[1],
-            effective_prompt=stored_stages[2],
+            submitted_prompt=clipped[0],
+            moderation_prompt=clipped[1],
+            effective_prompt=clipped[2],
             text_state=text_state.value,
             text_sha256=encoded[1] if encoded is not None else None,
             text_chars=encoded[2] if encoded is not None else None,

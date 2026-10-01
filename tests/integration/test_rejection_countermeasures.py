@@ -2,11 +2,10 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Exercise the per-subject countermeasures on rejected prompts and the evidence text link in the moderator listing.
+"""Exercise the model-path timeout on rejected prompts and the evidence text link in the moderator listing.
 
-Repeated model rejections from one IP subject time out its address, and rejections past the hourly text cap keep a
-digest and character count but no text. The suspicion and timeout Redis databases are fakeredis instances, since the
-test application leaves them unset.
+Repeated model rejections from one IP subject time out its address; filter rejections do not count toward it. The
+suspicion and timeout Redis databases are fakeredis instances, since the test application leaves them unset.
 """
 
 from __future__ import annotations
@@ -32,8 +31,6 @@ from tests.integration.test_request_parameters import IMAGE_REQUEST
 
 TEST_TIMEOUT_THRESHOLD = 5
 """The model rejection timeout threshold the tests pin, the deployment default."""
-TEST_TEXT_CAP = 5
-"""The hourly text cap the tests pin, the deployment default."""
 
 
 class _CounterRecorder:
@@ -62,7 +59,6 @@ def notices(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     monkeypatch.setattr(countermeasures, "ip_t_r", fakeredis.FakeStrictRedis())
     monkeypatch.setattr(countermeasures, "IP_SUBJECT_KEY_SECRET", TEST_IP_SUBJECT_SECRET)
     monkeypatch.setattr(prompt_moderation, "MODEL_REJECTION_TIMEOUT_THRESHOLD", TEST_TIMEOUT_THRESHOLD)
-    monkeypatch.setattr(prompt_moderation, "SUBJECT_TEXT_CAP_PER_HOUR", TEST_TEXT_CAP)
     monkeypatch.setattr(base, "upload_prompt", lambda *_: None)
     sent: list[str] = []
     monkeypatch.setattr(base, "send_problem_user_notification", sent.append)
@@ -123,8 +119,7 @@ def test_model_rejections_past_the_threshold_time_out_the_address(
 ) -> None:
     """The threshold's worth of model rejections in the window leave the address free; the next one times it out.
 
-    Crossing the threshold also crosses the equal text cap, and moderators get one notice naming both, carrying the
-    pseudonym prefix and neither the prompt nor the address.
+    Moderators get one notice carrying the pseudonym prefix and neither the prompt nor the address.
     """
     _patch_model_rejection(monkeypatch)
     submitter = _funded_submitter(make_api_user, settle_kudos)
@@ -143,13 +138,13 @@ def test_model_rejections_past_the_threshold_time_out_the_address(
     assert subject_key not in notice
     assert ipaddr not in notice
     assert IMAGE_REQUEST["prompt"] not in notice
-    assert "Text capped" in notice
+    assert f"{TEST_TIMEOUT_THRESHOLD + 1} model rejections in the past hour." in notice
     assert f"IP timeout: model rejections past {TEST_TIMEOUT_THRESHOLD} per hour time out the address." in notice
-    assert "Muted for this subject and countermeasure for 60 minutes." in notice
+    assert "Muted for this subject for 60 minutes." in notice
     latest = _events(app, submitter.id)[-1]
     assert f"Latest: event {latest.id}." in notice
     assert f"Review: event {latest.id} in the frontpage Prompts tab." in notice
-    assert sorted(attributes["horde.action"] for _, attributes in countermeasure_metric.adds) == ["text_capped", "timeout"]
+    assert countermeasure_metric.adds == [(1, {"horde.action": "timeout"})]
 
 
 def test_a_timed_out_address_is_refused_before_moderation(
@@ -175,7 +170,7 @@ def test_a_timed_out_address_is_refused_before_moderation(
     assert len(_events(app, submitter.id)) == TEST_TIMEOUT_THRESHOLD + 1
 
 
-def test_moderators_are_exempt_from_the_timeout_and_the_text_cap(
+def test_moderators_are_exempt_from_the_timeout(
     client,
     app,
     make_api_user: MakeApiUser,
@@ -183,18 +178,17 @@ def test_moderators_are_exempt_from_the_timeout_and_the_text_cap(
     monkeypatch: pytest.MonkeyPatch,
     notices: list[str],
 ) -> None:
-    """A moderator's model rejections past the threshold and the cap leave the address free and keep their text.
+    """A moderator's model rejections past the threshold leave the address free and send no notice.
 
-    Moderators experiment with the filter, so no countermeasure applies and no notice is sent.
+    Moderators experiment with the filter, so the timeout does not apply.
     """
     _patch_model_rejection(monkeypatch)
     submitter = make_api_user(moderator=True, kudos=1000)
     settle_kudos()
     ipaddr = _unique_ip()
-    _reject(client, submitter, ipaddr, times=max(TEST_TIMEOUT_THRESHOLD, TEST_TEXT_CAP) + 2)
+    _reject(client, submitter, ipaddr, times=TEST_TIMEOUT_THRESHOLD + 2)
     assert CounterMeasures.retrieve_timeout(ipaddr) == 0
     assert notices == []
-    assert {event.text_state for event in _events(app, submitter.id)} == {"pending"}
 
 
 def test_raid_mode_times_out_the_first_model_rejection(
@@ -218,7 +212,7 @@ def test_raid_mode_times_out_the_first_model_rejection(
     assert "IP timeout: every model rejection times out the address (raid mode)." in notice
 
 
-def test_rejections_past_the_text_cap_keep_no_text(
+def test_filter_rejections_do_not_count_toward_the_model_threshold(
     client,
     app,
     make_api_user: MakeApiUser,
@@ -226,28 +220,27 @@ def test_rejections_past_the_text_cap_keep_no_text(
     monkeypatch: pytest.MonkeyPatch,
     notices: list[str],
 ) -> None:
-    """Rejections within the cap hold their text pending upload; the next one keeps only the digest and length.
+    """A threshold's worth of filter rejections leaves no model rejection count, so the next model rejection is free.
 
-    Filter and model rejections share the count, and a filter rejection is still recorded once the cap is reached.
+    Every rejection keeps its text pending upload.
     """
+    from horde import countermeasures
+
     submitter = _funded_submitter(make_api_user, settle_kudos)
     ipaddr = _unique_ip()
-    _patch_model_rejection(monkeypatch)
-    _reject(client, submitter, ipaddr, times=TEST_TEXT_CAP - 1)
-    # An opt-in replacement refused for length is a filter rejection that sets no timeout of its own.
+    # An opt-in replacement refused for length is a filter rejection that sets no timeout of its own, so the address
+    # stays free to send the model rejection that follows.
     _patch_checker(monkeypatch, 2, check_prompt_replacement_length=False)
-    _reject(client, submitter, ipaddr, times=2, body={**IMAGE_REQUEST, "replacement_filter": True})
+    _reject(client, submitter, ipaddr, times=TEST_TIMEOUT_THRESHOLD, body={**IMAGE_REQUEST, "replacement_filter": True})
+    subject = CounterMeasures.ip_subject(ipaddr)
+    assert countermeasures.ip_s_r.exists(f"{countermeasures.MODEL_REJECTION_COUNT_KEY_PREFIX}{subject}") == 0
+    _patch_model_rejection(monkeypatch)
+    _reject(client, submitter, ipaddr)
+    assert CounterMeasures.retrieve_timeout(ipaddr) == 0
+    assert notices == []
     events = _events(app, submitter.id)
-    assert [event.reason for event in events] == ["model_rejection"] * (TEST_TEXT_CAP - 1) + ["filter_rejection"] * 2
-    *within_cap, capped = events
-    for event in within_cap:
-        assert event.text_state == "pending"
-        assert event.submitted_prompt == IMAGE_REQUEST["prompt"]
-    assert capped.text_state == "none"
-    assert (capped.submitted_prompt, capped.moderation_prompt, capped.effective_prompt) == (None, None, None)
-    assert capped.text_sha256 == within_cap[-1].text_sha256
-    assert capped.text_chars == within_cap[-1].text_chars
-    assert capped.ip_subject_key == within_cap[0].ip_subject_key
+    assert [event.reason for event in events] == ["filter_rejection"] * TEST_TIMEOUT_THRESHOLD + ["model_rejection"]
+    assert {event.text_state for event in events} == {"pending"}
 
 
 def test_listing_links_stored_text_and_inlines_pending_text(
