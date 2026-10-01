@@ -46,6 +46,10 @@ that re-export the User classes Locust should discover:
 - `locustfile_queue_pressure.py` spawns the queue-pressure populations.
 - `locustfile_reference_churn.py` mixes control and changing image models while
   an external driver updates the served reference.
+- `locustfile_moderation.py` floods the prompt filters with operator-seeded
+  nonsense tokens, reviews the evidence listing as a moderator (following
+  `text_url` links and checking digests), and probes the moderation surface the
+  way an attacker would. See [Moderation evidence scenario](#moderation-evidence-scenario).
 
 ## Prerequisites
 
@@ -266,6 +270,9 @@ artifacts into a verdict.
   python tests/stress/check_attribution_results.py --evidence prefix_evidence.jsonl --expect-violations
   ```
 
+- `check_moderation_results.py` gates a moderation evidence run on what the
+  backend recorded. See [Checking the run](#checking-the-run).
+
 - `analyze_hot_user_convoy.py` and `analyze_queue_pressure.py` correlate a
   run's artifacts into a phase-aligned verdict. Each reads a run directory
   containing the Locust CSV history, the Postgres prober JSONL, and a
@@ -470,3 +477,93 @@ descriptive rather than pass/fail, and both need a phase-aligned run directory
 produce meaningfully. Run them as described above. If they are added to CI later,
 run the analyzer as a non-gating step and keep the run directory as an uploaded
 artifact.
+
+## Moderation evidence scenario
+
+`locustfile_moderation.py` exercises the evidence path: capture of rejected
+prompts, the background move of their text to object storage, the moderator
+listing with its presigned `text_url` links, and the timeout an address earns
+after repeated model rejections. It never sends real abusive text. Before a run,
+a moderator seeds four filters whose regexes are nonsense words (`PUT
+/api/v2/filters`, each with `"replacement": ""`): one of type 10, which the
+NSFW-model check strips so a prompt holding only that word is a model rejection;
+and, for the two filter words, types 10 and 20 for one word and type 10 for the
+other. Together the two words are one match in each group the general filter
+counts (suspicion 2). Requests default to `replacement_filter: true`, which
+sanitizes such a prompt with the type-10 replacements and rejects it only when
+nothing is left, so both words need a type-10 filter for the flooder's filter
+requests to be rejected. Pass the words
+with `--moderation-model-token` and `--moderation-filter-tokens`, and a model the
+deployment's reference marks NSFW with `--moderation-nsfw-model`.
+
+`PUT /api/v2/filters` returns the existing filter when one with the same regex
+and type exists, so check that none does first, keep the ids it returns, and
+delete only those after the run.
+
+Populations, each with a fixed-count flag:
+
+| User | Flag | Behavior |
+| --- | --- | --- |
+| `RejectionFlooder` | `--moderation-flooders` | Sends model rejections (six of seven requests) and filter rejections with the requestor keys; counts 400 `CorruptPrompt`, 403 `TimeoutIP` and 429 as expected, keeps sending after a timeout to show it holds; an accepted prompt fails the run because the tokens are not tripping the filter. `--moderation-pad-chars` appends a random negative prompt to make each rejected prompt large. |
+| `ModeratorReviewer` | `--moderation-reviewers` | Lists pages with `--moderation-moderator-api-key`, pages by cursor, fetches a stored event's `text_url`, verifies the object's SHA-256 against `text_sha256` and its three stage keys, and writes a note with `--moderation-note-chance`. |
+| `ModerationProber` | `--moderation-probers` | Listing without a key and with a non-moderator key (401 or 403), a page over the limit (400), a presigned link with its object key changed (403), and a rejected prompt with a 40,000-character negative side (clipped, 400). |
+
+The report's per-name rows (`[rejected]`, `[timed-out]`, `[rate-limited]`,
+`[expired]`) are the behavioral record: with the default threshold, a flooder key
+sharing one address should show its first few requests rejected and the rest
+timed out within the first minute, and the reviewer should see `text_state`
+move from `pending` to `stored` within seconds of capture.
+
+The users also write the run's ground truth to a JSONL file: a `run_start`
+record with the newest event id before the run, one record per flood request
+(path, key hash, status, return code, timeout seconds, prompt length and
+digest, send and receive times), per reviewer object fetch and per probe, and
+a `run_stop` record. The file is truncated at test start.
+
+| Flag | Environment variable | Default | Meaning |
+| --- | --- | --- | --- |
+| `--moderation-evidence-path` | `HORDE_MODERATION_EVIDENCE_PATH` | `moderation_evidence.jsonl` | Where the ground truth is written. |
+| `--moderation-address-label` | `HORDE_MODERATION_ADDRESS_LABEL` | `local` | Name of this source address. Timeouts are per address, so give each load-generating host its own label and its own evidence file. |
+| `--moderation-threshold-hint` | `HORDE_MODERATION_THRESHOLD_HINT` | `5` | The deployment's `HORDE_MODEL_REJECTION_TIMEOUT_THRESHOLD`, recorded for the checker's report. |
+
+The model-rejection count is per address per hour. Space runs from one address
+an hour apart, or the second run starts above the threshold and the onset
+check fails.
+
+Any filter rejection times its address out at once, and the flooders send one
+filter request in seven, so a single-address run usually times out on a filter
+rejection before the model threshold can trip. To test the model threshold, run
+model-only with `--moderation-filter-tokens ""` (the filter task then sends
+nothing). An address timeout refuses every generation request from that address,
+so load that must keep generating, such as a concurrent `closedloop` run, has to
+come from another address.
+
+### Checking the run
+
+Locust's exit code only reflects per-response expectations. The pass criterion
+is `check_moderation_results.py`, run after the scenario ends:
+
+```
+python tests/stress/check_moderation_results.py \
+    --evidence moderation_evidence.jsonl --host https://dev.example \
+    --moderator-api-key M --stats moderation_stats.csv \
+    --threshold 5 --flooders 8
+```
+
+It gathers the run's events (ids above the `run_start` id) from the moderator
+listing, prints one PASS or FAIL line per check with its numbers, and exits 1
+on any failure. `--evidence` takes one file per host. On a shared deployment,
+`--allow-other-traffic` turns the count equalities into lower bounds.
+
+| Group | Enabled by | What it proves |
+| --- | --- | --- |
+| A, API | Always | Every rejected request is an event of its reason (A1). No event older than `--grace-seconds` is still `pending` (A2). Each `text_state` has the fields the listing promises (A3). Stored objects are uncacheable, hold exactly the three stages, and match `text_sha256` and `text_chars`; clipping is bounded and flagged (A4). Per address, the model-rejection timeout engages after `--threshold` rejections, not before, every rejection past it times the address out, nothing gets through a timeout, and the first filter rejection times out (A5). Moderators are never timed out (A6). Probes are refused as expected and no response is a 5xx (A7). Reviewer fetches matched their listing (A8). With `--stats`, Locust saw no 5xx and the flooders reached the target (A9). |
+| B, database | `--pg-dsn` (needs `psycopg2`) | The row invariants of each `text_state`, redaction and anonymization hold for the run's rows; no row is pending past the grace period; `ck_prompt_moderation_text_state` exists. |
+| C, bucket | `--evidence-endpoint`, `--evidence-bucket`, `EVIDENCE_AWS_ACCESS_KEY_ID`, `EVIDENCE_AWS_SECRET_ACCESS_KEY` (needs `boto3`) | The run's `evidence/` objects are exactly its stored events: none missing, no orphans. |
+| D, metrics | `--mimir-url` (the Prometheus API base), `--mimir-tenant`, `--mimir-selector` | Upload backlog within one batch, no upload or write failures, one countermeasure notice per address that passed the threshold, and no retention saturation over the run window unless `--expect-saturation`. |
+
+`--flooders` is the in-flight tolerance on the threshold: requests sent
+before the response that set a timeout arrived may still be rejected. A timeout
+that follows a filter rejection says nothing about the model threshold, so the
+onset check then tests only its upper bound.
+
