@@ -209,6 +209,7 @@ def test_raid_mode_times_out_the_first_model_rejection(
     _reject(client, submitter, ipaddr)
     assert CounterMeasures.retrieve_timeout(ipaddr) > 0
     (notice,) = notices
+    assert "1 model rejection in the past hour." in notice
     assert "IP timeout: every model rejection times out the address (raid mode)." in notice
 
 

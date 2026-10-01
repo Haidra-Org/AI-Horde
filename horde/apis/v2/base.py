@@ -590,7 +590,7 @@ class GenerateTemplate(Resource):
         subject = f"IP subject {subject_key[:12]}" if subject_key else "one IP subject"
         lines = [
             f"Prompt rejection countermeasures: {subject}",
-            f"{rejection_count} model rejections in the past hour.",
+            f"{rejection_count} model rejection{'' if rejection_count == 1 else 's'} in the past hour.",
         ]
         if timeout_threshold == 0:
             lines.append("IP timeout: every model rejection times out the address (raid mode).")
