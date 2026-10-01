@@ -1050,6 +1050,23 @@ def count_things_for_specific_model(wp_class, procgen_class, model_name):
 
 
 @logger.catch(reraise=True)
+def _wp_requests_post_processing():
+    """SQL condition: the image request lists at least one post-processor.
+
+    Clients may send an empty ``post_processing`` list, which needs no post-processor, so key
+    presence alone over-matches. The CASE guards ``jsonb_array_length``, which raises on a
+    non-array value, and maps a missing key to false instead of NULL.
+    """
+    post_processing = ImageWaitingPrompt.params["post_processing"]
+    return (
+        case(
+            (func.jsonb_typeof(post_processing) == "array", func.jsonb_array_length(post_processing)),
+            else_=0,
+        )
+        > 0
+    )
+
+
 def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, priority_user_ids=None, page=0):
     import time as _time
 
@@ -1131,7 +1148,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 check_bridge_capability("textual_inversion", worker.bridge_agent),
             ),
             or_(
-                not_(ImageWaitingPrompt.params.has_key("post-processing")),
+                not_(_wp_requests_post_processing()),
                 and_(
                     worker.allow_post_processing == True,  # noqa E712
                     check_bridge_capability("post-processing", worker.bridge_agent),
@@ -1376,7 +1393,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
 
     # post-processing
     if worker.allow_post_processing is False or not can_pp:
-        count_exprs["_pp_raw"] = count_distinct_wp(ImageWaitingPrompt.params.has_key("post-processing"))
+        count_exprs["_pp_raw"] = count_distinct_wp(_wp_requests_post_processing())
 
     # controlnet
     if worker.allow_controlnet is False or not can_controlnet:
