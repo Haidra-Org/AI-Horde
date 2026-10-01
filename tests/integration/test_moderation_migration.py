@@ -18,8 +18,12 @@ from tests.dependency_runtime import create_schema, drop_schema, new_test_schema
 
 MIGRATION_PATH = Path(__file__).resolve().parents[2] / "sql_statements" / "5.1.12.txt"
 """The migration that creates the moderation tables in production."""
-WAITING_PROMPTS_STUB = "CREATE TABLE waiting_prompts (id UUID PRIMARY KEY, sharedkey_id UUID, prompt TEXT)"
+WAITING_PROMPTS_STUB = (
+    "CREATE TABLE waiting_prompts (id UUID PRIMARY KEY, sharedkey_id UUID, prompt TEXT, extra_priority INTEGER NOT NULL DEFAULT 0)"
+)
 """The pre-change columns of ``waiting_prompts`` the migration alters or indexes."""
+INTERROGATIONS_STUB = "CREATE TABLE interrogations (id UUID PRIMARY KEY, extra_priority INTEGER NOT NULL DEFAULT 0)"
+"""The pre-change columns of ``interrogations`` the migration alters."""
 USERS_STUB = "CREATE TABLE users (id INTEGER PRIMARY KEY, evaluating_kudos INTEGER NOT NULL)"
 """The pre-change columns of ``users`` the migration indexes."""
 WORKERS_STUB = "CREATE TABLE workers (id UUID PRIMARY KEY)"
@@ -56,6 +60,7 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
     try:
         with engine.connect() as connection:
             connection.execute(sqlalchemy.text(WAITING_PROMPTS_STUB))
+            connection.execute(sqlalchemy.text(INTERROGATIONS_STUB))
             connection.execute(sqlalchemy.text(WORKERS_STUB))
             connection.execute(sqlalchemy.text(USERS_STUB))
             connection.execute(sqlalchemy.text(USER_PROBLEM_JOBS_STUB))
@@ -68,6 +73,10 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
                 _apply_migration(connection)
             row = connection.execute(sqlalchemy.text("SELECT prompt, submitted_prompt FROM waiting_prompts")).one()
             assert row == ("effective", None)
+            # Queue priority holds a kudos balance, which can exceed the 32-bit range.
+            for table in ("waiting_prompts", "interrogations"):
+                priority = {column["name"]: column for column in sqlalchemy.inspect(connection).get_columns(table)}["extra_priority"]
+                assert isinstance(priority["type"], sqlalchemy.BigInteger), table
             indexes = {index["name"]: index for index in sqlalchemy.inspect(connection).get_indexes("waiting_prompts")}
             assert "ix_waiting_prompts_sharedkey_id" in indexes
             sharedkey_index = indexes["ix_waiting_prompts_sharedkey_id"]
@@ -145,6 +154,7 @@ def test_events_captured_before_the_text_location_columns_are_queued_for_upload(
         with engine.connect() as connection:
             connection.execute(sqlalchemy.text(USERS_STUB))
             connection.execute(sqlalchemy.text(WAITING_PROMPTS_STUB))
+            connection.execute(sqlalchemy.text(INTERROGATIONS_STUB))
             connection.execute(sqlalchemy.text(WORKERS_STUB))
             connection.execute(sqlalchemy.text(USER_PROBLEM_JOBS_STUB))
             _apply_migration(connection)
@@ -227,6 +237,7 @@ def _moderation_catalogs(pg_dsn: str) -> Iterator[tuple[dict[str, Any], dict[str
     try:
         with migration_engine.connect() as connection:
             connection.execute(sqlalchemy.text(WAITING_PROMPTS_STUB))
+            connection.execute(sqlalchemy.text(INTERROGATIONS_STUB))
             connection.execute(sqlalchemy.text(WORKERS_STUB))
             connection.execute(sqlalchemy.text(USERS_STUB))
             connection.execute(sqlalchemy.text(USER_PROBLEM_JOBS_STUB))
