@@ -94,7 +94,8 @@ both reading it when they run, and the moderator listing reports that policy, so
   anonymized.
 - Bad: Rows are never deleted by age, so the row count grows with rejection and report volume for as long as the
   table exists.
-- Bad: A backlog larger than one batch per hourly pass leaves values past their windows until the pass catches up.
+- Bad: A backlog larger than the per-minute catch-up bound (20 passes of 1,000 rows per step) leaves values past
+  their windows until the tick catches up; a saturation counter reports each tick that used every pass.
 - Bad: Records under moderation action never get a retention flag, so every pass rescans them.
 - Bad: Lengthening a window cannot restore values already removed.
 - Bad: The pseudonym keeps events of one address linkable until the ceiling, after the address itself is gone.

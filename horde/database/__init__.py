@@ -55,8 +55,10 @@ def start_background_threads():
     PrimaryTimedFunction(30, threads.refresh_worker_speeds, quorum=quorum)
     PrimaryTimedFunction(60, threads.store_totals, quorum=quorum)
     PrimaryTimedFunction(60, threads.prune_stats, quorum=quorum)
-    # Rows under moderation action never get a retention flag, so every pass rescans them; see CLEANUP_BATCH_SIZE.
-    PrimaryTimedFunction(3600, threads.apply_moderation_retention, quorum=quorum)
+    # Each tick drains up to RETENTION_MAX_CATCHUP_CYCLES bounded passes, so a backlog clears within hours and a
+    # fresh row meets its window within minutes of becoming due. Rows under moderation action never get a retention
+    # flag, so every pass rescans them; see CLEANUP_BATCH_SIZE.
+    PrimaryTimedFunction(60, threads.apply_moderation_retention, quorum=quorum)
     # Captured prompt text waits in the database until this moves it to object storage; requests never wait on the
     # store. While the store is reachable, the interval bounds how long text stays in the row.
     PrimaryTimedFunction(5, threads.upload_moderation_evidence_text, quorum=quorum)

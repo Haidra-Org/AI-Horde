@@ -491,17 +491,64 @@ def prune_stats():
 
 @logger.catch(reraise=True)
 def apply_moderation_retention() -> None:
-    """Run one bounded retention pass over prompt moderation evidence and worker reports."""
-    from horde.database.prompt_moderation import apply_evidence_retention
+    """Apply moderation retention to prompt moderation evidence and worker reports.
 
-    with get_app().app_context():
-        result = apply_evidence_retention()
-        if result.total:
+    Runs on the quorum node. A tick repeats bounded retention passes while any step fills its batch, up to
+    ``RETENTION_MAX_CATCHUP_CYCLES``, so a backlog drains at many batches a tick while each pass keeps its short
+    transactions. Both bounds are read at the call, so a changed module value applies to the next tick.
+    """
+    from horde.database import prompt_moderation
+    from horde.metrics import (
+        moderation_retention_cycles,
+        moderation_retention_rows,
+        moderation_retention_saturation,
+    )
+
+    # A counter with no recordings exports no series, so increase()-based alerts could not see its first event; a zero
+    # add per tick keeps the series present without changing its value.
+    moderation_retention_saturation.add(0)
+    batch_size = prompt_moderation.CLEANUP_BATCH_SIZE
+    max_cycles = prompt_moderation.RETENTION_MAX_CATCHUP_CYCLES
+    totals = dict.fromkeys(
+        (
+            "anonymized",
+            "text_redacted",
+            "ipaddr_redacted",
+            "problem_jobs_deleted",
+            "problem_job_ipaddr_redacted",
+        ),
+        0,
+    )
+    cycles_used = 0
+    with get_app().app_context(), logfire.span("horde.moderation.retention.tick") as tick_span:
+        for _ in range(max_cycles):
+            result = prompt_moderation.apply_evidence_retention(batch_size=batch_size)
+            cycles_used += 1
+            moderation_retention_cycles.add(1)
+            for step in totals:
+                count = getattr(result, step)
+                totals[step] += count
+                if count:
+                    moderation_retention_rows.add(count, {"horde.step": step})
+            if not result.filled_batch(batch_size):
+                break
+        else:
+            # Every cycle ended with a full batch in some step, so rows past their windows likely remain and the pass
+            # is falling behind.
+            moderation_retention_saturation.add(1)
+            logger.warning(
+                f"Moderation retention used all {max_cycles} catch-up cycles with a full final batch "
+                f"({sum(totals.values())} rows this tick); rows may be falling behind their windows",
+            )
+        tick_span.set_attribute("horde.moderation.retention.cycles", cycles_used)
+        tick_span.set_attribute("horde.moderation.retention.rows", sum(totals.values()))
+        if any(totals.values()):
             logger.info(
-                f"Moderation evidence retention: anonymized {result.anonymized}, removed text from {result.text_redacted}, "
-                f"removed addresses from {result.ipaddr_redacted} events; "
-                f"deleted {result.problem_jobs_deleted} worker reports, "
-                f"removed addresses from {result.problem_job_ipaddr_redacted} worker reports",
+                f"Moderation evidence retention ({cycles_used} passes): anonymized {totals['anonymized']}, "
+                f"removed text from {totals['text_redacted']}, "
+                f"removed addresses from {totals['ipaddr_redacted']} events; "
+                f"deleted {totals['problem_jobs_deleted']} worker reports, "
+                f"removed addresses from {totals['problem_job_ipaddr_redacted']} worker reports",
             )
 
 

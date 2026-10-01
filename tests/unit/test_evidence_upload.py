@@ -469,13 +469,16 @@ class TestRetentionDeletesStoredText:
         for event_id in (stored_id, pending_id):
             _age(db_session, event_id, days=15)
         monkeypatch.setattr(r2, "evidence_client", None)
+        monkeypatch.setattr(evidence_db, "_last_no_store_warning", None)
         logger = Mock()
         monkeypatch.setattr(evidence_db, "logger", logger)
 
         assert apply_evidence_retention(_text_policy()).text_redacted == 1
+        assert apply_evidence_retention(_text_policy()).text_redacted == 0
 
         assert not _event(db_session, stored_id).text_redacted
         assert _event(db_session, pending_id).text_state == EvidenceTextState.NONE
+        # The second pass meets the same waiting row inside the warning interval, so the warning is not repeated.
         logger.warning.assert_called_once_with(
             "{} stored evidence rows kept past their window: no evidence store is configured",
             1,

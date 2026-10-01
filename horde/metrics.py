@@ -824,3 +824,21 @@ moderation_countermeasures = logfire.metric_counter(
     unit="1",
     description="Automatic countermeasures against a rejecting IP subject, by horde.action (text_capped, timeout)",
 )
+moderation_retention_rows = logfire.metric_counter(
+    "horde.moderation.retention.rows",
+    unit="1",
+    description=(
+        "Rows the moderation retention pass changed or deleted, by horde.step (anonymized, text_redacted, "
+        "ipaddr_redacted, problem_jobs_deleted, problem_job_ipaddr_redacted)"
+    ),
+)
+moderation_retention_cycles = logfire.metric_counter(
+    "horde.moderation.retention.cycles",
+    unit="1",
+    description="Moderation retention passes run",
+)
+moderation_retention_saturation = logfire.metric_counter(
+    "horde.moderation.retention.saturation",
+    unit="1",
+    description="Moderation retention ticks that used every catch-up cycle with a full final batch",
+)

@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
@@ -141,10 +142,25 @@ Five minutes smooths single bursts while still showing a flood within one dashbo
 CLEANUP_BATCH_SIZE: int = 1000
 """The most rows each retention step changes or deletes in one pass.
 
-The pass runs every hour, so each step can drain 24,000 rows a day, above the daily intake of events and worker
-reports, while one batch keeps each step's transaction and its row locks short. Rows under moderation action never get
-a flag, so every pass rescans them; running hourly with a bounded batch keeps that rescan cheap.
+The bound keeps each step's transaction and its row locks short. The retention tick repeats passes, up to
+``RETENTION_MAX_CATCHUP_CYCLES``, to drain a backlog. Rows under moderation action never get a flag, so every pass
+rescans them; the bound keeps that rescan cheap.
 """
+RETENTION_MAX_CATCHUP_CYCLES: int = 20
+"""The most retention passes one tick runs while a step keeps filling its batch.
+
+The tick runs every minute, so 20 passes of ``CLEANUP_BATCH_SIZE`` rows drain 20,000 rows per step a minute: a backlog
+of millions clears in hours while each pass keeps its short transactions. A tick that uses every cycle with a full
+final batch reports saturation.
+"""
+NO_STORE_WARNING_INTERVAL: timedelta = timedelta(hours=1)
+"""The least time between warnings that stored evidence rows wait because no evidence store is configured.
+
+The retention pass runs every minute and checks this in two steps, so without the interval the warning would repeat
+twice a minute for as long as stored rows wait.
+"""
+_last_no_store_warning: float | None = None
+"""The ``time.monotonic`` reading of the latest no-store warning, or None before the first."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -446,6 +462,19 @@ class RetentionPassResult:
     def total(self) -> int:
         """Return the number of rows changed or deleted across all steps."""
         return self.anonymized + self.text_redacted + self.ipaddr_redacted + self.problem_jobs_deleted + self.problem_job_ipaddr_redacted
+
+    def filled_batch(self, batch_size: int) -> bool:
+        """Return whether any step changed or deleted ``batch_size`` rows, so more rows may remain for that step."""
+        return any(
+            count >= batch_size
+            for count in (
+                self.anonymized,
+                self.text_redacted,
+                self.ipaddr_redacted,
+                self.problem_jobs_deleted,
+                self.problem_job_ipaddr_redacted,
+            )
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -856,8 +885,11 @@ def _text_objects_deleted(connection: Connection, event_ids: list[int]) -> list[
         The IDs to flag.
     """
     if r2.evidence_client is None:
+        global _last_no_store_warning
         stored = _stored_event_ids(connection, event_ids)
-        if stored:
+        now = time.monotonic()
+        if stored and (_last_no_store_warning is None or now - _last_no_store_warning >= NO_STORE_WARNING_INTERVAL.total_seconds()):
+            _last_no_store_warning = now
             logger.warning("{} stored evidence rows kept past their window: no evidence store is configured", len(stored))
         return [event_id for event_id in event_ids if event_id not in stored]
     try:
