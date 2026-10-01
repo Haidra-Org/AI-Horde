@@ -1369,6 +1369,82 @@ def test_the_retention_pass_and_the_privacy_document_read_the_policy_when_they_r
     assert "After 300 days, a record that is not subject to moderation action is anonymized" in document
 
 
+class _CounterRecorder:
+    """Stand-in for an OpenTelemetry counter that keeps the attributes of every add."""
+
+    def __init__(self) -> None:
+        self.adds: list[tuple[int, dict[str, Any]]] = []
+
+    def add(self, amount: int, attributes: dict[str, Any] | None = None) -> None:
+        self.adds.append((amount, dict(attributes or {})))
+
+    def total(self, **attributes: Any) -> int:
+        """Return the sum of the adds whose attributes include ``attributes``."""
+        return sum(amount for amount, recorded in self.adds if attributes.items() <= recorded.items())
+
+
+@pytest.fixture
+def retention_counters(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Replace the retention counters with recorders and return them."""
+    from horde import metrics
+
+    counters = SimpleNamespace(rows=_CounterRecorder(), cycles=_CounterRecorder(), saturation=_CounterRecorder())
+    monkeypatch.setattr(metrics, "moderation_retention_rows", counters.rows)
+    monkeypatch.setattr(metrics, "moderation_retention_cycles", counters.cycles)
+    monkeypatch.setattr(metrics, "moderation_retention_saturation", counters.saturation)
+    return counters
+
+
+def _record_reports_past_the_ceiling(app, make_api_user, monkeypatch: pytest.MonkeyPatch, count: int) -> list[int]:
+    """Pin a policy whose only step is the ceiling, record ``count`` worker report records past it and return their IDs.
+
+    Without the address window, deletion at the ceiling is the only step that changes rows, so the counts the tick
+    reports are the deletions alone.
+    """
+    from horde.database import prompt_moderation
+
+    monkeypatch.setattr(prompt_moderation, "MODERATION_RETENTION_POLICY", _policy(text=None, ipaddr=None, ceiling=30))
+    submitter, worker_owner = make_api_user(), make_api_user()
+    worker_id = _synthetic_worker(app, worker_owner.id, "synthetic-report-worker")
+    return [_record_problem_job(app, user_id=submitter.id, worker_id=worker_id, ipaddr=_unique_ip(), age_days=31) for _ in range(count)]
+
+
+def _remaining_reports(app, report_ids: list[int]) -> list[int]:
+    """Return the IDs among ``report_ids`` still stored."""
+    from horde.flask import db
+
+    with app.app_context():
+        return [report_id for report_id in report_ids if db.session.get(UserProblemJobs, report_id) is not None]
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_a_retention_tick_drains_a_backlog_larger_than_one_batch(app, make_api_user, monkeypatch, retention_counters) -> None:
+    """The tick repeats passes while a step fills its batch, so a backlog of several batches clears in one tick."""
+    from horde.database import prompt_moderation, threads
+
+    reports = _record_reports_past_the_ceiling(app, make_api_user, monkeypatch, 5)
+    monkeypatch.setattr(prompt_moderation, "CLEANUP_BATCH_SIZE", 2)
+    threads.apply_moderation_retention()
+    assert _remaining_reports(app, reports) == []
+    assert retention_counters.rows.total(**{"horde.step": "problem_jobs_deleted"}) == 5
+    assert retention_counters.cycles.total() == 3
+    assert retention_counters.saturation.total() == 0
+
+
+@pytest.mark.usefixtures("_no_prior_evidence")
+def test_a_retention_tick_that_uses_every_cycle_reports_saturation(app, make_api_user, monkeypatch, retention_counters) -> None:
+    """A tick whose last allowed pass still fills a batch stops there and counts one saturation."""
+    from horde.database import prompt_moderation, threads
+
+    reports = _record_reports_past_the_ceiling(app, make_api_user, monkeypatch, 5)
+    monkeypatch.setattr(prompt_moderation, "CLEANUP_BATCH_SIZE", 2)
+    monkeypatch.setattr(prompt_moderation, "RETENTION_MAX_CATCHUP_CYCLES", 1)
+    threads.apply_moderation_retention()
+    assert len(_remaining_reports(app, reports)) == 3
+    assert retention_counters.rows.adds == [(2, {"horde.step": "problem_jobs_deleted"})]
+    assert retention_counters.saturation.total() == 1
+
+
 @pytest.mark.parametrize("document_format", ["html", "markdown"])
 def test_privacy_document_discloses_the_configured_retention(client, api_key, monkeypatch, document_format: str) -> None:
     """The privacy document states the periods the moderator listing reports for the same policy, including a none window."""

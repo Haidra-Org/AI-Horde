@@ -230,12 +230,15 @@ wipe, keeps the reports it made. Their
 alerts count the last hour or day only, so
 neither step changes an alert.
 
-The primary node's maintenance loop runs one pass an hour (`apply_moderation_retention`). A pass anonymizes, then
-removes text, then removes addresses; each step changes at most 1,000 events, oldest first, in its own transaction.
+The primary node's maintenance loop runs the retention tick every minute (`apply_moderation_retention`). A tick
+repeats passes while any step changes a full batch, up to 20 passes (`RETENTION_MAX_CATCHUP_CYCLES`), so each step can
+drain 20,000 rows a minute and a backlog of millions clears in hours. A pass anonymizes, then removes text, then removes
+addresses; each step changes at most 1,000 events (`CLEANUP_BATCH_SIZE`), oldest first, in its own transaction.
 The two steps that clear text lock their batch, delete the objects of every row in it with one bulk call (a missing
 key counts as deleted, so a row still `pending` or already `none` costs nothing), and flag only the rows whose delete
 succeeded. When the store fails or no store is configured, `stored` rows stay unflagged for the next pass and every
-other row proceeds, so a store outage never blocks the ceiling or the text step for rows without a stored object. A
+other row proceeds, so a store outage never blocks the ceiling or the text step for rows without a stored object.
+Without a configured store, the warning that `stored` rows wait is logged at most once an hour. A
 `pending` row flagged during an outage is safe: an upload that stored its object finds the row cleared and deletes the
 object itself.
 Each step reads a partial index on `(created, id)` that excludes events it already finished, so a pass does not
@@ -332,11 +335,15 @@ Both thresholds are positive whole numbers read at startup; a malformed value st
 | `horde.moderation.evidence.pending_rows`, `horde.moderation.evidence.oldest_pending_seconds` | Upload backlog and its age |
 | `horde.moderation.evidence.uploads`, `horde.moderation.evidence.upload_failures` | Applier outcomes |
 | `horde.moderation.countermeasures` (`horde.action`) | Subjects first capped or timed out |
+| `horde.moderation.retention.rows` (`horde.step`) | Rows each retention step changed or deleted: `anonymized`, `text_redacted`, `ipaddr_redacted`, `problem_jobs_deleted`, `problem_job_ipaddr_redacted` |
+| `horde.moderation.retention.cycles` | Retention passes run; one tick runs between 1 and 20 |
+| `horde.moderation.retention.saturation` | Retention ticks that used every catch-up pass with a full final batch; sustained, rows are falling behind their windows |
 | `horde.moderation.observation_timestamp` | Unix time of the quorum node's latest sample; recording rules select the live process by it, since a former quorum node keeps exporting its last gauge values |
 
 Operators alert on these gauges in their own deployment. A sustained rate from one or a few subjects is contained
 by the per-subject countermeasures; the same rate from many subjects is a distributed flood, which only an edge
-rate limit or raid mode answers.
+rate limit or raid mode answers. The retention tick, not the applier, records the `horde.moderation.retention.*`
+counters; a tick that saturates for hours means rows are falling behind their windows.
 
 **Levers, all manual.** Raid mode (timeout on every model rejection); the two thresholds; the IP timeout and block
 endpoints under `/operations/ipaddr`; rate limits at the deployment's edge, which belong to the operator's own configuration; maintenance mode.
@@ -360,14 +367,15 @@ endpoints under `/operations/ipaddr`; rate limits at the deployment's edge, whic
   already contended.
 - **No foreign keys.** A rejected submission has no waiting row, and evidence must outlive request expiry and account
   deletion. Only notes reference an event, and nothing deletes an event.
-- **Retention is eventual and never deletes by age.** A backlog larger than one batch an hour leaves text, addresses
-  or identity past their windows until the loop catches up; monitor the maintenance loop for failures and backlog.
+- **Retention is eventual and never deletes by age.** A backlog larger than 20 batches a minute leaves text,
+  addresses or identity past their windows until the tick catches up; `horde.moderation.retention.saturation` counts
+  ticks that used every catch-up pass, and the maintenance loop logs failures.
   Anonymized events stay, so row count grows with rejection and problem-job volume.
   Events and worker report records under moderation action are never redacted or anonymized. Redaction and anonymization
   change live rows only and leave backups alone.
 - **Rows under moderation action are rescanned on every pass.** They never get a retention flag, so the partial
-  indexes keep them, and each pass reads them again before the exemption filters them out. That is why the pass runs
-  hourly and each step is bounded to 1,000 rows.
+  indexes keep them, and each pass reads them again before the exemption filters them out. That is why each step is
+  bounded to 1,000 rows, which keeps the rescan cheap at up to 20 passes a minute.
 - **Changing a window changes the disclosure.** The privacy document renders the configured values; a shorter window
   applies to existing events on the next pass, a longer one cannot restore removed values.
 - **The pseudonym needs a private secret.** Without one, events carry no pseudonym and the `ipaddr` filter stops

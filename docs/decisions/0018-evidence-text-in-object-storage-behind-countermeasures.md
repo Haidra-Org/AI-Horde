@@ -59,7 +59,7 @@ inline. The client fetches the object and reads the digest beside it; on an expi
 
 **Retention.** The text window and the ceiling delete the object for every row in their batch in one bulk call,
 inside the row-locked transaction, and flag only the rows whose delete succeeded. A missing key counts as deleted. When
-the store fails, rows whose text is `stored` wait for the next hourly pass and the rest of the batch is flagged, so an
+the store fails, rows whose text is `stored` wait for a later pass and the rest of the batch is flagged, so an
 outage never holds back removal of identity from rows without a stored object. The digest and character count leave with the text.
 There is no bucket lifecycle rule, because a rule cannot see the moderation-action exemption.
 
