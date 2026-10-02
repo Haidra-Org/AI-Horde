@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from flask import request
 from flask_restx import Resource, reqparse
@@ -76,6 +76,36 @@ def clear_cached_responses(cache_keys: Iterable[str]) -> None:
     """
     for cache_key in cache_keys:
         cache.delete(cache_key)
+
+
+def resolve_collection_styles(style_references: Sequence[str]) -> tuple[list[Style], str]:
+    """Return the styles a collection request lists, and the one type they share.
+
+    Each reference is a style id or a style name. A collection holds styles of one type only, since
+    a request using it runs under whichever style is drawn.
+
+    Args:
+        style_references: The ids or names the request lists.
+
+    Returns:
+        The styles in the order listed, and their type.
+
+    Raises:
+        horde.exceptions.BadRequest: If a reference matches no style, or with the ``StyleMismatch``
+            return code if the styles are not all of one type.
+    """
+    styles: list[Style] = []
+    for style_reference in style_references:
+        style = database.get_style_by_uuid(style_reference, is_collection=False)
+        if not style:
+            style = database.get_style_by_name(style_reference, is_collection=False)
+        if not style:
+            raise e.BadRequest(f"A style with name '{style_reference}' cannot be found")
+        styles.append(style)
+    style_types = {style.style_type for style in styles}
+    if len(style_types) > 1:
+        raise e.BadRequest("Cannot mix image and text styles in the same collection", rc="StyleMismatch")
+    return styles, styles[0].style_type
 
 
 ## Styles
@@ -585,17 +615,7 @@ class Collection(Resource):
             raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
         if self.user.is_anon():
             raise e.Forbidden("Anonymous users cannot create collections", rc="StylesAnonForbidden")
-        for st in self.args.styles:
-            existing_style = database.get_style_by_uuid(st, is_collection=False)
-            if not existing_style:
-                existing_style = database.get_style_by_name(st, is_collection=False)
-                if not existing_style:
-                    raise e.BadRequest(f"A style with name '{st}' cannot be found")
-                if styles_type is None:
-                    styles_type = existing_style.style_type
-                elif styles_type != existing_style.style_type:
-                    raise e.BadRequest("Cannot mix image and text styles in the same collection", rc="StyleMismatch")
-            self.styles.append(existing_style)
+        self.styles, styles_type = resolve_collection_styles(self.args.styles)
         self.collection_name = ensure_clean(self.args.name, "collection name")
         new_collection = StyleCollection(
             user_id=self.user.id,
@@ -708,17 +728,7 @@ class SingleCollection(SingleCollectionGet):
         if self.args.styles:
             if len(self.args.styles) < 1:
                 raise e.BadRequest("A collection has to include at least 1 style")
-            for st in self.args.styles:
-                existing_style = database.get_style_by_uuid(st, is_collection=False)
-                if not existing_style:
-                    existing_style = database.get_style_by_name(st, is_collection=False)
-                    if not existing_style:
-                        raise e.BadRequest(f"A style with name '{st}' cannot be found")
-                    if styles_type is None:
-                        styles_type = existing_style.style_type
-                    elif styles_type != existing_style.style_type:
-                        raise e.BadRequest("Cannot mix image and text styles in the same collection", rc="StyleMismatch")
-                self.styles.append(existing_style)
+            self.styles, styles_type = resolve_collection_styles(self.args.styles)
         self.user = database.find_user_by_api_key(self.args["apikey"])
         if not self.user:
             raise e.InvalidAPIKey("Collection PATCH")
@@ -727,7 +737,8 @@ class SingleCollection(SingleCollectionGet):
             raise e.ThingNotFound("Collection", collection_id)
         if self.existing_collection.user_id != self.user.id:
             raise e.Forbidden(f"This Collection is not owned by user {self.user.get_unique_alias()}")
-        if self.existing_collection.style_type != styles_type:
+        # A patch that leaves the styles alone keeps the collection's type.
+        if styles_type is not None and self.existing_collection.style_type != styles_type:
             raise e.BadRequest("Cannot mix image and text styles in the same collection", rc="StyleMismatch")
         collection_modified = False
         if self.args.name:

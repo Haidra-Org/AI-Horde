@@ -203,6 +203,62 @@ class TestStyleCollectionTypes:
             assert response.status_code == 400, response.get_data(as_text=True)
             assert response.get_json()["rc"] == "StyleMismatch"
 
+    def test_a_collection_mixing_styles_named_by_id_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        suffix = uuid.uuid4().hex[:8]
+        with (
+            created_style(client, request_headers, style_body(f"collection text id {suffix}")) as text_style_id,
+            created_image_style(client, request_headers, f"collection image id {suffix}") as image_style_id,
+        ):
+            response = client.post(
+                "/api/v2/collections",
+                json={"name": f"mixed id collection {suffix}", "styles": [text_style_id, image_style_id]},
+                headers=request_headers,
+            )
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StyleMismatch"
+
+    def test_a_collection_of_styles_named_by_id_takes_their_type(self, client, request_headers: dict[str, str]) -> None:
+        suffix = uuid.uuid4().hex[:8]
+        with created_style(client, request_headers, style_body(f"collection by id {suffix}")) as style_id:
+            created = client.post(
+                "/api/v2/collections",
+                json={"name": f"id collection {suffix}", "styles": [style_id]},
+                headers=request_headers,
+            )
+            assert created.status_code == 200, created.get_data(as_text=True)
+            collection_id = created.get_json()["id"]
+            try:
+                details = client.get(f"/api/v2/collections/{collection_id}", headers=request_headers).get_json()
+
+                assert details["type"] == "text"
+            finally:
+                client.delete(f"/api/v2/collections/{collection_id}", headers=request_headers)
+
+    def test_a_patch_that_leaves_the_styles_alone_is_accepted(self, client, request_headers: dict[str, str]) -> None:
+        suffix = uuid.uuid4().hex[:8]
+        with created_style(client, request_headers, style_body(f"collection rename {suffix}")) as style_id:
+            created = client.post(
+                "/api/v2/collections",
+                json={"name": f"before rename {suffix}", "styles": [style_id]},
+                headers=request_headers,
+            )
+            assert created.status_code == 200, created.get_data(as_text=True)
+            collection_id = created.get_json()["id"]
+            try:
+                patched = client.patch(
+                    f"/api/v2/collections/{collection_id}",
+                    json={"name": f"after rename {suffix}"},
+                    headers=request_headers,
+                )
+
+                assert patched.status_code == 200, patched.get_data(as_text=True)
+                details = client.get(f"/api/v2/collections/{collection_id}", headers=request_headers).get_json()
+                assert details["name"] == f"after rename {suffix}"
+                assert details["type"] == "text"
+            finally:
+                client.delete(f"/api/v2/collections/{collection_id}", headers=request_headers)
+
 
 class TestTextStylePartialPatch:
     """A patch changes only the fields it carries and leaves the rest of the style alone."""
