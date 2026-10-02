@@ -18,6 +18,7 @@ import horde.classes.base.stats as stats
 from horde import exceptions as e
 from horde.apis.models.stable_v2 import ImageModels, ImageParsers
 from horde.apis.v2.base import (
+    STYLE_OWNER_REWARD,
     GenerateTemplate,
     JobPopTemplate,
     JobSubmitTemplate,
@@ -492,7 +493,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             source_image=self.source_image,
             source_mask=self.source_mask,
             extra_source_images=self.args.extra_source_images,
-            kudos_adjustment=2 if self.style_kudos is True else 0,
+            kudos_adjustment=STYLE_OWNER_REWARD if self.style_kudos is True else 0,
         )
 
     def style_contract_vocabulary(self) -> StyleContractVocabulary:
