@@ -178,6 +178,7 @@ The errors returned by the AI horde are always in this json format
 | InvalidModerationAddressFilter | The moderation evidence `ipaddr` or `ip_subject_key` filter is not a valid address, network or pseudonym |
 | InvalidModerationEventID | The moderation evidence `event_id` filter is not a positive integer |
 | InvalidModerationNote | A moderation note is 1 to 2000 characters and may not contain NUL bytes |
+| InvalidModerationReason | The moderation evidence `reason` filter is not a known moderation reason |
 | InvalidModerationTimeRange | The moderation evidence time bounds are not a valid range |
 | InvalidOperationsCursor | The pagination cursor for a moderator operations listing is not positive |
 | InvalidOperationsLimit | The page size for a moderator operations listing is out of range |

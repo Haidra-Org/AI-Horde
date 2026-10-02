@@ -69,6 +69,18 @@ class PromptModerationReason(StrEnum):
     """A worker reported its generation as suspected child sexual abuse material and censored it."""
 
 
+class EvidenceHoldSource(StrEnum):
+    """Represent why retention keeps an event whole.
+
+    No column stores it. The event listing derives it from the same predicates the retention steps apply.
+    """
+
+    NOTE = "note"
+    """The event has a moderator note."""
+    ACCOUNT_STATUS = "account_status"
+    """The event's account is flagged, or suspicious as ``User.is_suspicious`` judges it."""
+
+
 class PromptModerationOutcome(StrEnum):
     """Represent what happened to the request an event records."""
 
@@ -118,6 +130,8 @@ class PromptModerationEvent(db.Model):
             "id",
             postgresql_where=column("worker_id").is_not(None),
         ),
+        # Serves the reason filter newest-first, so a page of a rare reason does not walk the common ones.
+        db.Index("ix_prompt_moderation_reason_id", "reason", "id"),
         # The upload job reads only events whose text awaits upload, a small share of the table at any time.
         db.Index("ix_prompt_moderation_text_state_pending", "id", postgresql_where=text("text_state = 'pending'")),
         # The expression text matches the migration's, so both DDL sources build the same constraint.

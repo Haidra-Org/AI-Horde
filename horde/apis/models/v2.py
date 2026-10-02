@@ -9,6 +9,7 @@ from flask_restx import fields, reqparse
 
 from horde.classes.base.prompt_moderation import (
     MAX_NOTE_CHARACTERS,
+    EvidenceHoldSource,
     EvidenceTextState,
     PromptModerationOutcome,
     PromptModerationReason,
@@ -2082,6 +2083,13 @@ class Models:
                 "anonymized": fields.Boolean(
                     description="Retention removed the account, proxied account, address, address pseudonym, request "
                     "and job identifiers and prompt stages; notes are kept.",
+                ),
+                "hold_source": fields.String(
+                    description="Why retention keeps the event whole: note (it has a moderator note) or "
+                    "account_status (its account is flagged or suspicious), note when both apply; null when the "
+                    "retention windows apply. Derived when the listing is read from the conditions retention checks; "
+                    "it is not stored and cannot be released.",
+                    enum=[source.value for source in EvidenceHoldSource],
                 ),
                 "notes": fields.List(
                     fields.Nested(self.response_model_prompt_moderation_note),

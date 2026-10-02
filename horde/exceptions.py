@@ -188,6 +188,7 @@ KNOWN_RC = [
     "InvalidModerationTimeRange",
     "InvalidModerationAddressFilter",
     "InvalidModerationEventID",
+    "InvalidModerationReason",
     "InvalidModerationNote",
     "ModerationEventNotFound",
     "InvalidWorkerID",

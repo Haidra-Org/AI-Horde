@@ -16,8 +16,16 @@ import sqlparse
 
 from tests.dependency_runtime import create_schema, drop_schema, new_test_schema_name
 
-MIGRATION_PATH = Path(__file__).resolve().parents[2] / "sql_statements" / "5.1.12.txt"
-"""The migration that creates the moderation tables in production."""
+SQL_STATEMENTS = Path(__file__).resolve().parents[2] / "sql_statements"
+"""The directory of the hand-applied production migrations."""
+MIGRATION_PATHS = (
+    SQL_STATEMENTS / "5.1.12.txt",
+    SQL_STATEMENTS / "5.1.14.txt",
+)
+"""The migrations that create or change the moderation tables in production, in the order they are applied.
+
+Migrations that touch no moderation table are left out, since they alter tables these tests do not build.
+"""
 WAITING_PROMPTS_STUB = (
     "CREATE TABLE waiting_prompts (id UUID PRIMARY KEY, sharedkey_id UUID, prompt TEXT, extra_priority INTEGER NOT NULL DEFAULT 0)"
 )
@@ -49,8 +57,9 @@ def _schema_engine(pg_dsn: str, schema_name: str) -> sqlalchemy.Engine:
 
 
 def _apply_migration(connection: sqlalchemy.Connection) -> None:
-    for statement in sqlparse.split(MIGRATION_PATH.read_text()):
-        connection.execute(sqlalchemy.text(statement))
+    for migration_path in MIGRATION_PATHS:
+        for statement in sqlparse.split(migration_path.read_text()):
+            connection.execute(sqlalchemy.text(statement))
 
 
 def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
@@ -104,6 +113,7 @@ def test_moderation_migration_is_additive_and_repeatable(pg_dsn: str) -> None:
                 "ix_prompt_moderation_worker_id",
             } <= set(event_indexes)
             assert event_indexes["ix_prompt_moderation_proxied_account_id"]["column_names"] == ["proxied_account", "id"]
+            assert event_indexes["ix_prompt_moderation_reason_id"]["column_names"] == ["reason", "id"]
             for index_name, flag in (
                 ("ix_prompt_moderation_text_pending", "text_redacted"),
                 ("ix_prompt_moderation_ipaddr_pending", "ipaddr_redacted"),
