@@ -1,0 +1,14 @@
+-- Run with psql in its default autocommit mode. Do not pass --single-transaction:
+-- CREATE INDEX CONCURRENTLY cannot run inside a transaction block. Pass
+-- -v ON_ERROR_STOP=1 so a failure stops the migration. A failed concurrent build
+-- leaves an INVALID index; drop it and rerun after correcting the cause.
+--
+-- Moderators browse the evidence of one reason newest-first:
+--   SELECT ... FROM prompt_moderation_events WHERE reason IN (...) ORDER BY id DESC LIMIT ?
+-- Without an index the descending id scan walks every event of the common
+-- reasons to fill a page of a rare one. The application filters by reason with
+-- or without the index, so this can be applied before or after deploying 5.1.14.
+SET lock_timeout = '3s';
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_prompt_moderation_reason_id
+  ON prompt_moderation_events (reason, id);

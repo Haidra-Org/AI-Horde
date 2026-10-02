@@ -45,8 +45,13 @@ EVENTS_URL = "/api/v2/operations/moderation/prompts"
 """The moderator evidence listing."""
 UNLISTED_EVENT_COLUMNS = frozenset({"job_id"})
 """Event columns the listing omits; the job ID is internal deduplication state."""
-LISTING_ONLY_EVENT_KEYS = frozenset({"notes"})
-"""Listed event keys that are not event columns."""
+LISTING_ONLY_EVENT_KEYS = frozenset(
+    {
+        "hold_source",
+        "notes",
+    },
+)
+"""Listed event keys that are not event columns; ``hold_source`` is derived in the listing query."""
 API_ONLY_EVENT_KEYS = frozenset({"text_url"})
 """Event keys the listing endpoint adds to what ``get_prompt_events`` returns; the signed text URL is built per request."""
 TEST_IP_SUBJECT_SECRET = b"integration-test deployment secret"
@@ -599,6 +604,7 @@ def test_event_listing_exposes_documented_fields_with_utc_offsets(client, app, a
         "text_redacted",
         "ipaddr_redacted",
         "anonymized",
+        "hold_source",
         "notes",
     }
     # Without an evidence store the text stays in the row, listed inline, with no signed URL.
@@ -1041,6 +1047,45 @@ def test_worker_reports_of_an_account_under_moderation_action_survive_the_ceilin
             assert stored is not None
             assert (stored.user_id, stored.ipaddr) == (submitter.id, ipaddr)
         assert db.session.get(UserProblemJobs, unactioned) is None
+
+
+@pytest.mark.parametrize(
+    ("actions", "expected"),
+    [
+        ((), None),
+        (("note",), "note"),
+        (("flagged",), "account_status"),
+        (("suspicious",), "account_status"),
+        (("note", "flagged"), "note"),
+    ],
+)
+def test_event_listing_reports_why_retention_holds_an_event(
+    client,
+    app,
+    api_key,
+    make_api_user,
+    actions: tuple[str, ...],
+    expected: str | None,
+) -> None:
+    """``hold_source`` is the note when the event has one, else the account status when it is flagged or suspicious.
+
+    An event under neither condition is not held and reports null.
+    """
+    submitter = make_api_user()
+    (event_id,) = _seed(app, user_id=submitter.id)
+    headers = {"apikey": api_key}
+    for action in actions:
+        if action == "note":
+            note = client.post(f"{EVENTS_URL}/{event_id}/notes", json={"note": "under review"}, headers=headers)
+            assert note.status_code == 201, note.get_json()
+        elif action == "flagged":
+            _flag(app, submitter.id)
+        else:
+            _make_suspicious(app, submitter.id)
+    page = client.get(EVENTS_URL, query_string={"event_id": event_id}, headers=headers)
+    assert page.status_code == 200, page.get_json()
+    (event,) = page.get_json()["events"]
+    assert event["hold_source"] == expected
 
 
 def _listed_ids(app, **filters: Any) -> set[int]:
@@ -1625,6 +1670,60 @@ def test_prompt_event_pagination_filters_and_invalid_notes(client, app, api_key,
     missing = client.post(f"{EVENTS_URL}/0/notes", json={"note": "gone"}, headers=headers)
     assert missing.status_code == 404
     assert missing.get_json()["rc"] == "ModerationEventNotFound"
+
+
+def _record_reason(app, *, user_id: int, reason: PromptModerationReason) -> int:
+    """Record one synthetic event of ``reason`` and return its ID."""
+    with app.app_context():
+        event_id = record_prompt_evidence(
+            PromptEvidence(
+                user_id=user_id,
+                reason=reason,
+                submitted_prompt="synthetic",
+                moderation_prompt=None,
+                effective_prompt=None,
+            ),
+        )
+    assert event_id is not None
+    return event_id
+
+
+def test_reason_filter_selects_events_of_any_listed_reason(client, app, api_key, make_api_user) -> None:
+    """One ``reason`` selects that reason's events, repeated values select the union, and other filters still apply."""
+    submitter, bystander = make_api_user(), make_api_user()
+    filter_id = _record_reason(app, user_id=submitter.id, reason=PromptModerationReason.FILTER_REJECTION)
+    model_id = _record_reason(app, user_id=submitter.id, reason=PromptModerationReason.MODEL_REJECTION)
+    _record_reason(app, user_id=submitter.id, reason=PromptModerationReason.WORKER_CSAM)
+    _record_reason(app, user_id=bystander.id, reason=PromptModerationReason.MODEL_REJECTION)
+    headers = {"apikey": api_key}
+    single = client.get(EVENTS_URL, query_string={"user_id": submitter.id, "reason": "model_rejection"}, headers=headers)
+    assert single.status_code == 200, single.get_json()
+    assert [event["id"] for event in single.get_json()["events"]] == [model_id]
+    union = client.get(
+        EVENTS_URL,
+        query_string=[
+            ("user_id", submitter.id),
+            ("reason", "filter_rejection"),
+            ("reason", "model_rejection"),
+        ],
+        headers=headers,
+    )
+    assert union.status_code == 200, union.get_json()
+    assert [event["id"] for event in union.get_json()["events"]] == [model_id, filter_id]
+
+
+def test_an_unknown_reason_filter_is_refused(client, api_key) -> None:
+    """A ``reason`` value that is not a moderation reason returns 400, even beside a valid one."""
+    response = client.get(
+        EVENTS_URL,
+        query_string=[
+            ("reason", "filter_rejection"),
+            ("reason", "unknown"),
+        ],
+        headers={"apikey": api_key},
+    )
+    assert response.status_code == 400
+    assert response.get_json()["rc"] == "InvalidModerationReason"
 
 
 def test_moderator_limits_count_per_key(client, app, api_key, make_api_user) -> None:

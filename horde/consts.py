@@ -7,7 +7,7 @@ from horde_sdk.generation_parameters.image.constraints import (
     KNOWN_SAMPLER_SOLVER_TYPES,
 )
 
-HORDE_VERSION = "5.1.13"
+HORDE_VERSION = "5.1.14"
 
 # The key an anonymous request carries. Generated clients send it whenever no key is configured, so
 # its presence on a request says nothing about who is asking.

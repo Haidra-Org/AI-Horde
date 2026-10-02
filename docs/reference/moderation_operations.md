@@ -160,7 +160,8 @@ long to wait after a `429`.
 ### Events and notes
 
 - `GET /prompts` filters by `event_id`, `user_id`, `proxied_account`, `ipaddr`, `ip_subject_key`, `worker_id`,
-  `since` (inclusive) and `until` (exclusive). `event_id` selects that one event; the `event_id` in an alert's review
+  `reason`, `since` (inclusive) and `until` (exclusive). `reason` is repeatable and selects events of any listed
+  reason; a value that is not a moderation reason returns `400 InvalidModerationReason`. `event_id` selects that one event; the `event_id` in an alert's review
   link is meant for it, and a value below 1 returns `400 InvalidModerationEventID`. `ipaddr` takes an address or an IPv6 network of
   /64 or narrower and selects its IP subject, so an IPv6 address selects its /64 and an IPv4-mapped address its IPv4
   address. It matches events by pseudonym, so an event whose address retention removed still matches until it is
@@ -171,8 +172,8 @@ long to wait after a `429`.
   (inline only while `pending`), `text_url` (a presigned link to the object while `stored`, valid for 10 minutes
   and signed without a network call; `null` otherwise, and always `null` when no evidence store is configured),
   `text_sha256`, `text_chars`, `text_truncated`, correlation fields except the internal `job_id`, `ip_subject_key` (the pseudonym, equal for events
-  of one subject, never an address), the retention flags `text_redacted`, `ipaddr_redacted` and `anonymized`, and
-  notes ordered oldest first. A retention flag is set once its step ran on the event, whether or not there was a value
+  of one subject, never an address), the retention flags `text_redacted`, `ipaddr_redacted` and `anonymized`,
+  `hold_source` (see [Moderation action](#moderation-action)), and notes ordered oldest first. A retention flag is set once its step ran on the event, whether or not there was a value
   to remove. `user_id` and `ip_subject_key` are `null` on an anonymized event. A client that reveals text after the link expired
   gets `403` from the store and refetches the event by `event_id` for a fresh link. The page also carries
   `retention`: `text_days`, `ipaddr_days` (each `null` when that window is `none`) and `ceiling_days`, the policy in
@@ -186,7 +187,8 @@ long to wait after a `429`.
 
 Each subject filter reads its own index, newest `id` first: `(user_id, id)`, `(proxied_account, id)`, `(worker_id, id)`
 and `(ip_subject_key, id)`, the last three partial on a non-null value. Events without a pseudonym keep a partial
-`(ipaddr, id)` index for the `ipaddr` fallback, which stays small while the deployment has a private secret.
+`(ipaddr, id)` index for the `ipaddr` fallback, which stays small while the deployment has a private secret. The
+`reason` filter reads `(reason, id)`, so a page of a rare reason does not walk the events of the common ones.
 
 ### Promotion and paused-worker review
 
@@ -269,6 +271,12 @@ record is gone; the ceiling bounds only unactioned events. See
 The exemption is evaluated at each pass. Once an event has no note and its account is neither flagged nor suspicious,
 the next pass applies every window already elapsed. Values already removed stay removed if the account is flagged
 later.
+
+The event listing reports the exemption in `hold_source`: `note` when the event has a note, `account_status` when
+its account is flagged or suspicious, `note` when both hold, and `null` when neither does. It is derived in the
+listing query from the predicates `_under_moderation_action` combines, so it matches what the next retention pass
+would decide at the time of the read. No column stores it, and there is no release: the hold ends only when its
+condition stops holding.
 
 The variables are read once at startup into `MODERATION_RETENTION_POLICY`; the retention pass and the privacy
 document both read that policy when they run. A window is a positive whole number of days or `none` (any case); the

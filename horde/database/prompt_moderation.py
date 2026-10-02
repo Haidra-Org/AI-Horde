@@ -51,6 +51,7 @@ from sqlalchemy.orm import Session
 from horde import r2
 from horde.classes.base.prompt_moderation import (
     MAX_ORIGIN_TEXT_CHARACTERS,
+    EvidenceHoldSource,
     EvidenceTextState,
     PromptModerationEvent,
     PromptModerationNote,
@@ -698,10 +699,14 @@ def get_prompt_events(
     ip_subject: str | None = None,
     ip_subject_key: str | None = None,
     worker_id: str | None = None,
+    reasons: Sequence[PromptModerationReason] | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> dict[str, Any]:
     """Return a bounded, newest-first page of evidence with its notes.
+
+    Each event's ``hold_source`` is computed in the page query from the predicates retention applies, so the listing
+    reports a hold exactly when retention honours it.
 
     Args:
         limit: Maximum number of events in the page.
@@ -713,13 +718,14 @@ def get_prompt_events(
             pseudonym, so an event stays selected after its address is removed.
         ip_subject_key: Restrict to one address pseudonym, matched exactly.
         worker_id: Restrict to one reporting worker.
+        reasons: Restrict to events of any of these reasons.
         since: Inclusive naive UTC lower bound on the capture time.
         until: Exclusive naive UTC upper bound on the capture time.
 
     Returns:
         ``events``, each with its notes oldest first, and ``next_cursor``, the ``before_id`` of the next page or None.
     """
-    statement = select(PromptModerationEvent)
+    statement = select(PromptModerationEvent, _hold_source().label("hold_source"))
     if before_id is not None:
         statement = statement.where(PromptModerationEvent.id < before_id)
     if event_id is not None:
@@ -734,22 +740,24 @@ def get_prompt_events(
         statement = statement.where(PromptModerationEvent.ip_subject_key == ip_subject_key)
     if worker_id is not None:
         statement = statement.where(PromptModerationEvent.worker_id == worker_id)
+    if reasons is not None:
+        statement = statement.where(PromptModerationEvent.reason.in_([reason.value for reason in reasons]))
     if since is not None:
         statement = statement.where(PromptModerationEvent.created >= since)
     if until is not None:
         statement = statement.where(PromptModerationEvent.created < until)
     statement = statement.order_by(PromptModerationEvent.id.desc()).limit(limit + 1)
-    rows = list(db.session.execute(statement).scalars())
+    rows = list(db.session.execute(statement).tuples())
     notes: dict[int, list[NoteRecord]] = defaultdict(list)
     if rows[:limit]:
         for note in db.session.execute(
             select(PromptModerationNote)
-            .where(PromptModerationNote.event_id.in_([evidence.id for evidence in rows[:limit]]))
+            .where(PromptModerationNote.event_id.in_([evidence.id for evidence, _ in rows[:limit]]))
             .order_by(PromptModerationNote.id),
         ).scalars():
             notes[note.event_id].append(_note_record(note))
     events = []
-    for evidence in rows[:limit]:
+    for evidence, hold_source in rows[:limit]:
         # Deliberate allowlist: never serialize ORM __dict__ or arbitrary relationships.
         events.append(
             {
@@ -775,6 +783,7 @@ def get_prompt_events(
                 "text_redacted": evidence.text_redacted,
                 "ipaddr_redacted": evidence.ipaddr_redacted,
                 "anonymized": evidence.anonymized,
+                "hold_source": hold_source,
                 "notes": notes.get(evidence.id, []),
             }
         )
@@ -846,8 +855,20 @@ def _under_moderation_action() -> ColumnElement[bool]:
     that follow, and a restriction cannot be enforced against an account whose record is gone, so no retention step
     touches these events.
     """
-    has_note = exists().where(PromptModerationNote.event_id == PromptModerationEvent.id)
-    return or_(has_note, _account_restricted(PromptModerationEvent.user_id))
+    return or_(_has_note(), _account_restricted(PromptModerationEvent.user_id))
+
+
+def _has_note() -> ColumnElement[bool]:
+    return exists().where(PromptModerationNote.event_id == PromptModerationEvent.id)
+
+
+def _hold_source() -> ColumnElement[str | None]:
+    """Return which ``_under_moderation_action`` predicate holds for an event, the note first, or null when neither does."""
+    return case(
+        (_has_note(), EvidenceHoldSource.NOTE.value),
+        (_account_restricted(PromptModerationEvent.user_id), EvidenceHoldSource.ACCOUNT_STATUS.value),
+        else_=None,
+    )
 
 
 # Each predicate is the single definition of which rows a retention step selects. The negated flag, or the non-null

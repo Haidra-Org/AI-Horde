@@ -22,7 +22,7 @@ import horde.apis.limiter_api as lim
 from horde import exceptions as e
 from horde import r2
 from horde.apis.v2.base import api, check_for_mod, models
-from horde.classes.base.prompt_moderation import MAX_NOTE_CHARACTERS, EvidenceTextState
+from horde.classes.base.prompt_moderation import MAX_NOTE_CHARACTERS, EvidenceTextState, PromptModerationReason
 from horde.countermeasures import CounterMeasures
 from horde.database import moderation as moderation_db
 from horde.database import prompt_moderation as evidence_db
@@ -151,6 +151,23 @@ def _assert_note(note: str) -> None:
         )
 
 
+def _moderation_reasons(values: list[str] | None) -> list[PromptModerationReason] | None:
+    """Validate repeated evidence reason filters.
+
+    Raises:
+        e.BadRequest: A value is not a moderation reason.
+    """
+    if values is None:
+        return None
+    reasons = []
+    for value in values:
+        try:
+            reasons.append(PromptModerationReason(value))
+        except ValueError as err:
+            raise e.BadRequest(f"Unknown moderation reason {value}", rc="InvalidModerationReason") from err
+    return reasons
+
+
 class OperationsPromptEvents(Resource):
     """Return actionable evidence; ordinary filter replacements are not events."""
 
@@ -190,6 +207,14 @@ class OperationsPromptEvents(Resource):
         location="args",
     )
     get_parser.add_argument("worker_id", type=str, required=False, help="Restrict to one reporting worker.", location="args")
+    get_parser.add_argument(
+        "reason",
+        type=str,
+        action="append",
+        required=False,
+        help="Restrict to events of any of these reasons; repeatable.",
+        location="args",
+    )
     get_parser.add_argument("since", type=str, required=False, help="Inclusive ISO 8601 lower bound.", location="args")
     get_parser.add_argument("until", type=str, required=False, help="Exclusive ISO 8601 upper bound.", location="args")
 
@@ -222,6 +247,7 @@ class OperationsPromptEvents(Resource):
             ip_subject=_parse_ipaddr_filter(self.args.ipaddr),
             ip_subject_key=_assert_ip_subject_key(self.args.ip_subject_key),
             worker_id=self.args.worker_id,
+            reasons=_moderation_reasons(self.args.reason),
             since=since,
             until=until,
         )
