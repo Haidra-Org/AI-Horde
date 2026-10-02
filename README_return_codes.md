@@ -170,6 +170,7 @@ The errors returned by the AI horde are always in this json format
 | CannotDeleteMod | A moderator account cannot be deleted; contact an admin |
 | CannotWipeActiveUser | An account that was active in the last 30 days cannot be wiped yet |
 | DeletedUser | This account has been scheduled for deletion and is disabled |
+| ExampleURLAlreadyInUse | The image style already has an example at this URL |
 | ExcessiveStopSequence | The total length of the stop sequences exceeds the allowed limit |
 | InvalidControlType | The annotation form requires a known control_type in its payload |
 | InvalidExtraSourceImages | This request type does not accept extra source images |
@@ -197,10 +198,13 @@ The errors returned by the AI horde are always in this json format
 | NulByteInPayload | The request payload may not contain NUL bytes |
 | PromptExceedsContext | The prompt does not fit the context length the request would run under |
 | SharedKeyAssignedStyles | This shared key is restricted to specific styles |
+| SharedKeyInvalid | The shared key given for the style does not exist |
 | StyleDeclarationInvalid | A style's stored parameter policy or template fields no longer pass validation, so the style cannot be applied |
+| StyleGetMistmatch | The style exists, but its type does not match the route it was read through |
 | StyleMismatch | The style's type does not match the request, or a collection mixes image and text styles |
 | StyleParameterAboveCeiling | A requested parameter is above the ceiling the style puts on it |
 | StylePolicyOverridableMisplaced | A style's overridable list is only read under the 'listed' override mode |
+| StylePromptMissingVars | A style prompt lacks the '{p}' placeholder, or an image style prompt lacks '{np}' |
 | StylesAnonForbidden | Anonymous users cannot create styles |
 | StylesRequiresCustomizer | Only customizers and trusted users can create styles |
 | TemplateFieldMissing | The style requires a template field the request did not supply |
@@ -210,6 +214,7 @@ The errors returned by the AI horde are always in this json format
 | TokenOverflow | More tokens were requested than the context length allows |
 | TooManyExtraSourceImages | At most 5 extra source images can be sent |
 | TooManyStopSequences | Too many stop sequences were specified |
+| TooManyStyleExamples | An image style can have at most 4 examples |
 | TooManyWorkers | Untrusted users can have at most 3 distinct workers |
 | TooManyWorkersTrusted | Trusted users cannot onboard more than 20 workers without contacting the team |
 | UserNotDeleted | The user is not deleted and cannot be undeleted |

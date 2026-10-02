@@ -214,7 +214,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             if not self.safe_ip:
                 raise e.NotTrusted(rc="UntrustedUnsafeIP")
         if not self.user.special and self.params.get("special"):
-            raise e.BadRequest("Only special users can send a special field.", "SpecialFieldNeedsSpecialUser")
+            raise e.BadRequest("Only special users can send a special field.", rc="SpecialFieldNeedsSpecialUser")
         if not self.args.source_image and self.args.source_mask:
             raise e.SourceMaskUnnecessary
         # Use the models the job will run on; a style may have replaced the request's list.
