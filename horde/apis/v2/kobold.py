@@ -253,7 +253,7 @@ class TextAsyncGenerate(GenerateTemplate):
         self.apply_style()
         self.apply_context_fit()
         super().validate()
-        self.credit_style_owner()
+        self.decide_style_surcharge()
         param_validator = ParamValidator(self.prompt, self.args.models, self.params, self.user)
         self.warnings = param_validator.validate_text_params()
         if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
@@ -308,22 +308,6 @@ class TextAsyncGenerate(GenerateTemplate):
         self.existing_style.use_count += 1
         db.session.commit()
         logger.debug(f"Style '{self.args.style}' applied.")
-
-    def credit_style_owner(self):
-        """Pay the owner of the style this request used, and add the same amount to what it costs.
-
-        A request generating under its own author's style pays neither, so this runs after the shared
-        validation rather than inside ``apply_style``: the style is resolved before the user is, and
-        the comparison needs both. The two are compared by id, since the shared validation resolves
-        the user inside an app context of its own and the two rows can be separate instances.
-        """
-        if self.existing_style is None:
-            return
-        if self.existing_style.user_id == self.user.id:
-            return
-
-        self.existing_style.user.record_style(2, "text")
-        self.style_kudos = True
 
     def apply_context_fit(self):
         """Size the request's context against the prompt that will actually be sent.
