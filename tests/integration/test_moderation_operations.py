@@ -526,8 +526,14 @@ def _paused(client, api_key: str, **query: object) -> dict:
 def test_paused_workers_filter_sort_and_total(client, app, api_key, make_api_user) -> None:
     from uuid import uuid4
 
+    from horde.classes.base.user import UserSuspicions
+    from horde.flask import db
+
     marker = uuid4().hex[:8]
     first_owner, second_owner = make_api_user(), make_api_user()
+    with app.app_context():
+        db.session.add_all(UserSuspicions(user_id=first_owner.id, suspicion_id=int(Suspicions.UNREASONABLY_FAST)) for _ in range(2))
+        db.session.commit()
     now = datetime.utcnow()
     ids = {
         "text_online": _make_typed_worker(
@@ -567,6 +573,17 @@ def test_paused_workers_filter_sort_and_total(client, app, api_key, make_api_use
     text_online = next(worker for worker in everything["paused_workers"] if worker["id"] == ids["text_online"])
     _assert_utc_timestamp(text_online["last_check_in"])
     assert text_online["suspicious"] == 2
+    assert text_online["suspicion_reasons"] == [
+        {
+            "id": int(Suspicions.UNREASONABLY_FAST),
+            "name": "UNREASONABLY_FAST",
+            "description": "Generation unreasonably fast",
+            "count": 2,
+        },
+    ]
+    assert text_online["owner_suspicion"] == 2
+    text_offline = next(worker for worker in everything["paused_workers"] if worker["id"] == ids["text_offline"])
+    assert text_offline["owner_suspicion"] == 0
     assert text_online["models"] == ["elinas/chronos-70b-v2"]
     assert text_online["owner_id"] == first_owner.id
 

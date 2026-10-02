@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import string
 import uuid
-from collections.abc import Collection, Iterable
+from collections.abc import Collection
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
@@ -209,12 +209,48 @@ def _suspicion_name(suspicion_id: int) -> str:
         return f"UNKNOWN_{suspicion_id}"
 
 
-def _suspicion_details(
-    suspicions: Iterable[UserSuspicions | WorkerSuspicions],
-) -> list[SuspicionReasonDetails]:
-    counts: dict[int, int] = {}
-    for suspicion in suspicions:
-        counts[suspicion.suspicion_id] = counts.get(suspicion.suspicion_id, 0) + 1
+def _user_suspicion_counts(user_ids: Collection[int]) -> dict[int, dict[int, int]]:
+    """Return each account's active suspicion reports, counted per reason, for the given accounts.
+
+    An account keeps one ``user_suspicions`` row per report and nothing bounds that history, so the reports are
+    counted in SQL instead of being loaded as objects. Accounts without reports are absent from the result.
+    """
+    if not user_ids:
+        return {}
+    rows = (
+        db.session.query(UserSuspicions.user_id, UserSuspicions.suspicion_id, func.count(UserSuspicions.id))
+        .filter(UserSuspicions.user_id.in_(list(user_ids)))
+        .group_by(UserSuspicions.user_id, UserSuspicions.suspicion_id)
+        .all()
+    )
+    counts: dict[int, dict[int, int]] = {}
+    for user_id, suspicion_id, count in rows:
+        counts.setdefault(user_id, {})[suspicion_id] = count
+    return counts
+
+
+def _worker_suspicion_counts(worker_ids: Collection[uuid.UUID | str]) -> dict[uuid.UUID | str, dict[int, int]]:
+    """Return each worker's active suspicion reports, counted per reason, for the given workers.
+
+    A worker keeps one ``worker_suspicions`` row per report and nothing bounds that history, so the reports are
+    counted in SQL instead of being loaded as objects. Workers without reports are absent from the result.
+    """
+    if not worker_ids:
+        return {}
+    rows = (
+        db.session.query(WorkerSuspicions.worker_id, WorkerSuspicions.suspicion_id, func.count(WorkerSuspicions.id))
+        .filter(WorkerSuspicions.worker_id.in_(list(worker_ids)))
+        .group_by(WorkerSuspicions.worker_id, WorkerSuspicions.suspicion_id)
+        .all()
+    )
+    counts: dict[uuid.UUID | str, dict[int, int]] = {}
+    for worker_id, suspicion_id, count in rows:
+        counts.setdefault(worker_id, {})[suspicion_id] = count
+    return counts
+
+
+def _suspicion_details(counts: dict[int, int]) -> list[SuspicionReasonDetails]:
+    """Describe active suspicion reports from their counts per reason, ordered by reason code."""
     details: list[SuspicionReasonDetails] = []
     for suspicion_id, count in sorted(counts.items()):
         try:
@@ -234,7 +270,7 @@ def _suspicion_details(
     return details
 
 
-def _promotion_user_details(user: User) -> PromotionReviewUser:
+def _promotion_user_details(user: User, suspicion_counts: dict[int, int]) -> PromotionReviewUser:
     workers = list(user.workers)
     return {
         "id": user.id,
@@ -243,8 +279,8 @@ def _promotion_user_details(user: User) -> PromotionReviewUser:
         "account_age": int((datetime.utcnow() - user.created).total_seconds()),
         "kudos": user.kudos,
         "evaluating_kudos": user.evaluating_kudos,
-        "suspicious": len(user.suspicions),
-        "suspicion_reasons": _suspicion_details(user.suspicions),
+        "suspicious": sum(suspicion_counts.values()),
+        "suspicion_reasons": _suspicion_details(suspicion_counts),
         "flagged": user.flagged,
         "deleted": user.deleted,
         "vpn": user.vpn,
@@ -263,13 +299,13 @@ def _promotion_queue(*, threshold: Decimal, status: PromotionStatus, limit: int)
     The query is bounded by ``limit`` and walks ``ix_users_evaluating_kudos_rank`` from
     the top, so its cost follows the population above the threshold, not the table.
     The relationships ``_promotion_user_details`` reads are loaded for the returned
-    rows only, in one extra query each.
+    rows only, in one extra query each. Suspicion reports are not among them: their
+    history is unbounded, so ``_user_suspicion_counts`` counts them instead.
     """
     return (
         db.session.query(User)
         .options(
             selectinload(User.roles),
-            selectinload(User.suspicions),
             selectinload(User.workers),
         )
         .filter(User.promotion_queue_criteria(threshold, status))
@@ -279,7 +315,12 @@ def _promotion_queue(*, threshold: Decimal, status: PromotionStatus, limit: int)
     )
 
 
-def _paused_worker_details(worker: WorkerTemplate, models: list[str]) -> PausedWorkerReview:
+def _paused_worker_details(
+    worker: WorkerTemplate,
+    models: list[str],
+    suspicion_counts: dict[int, int],
+    owner_suspicion_counts: dict[int, int],
+) -> PausedWorkerReview:
     return {
         "id": str(worker.id),
         "name": worker.name,
@@ -290,9 +331,9 @@ def _paused_worker_details(worker: WorkerTemplate, models: list[str]) -> PausedW
         "online": not worker.is_stale(),
         "maintenance_mode": worker.maintenance,
         "maintenance_msg": worker.maintenance_msg,
-        "suspicious": len(worker.suspicions),
-        "suspicion_reasons": _suspicion_details(worker.suspicions),
-        "owner_suspicion": len(worker.user.suspicions),
+        "suspicious": sum(suspicion_counts.values()),
+        "suspicion_reasons": _suspicion_details(suspicion_counts),
+        "owner_suspicion": sum(owner_suspicion_counts.values()),
         "owner_trusted": worker.user.trusted,
         "owner_flagged": worker.user.flagged,
         "requests_fulfilled": worker.fulfilments,
@@ -313,10 +354,11 @@ def _promotion_queues(limit: int) -> tuple[float | None, list[PromotionReviewUse
         return None, [], []
     blocked = _promotion_queue(threshold=threshold, status=PromotionStatus.BLOCKED_BY_SUSPICION, limit=limit)
     eligible = _promotion_queue(threshold=threshold, status=PromotionStatus.PROMOTE, limit=limit)
+    suspicion_counts = _user_suspicion_counts([user.id for user in (*blocked, *eligible)])
     return (
         float(threshold),
-        [_promotion_user_details(user) for user in blocked],
-        [_promotion_user_details(user) for user in eligible],
+        [_promotion_user_details(user, suspicion_counts.get(user.id, {})) for user in blocked],
+        [_promotion_user_details(user, suspicion_counts.get(user.id, {})) for user in eligible],
     )
 
 
@@ -376,8 +418,6 @@ def get_moderation_overview(
     paused_workers = (
         paused_query.options(
             selectinload(WorkerTemplate.user).selectinload(User.roles),
-            selectinload(WorkerTemplate.user).selectinload(User.suspicions),
-            selectinload(WorkerTemplate.suspicions),
         )
         .order_by(*ordering, WorkerTemplate.id.asc())
         .limit(limit)
@@ -390,6 +430,8 @@ def get_moderation_overview(
     models_by_worker: dict[uuid.UUID | str, list[str]] = {}
     for worker_id, model in model_rows:
         models_by_worker.setdefault(worker_id, []).append(model)
+    worker_suspicion_counts = _worker_suspicion_counts(worker_ids)
+    owner_suspicion_counts = _user_suspicion_counts({worker.user_id for worker in paused_workers})
 
     return {
         "promotion_threshold": promotion_threshold,
@@ -397,7 +439,15 @@ def get_moderation_overview(
         "worker_suspicion_threshold": WorkerTemplate.suspicion_threshold,
         "promotion_blocked_users": blocked_users,
         "promotion_eligible_users": eligible_users,
-        "paused_workers": [_paused_worker_details(worker, sorted(models_by_worker.get(worker.id, []))) for worker in paused_workers],
+        "paused_workers": [
+            _paused_worker_details(
+                worker,
+                sorted(models_by_worker.get(worker.id, [])),
+                worker_suspicion_counts.get(worker.id, {}),
+                owner_suspicion_counts.get(worker.user_id, {}),
+            )
+            for worker in paused_workers
+        ],
         "paused_workers_total": paused_total,
     }
 
