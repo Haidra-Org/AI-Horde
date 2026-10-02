@@ -204,6 +204,7 @@ The errors returned by the AI horde are always in this json format
 | StyleMismatch | The style's type does not match the request, or a collection mixes image and text styles |
 | StyleParameterAboveCeiling | A requested parameter is above the ceiling the style puts on it |
 | StylePolicyOverridableMisplaced | A style's overridable list is only read under the 'listed' override mode |
+| StylePromptFieldInvalid | A text style prompt has a placeholder that is more than a bare name, or a brace that does not parse |
 | StylePromptMissingVars | A style prompt lacks the '{p}' placeholder, or an image style prompt lacks '{np}' |
 | StylesAnonForbidden | Anonymous users cannot create styles |
 | StylesRequiresCustomizer | Only customizers and trusted users can create styles |

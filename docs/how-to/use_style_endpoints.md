@@ -256,7 +256,8 @@ that takes a new style.
   request is queued. A dry run or a refused request credits nothing. Using your own style costs the
   same as the unstyled request.
 - A text template's braces are format specifiers. `{{` is one literal brace, an unknown `{word}`
-  becomes the empty string, and only `{{[NAME]}}` with uppercase letters and underscores between the
+  becomes the empty string, a placeholder with a format spec, a conversion, attribute or index access
+  or no name at all is refused with `StylePromptFieldInvalid`, and only `{{[NAME]}}` with uppercase letters and underscores between the
   brackets is kept as written. `{{[input]}}` and `{{[IN PUT]}}` are not protected and collapse to one
   brace each side. Check a template against the published `protected_patterns` regular expression
   before sending it.

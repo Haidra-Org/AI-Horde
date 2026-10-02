@@ -17,6 +17,7 @@ from horde.classes.base.style_application import (
     format_text_style_prompt,
     merge_client_parameters,
     resolve_template_field_values,
+    validate_text_template_fields,
 )
 from horde.classes.base.style_contract import StyleParameterPolicy, StyleTemplateField
 
@@ -351,3 +352,75 @@ class TestTextPromptFormatting:
         )
 
         assert formatted == "{{[INPUT]}}{{[OUTPUT]}} and {p} and {tags}"
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "{p:>20000}",
+            "{p!r}",
+            "{p.__class__}",
+            "{p[0]}",
+            "{}",
+            "{0}",
+        ],
+    )
+    def test_a_field_that_is_more_than_a_bare_name_is_sent_as_written(self, field: str) -> None:
+        """A stored template may predate the write-time check, so such a field is left alone rather than run."""
+        formatted = format_text_style_prompt(
+            template=f"{field} then {{p}}",
+            prompt="a lighthouse",
+            field_values={},
+        )
+
+        assert formatted == f"{field} then a lighthouse"
+
+    def test_a_format_spec_does_not_grow_the_prompt(self) -> None:
+        formatted = format_text_style_prompt(
+            template="{p:>20000}{p}",
+            prompt="a lighthouse",
+            field_values={},
+        )
+
+        assert len(formatted) == len("{p:>20000}a lighthouse")
+
+    def test_a_stored_template_whose_braces_do_not_parse_is_a_client_error(self) -> None:
+        with pytest.raises(e.BadRequest) as raised:
+            format_text_style_prompt(template="{p} and a lone {", prompt="a lighthouse", field_values={})
+
+        assert raised.value.rc == "StyleDeclarationInvalid"
+
+
+class TestTextTemplateFieldValidation:
+    """Which text templates a style may be written with."""
+
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "{p}",
+            "{p} [{tags}]",
+            "{{literal}} {p}",
+            "{{[INPUT]}}{p}{{[OUTPUT]}}",
+            "{p} {Unknown_Name}",
+        ],
+    )
+    def test_bare_names_and_literal_braces_are_accepted(self, template: str) -> None:
+        validate_text_template_fields(template)
+
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "{p:>20000}",
+            "{p} {tags!s}",
+            "{p.__class__}",
+            "{p} {tags[0]}",
+            "{p} {}",
+            "{p} {1}",
+            "{p} {",
+            "{p} }",
+        ],
+    )
+    def test_a_field_that_is_more_than_a_bare_name_or_a_lone_brace_is_refused(self, template: str) -> None:
+        with pytest.raises(e.BadRequest) as raised:
+            validate_text_template_fields(template)
+
+        assert raised.value.rc == "StylePromptFieldInvalid"

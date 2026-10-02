@@ -46,8 +46,9 @@ IMAGE_PLACEHOLDERS = ("p", "np")
 
 TEXT_BRACE_HANDLING = (
     "A doubled brace is one literal brace, '{p}' and the placeholders this style declares are filled "
-    "in, and a placeholder nothing fills becomes the empty string. The protected patterns below are "
-    "the exception and are left exactly as written."
+    "in, and a placeholder nothing fills becomes the empty string. A placeholder is a bare name: one "
+    "with a format spec, a conversion, attribute or index access, or no name is refused. The protected "
+    "patterns below are the exception and are left exactly as written."
 )
 
 IMAGE_BRACE_HANDLING = (

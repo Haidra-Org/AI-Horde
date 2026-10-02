@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import string
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -56,6 +57,9 @@ lowercase name, is ordinary template text and formats under the usual rules.
 
 SHIELD_MARKER_NONCE_BYTES = 8
 """Length of the random part of the marker that stands in for a protected placeholder."""
+
+TEXT_TEMPLATE_FORMATTER = string.Formatter()
+"""Splits a text template into literal text and replacement fields, under Python's format string grammar."""
 
 
 @dataclass(frozen=True)
@@ -240,8 +244,97 @@ def format_text_style_prompt(
     # This rule is what the style contract endpoint publishes and what docs/reference/style_contract.md
     # sets out. Changing any part of it means raising the contract's schema version and rewriting both.
     shielded_template, protected_placeholders = _shield_protected_placeholders(template)
-    formatted_prompt = shielded_template.format_map(defaultdict(str, field_values, p=prompt))
-    return _restore_protected_placeholders(formatted_prompt, protected_placeholders)
+    try:
+        template_parts = list(TEXT_TEMPLATE_FORMATTER.parse(shielded_template))
+    except ValueError as error:
+        raise e.BadRequest(
+            f"This style cannot be applied because its stored prompt template does not parse: {error}.",
+            rc="StyleDeclarationInvalid",
+        ) from error
+
+    fill_values = defaultdict(str, field_values, p=prompt)
+    formatted_parts: list[str] = []
+    for literal_text, field_name, format_spec, conversion in template_parts:
+        formatted_parts.append(literal_text)
+        if field_name is None:
+            continue
+        if _is_plain_field(field_name, format_spec, conversion):
+            formatted_parts.append(fill_values[field_name])
+        else:
+            formatted_parts.append(_field_as_written(field_name, format_spec, conversion))
+
+    return _restore_protected_placeholders("".join(formatted_parts), protected_placeholders)
+
+
+def validate_text_template_fields(template: str) -> None:
+    """Validate that every replacement field in a text template is a bare name.
+
+    A text template is formatted with Python's format string grammar, which also accepts format specs
+    (``{p:>20000}``), conversions (``{p!r}``), attribute and index access (``{p.__class__}``) and
+    positional fields (``{}``, ``{0}``). None of them has a use in a prompt, and a format spec lets a
+    template make every request it serves build an arbitrarily large string, so a style is refused when
+    it is written with one. A template already stored with one has the field sent as written instead
+    (see ``format_text_style_prompt``).
+
+    Args:
+        template: The style's prompt template.
+
+    Raises:
+        horde.exceptions.BadRequest: With the ``StylePromptFieldInvalid`` return code, if the template's
+            braces do not parse or a replacement field is more than a bare name.
+    """
+    shielded_template, _protected_placeholders = _shield_protected_placeholders(template)
+    try:
+        template_parts = list(TEXT_TEMPLATE_FORMATTER.parse(shielded_template))
+    except ValueError as error:
+        raise e.BadRequest(
+            f"The style prompt does not parse: {error}. Write a literal brace as '{{{{' or '}}}}'.",
+            rc="StylePromptFieldInvalid",
+        ) from error
+
+    unsupported_fields = [
+        _field_as_written(field_name, format_spec, conversion)
+        for _literal_text, field_name, format_spec, conversion in template_parts
+        if field_name is not None and not _is_plain_field(field_name, format_spec, conversion)
+    ]
+    if unsupported_fields:
+        raise e.BadRequest(
+            f"The style prompt uses {', '.join(unsupported_fields)}. A placeholder is a bare name in braces, "
+            "such as '{p}', with no format spec, conversion, attribute or index access, or position.",
+            rc="StylePromptFieldInvalid",
+        )
+
+
+def _is_plain_field(field_name: str, format_spec: str | None, conversion: str | None) -> bool:
+    """Report whether a replacement field is a bare name that formatting only fills in.
+
+    Args:
+        field_name: The field's name as parsed, including any attribute or index access.
+        format_spec: The field's format spec, empty when it has none.
+        conversion: The field's conversion character, or None when it has none.
+
+    Returns:
+        True when the field refers to a value and asks for nothing else.
+    """
+    is_positional = field_name == "" or field_name.isdigit()
+    has_lookup = "." in field_name or "[" in field_name
+    return not is_positional and not has_lookup and not format_spec and conversion is None
+
+
+def _field_as_written(field_name: str, format_spec: str | None, conversion: str | None) -> str:
+    """Return a replacement field rebuilt as it appears in the template.
+
+    Args:
+        field_name: The field's name as parsed, including any attribute or index access.
+        format_spec: The field's format spec, empty when it has none.
+        conversion: The field's conversion character, or None when it has none.
+
+    Returns:
+        The field with its braces, conversion and format spec.
+    """
+    conversion_text = f"!{conversion}" if conversion is not None else ""
+    format_spec_text = f":{format_spec}" if format_spec else ""
+    return "{" + field_name + conversion_text + format_spec_text + "}"
 
 
 def _shield_protected_placeholders(template: str) -> tuple[str, dict[str, str]]:
