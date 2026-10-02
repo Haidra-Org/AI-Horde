@@ -173,7 +173,7 @@ class StyleTemplate(Resource):
                 raise e.BadRequest("This shared key does not exist", rc="SharedKeyInvalid")
             shared_key_validity = self.sharedkey.is_valid()
             if shared_key_validity[0] is False:
-                raise e.BadRequest(shared_key_validity[1], shared_key_validity[2])
+                raise e.BadRequest(shared_key_validity[1], rc=shared_key_validity[2])
         if self.user.deleted:
             raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
         self.parse_type_specific_args()
@@ -338,7 +338,7 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
                 raise e.BadRequest("This shared key does not exist", rc="SharedKeyInvalid")
             shared_key_validity = self.sharedkey.is_valid()
             if shared_key_validity[0] is False:
-                raise e.BadRequest(shared_key_validity[1], shared_key_validity[2])
+                raise e.BadRequest(shared_key_validity[1], rc=shared_key_validity[2])
         self.parse_type_specific_args()
 
     def delete(self, style_id):
