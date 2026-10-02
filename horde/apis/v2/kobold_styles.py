@@ -9,6 +9,7 @@ import horde.apis.limiter_api as lim
 from horde import exceptions as e
 from horde.apis.v2.kobold import models, parsers, text_style_contract_vocabulary
 from horde.apis.v2.styles import (
+    STYLE_CREATE_WINDOW_RATE_LIMIT,
     SingleStyleTemplate,
     SingleStyleTemplateGet,
     StyleContractArgs,
@@ -24,9 +25,6 @@ from horde.limiter import limiter
 from horde.logger import logger
 from horde.utils import ensure_clean
 from horde.validation import ParamValidator
-
-TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT = "20/hour"
-"""How many text styles one address may write in an hour. The per-second limit applies on top of it."""
 
 
 class TextStyleContractArgs(StyleContractArgs):
@@ -106,7 +104,7 @@ class TextStyle(TextStyleContractArgs, StyleTemplate):
 
     decorators = [
         limiter.limit(
-            limit_value=TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT,
+            limit_value=STYLE_CREATE_WINDOW_RATE_LIMIT,
             key_func=lim.get_request_path,
         ),
         limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),

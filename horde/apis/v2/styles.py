@@ -24,6 +24,9 @@ from horde.logger import logger
 from horde.style_contract_document import published_style_contract
 from horde.utils import ensure_clean
 
+STYLE_CREATE_WINDOW_RATE_LIMIT = "20/hour"
+"""How many styles of one type an address may create in an hour. The per-second limit applies on top of it."""
+
 ## Styles
 
 

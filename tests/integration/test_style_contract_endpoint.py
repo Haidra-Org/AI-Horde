@@ -13,10 +13,11 @@ comes back through Flask's JSON encoder unchanged.
 import re
 
 import pytest
+from flask import Flask, request
+from flask_limiter.util import get_qualified_name
+from limits import RateLimitItem, parse
 
-from horde.apis.limiter_api import REQUEST_2SEC_LIMIT_PER_IP, REQUEST_90MIN_LIMIT_PER_IP
 from horde.apis.v2.kobold import text_style_contract_vocabulary
-from horde.apis.v2.kobold_styles import TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT
 from horde.apis.v2.stable import image_style_contract_vocabulary
 from horde.classes.kobold.request_fit import ContextFit
 from horde.style_contract_document import SCHEMA_VERSION
@@ -95,17 +96,58 @@ def test_context_fitting_is_published_for_text_only(client):
     assert contract["image"]["context_fit_modes"] is None
 
 
-def test_the_style_write_limits_are_the_ones_the_endpoints_declare(client):
+STYLE_WRITE_ROUTES = [
+    ("text", "/api/v2/styles/text", "POST", "style_create_rate_limits"),
+    ("text", "/api/v2/styles/text/00000000-0000-0000-0000-000000000000", "PATCH", "style_modify_rate_limits"),
+    ("text", "/api/v2/styles/text/00000000-0000-0000-0000-000000000000", "DELETE", "style_modify_rate_limits"),
+    ("image", "/api/v2/styles/image", "POST", "style_create_rate_limits"),
+    ("image", "/api/v2/styles/image/00000000-0000-0000-0000-000000000000", "PATCH", "style_modify_rate_limits"),
+    ("image", "/api/v2/styles/image/00000000-0000-0000-0000-000000000000", "DELETE", "style_modify_rate_limits"),
+]
+"""Each style write a client can make: the style type, a path and method reaching it, and the contract field publishing its limits."""
+
+
+def enforced_rate_limits(app: Flask, path: str, method: str) -> set[RateLimitItem]:
+    """Return the limits the route serving a request is decorated with, as an ordinary address sees them.
+
+    Args:
+        app: The Flask app the routes are registered on.
+        path: A path the route serves.
+        method: The HTTP method of the request.
+
+    Returns:
+        Every limit applied to the request, resolved inside a request context so a limit that depends on
+        the caller's address resolves to the ordinary one.
+    """
+    from horde.limiter import limiter
+
+    with app.test_request_context(path, method=method):
+        view = app.view_functions[request.url_rule.endpoint]
+        return {limit.limit for limit in limiter.limit_manager.decorated_limits(get_qualified_name(view))}
+
+
+@pytest.mark.parametrize(("style_type", "path", "method", "contract_field"), STYLE_WRITE_ROUTES)
+def test_each_style_write_publishes_the_limits_its_route_enforces(
+    app: Flask,
+    client,
+    style_type: str,
+    path: str,
+    method: str,
+    contract_field: str,
+) -> None:
     contract = client.get(CONTRACT_URL).get_json()
 
-    assert contract["text"]["style_write_rate_limits"] == [
-        TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT,
-        REQUEST_2SEC_LIMIT_PER_IP,
-    ]
-    assert contract["image"]["style_write_rate_limits"] == [
-        REQUEST_90MIN_LIMIT_PER_IP,
-        REQUEST_2SEC_LIMIT_PER_IP,
-    ]
+    published = {parse(limit) for limit in contract[style_type][contract_field]}
+
+    assert published == enforced_rate_limits(app, path, method)
+
+
+def test_both_style_types_are_held_to_the_same_write_limits(client) -> None:
+    """A client pacing its writes can do so the same way for either style type."""
+    contract = client.get(CONTRACT_URL).get_json()
+
+    for contract_field in ("style_create_rate_limits", "style_modify_rate_limits"):
+        assert contract["text"][contract_field] == contract["image"][contract_field]
 
 
 def test_repeated_requests_serve_an_unchanged_contract(client):
