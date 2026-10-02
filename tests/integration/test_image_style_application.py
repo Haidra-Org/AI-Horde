@@ -707,6 +707,31 @@ class TestImageDryRunResolvedRequest:
             assert quote["kudos"] == unstyled.get_json()["kudos"]
 
 
+class TestImageStyleTypeMismatch:
+    """An image request refuses a style of the other type."""
+
+    def test_a_text_style_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        text_style = {
+            "name": "image request text style",
+            "info": "A text style used by the image style application tests.",
+            "prompt": "Answer plainly: {p}",
+            "params": {"max_length": 80, "max_context_length": 1024},
+            "models": ["elinas/chronos-70b-v2"],
+            "public": True,
+            "nsfw": False,
+        }
+        created = client.post("/api/v2/styles/text", json=text_style, headers=request_headers)
+        assert created.status_code == 200, created.get_data(as_text=True)
+        style_id = created.get_json()["id"]
+        try:
+            response = post_dry_run(client, request_headers, style=style_id)
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StyleMismatch"
+        finally:
+            client.delete(f"/api/v2/styles/text/{style_id}", headers=request_headers)
+
+
 class TestImageStyleQuote:
     """What a quote for a styled request comes to."""
 

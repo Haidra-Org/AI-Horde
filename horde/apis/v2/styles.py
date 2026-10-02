@@ -530,7 +530,7 @@ class Collection(Resource):
                 if styles_type is None:
                     styles_type = existing_style.style_type
                 elif styles_type != existing_style.style_type:
-                    raise e.BadRequest("Cannot mix image and text styles in the same collection")
+                    raise e.BadRequest("Cannot mix image and text styles in the same collection", rc="StyleMismatch")
             self.styles.append(existing_style)
         self.collection_name = ensure_clean(self.args.name, "collection name")
         new_collection = StyleCollection(
@@ -648,7 +648,7 @@ class SingleCollection(SingleCollectionGet):
                     if styles_type is None:
                         styles_type = existing_style.style_type
                     elif styles_type != existing_style.style_type:
-                        raise e.BadRequest("Cannot mix image and text styles in the same collection", "StyleMismatch")
+                        raise e.BadRequest("Cannot mix image and text styles in the same collection", rc="StyleMismatch")
                 self.styles.append(existing_style)
         self.user = database.find_user_by_api_key(self.args["apikey"])
         if not self.user:
@@ -659,7 +659,7 @@ class SingleCollection(SingleCollectionGet):
         if self.existing_collection.user_id != self.user.id:
             raise e.Forbidden(f"This Collection is not owned by user {self.user.get_unique_alias()}")
         if self.existing_collection.style_type != styles_type:
-            raise e.BadRequest("Cannot mix image and text styles in the same collection", "StyleMismatch")
+            raise e.BadRequest("Cannot mix image and text styles in the same collection", rc="StyleMismatch")
         collection_modified = False
         if self.args.name:
             self.existing_collection.name = ensure_clean(self.args.name, "collection name")

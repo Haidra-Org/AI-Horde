@@ -291,7 +291,7 @@ class TextAsyncGenerate(GenerateTemplate):
         # The super() ensures the common parts of applying a style
         super().apply_style()
         if self.existing_style.style_type != "text":
-            raise e.BadRequest("Image styles cannot be used on image requests", "StyleMismatch")
+            raise e.BadRequest("Image styles cannot be used on text requests", rc="StyleMismatch")
         if isinstance(self.existing_style, StyleCollection):
             colstyles = self.existing_style.styles
             random.shuffle(colstyles)
