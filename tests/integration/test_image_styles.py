@@ -565,3 +565,24 @@ class TestImageStyleSharedKeyVisibility:
             assert response.status_code == 200, response.get_data(as_text=True)
             listed_styles = {listed_style["id"]: listed_style for listed_style in response.get_json()}
             assert listed_styles[style_id]["shared_key"] is None
+
+
+class TestImageStyleReadCache:
+    """An anonymous read of an image style reflects a change to its examples straight away."""
+
+    def test_an_added_example_is_served(self, client, request_headers: dict[str, str]) -> None:
+        anonymous_headers = {"Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, request_headers, style_body("cached example read")) as style_id:
+            before = client.get(f"/api/v2/styles/image/{style_id}", headers=anonymous_headers)
+            assert before.status_code == 200, before.get_data(as_text=True)
+            assert before.get_json()["examples"] == []
+
+            added = client.post(
+                f"/api/v2/styles/image/{style_id}/example",
+                json={"url": "https://example.com/cached-example.webp", "primary": False},
+                headers=request_headers,
+            )
+            assert added.status_code == 200, added.get_data(as_text=True)
+
+            after = client.get(f"/api/v2/styles/image/{style_id}", headers=anonymous_headers)
+            assert [example["url"] for example in after.get_json()["examples"]] == ["https://example.com/cached-example.webp"]

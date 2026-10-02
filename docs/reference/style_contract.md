@@ -306,6 +306,12 @@ callers, and its response carries `Cache-Control: private, no-store`. The list r
 `/v2/styles/text` and `/v2/styles/image`, serve `shared_key` as null to every caller, the owner
 included. `Style.get_details(include_shared_key=...)` is the switch, and it defaults to off.
 
+A style's PATCH or DELETE, and an image style's example writes, clear the cached responses of its
+read by id, by name, and by the name qualified with its owner's alias (`style_read_cache_keys` and
+`clear_cached_responses` in `horde/apis/v2/styles.py`), including the name a rename replaced. Any other
+spelling of the name, and the list and collection routes, which are cached per query string, can serve
+the earlier version for up to 30 seconds.
+
 The patch parser's arguments have no defaults, so a key a `PATCH` omits leaves the stored value alone.
 A key that is present replaces the whole JSON column.
 
@@ -452,6 +458,7 @@ receives falls back to its own defaults rather than applying the document.
 | The image dry-run `resolved` body and compatibility | `tests/integration/test_image_style_application.py`, `TestImageDryRunResolvedRequest` |
 | The quote cache key tells a styled request apart and is stable across validation | `tests/unit/test_dry_run_kudos_quote.py`, `TestQuoteCacheKey`, `TestTextQuoteCacheKey` |
 | `shared_key` served to the owner only, and never on the list | `tests/integration/test_text_styles.py`, `TestTextStyleSharedKeyVisibility`; `tests/integration/test_image_styles.py`, `TestImageStyleSharedKeyVisibility` |
+| A write to a style is served by its single-style reads straight away | `tests/integration/test_text_styles.py`, `TestTextStyleReadCache`; `tests/integration/test_image_styles.py`, `TestImageStyleReadCache` |
 
 ## Sharp edges
 

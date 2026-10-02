@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from collections.abc import Iterable
+
 from flask import request
 from flask_restx import Resource, reqparse
 
@@ -32,6 +34,49 @@ STYLE_CREATE_METHODS = ["POST"]
 
 STYLE_MODIFY_METHODS = ["PATCH", "DELETE"]
 """The methods the modify limits apply to on a route that also reads one item. A read falls under the app's default limit."""
+
+STYLE_API_ROOT = "/api/v2"
+"""Where the style routes are mounted. The shared response cache keys a single-style read by its path."""
+
+RESPONSE_CACHE_KEY_FORMAT = "view/{path}"
+"""How ``cache.cached`` keys a response it caches without the query string: its default ``view/%s`` prefix over the path."""
+
+
+def style_read_cache_keys(style: Style, *, names: Iterable[str]) -> list[str]:
+    """Return the response cache keys a style's single-style reads are served from.
+
+    An anonymous read of one style is cached for a short while, keyed by the request path. A write
+    clears these keys so the next read is built from the database. A style can be read by its id, by
+    its name, or by its name qualified with its owner's alias; any other spelling of the name keeps
+    serving its cached response until that expires.
+
+    Args:
+        style: The style that was written.
+        names: Every name the style could have been read under, including a name a rename replaced.
+
+    Returns:
+        The cache keys of the style's read by id and of its reads by each name.
+    """
+    owner_alias = style.user.get_unique_alias()
+    paths = [f"{STYLE_API_ROOT}/styles/{style.style_type}/{style.id}"]
+    for name in dict.fromkeys(names):
+        paths.append(f"{STYLE_API_ROOT}/styles/{style.style_type}_by_name/{name}")
+        paths.append(f"{STYLE_API_ROOT}/styles/{style.style_type}_by_name/{owner_alias}::{name}")
+    return [RESPONSE_CACHE_KEY_FORMAT.format(path=path) for path in paths]
+
+
+def clear_cached_responses(cache_keys: Iterable[str]) -> None:
+    """Mutate the response cache by dropping each of the given keys.
+
+    Each key is deleted on its own: ``cache.delete_many`` stops at the first key that is not cached,
+    and most of a style's read keys usually are not.
+
+    Args:
+        cache_keys: The keys to drop.
+    """
+    for cache_key in cache_keys:
+        cache.delete(cache_key)
+
 
 ## Styles
 
@@ -285,6 +330,7 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
                 raise e.BadRequest("A style has to specify at least one model.")
         else:
             self.models = self.existing_style.get_model_names()
+        previous_name = self.existing_style.name
         self.style_name = None
         if self.args.name:
             self.style_name = ensure_clean(self.args.name, "style name")
@@ -324,6 +370,7 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
         db.session.commit()
         self.existing_style.set_models(self.models)
         self.existing_style.set_tags(self.tags)
+        clear_cached_responses(style_read_cache_keys(self.existing_style, names=(previous_name, self.existing_style.name)))
         return {
             "id": self.existing_style.id,
             "message": "OK",
@@ -355,7 +402,10 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
             raise e.Forbidden(f"This Style is not owned by user {self.user.get_unique_alias()}")
         if self.existing_style.user_id != self.user.id and self.user.moderator:
             logger.info(f"Moderator {self.user.moderator} deleted style {self.existing_style.id}")
+        # Read from the style before the delete removes it.
+        cached_read_keys = style_read_cache_keys(self.existing_style, names=(self.existing_style.name,))
         self.existing_style.delete()
+        clear_cached_responses(cached_read_keys)
         return ({"message": "OK"}, 200)
 
 
