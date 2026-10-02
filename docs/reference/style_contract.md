@@ -338,7 +338,7 @@ The body has three keys: `schema_version`, and one section each for `text` and `
 | `overridable_parameters` | Every param a policy of this type may put in `overridable`, sorted. Anything outside this list is refused at declaration time. |
 | `ceiling_parameters` | The params a policy of this type may cap, each an object of `minimum` and `maximum` giving the range that ceiling may be set to. A null bound means the param has none. |
 | `context_fit_modes` | How a request of this type may be sized against its prompt. Null for image, which cannot be sized. |
-| `style_create_rate_limits` | Every limit a client creating a style of this type is held to. All of them apply at once, and a whitelisted service address is allowed more. |
+| `style_create_rate_limits` | Every limit a client creating a style of this type is held to. All of them apply at once. A whitelisted service address is allowed more per second, but the hourly limit is the same for every address. |
 | `style_modify_rate_limits` | Every limit a client patching or deleting a style of this type is held to. All of them apply at once, counted separately for each style and for PATCH and DELETE, and a whitelisted service address is allowed more. |
 
 The `text` section as served:

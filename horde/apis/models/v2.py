@@ -1366,7 +1366,8 @@ class Models:
                     fields.String(example="20/hour"),
                     description=(
                         "Every limit a client creating a style of this type is held to; all of them apply at "
-                        "once. A whitelisted service address is allowed more."
+                        "once. A whitelisted service address is allowed more per second, but the hourly limit is "
+                        "the same for every address."
                     ),
                 ),
                 "style_modify_rate_limits": fields.List(
