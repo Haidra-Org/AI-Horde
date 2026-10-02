@@ -465,6 +465,8 @@ receives falls back to its own defaults rather than applying the document.
   is keyed on the address, the method and the request path, so the modify limits count each style
   separately. A client creating several styles in a loop hits the per-second limit first, and the
   published `style_create_rate_limits` and `style_modify_rate_limits` are what it should pace against.
+  The limits are declared for the write methods only (`STYLE_CREATE_METHODS`, `STYLE_MODIFY_METHODS`), so
+  reading styles and collections falls under the app's default limit of 90 a minute per address.
 - The token estimate runs no tokenizer. `ceil(len(prompt) / 3)` is a conservative character count, so
   `reject` can refuse a prompt a real tokenizer would have fitted, and `grow` can buy context a request
   does not need. Per-model tokenization would make the estimate exact.

@@ -123,7 +123,7 @@ def enforced_rate_limits(app: Flask, path: str, method: str) -> set[RateLimitIte
 
     with app.test_request_context(path, method=method):
         view = app.view_functions[request.url_rule.endpoint]
-        return {limit.limit for limit in limiter.limit_manager.decorated_limits(get_qualified_name(view))}
+        return {limit.limit for limit in limiter.limit_manager.decorated_limits(get_qualified_name(view)) if not limit.method_exempt}
 
 
 @pytest.mark.parametrize(("style_type", "path", "method", "contract_field"), STYLE_WRITE_ROUTES)
@@ -140,6 +140,37 @@ def test_each_style_write_publishes_the_limits_its_route_enforces(
     published = {parse(limit) for limit in contract[style_type][contract_field]}
 
     assert published == enforced_rate_limits(app, path, method)
+
+
+STYLE_READ_PATHS = [
+    "/api/v2/styles/text",
+    "/api/v2/styles/text/00000000-0000-0000-0000-000000000000",
+    "/api/v2/styles/image",
+    "/api/v2/styles/image/00000000-0000-0000-0000-000000000000",
+    "/api/v2/collections",
+    "/api/v2/collections/00000000-0000-0000-0000-000000000000",
+]
+"""A listing and a single-item read on each style route that also takes writes."""
+
+APP_DEFAULT_READS_PER_MINUTE = 90
+"""The app's default limit, which a route without a limit of its own for the method falls under."""
+
+
+@pytest.mark.parametrize("path", STYLE_READ_PATHS)
+def test_style_reads_fall_under_the_app_default_limit(client, path: str) -> None:
+    """A read is not held to the write limits of its route, only to the limit every undecorated read has."""
+    from horde.limiter import limiter
+
+    limiter.enabled = True
+    try:
+        statuses = [client.get(path).status_code for _ in range(APP_DEFAULT_READS_PER_MINUTE)]
+        over_the_limit = client.get(path).status_code
+    finally:
+        limiter.enabled = False
+        limiter.reset()
+
+    assert 429 not in statuses
+    assert over_the_limit == 429
 
 
 def test_both_style_types_are_held_to_the_same_write_limits(client) -> None:

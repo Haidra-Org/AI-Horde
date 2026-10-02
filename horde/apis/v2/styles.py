@@ -27,6 +27,12 @@ from horde.utils import ensure_clean
 STYLE_CREATE_WINDOW_RATE_LIMIT = "20/hour"
 """How many styles of one type an address may create in an hour. The per-second limit applies on top of it."""
 
+STYLE_CREATE_METHODS = ["POST"]
+"""The methods the create limits apply to on a route that also lists. A read falls under the app's default limit."""
+
+STYLE_MODIFY_METHODS = ["PATCH", "DELETE"]
+"""The methods the modify limits apply to on a route that also reads one item. A read falls under the app's default limit."""
+
 ## Styles
 
 
@@ -492,8 +498,13 @@ class Collection(Resource):
         limiter.limit(
             limit_value=lim.get_request_90min_limit_per_ip,
             key_func=lim.get_request_path,
+            methods=STYLE_CREATE_METHODS,
         ),
-        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+        limiter.limit(
+            limit_value=lim.get_request_2sec_limit_per_ip,
+            key_func=lim.get_request_path,
+            methods=STYLE_CREATE_METHODS,
+        ),
     ]
 
     @api.expect(post_parser, models.input_model_collection, validate=True)
@@ -619,8 +630,13 @@ class SingleCollection(SingleCollectionGet):
         limiter.limit(
             limit_value=lim.get_request_90min_limit_per_ip,
             key_func=lim.get_request_path,
+            methods=STYLE_MODIFY_METHODS,
         ),
-        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+        limiter.limit(
+            limit_value=lim.get_request_2sec_limit_per_ip,
+            key_func=lim.get_request_path,
+            methods=STYLE_MODIFY_METHODS,
+        ),
     ]
 
     @api.expect(patch_parser, models.input_model_collection, validate=True)
