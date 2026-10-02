@@ -488,6 +488,23 @@ class TestTextStyleWriteReturnCodes:
         assert response.status_code == 400, response.get_data(as_text=True)
         assert response.get_json()["rc"] == "SharedKeyInvalid"
 
+    def test_a_prompt_field_with_a_format_spec_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        response = post_style(client, request_headers, style_body("format spec", prompt="{p} {p:>20000}"))
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "StylePromptFieldInvalid"
+
+    def test_a_patch_to_a_prompt_with_attribute_access_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        with created_style(client, request_headers, style_body("attribute access patch")) as style_id:
+            response = client.patch(
+                f"/api/v2/styles/text/{style_id}",
+                json={"prompt": "{p} {p.__class__}"},
+                headers=request_headers,
+            )
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StylePromptFieldInvalid"
+
     def test_reading_a_text_style_through_the_image_route_is_refused(
         self,
         client,

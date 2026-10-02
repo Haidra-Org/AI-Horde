@@ -72,19 +72,27 @@ resolves the user. For a text request `apply_context_fit` runs immediately after
 
 ## Prompt template rules
 
-Both types fill their template with `str.format_map` over a `defaultdict(str)`, so `{p}` and the
-placeholders the style declares are format specifiers and a placeholder nothing fills becomes the
-empty string. What differs is how much of the rest of the template is left alone.
+Both types fill `{p}` and the placeholders the style declares, and a placeholder nothing fills becomes
+the empty string. What differs is how much of the rest of the template is left alone.
 
 | | Text | Image |
 | --- | --- | --- |
 | Filled by the horde | `{p}` | `{p}`, `{np}` |
 | Declared placeholders filled | Yes | Yes |
-| A brace outside those | A format specifier: `{{` and `}}` are one literal brace each, and `{anything}` is a placeholder that empties when nothing fills it | Literal: every brace is doubled before formatting and only the filled placeholders are put back |
+| A brace outside those | Python format string grammar: `{{` and `}}` are one literal brace each, and any other bare `{name}` is a placeholder that empties when nothing fills it | Literal: every brace is doubled before formatting and only the filled placeholders are put back |
+| A field that is more than a bare name | Refused when the style is written (`StylePromptFieldInvalid`); one already stored is sent as written | Literal, like any other brace |
 | Protected patterns | `\{\{\[[A-Z_]+\]\}\}` | None |
 
-A text template is formatted directly, so a template written for a Python format string keeps working:
-`{{` is one literal brace. An image template has every brace doubled first and only `{p}`, `{np}` and
+A text template is parsed with `string.Formatter`, so a template written for a Python format string
+keeps working: `{{` is one literal brace. Only a bare name is filled. A format spec (`{p:>20000}`), a
+conversion (`{p!r}`), attribute or index access (`{p.__class__}`, `{p[0]}`) and a positional field
+(`{}`, `{0}`) have no use in a prompt, and a format spec would let a template make every request build
+an arbitrarily large string. `validate_text_template_fields` refuses a style written with one, or with
+a lone brace that does not parse, with `StylePromptFieldInvalid`. A template stored before that check
+has such a field sent to the worker exactly as written, and one whose braces do not parse is refused
+at request time with `StyleDeclarationInvalid`. Patching any field of a style revalidates its stored
+prompt, so a style carrying such a field has to have its prompt corrected on its next edit. An image
+template has every brace doubled first and only `{p}`, `{np}` and
 its declared placeholders put back, so a wildcard or a workflow string in braces reaches the worker as
 written.
 
@@ -320,7 +328,7 @@ The body has three keys: `schema_version`, and one section each for `text` and `
 | `placeholders` | The placeholders the horde fills itself, written without braces. `["p"]` for text, `["p", "np"]` for image. Neither can be declared in `template_fields`. |
 | `declared_fields_are_placeholders` | Whether a placeholder declared in `template_fields` is filled from the request's own `template_fields` object. True for both types. |
 | `protected_patterns` | Template text formatting leaves exactly as written, each an object of `pattern` (a regular expression) and `description`. Empty for a type that protects nothing. |
-| `brace_handling` | One sentence stating what the braces in this type's prompt template mean. |
+| `brace_handling` | A short statement of what the braces in this type's prompt template mean. |
 | `overridable_parameters` | Every param a policy of this type may put in `overridable`, sorted. Anything outside this list is refused at declaration time. |
 | `ceiling_parameters` | The params a policy of this type may cap, each an object of `minimum` and `maximum` giving the range that ceiling may be set to. A null bound means the param has none. |
 | `context_fit_modes` | How a request of this type may be sized against its prompt. Null for image, which cannot be sized. |
@@ -343,7 +351,7 @@ The `text` section as served:
         "description": "An instruct placeholder a text backend fills in when it builds its own prompt, such as '{{[INPUT]}}' or '{{[OUTPUT]}}'."
       }
     ],
-    "brace_handling": "A doubled brace is one literal brace, '{p}' and the placeholders this style declares are filled in, and a placeholder nothing fills becomes the empty string. The protected patterns below are the exception and are left exactly as written.",
+    "brace_handling": "A doubled brace is one literal brace, '{p}' and the placeholders this style declares are filled in, and a placeholder nothing fills becomes the empty string. A placeholder is a bare name: one with a format spec, a conversion, attribute or index access, or no name is refused. The protected patterns below are the exception and are left exactly as written.",
     "overridable_parameters": [
       "dynatemp_exponent", "dynatemp_range", "frmtadsnsp", "frmtrmblln", "frmtrmspch",
       "frmttriminc", "max_context_length", "max_length", "min_p", "rep_pen", "rep_pen_range",
@@ -434,6 +442,7 @@ receives falls back to its own defaults rather than applying the document.
 | The text dry-run `resolved` body and what growth costs | `tests/integration/test_text_style_application.py`, `TestTextDryRunResolvedRequest` |
 | A text style with neither declaration behaves as before | `tests/integration/test_text_style_application.py`, `TestTextStyleApplicationCompatibility` |
 | The text brace rule, the protected pattern and the forms it does not cover | `tests/unit/test_style_application.py`, `TestTextPromptFormatting` |
+| Which text templates a style may be written with, and how a stored field that is more than a bare name is sent | `tests/unit/test_style_application.py`, `TestTextTemplateFieldValidation`, `TestTextPromptFormatting`; `tests/integration/test_text_styles.py`, `TestTextStyleWriteReturnCodes` |
 | An instruct placeholder reaching a live text request unchanged | `tests/integration/test_text_style_application.py`, `TestTextStyleInstructPlaceholders` |
 | The surcharge on someone else's style, and none on your own | `tests/integration/test_text_style_application.py`, `TestTextStyleQuote` |
 | Only a queued request credits the style's author; a dry run or a refused request does not | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`; `tests/integration/test_image_style_application.py`, `TestImageStyleAuthorCredit` |

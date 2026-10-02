@@ -156,6 +156,7 @@ KNOWN_RC = [
     "HiResMismatch",
     "StylesAnonForbidden",
     "StylePromptMissingVars",
+    "StylePromptFieldInvalid",
     "StylesRequiresCustomizer",
     "StyleMismatch",
     "StyleGetMistmatch",

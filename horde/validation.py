@@ -16,6 +16,7 @@ from loguru import logger
 
 from horde import exceptions as e
 from horde.baseline_policy import UNSUPPORTED_MODEL_RETURN_CODE, baseline_violation
+from horde.classes.base.style_application import validate_text_template_fields
 from horde.classes.base.user import User
 from horde.consts import (
     CONTROL_STRENGTH_MAX,
@@ -303,3 +304,4 @@ class ParamValidator:
                 "A style prompt must include a dedicated spot where the user's positive prompt will be added, signified with '{p}'",
                 rc="StylePromptMissingVars",
             )
+        validate_text_template_fields(prompt)
