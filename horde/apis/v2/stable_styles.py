@@ -361,7 +361,7 @@ class ImageStyleExample(Resource):
                 raise e.BadRequest(f"The url '{self.args.url}'is already used for this style.", rc="ExampleURLAlreadyInUse")
             if example.primary is True:
                 previous_primary = example
-        if self.args.primary is True:
+        if self.args.primary is True and previous_primary is not None:
             previous_primary.primary = False
         # If we have no primary yet. the first image becomes the default primary.
         elif not is_primary and previous_primary is None:

@@ -586,3 +586,37 @@ class TestImageStyleReadCache:
 
             after = client.get(f"/api/v2/styles/image/{style_id}", headers=anonymous_headers)
             assert [example["url"] for example in after.get_json()["examples"]] == ["https://example.com/cached-example.webp"]
+
+
+class TestImageStyleExamples:
+    """Which of an image style's examples is its primary one."""
+
+    def test_the_first_example_can_be_added_as_primary(self, client, request_headers: dict[str, str]) -> None:
+        with created_style(client, request_headers, style_body("first primary example")) as style_id:
+            added = client.post(
+                f"/api/v2/styles/image/{style_id}/example",
+                json={"url": "https://example.com/first-primary.webp", "primary": True},
+                headers=request_headers,
+            )
+            assert added.status_code == 200, added.get_data(as_text=True)
+
+            examples = client.get(f"/api/v2/styles/image/{style_id}", headers=request_headers).get_json()["examples"]
+            assert [(example["url"], example["primary"]) for example in examples] == [
+                ("https://example.com/first-primary.webp", True),
+            ]
+
+    def test_a_new_primary_example_replaces_the_previous_one(self, client, request_headers: dict[str, str]) -> None:
+        with created_style(client, request_headers, style_body("replaced primary example")) as style_id:
+            for url, primary in (("https://example.com/old-primary.webp", True), ("https://example.com/new-primary.webp", True)):
+                added = client.post(
+                    f"/api/v2/styles/image/{style_id}/example",
+                    json={"url": url, "primary": primary},
+                    headers=request_headers,
+                )
+                assert added.status_code == 200, added.get_data(as_text=True)
+
+            examples = client.get(f"/api/v2/styles/image/{style_id}", headers=request_headers).get_json()["examples"]
+            assert {example["url"]: example["primary"] for example in examples} == {
+                "https://example.com/old-primary.webp": False,
+                "https://example.com/new-primary.webp": True,
+            }
