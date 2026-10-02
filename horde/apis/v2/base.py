@@ -372,7 +372,7 @@ class GenerateTemplate(Resource):
     def extrapolate_dry_run_kudos(self):
         kudos = self.wp.extrapolate_dry_run_kudos(
             extra_source_images_count=self.get_extra_source_images_count(),
-            kudos_adjustment=2 if self.style_kudos is True else 0,
+            kudos_adjustment=STYLE_OWNER_REWARD if self.style_kudos is True else 0,
         )
         params_hash = self.get_hashed_params_dict()
         hr.horde_r_setex(f"payload_kudos_{params_hash}", timedelta(days=2), kudos)
@@ -736,7 +736,7 @@ class GenerateTemplate(Resource):
         self.wp.activate(
             self.downgrade_wp_priority,
             extra_source_images=self.args.extra_source_images,
-            kudos_adjustment=2 if self.style_kudos is True else 0,
+            kudos_adjustment=STYLE_OWNER_REWARD if self.style_kudos is True else 0,
         )
 
     def apply_style(self):
