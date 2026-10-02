@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from flask.testing import FlaskClient
@@ -667,3 +668,58 @@ class TestTextStyleSharedKeyVisibility:
             assert response.status_code == 200, response.get_data(as_text=True)
             listed_styles = {listed_style["id"]: listed_style for listed_style in response.get_json()}
             assert listed_styles[style_id]["shared_key"] is None
+
+
+class TestTextStyleReadCache:
+    """An anonymous read of a style reflects a write to it straight away, though such reads are cached."""
+
+    def test_a_patch_is_served_by_id_and_by_name(self, client, request_headers: dict[str, str]) -> None:
+        anonymous_headers = {"Client-Agent": request_headers["Client-Agent"]}
+        owner_alias = client.get("/api/v2/find_user", headers=request_headers).get_json()["username"]
+        name = f"cached read {uuid.uuid4().hex[:8]}"
+        read_paths = [
+            f"/api/v2/styles/text_by_name/{name}",
+            # The alias carries a '#', which a URL would otherwise read as the start of a fragment.
+            f"/api/v2/styles/text_by_name/{quote(f'{owner_alias}::{name}')}",
+        ]
+        with created_style(client, request_headers, style_body(name)) as style_id:
+            read_paths.append(f"/api/v2/styles/text/{style_id}")
+            for path in read_paths:
+                assert client.get(path, headers=anonymous_headers).status_code == 200
+
+            patched = client.patch(
+                f"/api/v2/styles/text/{style_id}",
+                json={"info": "Info written after the first read."},
+                headers=request_headers,
+            )
+            assert patched.status_code == 200, patched.get_data(as_text=True)
+
+            for path in read_paths:
+                assert client.get(path, headers=anonymous_headers).get_json()["info"] == "Info written after the first read."
+
+    def test_a_renamed_style_is_not_served_under_its_old_name(self, client, request_headers: dict[str, str]) -> None:
+        anonymous_headers = {"Client-Agent": request_headers["Client-Agent"]}
+        old_name = f"before rename {uuid.uuid4().hex[:8]}"
+        with created_style(client, request_headers, style_body(old_name)) as style_id:
+            assert client.get(f"/api/v2/styles/text_by_name/{old_name}", headers=anonymous_headers).status_code == 200
+
+            patched = client.patch(
+                f"/api/v2/styles/text/{style_id}",
+                json={"name": f"after rename {uuid.uuid4().hex[:8]}"},
+                headers=request_headers,
+            )
+            assert patched.status_code == 200, patched.get_data(as_text=True)
+
+            assert client.get(f"/api/v2/styles/text_by_name/{old_name}", headers=anonymous_headers).status_code == 404
+
+    def test_a_deleted_style_is_not_served(self, client, request_headers: dict[str, str]) -> None:
+        anonymous_headers = {"Client-Agent": request_headers["Client-Agent"]}
+        created = post_style(client, request_headers, style_body(f"deleted read {uuid.uuid4().hex[:8]}"))
+        assert created.status_code == 200, created.get_data(as_text=True)
+        style_id = created.get_json()["id"]
+        assert client.get(f"/api/v2/styles/text/{style_id}", headers=anonymous_headers).status_code == 200
+
+        deleted = client.delete(f"/api/v2/styles/text/{style_id}", headers=request_headers)
+        assert deleted.status_code == 200, deleted.get_data(as_text=True)
+
+        assert client.get(f"/api/v2/styles/text/{style_id}", headers=anonymous_headers).status_code == 404

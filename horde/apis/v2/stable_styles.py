@@ -16,7 +16,9 @@ from horde.apis.v2.styles import (
     StyleContractArgs,
     StyleTemplate,
     api,
+    clear_cached_responses,
     request_carries_a_user_key,
+    style_read_cache_keys,
 )
 from horde.classes.base.style import Style, StyleExample
 from horde.classes.base.style_contract import StyleContractVocabulary
@@ -371,6 +373,7 @@ class ImageStyleExample(Resource):
         )
         db.session.add(new_example)
         db.session.commit()
+        clear_cached_responses(style_read_cache_keys(self.existing_style, names=(self.existing_style.name,)))
         return {
             "id": new_example.id,
             "message": "OK",
@@ -449,6 +452,7 @@ class SingleImageStyleExample(Resource):
         if self.args.url:
             self.example.url = self.args.url
         db.session.commit()
+        clear_cached_responses(style_read_cache_keys(self.existing_style, names=(self.existing_style.name,)))
         return {
             "id": self.example.id,
             "message": "OK",
@@ -486,4 +490,5 @@ class SingleImageStyleExample(Resource):
                     example.primary = True
         db.session.delete(self.example)
         db.session.commit()
+        clear_cached_responses(style_read_cache_keys(self.existing_style, names=(self.existing_style.name,)))
         return ({"message": "OK"}, 200)
