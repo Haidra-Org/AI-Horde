@@ -409,6 +409,31 @@ class TestTextStyleAuthorCredit:
             assert settled_kudos(app, settle_kudos, owner.id) == balance_before
 
 
+class TestTextStyleTypeMismatch:
+    """A text request refuses a style of the other type."""
+
+    def test_an_image_style_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        image_style = {
+            "name": "text request image style",
+            "info": "An image style used by the text style application tests.",
+            "prompt": "{p}, watercolour###{np}",
+            "params": {"steps": 8, "width": 512, "height": 512},
+            "models": ["stable_diffusion"],
+            "public": True,
+            "nsfw": False,
+        }
+        created = client.post("/api/v2/styles/image", json=image_style, headers=request_headers)
+        assert created.status_code == 200, created.get_data(as_text=True)
+        style_id = created.get_json()["id"]
+        try:
+            response = post_dry_run(client, request_headers, style=style_id)
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StyleMismatch"
+        finally:
+            client.delete(f"/api/v2/styles/image/{style_id}", headers=request_headers)
+
+
 class TestTextStyleParameterPolicy:
     """Which of a request's params a style's parameter policy lets through."""
 

@@ -147,6 +147,62 @@ class TestTextStyleCreate:
             assert "top_k" not in details["params"]
 
 
+@contextmanager
+def created_image_style(client: FlaskClient, request_headers: dict[str, str], name: str) -> Iterator[str]:
+    """Create an image style for the duration of the block and delete it at the end.
+
+    Args:
+        client: The Flask test client.
+        request_headers: Headers carrying the API key of the user the style belongs to.
+        name: The style name.
+
+    Yields:
+        The id of the new style.
+    """
+    body = {
+        "name": name,
+        "info": "An image style used by the text style endpoint tests.",
+        "prompt": "{p}, watercolour###{np}",
+        "params": {"steps": 8, "width": 512, "height": 512},
+        "models": ["stable_diffusion"],
+        "public": False,
+        "nsfw": False,
+    }
+    response = client.post("/api/v2/styles/image", json=body, headers=request_headers)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    style_id = response.get_json()["id"]
+    try:
+        yield style_id
+    finally:
+        client.delete(f"/api/v2/styles/image/{style_id}", headers=request_headers)
+
+
+class TestStyleCollectionTypes:
+    """A collection holds styles of one type only."""
+
+    def test_a_collection_mixing_image_and_text_styles_is_refused(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        # Names, rather than ids, keep each style unique to this case across reruns.
+        suffix = uuid.uuid4().hex[:8]
+        text_name = f"collection text {suffix}"
+        image_name = f"collection image {suffix}"
+        with (
+            created_style(client, request_headers, style_body(text_name)),
+            created_image_style(client, request_headers, image_name),
+        ):
+            response = client.post(
+                "/api/v2/collections",
+                json={"name": f"mixed collection {suffix}", "styles": [text_name, image_name]},
+                headers=request_headers,
+            )
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StyleMismatch"
+
+
 class TestTextStylePartialPatch:
     """A patch changes only the fields it carries and leaves the rest of the style alone."""
 
