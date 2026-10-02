@@ -505,6 +505,13 @@ class TestTextStyleWriteReturnCodes:
             assert response.status_code == 400, response.get_data(as_text=True)
             assert response.get_json()["rc"] == "StylePromptFieldInvalid"
 
+    def test_a_shared_key_without_kudos_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        with created_shared_key(client, request_headers, "empty style key", kudos=0) as shared_key_id:
+            response = post_style(client, request_headers, style_body("empty shared key", sharedkey=shared_key_id))
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "SharedKeyEmpty"
+
     def test_reading_a_text_style_through_the_image_route_is_refused(
         self,
         client,
@@ -518,18 +525,25 @@ class TestTextStyleWriteReturnCodes:
 
 
 @contextmanager
-def created_shared_key(client: FlaskClient, request_headers: dict[str, str], name: str) -> Iterator[str]:
+def created_shared_key(
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    name: str,
+    *,
+    kudos: int = 100,
+) -> Iterator[str]:
     """Create a shared key for the duration of the block and delete it at the end.
 
     Args:
         client: The Flask test client.
         request_headers: Headers carrying the API key of the user the shared key belongs to.
         name: The shared key's name.
+        kudos: The shared key's kudos budget.
 
     Yields:
         The id of the new shared key.
     """
-    response = client.put("/api/v2/sharedkeys", json={"kudos": 100, "name": name}, headers=request_headers)
+    response = client.put("/api/v2/sharedkeys", json={"kudos": kudos, "name": name}, headers=request_headers)
     assert response.status_code == 200, response.get_data(as_text=True)
     shared_key_id = response.get_json()["id"]
     try:
