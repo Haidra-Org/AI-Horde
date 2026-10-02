@@ -8,6 +8,7 @@ import horde.apis.limiter_api as lim
 from horde import exceptions as e
 from horde.apis.v2.stable import image_style_contract_vocabulary, models, parsers
 from horde.apis.v2.styles import (
+    STYLE_CREATE_WINDOW_RATE_LIMIT,
     SingleStyleTemplate,
     SingleStyleTemplateGet,
     StyleContractArgs,
@@ -101,7 +102,7 @@ class ImageStyle(ImageStyleContractArgs, StyleTemplate):
 
     decorators = [
         limiter.limit(
-            limit_value=lim.get_request_90min_limit_per_ip,
+            limit_value=STYLE_CREATE_WINDOW_RATE_LIMIT,
             key_func=lim.get_request_path,
         ),
         limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
@@ -202,7 +203,7 @@ class SingleImageStyle(ImageStyleContractArgs, SingleStyleTemplate):
 
     decorators = [
         limiter.limit(
-            limit_value="20/hour",
+            limit_value=lim.get_request_90min_limit_per_ip,
             key_func=lim.get_request_path,
         ),
         limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),

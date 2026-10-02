@@ -324,7 +324,8 @@ The body has three keys: `schema_version`, and one section each for `text` and `
 | `overridable_parameters` | Every param a policy of this type may put in `overridable`, sorted. Anything outside this list is refused at declaration time. |
 | `ceiling_parameters` | The params a policy of this type may cap, each an object of `minimum` and `maximum` giving the range that ceiling may be set to. A null bound means the param has none. |
 | `context_fit_modes` | How a request of this type may be sized against its prompt. Null for image, which cannot be sized. |
-| `style_write_rate_limits` | Every limit a client writing a style of this type is held to. All of them apply at once, and a whitelisted service address is allowed more. |
+| `style_create_rate_limits` | Every limit a client creating a style of this type is held to. All of them apply at once, and a whitelisted service address is allowed more. |
+| `style_modify_rate_limits` | Every limit a client patching or deleting a style of this type is held to. All of them apply at once, counted separately for each style and for PATCH and DELETE, and a whitelisted service address is allowed more. |
 
 The `text` section as served:
 
@@ -359,8 +360,12 @@ The `text` section as served:
       "reject",
       "grow"
     ],
-    "style_write_rate_limits": [
+    "style_create_rate_limits": [
       "20/hour",
+      "2/second"
+    ],
+    "style_modify_rate_limits": [
+      "90/minute",
       "2/second"
     ]
   }
@@ -369,8 +374,7 @@ The `text` section as served:
 
 The `image` section has the same keys with different values: `placeholders` is `["p", "np"]`,
 `protected_patterns` is empty, `brace_handling` states that every brace is literal except the filled
-placeholders, `context_fit_modes` is null, `style_write_rate_limits` is `["90/minute", "2/second"]`,
-`ceiling_parameters` covers `width` and `height` (64 to 3072), `steps` (1 to 500) and `n` (1 to 20),
+placeholders, `context_fit_modes` is null, `ceiling_parameters` covers `width` and `height` (64 to 3072), `steps` (1 to 500) and `n` (1 to 20),
 and `overridable_parameters` is the 34 params of the image payload model, from `cfg_scale` through
 `workflow`.
 
@@ -433,7 +437,7 @@ receives falls back to its own defaults rather than applying the document.
 | An instruct placeholder reaching a live text request unchanged | `tests/integration/test_text_style_application.py`, `TestTextStyleInstructPlaceholders` |
 | The surcharge on someone else's style, and none on your own | `tests/integration/test_text_style_application.py`, `TestTextStyleQuote` |
 | Only a queued request credits the style's author; a dry run or a refused request does not | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`; `tests/integration/test_image_style_application.py`, `TestImageStyleAuthorCredit` |
-| The published contract matches the vocabulary the endpoints validate against | `tests/integration/test_style_contract_endpoint.py` |
+| The published contract matches the vocabulary the endpoints validate against and the write limits their routes enforce | `tests/integration/test_style_contract_endpoint.py` |
 | A policy applied to a live image request, including the size fallback | `tests/integration/test_image_style_application.py`, `TestImageStyleParameterPolicy` |
 | Placeholders applied to a live image request | `tests/integration/test_image_style_application.py`, `TestImageStyleTemplateFields` |
 | The image dry-run `resolved` body and compatibility | `tests/integration/test_image_style_application.py`, `TestImageDryRunResolvedRequest` |
@@ -447,10 +451,11 @@ receives falls back to its own defaults rather than applying the document.
   with is not the order `get_model_names` reads back. A request that uses the style has its own model
   list replaced by that unordered one, and text pricing is based on whichever model is first, so the
   quote for a multi-model text style depends on an order the author did not choose.
-- Style writes are rate limited per address, not per account. A text style write is held to 20 an hour
-  and 2 a second, an image style write to 90 a minute and 2 a second; both limits are keyed on the
-  request path and the address. A client creating several styles in a loop hits the per-second limit
-  first, and the published `style_write_rate_limits` is what it should pace against.
+- Style writes are rate limited per address, not per account. Creating a style of either type is held
+  to 20 an hour and 2 a second, and patching or deleting one to 90 a minute and 2 a second. Every limit
+  is keyed on the address, the method and the request path, so the modify limits count each style
+  separately. A client creating several styles in a loop hits the per-second limit first, and the
+  published `style_create_rate_limits` and `style_modify_rate_limits` are what it should pace against.
 - The token estimate runs no tokenizer. `ceil(len(prompt) / 3)` is a conservative character count, so
   `reject` can refuse a prompt a real tokenizer would have fitted, and `grow` can buy context a request
   does not need. Per-model tokenization would make the estimate exact.

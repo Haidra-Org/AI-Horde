@@ -232,11 +232,11 @@ that takes a new style.
 
 ## Traps
 
-- Two style writes a second, and 20 an hour for text or 90 a minute for image, per address and route.
-  A client creating several styles in a loop hits the per-second limit first and gets 429. Pace the
-  writes against the `style_write_rate_limits` the contract publishes: at least half a second between
-  writes, and on a 429 back off for the window the limit covers before the next attempt rather than
-  retrying at once.
+- Two style writes a second per address and route, and on top of that 20 creations an hour, or 90
+  patches or deletions of one style a minute. A client creating several styles in a loop hits the
+  per-second limit first and gets 429. Pace the writes against the `style_create_rate_limits` and
+  `style_modify_rate_limits` the contract publishes: at least half a second between writes, and on a
+  429 back off for the window the limit covers before the next attempt rather than retrying at once.
 - A style does not keep the order of its models. The list is trimmed to five and stored as a set, so
   the order read back is not the order sent. Text pricing uses whichever model comes first, so a
   multi-model text style can quote differently from one run to the next. Use one model per style where

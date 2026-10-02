@@ -110,8 +110,11 @@ class PublishedStyleTypeContract(BaseModel):
     context_fit_modes: tuple[str, ...] | None
     """How a request of this type may be sized against its prompt, or null for a type that cannot be."""
 
-    style_write_rate_limits: tuple[str, ...]
-    """Every limit a client writing a style of this type is held to; all of them apply at once."""
+    style_create_rate_limits: tuple[str, ...]
+    """Every limit a client creating a style of this type is held to; all of them apply at once."""
+
+    style_modify_rate_limits: tuple[str, ...]
+    """Every limit a client patching or deleting a style of this type is held to; all of them apply at once."""
 
 
 class StyleContractDocument(BaseModel):
@@ -160,8 +163,8 @@ def compile_style_contract() -> StyleContractDocument:
     # imports the endpoint this contract is served from.
     import horde.apis.limiter_api as lim
     from horde.apis.v2.kobold import text_style_contract_vocabulary
-    from horde.apis.v2.kobold_styles import TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT
     from horde.apis.v2.stable import image_style_contract_vocabulary
+    from horde.apis.v2.styles import STYLE_CREATE_WINDOW_RATE_LIMIT
 
     text_vocabulary = text_style_contract_vocabulary()
     image_vocabulary = image_style_contract_vocabulary()
@@ -181,7 +184,8 @@ def compile_style_contract() -> StyleContractDocument:
             overridable_parameters=tuple(sorted(text_vocabulary.overridable_parameter_names)),
             ceiling_parameters=_serialize_ceilings(text_vocabulary),
             context_fit_modes=tuple(mode.value for mode in ContextFit),
-            style_write_rate_limits=(TEXT_STYLE_WRITE_WINDOW_RATE_LIMIT, lim.REQUEST_2SEC_LIMIT_PER_IP),
+            style_create_rate_limits=(STYLE_CREATE_WINDOW_RATE_LIMIT, lim.REQUEST_2SEC_LIMIT_PER_IP),
+            style_modify_rate_limits=(lim.REQUEST_90MIN_LIMIT_PER_IP, lim.REQUEST_2SEC_LIMIT_PER_IP),
         ),
         image=PublishedStyleTypeContract(
             placeholders=IMAGE_PLACEHOLDERS,
@@ -191,7 +195,8 @@ def compile_style_contract() -> StyleContractDocument:
             overridable_parameters=tuple(sorted(image_vocabulary.overridable_parameter_names)),
             ceiling_parameters=_serialize_ceilings(image_vocabulary),
             context_fit_modes=None,
-            style_write_rate_limits=(lim.REQUEST_90MIN_LIMIT_PER_IP, lim.REQUEST_2SEC_LIMIT_PER_IP),
+            style_create_rate_limits=(STYLE_CREATE_WINDOW_RATE_LIMIT, lim.REQUEST_2SEC_LIMIT_PER_IP),
+            style_modify_rate_limits=(lim.REQUEST_90MIN_LIMIT_PER_IP, lim.REQUEST_2SEC_LIMIT_PER_IP),
         ),
     )
 

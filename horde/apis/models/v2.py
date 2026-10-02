@@ -1362,11 +1362,19 @@ class Models:
                     fields.String(example="grow"),
                     description=("How a request of this type may be sized against its prompt, or null for a type that cannot be sized."),
                 ),
-                "style_write_rate_limits": fields.List(
+                "style_create_rate_limits": fields.List(
                     fields.String(example="20/hour"),
                     description=(
                         "Every limit a client creating a style of this type is held to; all of them apply at "
                         "once. A whitelisted service address is allowed more."
+                    ),
+                ),
+                "style_modify_rate_limits": fields.List(
+                    fields.String(example="90/minute"),
+                    description=(
+                        "Every limit a client patching or deleting a style of this type is held to; all of them "
+                        "apply at once, counted separately for each style and for PATCH and DELETE. A whitelisted "
+                        "service address is allowed more."
                     ),
                 ),
             },
