@@ -9,7 +9,9 @@ import horde.apis.limiter_api as lim
 from horde import exceptions as e
 from horde.apis.v2.kobold import models, parsers, text_style_contract_vocabulary
 from horde.apis.v2.styles import (
+    STYLE_CREATE_METHODS,
     STYLE_CREATE_WINDOW_RATE_LIMIT,
+    STYLE_MODIFY_METHODS,
     SingleStyleTemplate,
     SingleStyleTemplateGet,
     StyleContractArgs,
@@ -106,8 +108,13 @@ class TextStyle(TextStyleContractArgs, StyleTemplate):
         limiter.limit(
             limit_value=STYLE_CREATE_WINDOW_RATE_LIMIT,
             key_func=lim.get_request_path,
+            methods=STYLE_CREATE_METHODS,
         ),
-        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+        limiter.limit(
+            limit_value=lim.get_request_2sec_limit_per_ip,
+            key_func=lim.get_request_path,
+            methods=STYLE_CREATE_METHODS,
+        ),
     ]
 
     @api.expect(parsers.style_parser, models.input_model_style, validate=True)
@@ -207,8 +214,13 @@ class SingleTextStyle(TextStyleContractArgs, SingleStyleTemplate):
         limiter.limit(
             limit_value=lim.get_request_90min_limit_per_ip,
             key_func=lim.get_request_path,
+            methods=STYLE_MODIFY_METHODS,
         ),
-        limiter.limit(limit_value=lim.get_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+        limiter.limit(
+            limit_value=lim.get_request_2sec_limit_per_ip,
+            key_func=lim.get_request_path,
+            methods=STYLE_MODIFY_METHODS,
+        ),
     ]
 
     @api.expect(parsers.style_parser_patch, models.patch_model_style, validate=True)
