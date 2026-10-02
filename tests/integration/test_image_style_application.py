@@ -855,3 +855,56 @@ class TestImageStyleAuthorCredit:
             assert refused.get_json()["rc"] == "SourceMaskUnnecessary"
 
             assert settled_kudos(app, settle_kudos, owner.id) == balance_before
+
+
+@contextmanager
+def created_collection(client: FlaskClient, request_headers: dict[str, str], *, name: str, style_ids: list[str]) -> Iterator[str]:
+    """Create a style collection for the duration of the block and delete it at the end.
+
+    Args:
+        client: The Flask test client.
+        request_headers: Headers carrying the API key of the user the collection belongs to.
+        name: The collection name.
+        style_ids: The styles the collection holds.
+
+    Yields:
+        The id of the new collection.
+    """
+    response = client.post("/api/v2/collections", json={"name": name, "styles": style_ids}, headers=request_headers)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    collection_id = response.get_json()["id"]
+    try:
+        yield collection_id
+    finally:
+        client.delete(f"/api/v2/collections/{collection_id}", headers=request_headers)
+
+
+class TestImageStyleCollection:
+    """An image request can run under a collection, which draws one of its styles."""
+
+    def test_a_dry_run_runs_under_one_of_the_collections_styles(self, client, request_headers: dict[str, str]) -> None:
+        with (
+            created_style(client, request_headers, style_body("image collection first")) as first_style_id,
+            created_style(client, request_headers, style_body("image collection second")) as second_style_id,
+            created_collection(
+                client,
+                request_headers,
+                name="image collection dry run",
+                style_ids=[first_style_id, second_style_id],
+            ) as collection_id,
+        ):
+            response = post_dry_run(client, request_headers, style=collection_id)
+
+            assert response.status_code == 200, response.get_data(as_text=True)
+            assert response.get_json()["resolved"]["style"]["id"] in {first_style_id, second_style_id}
+
+    def test_a_queued_request_counts_a_use_of_the_collection(self, client, request_headers: dict[str, str]) -> None:
+        with (
+            created_style(client, request_headers, style_body("image collection queued")) as style_id,
+            created_collection(client, request_headers, name="image collection queued", style_ids=[style_id]) as collection_id,
+        ):
+            with queued_request(client, request_headers, style=collection_id):
+                pass
+
+            details = client.get(f"/api/v2/collections/{collection_id}", headers=request_headers).get_json()
+            assert details["use_count"] == 1

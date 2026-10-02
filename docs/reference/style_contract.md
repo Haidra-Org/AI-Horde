@@ -28,9 +28,11 @@ they existed.
 
 ## Applying a style to a request
 
-`GenerateTemplate.apply_style` resolves the style by UUID or name and adopts its shared key when it
-carries a valid one. Each gentype then rejects a style of the other type (`StyleMismatch`), picks one
-member at random when the style is a `StyleCollection`, and:
+`GenerateTemplate.apply_style` resolves the style by UUID or name. When that is a `StyleCollection`,
+`GenerateTemplate.draw_collection_style` draws one of its styles at random and counts a use of the
+collection, and the request runs under the drawn style from there on. A collection has no prompt,
+params or shared key of its own. `apply_style` then adopts the style's shared key when it carries a
+valid one. Each gentype rejects a style of the other type (`StyleMismatch`), and:
 
 - replaces the request's models with the style's;
 - fills the style's prompt template, which must contain `{p}` for the request's own prompt, and for an
@@ -452,6 +454,7 @@ receives falls back to its own defaults rather than applying the document.
 | An instruct placeholder reaching a live text request unchanged | `tests/integration/test_text_style_application.py`, `TestTextStyleInstructPlaceholders` |
 | The surcharge on someone else's style, and none on your own | `tests/integration/test_text_style_application.py`, `TestTextStyleQuote` |
 | Only a queued request credits the style's author; a dry run or a refused request does not | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`; `tests/integration/test_image_style_application.py`, `TestImageStyleAuthorCredit` |
+| A request under a collection runs under one of its styles and counts a use of the collection | `tests/integration/test_text_style_application.py`, `TestTextStyleCollection`; `tests/integration/test_image_style_application.py`, `TestImageStyleCollection` |
 | The published contract matches the vocabulary the endpoints validate against and the write limits their routes enforce | `tests/integration/test_style_contract_endpoint.py` |
 | A policy applied to a live image request, including the size fallback | `tests/integration/test_image_style_application.py`, `TestImageStyleParameterPolicy` |
 | Placeholders applied to a live image request | `tests/integration/test_image_style_application.py`, `TestImageStyleTemplateFields` |

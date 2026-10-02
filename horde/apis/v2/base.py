@@ -5,6 +5,7 @@
 import copy
 import json
 import os
+import random
 import time
 from datetime import datetime, timedelta
 from typing import Any
@@ -29,6 +30,7 @@ from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
 from horde.classes.base.news import News
+from horde.classes.base.style import Style, StyleCollection
 from horde.classes.base.style_application import (
     merge_client_parameters,
     resolve_template_field_values,
@@ -746,9 +748,31 @@ class GenerateTemplate(Resource):
             self.existing_style = database.get_style_by_name(self.args.style)
         if not self.existing_style:
             raise e.ThingNotFound("Style", self.args.style)
+        if isinstance(self.existing_style, StyleCollection):
+            self.existing_style = self.draw_collection_style(self.existing_style)
         # If there's an attached shared key to the style, and it's not empty or expired, we use it.
         if self.existing_style.sharedkey and self.existing_style.sharedkey.is_valid()[0] is True:
             self.sharedkey = self.existing_style.sharedkey
+
+    def draw_collection_style(self, collection: StyleCollection) -> Style:
+        """Return a style drawn at random from a collection, and count the collection's use.
+
+        A collection has no prompt, params or shared key of its own, so the request runs under the drawn
+        style from here on, and each gentype checks that style against the request type.
+
+        Args:
+            collection: The collection the request specified.
+
+        Returns:
+            One of the collection's styles.
+
+        Raises:
+            horde.exceptions.BadRequest: If every style the collection held has been deleted.
+        """
+        if not collection.styles:
+            raise e.BadRequest(f"Collection '{collection.name}' holds no styles.")
+        collection.use_count += 1
+        return random.choice(collection.styles)
 
     def decide_style_surcharge(self) -> None:
         """Mutate the request so it pays the style surcharge when it runs under someone else's style.

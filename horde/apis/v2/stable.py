@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import random
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -27,7 +26,6 @@ from horde.apis.v2.base import (
     commit_request_cancellation,
 )
 from horde.classes.base import settings
-from horde.classes.base.style import StyleCollection
 from horde.classes.base.style_contract import (
     RESERVED_TEMPLATE_FIELD_NAMES,
     ParameterCeilingBound,
@@ -511,11 +509,6 @@ class ImageAsyncGenerate(GenerateTemplate):
         super().apply_style()
         if self.existing_style.style_type != "image":
             raise e.BadRequest("Text styles cannot be used on image requests", rc="StyleMismatch")
-        if isinstance(self.existing_style, StyleCollection):
-            colstyles = self.existing_style.styles
-            random.shuffle(colstyles)
-            self.existing_style = colstyles[0]
-            self.existing_style.use_count += 1
         self.models = self.existing_style.get_model_names()
         requested_params = self.params
         resolved_template_fields = self.apply_style_contract(self.existing_style)
