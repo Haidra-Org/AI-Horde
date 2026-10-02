@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-import random
 from datetime import datetime
 
 from flask import request
@@ -20,7 +19,6 @@ from horde.apis.v2.base import (
     commit_request_cancellation,
 )
 from horde.classes.base import settings
-from horde.classes.base.style import StyleCollection
 from horde.classes.base.style_application import format_text_style_prompt
 from horde.classes.base.style_contract import (
     ParameterCeilingBound,
@@ -292,11 +290,6 @@ class TextAsyncGenerate(GenerateTemplate):
         super().apply_style()
         if self.existing_style.style_type != "text":
             raise e.BadRequest("Image styles cannot be used on text requests", rc="StyleMismatch")
-        if isinstance(self.existing_style, StyleCollection):
-            colstyles = self.existing_style.styles
-            random.shuffle(colstyles)
-            self.existing_style.use_count += 1
-            self.existing_style = colstyles[0]
         self.models = self.existing_style.get_model_names()
         resolved_template_fields = self.apply_style_contract(self.existing_style)
         self.prompt = format_text_style_prompt(
