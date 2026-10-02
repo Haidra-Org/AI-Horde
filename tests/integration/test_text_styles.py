@@ -473,6 +473,33 @@ class TestTextStyleContractRejections:
         assert response.status_code == 400, response.get_data(as_text=True)
 
 
+class TestTextStyleWriteReturnCodes:
+    """The return code a refused text style write reports."""
+
+    def test_a_prompt_without_the_prompt_placeholder_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        response = post_style(client, request_headers, style_body("missing placeholder", prompt="No placeholder here."))
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "StylePromptMissingVars"
+
+    def test_a_shared_key_that_does_not_exist_is_refused(self, client, request_headers: dict[str, str]) -> None:
+        response = post_style(client, request_headers, style_body("unknown shared key", sharedkey=str(uuid.uuid4())))
+
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "SharedKeyInvalid"
+
+    def test_reading_a_text_style_through_the_image_route_is_refused(
+        self,
+        client,
+        request_headers: dict[str, str],
+    ) -> None:
+        with created_style(client, request_headers, style_body("read through image route")) as style_id:
+            response = client.get(f"/api/v2/styles/image/{style_id}", headers=request_headers)
+
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()["rc"] == "StyleGetMistmatch"
+
+
 @contextmanager
 def created_shared_key(client: FlaskClient, request_headers: dict[str, str], name: str) -> Iterator[str]:
     """Create a shared key for the duration of the block and delete it at the end.

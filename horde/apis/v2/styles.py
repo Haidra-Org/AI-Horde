@@ -164,7 +164,7 @@ class StyleTemplate(Resource):
         if self.args.sharedkey:
             self.sharedkey = database.find_sharedkey(self.args.sharedkey)
             if self.sharedkey is None:
-                raise e.BadRequest("This shared key does not exist", "SharedKeyInvalid")
+                raise e.BadRequest("This shared key does not exist", rc="SharedKeyInvalid")
             shared_key_validity = self.sharedkey.is_valid()
             if shared_key_validity[0] is False:
                 raise e.BadRequest(shared_key_validity[1], shared_key_validity[2])
@@ -208,7 +208,7 @@ class SingleStyleTemplateGet(Resource):
         if self.existing_style.style_type != self.gentype:
             raise e.BadRequest(
                 f"Style was found but was of the wrong type: {self.existing_style.style_type} != {self.gentype}",
-                "StyleGetMistmatch",
+                rc="StyleGetMistmatch",
             )
         self.args = self.get_parser.parse_args()
         caller = None
@@ -329,7 +329,7 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
         if self.args.sharedkey:
             self.sharedkey = database.find_sharedkey(self.args.sharedkey)
             if self.sharedkey is None:
-                raise e.BadRequest("This shared key does not exist", "SharedKeyInvalid")
+                raise e.BadRequest("This shared key does not exist", rc="SharedKeyInvalid")
             shared_key_validity = self.sharedkey.is_valid()
             if shared_key_validity[0] is False:
                 raise e.BadRequest(shared_key_validity[1], shared_key_validity[2])

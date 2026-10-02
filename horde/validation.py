@@ -268,11 +268,11 @@ class ParamValidator:
 
     def check_for_special(self):
         if not self.user and self.params.get("special"):
-            raise e.BadRequest("Only special users can send a special field.", "SpecialFieldNeedsSpecialUser")
+            raise e.BadRequest("Only special users can send a special field.", rc="SpecialFieldNeedsSpecialUser")
         for model in self.models:
             if "horde_special" in model:
                 if not self.user.special:
-                    raise e.Forbidden("Only special users can request a special model.", "SpecialModelNeedsSpecialUser")
+                    raise e.Forbidden("Only special users can request a special model.", rc="SpecialModelNeedsSpecialUser")
                 usermodel = model.split("::")
                 if len(usermodel) == 1:
                     raise e.BadRequest(
@@ -281,7 +281,7 @@ class ParamValidator:
                     )
                 user_alias = usermodel[1]
                 if self.user.get_unique_alias() != user_alias:
-                    raise e.Forbidden(f"This model can only be requested by {user_alias}", "SpecialForbidden")
+                    raise e.Forbidden(f"This model can only be requested by {user_alias}", rc="SpecialForbidden")
                 if not self.params.get("special"):
                     raise e.BadRequest("Special models have to include a special payload", rc="SpecialMissingPayload")
 
@@ -289,17 +289,17 @@ class ParamValidator:
         if "{p}" not in prompt:
             raise e.BadRequest(
                 "A style prompt must include a dedicated spot where the user's positive prompt will be added, signified with '{p}'",
-                "StylePromptMissingVars",
+                rc="StylePromptMissingVars",
             )
         if "{np}" not in prompt:
             raise e.BadRequest(
                 "A style prompt must include a dedicated spot where the user's negative prompt will be added, signified with '{np}'",
-                "StylePromptMissingVars",
+                rc="StylePromptMissingVars",
             )
 
     def validate_text_prompt(self, prompt):
         if "{p}" not in prompt:
             raise e.BadRequest(
                 "A style prompt must include a dedicated spot where the user's positive prompt will be added, signified with '{p}'",
-                "StylePromptMissingVars",
+                rc="StylePromptMissingVars",
             )

@@ -339,12 +339,12 @@ class ImageStyleExample(Resource):
         if self.existing_style.style_type == "text":
             raise e.BadRequest("Cannot add image examples to text styles.")
         if len(self.existing_style.examples) >= 4:
-            raise e.Forbidden("You cannot have more than 4 examples for each style", "TooManyStyleExamples")
+            raise e.Forbidden("You cannot have more than 4 examples for each style", rc="TooManyStyleExamples")
         previous_primary = None
         is_primary = self.args.primary
         for example in self.existing_style.examples:
             if example.url == self.args.url:
-                raise e.BadRequest(f"The url '{self.args.url}'is already used for this style.", "ExampleURLAlreadyInUse")
+                raise e.BadRequest(f"The url '{self.args.url}'is already used for this style.", rc="ExampleURLAlreadyInUse")
             if example.primary is True:
                 previous_primary = example
         if self.args.primary is True:
@@ -426,7 +426,7 @@ class SingleImageStyleExample(Resource):
             if example.id == self.example.id:
                 continue
             if example.url == self.args.url:
-                raise e.BadRequest(f"The url '{self.args.url}'is already used for this style.", "ExampleURLAlreadyInUse")
+                raise e.BadRequest(f"The url '{self.args.url}'is already used for this style.", rc="ExampleURLAlreadyInUse")
             if example.primary is True:
                 previous_primary = example
         if not self.args.primary and previous_primary is None:
