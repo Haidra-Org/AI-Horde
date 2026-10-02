@@ -12,6 +12,7 @@ style has been applied, how many takes the request still gets to choose, and wha
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Any
 
@@ -34,6 +35,9 @@ TEMPLATE_FIELDS = [
     {"name": "caption", "description": "What the picture shows", "required": True},
     {"name": "tags", "description": "Comma-separated tags", "required": False},
 ]
+
+STYLED_REQUEST_COUNT = 20
+"""How many requests the author credit record cases queue under one style."""
 
 WORKER_NAME = "CICD Style Scribe"
 
@@ -237,6 +241,23 @@ def settled_kudos(app: Flask, settle_kudos: Callable[[], int], user_id: int) -> 
         return database.find_user_by_id(user_id).kudos
 
 
+def style_record(client: FlaskClient, user_id: int) -> float:
+    """Return the user's text style record as the user details endpoint reports it.
+
+    The endpoint caches a user's details for a short while, so a case reads it once, after settling.
+
+    Args:
+        client: The Flask test client.
+        user_id: The user whose record to read.
+
+    Returns:
+        How many requests have run under the user's text styles, or 0 when none has.
+    """
+    response = client.get(f"/api/v2/users/{user_id}")
+    assert response.status_code == 200, response.get_data(as_text=True)
+    return response.get_json()["records"].get("style", {}).get("text", 0)
+
+
 class TestTextStyleParams:
     """Which params reach the worker when a style is applied."""
 
@@ -407,6 +428,60 @@ class TestTextStyleAuthorCredit:
             assert refused.get_json()["rc"] == "InvalidExtraSourceImages"
 
             assert settled_kudos(app, settle_kudos, owner.id) == balance_before
+
+    def test_every_queued_request_counts_once_in_the_authors_style_record(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """Each queued request adds one to the author's text style record and the surcharge to their balance.
+
+        Each request is cancelled before the next is queued. Cancelling leaves the author's credit and record
+        in place.
+        """
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, owner_headers, style_body("text credit record")) as style_id:
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            for _ in range(STYLED_REQUEST_COUNT):
+                with queued_request(client, request_headers, style=style_id):
+                    pass
+
+            balance_after = settled_kudos(app, settle_kudos, owner.id)
+            assert style_record(client, owner.id) == STYLED_REQUEST_COUNT
+            assert balance_after == balance_before + STYLED_REQUEST_COUNT * STYLE_KUDOS_SURCHARGE
+
+    def test_concurrently_queued_requests_each_count_once_in_the_authors_style_record(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """Requests queued at the same time under one style each add one to the author's record."""
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, owner_headers, style_body("text credit concurrent")) as style_id:
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            def queue_and_cancel(_: int) -> None:
+                # Each thread has a client of its own, so each request runs in an app context and on a
+                # database session of its own.
+                with queued_request(app.test_client(), request_headers, style=style_id):
+                    pass
+
+            # The app's connection pool holds five connections, and the main thread keeps one.
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(queue_and_cancel, range(STYLED_REQUEST_COUNT)))
+
+            balance_after = settled_kudos(app, settle_kudos, owner.id)
+            assert style_record(client, owner.id) == STYLED_REQUEST_COUNT
+            assert balance_after == balance_before + STYLED_REQUEST_COUNT * STYLE_KUDOS_SURCHARGE
 
 
 class TestTextStyleTypeMismatch:
