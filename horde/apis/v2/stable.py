@@ -197,7 +197,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             # names no model means the documented default.
             self.models = ["stable_diffusion"]
         super().validate()
-        self.credit_style_owner()
+        self.decide_style_surcharge()
         # Validated against the models the job will actually run on, which is what ImageWaitingPrompt is
         # built with below. A style replaces both the params and the model list, so reading the request's
         # own list here would check the style's settings against models it is not going to use.
@@ -543,22 +543,6 @@ class ImageAsyncGenerate(GenerateTemplate):
         self.existing_style.use_count += 1
         db.session.commit()
         logger.debug(f"Style '{self.args.style}' applied.")
-
-    def credit_style_owner(self):
-        """Pay the owner of the style this request used, and add the same amount to what it costs.
-
-        A request generating under its own author's style pays neither, so this runs after the shared
-        validation rather than inside ``apply_style``: the style is resolved before the user is, and
-        the comparison needs both. The two are compared by id, since the shared validation resolves
-        the user inside an app context of its own and the two rows can be separate instances.
-        """
-        if self.existing_style is None:
-            return
-        if self.existing_style.user_id == self.user.id:
-            return
-
-        self.existing_style.user.record_style(2, "image")
-        self.style_kudos = True
 
 
 class ImageAsyncStatus(Resource):

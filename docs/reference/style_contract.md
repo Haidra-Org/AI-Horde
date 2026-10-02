@@ -48,15 +48,19 @@ rules](#prompt-template-rules) below. An image request's prompt is split at `###
 and negative halves before formatting, and a template carrying `{np}` without a `###` of its own gets
 one in front of the negative half.
 
-Using someone else's style credits its owner with 2 kudos (`User.record_style`) and adds the same 2
-to the request's quote, through the `kudos_adjustment` argument that `GenerateTemplate` passes to
-`WaitingPrompt.activate` and to `extrapolate_dry_run_kudos`. A request running under its own author's
-style is neither charged the surcharge nor credits the author.
+Using someone else's style adds `STYLE_OWNER_REWARD` (2 kudos) to the request's quote, through the
+`kudos_adjustment` argument that `GenerateTemplate` passes to `WaitingPrompt.activate` and to
+`extrapolate_dry_run_kudos`, and credits the style's owner the same amount (`User.record_style`). A
+request running under its own author's style is neither charged the surcharge nor credits the author.
 
 The comparison needs both the style and the requesting user, and `apply_style` runs before the user is
-resolved, so it is made separately in `credit_style_owner` on each gentype, after the shared
-`super().validate()`. The two rows are compared by id, since the shared validation resolves the user
-inside an app context of its own.
+resolved, so `GenerateTemplate.decide_style_surcharge` makes it after the shared `super().validate()`
+on each gentype. The two rows are compared by id, since the shared validation resolves the user inside
+an app context of its own.
+
+The owner is credited by `GenerateTemplate.pay_style_owner`, which runs only after the waiting prompt
+is activated and the surcharge debited. A dry run quotes the surcharge but credits nothing, and neither
+does a request refused at any point before activation.
 
 A style may carry a shared key. When it does and the key is valid, `GenerateTemplate.apply_style`
 adopts it as the request's key, so the style's owner pays. The per-job limits on that key are then not
@@ -428,6 +432,7 @@ receives falls back to its own defaults rather than applying the document.
 | The text brace rule, the protected pattern and the forms it does not cover | `tests/unit/test_style_application.py`, `TestTextPromptFormatting` |
 | An instruct placeholder reaching a live text request unchanged | `tests/integration/test_text_style_application.py`, `TestTextStyleInstructPlaceholders` |
 | The surcharge on someone else's style, and none on your own | `tests/integration/test_text_style_application.py`, `TestTextStyleQuote` |
+| Only a queued request credits the style's author; a dry run or a refused request does not | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`; `tests/integration/test_image_style_application.py`, `TestImageStyleAuthorCredit` |
 | The published contract matches the vocabulary the endpoints validate against | `tests/integration/test_style_contract_endpoint.py` |
 | A policy applied to a live image request, including the size fallback | `tests/integration/test_image_style_application.py`, `TestImageStyleParameterPolicy` |
 | Placeholders applied to a live image request | `tests/integration/test_image_style_application.py`, `TestImageStyleTemplateFields` |

@@ -11,13 +11,16 @@ style has been applied, how many takes the request still gets to choose, and wha
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
 import pytest
+from flask import Flask
 from flask.testing import FlaskClient
 from werkzeug.test import TestResponse
+
+from tests.fixture_types import MakeApiUser
 
 TEXT_MODELS = ["elinas/chronos-70b-v2"]
 
@@ -216,6 +219,24 @@ def dry_run_kudos(client: FlaskClient, request_headers: dict[str, str], **body: 
     return response.get_json()["kudos"]
 
 
+def settled_kudos(app: Flask, settle_kudos: Callable[[], int], user_id: int) -> float:
+    """Fold every pending kudos posting and return the user's balance.
+
+    Args:
+        app: The Flask app, for the database session.
+        settle_kudos: The fixture helper that folds pending ledger postings.
+        user_id: The user whose balance to read.
+
+    Returns:
+        The user's balance once everything pending has been applied.
+    """
+    from horde.database import functions as database
+
+    settle_kudos()
+    with app.app_context():
+        return database.find_user_by_id(user_id).kudos
+
+
 class TestTextStyleParams:
     """Which params reach the worker when a style is applied."""
 
@@ -322,6 +343,70 @@ class TestTextStyleQuote:
             unstyled_quote = dry_run_kudos(client, request_headers, params=shared_params)
 
             assert unstyled_quote == styled.get_json()["kudos"] - STYLE_KUDOS_SURCHARGE
+
+
+class TestTextStyleAuthorCredit:
+    """When the author of a style is paid for a request that runs under it."""
+
+    def test_a_queued_request_pays_the_author_the_surcharge(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, owner_headers, style_body("text credit queued")) as style_id:
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            with queued_request(client, request_headers, style=style_id):
+                assert settled_kudos(app, settle_kudos, owner.id) == balance_before + STYLE_KUDOS_SURCHARGE
+
+    def test_a_dry_run_pays_the_author_nothing(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """A quote includes the surcharge, but asking for one queues nothing and so pays nobody."""
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, owner_headers, style_body("text credit dry run")) as style_id:
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            for _ in range(3):
+                dry_run_kudos(client, request_headers, style=style_id)
+
+            assert settled_kudos(app, settle_kudos, owner.id) == balance_before
+
+    def test_a_refused_request_pays_the_author_nothing(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """A request refused after the style resolved, here for carrying extra source images, pays no one."""
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, owner_headers, style_body("text credit refused")) as style_id:
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            refused = post_request(
+                client,
+                request_headers,
+                style=style_id,
+                extra_source_images=[{"image": "aGVsbG8="}],
+            )
+            assert refused.status_code == 400, refused.get_data(as_text=True)
+            assert refused.get_json()["rc"] == "InvalidExtraSourceImages"
+
+            assert settled_kudos(app, settle_kudos, owner.id) == balance_before
 
 
 class TestTextStyleParameterPolicy:

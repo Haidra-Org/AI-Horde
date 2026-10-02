@@ -97,6 +97,9 @@ api = Namespace("v2", "API Version 2")
 models = Models(api)
 parsers = Parsers()
 
+STYLE_OWNER_REWARD = 2
+"""Kudos a request under someone else's style pays on top of its quote, and its style's author receives."""
+
 
 def assert_submitting_key(apikey: str, wp: WaitingPrompt) -> None:
     """Refuse to expose a stored request unless ``apikey`` is the key that submitted it.
@@ -331,6 +334,7 @@ class GenerateTemplate(Resource):
                 self.activate_waiting_prompt()
             finally:
                 generate_activate_wp_duration.record(time.monotonic() - ta, {"horde.gentype": self.gentype})
+        self.pay_style_owner()
         # We use the wp.kudos to avoid calling the model twice.
         self.kudos = self.wp.kudos
 
@@ -745,6 +749,34 @@ class GenerateTemplate(Resource):
         # If there's an attached shared key to the style, and it's not empty or expired, we use it.
         if self.existing_style.sharedkey and self.existing_style.sharedkey.is_valid()[0] is True:
             self.sharedkey = self.existing_style.sharedkey
+
+    def decide_style_surcharge(self) -> None:
+        """Mutate the request so it pays the style surcharge when it runs under someone else's style.
+
+        A request under its own author's style pays nothing extra. The comparison needs both the style
+        and the user, and ``apply_style`` runs before the shared validation resolves the user, so each
+        gentype calls this after ``super().validate()``. The two are compared by id, since the shared
+        validation resolves the user inside an app context of its own and the two rows can be separate
+        instances.
+        """
+        if self.existing_style is None:
+            return
+        if self.existing_style.user_id == self.user.id:
+            return
+        self.style_kudos = True
+
+    def pay_style_owner(self) -> None:
+        """Credit the style's author with the surcharge this request paid.
+
+        Runs only once the waiting prompt is active, which is also when the surcharge is debited. A dry
+        run or a request refused at any point before activation pays no surcharge, so it credits nothing.
+
+        Side Effects:
+            Commits a ``STYLE_REWARD`` ledger posting for the author and bumps their style record.
+        """
+        if not self.style_kudos:
+            return
+        self.existing_style.user.record_style(STYLE_OWNER_REWARD, self.existing_style.style_type)
 
     def get_supplied_template_fields(self):
         """Return the template field values this request carried.

@@ -100,9 +100,11 @@ No worker conformance layer is added. A worker never sees a style: templating, t
 context sizing all resolve before the waiting prompt is built, and the worker receives an ordinary
 payload. There is no worker behaviour to make a claim about.
 
-The surcharge moves out of `apply_style` into `credit_style_owner` on both gentypes, called after
-`super().validate()` has resolved the user. A request under its own author's style is neither charged
-the 2 kudos nor credits the author; a request under someone else's style does both.
+The surcharge decision moves out of `apply_style` into `GenerateTemplate.decide_style_surcharge`,
+which both gentypes call after `super().validate()` has resolved the user. A request under its own
+author's style is neither charged the 2 kudos nor credits the author; a request under someone else's
+style does both. The author is credited by `GenerateTemplate.pay_style_owner` once the waiting prompt
+is active, which is also when the surcharge is debited, so a dry run or a refused request pays no one.
 
 ### Consequences
 
@@ -187,6 +189,8 @@ the lowercase and malformed forms that are not protected and a supplied value th
 `tests/integration/test_text_style_application.py::TestTextStyleInstructPlaceholders` checks that an
 instruct placeholder reaches the resolved request unchanged, and
 `TestTextStyleQuote::test_your_own_style_adds_no_surcharge` fixes the owner case of the surcharge.
+`TestTextStyleAuthorCredit` and `TestImageStyleAuthorCredit` fix that only a queued request credits the
+author.
 
 ## More Information
 
