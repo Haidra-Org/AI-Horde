@@ -412,6 +412,45 @@ A client pins `schema_version` and re-reads the document when it moves. A versio
 and can change what an existing field means, so a client that cannot make sense of a version it
 receives falls back to its own defaults rather than applying the document.
 
+## Logs and metrics
+
+A request under a style, a style or collection write, and a stored declaration that stops validating each
+leave a log line. Volume and outcomes are also counted in metrics whose labels stay bounded. The style,
+its owner and the requester go only to log lines and span attributes.
+
+### Log lines
+
+| Line starts with | Level | Carries |
+| --- | --- | --- |
+| `Style applied:` | info for a queued request, debug for a dry run | Style id, name and type, owner, requester, client agent, collection id or `none`, policy mode or `undeclared`, template fields supplied and declared, `literal_template_fields` (fields of a stored text template sent as written), whether the surcharge applied, dry run |
+| `Style created:`, `Style patched:`, `Style deleted:` | info | Style id, name, type, policy mode, declared field count, visibility, and the account. A patch adds the fields it carried. |
+| `Collection created:`, `Collection patched:`, `Collection deleted:` | info | Collection id, name, type, style count, visibility, and the account |
+| `Style example added:`, `Style example patched:`, `Style example deleted:` | info | Style id, example id, the account, and whether the example is primary |
+| `Stored style declaration invalid:` | warning | The style and the declaration that no longer validates, with the reasons |
+| `Style ... left out of a collection draw` | info | A collection's style skipped because its stored template fields no longer validate |
+| `Context grown from` | debug | The requested and the grown context of a text request. The counter below carries the volume |
+
+A dry run is logged at debug because a client previews a styled request repeatedly while its inputs
+change. The counter still counts it.
+
+### Metrics
+
+| Metric | Unit | Labels |
+| --- | --- | --- |
+| `horde.style.applications` | 1 | `horde.gentype`, `horde.style.source` (`style` or `collection`), `horde.style.policy` (`none`, `listed`, `all` or `undeclared`), `horde.style.template_fields` (`declared` or `none`), `horde.style.surcharged`, `horde.dry_run` |
+| `horde.style.author_credits` | kudos | `horde.style.type` |
+| `horde.style.forgiven_surcharges` | kudos | `horde.style.type`. Counts the part of a surcharge the minimum-balance floor forgave, which is not credited |
+| `horde.text.context_fit` | 1 | `horde.context_fit.mode`, `horde.context_fit.outcome` (`fits`, `sent_overlong`, `grown`, `refused`) |
+| `horde.api.rejections` | 1 | `horde.rc`, `http.response.status_code`, `http.route`, `http.request.method`. Counts every API refusal, styles included |
+
+`horde.api.rejections` labels a return code missing from `KNOWN_RC` as `Unlisted`, and a refusal raised
+outside a matched route as `unmatched`, so neither label grows with input.
+
+### Span attributes
+
+The span that validates a styled generate request carries `horde.style.id`, `horde.style.owner_id`,
+`horde.style.collection_id`, `horde.style.policy` and `horde.style.surcharged`.
+
 ## Code map
 
 | Concept | File | Symbol |
@@ -440,6 +479,12 @@ receives falls back to its own defaults rather than applying the document.
 | Text pricing | `horde/classes/kobold/waiting_prompt.py` | `TextWaitingPrompt.calculate_kudos` |
 | Style columns | `horde/classes/base/style.py` | `Style.parameter_policy`, `Style.template_fields` |
 | The owner-only `shared_key` on a served style | `horde/apis/v2/styles.py`, `horde/classes/base/style.py` | `SingleStyleTemplateGet.get_existing_style`, `Style.get_details` |
+| Style application log line, counter and span attributes | `horde/apis/v2/base.py` | `GenerateTemplate.report_style_application` |
+| Style and collection write log lines | `horde/apis/v2/styles.py` | `describe_style`, `describe_collection`, `STYLE_PATCH_FIELDS` |
+| Author credit and forgiven surcharge counters | `horde/classes/base/kudos.py` | `StyleReward.count_outcome` |
+| Context fit counter | `horde/apis/v2/kobold.py`, `horde/classes/kobold/request_fit.py` | `TextAsyncGenerate.count_context_fit`, `ContextFitOutcome` |
+| Literal fields of a stored text template | `horde/classes/base/style_application.py` | `count_literal_text_template_fields` |
+| API refusal counter | `horde/exceptions.py`, `horde/metrics.py` | `handle_bad_requests`, `rejection_attributes`, `api_rejections` |
 | The dry-run quote cache key | `horde/apis/v2/base.py`, `horde/apis/v2/stable.py`, `horde/apis/v2/kobold.py` | `GenerateTemplate.get_hashed_params_dict`, `ImageAsyncGenerate.get_hashed_params_dict`, `TextAsyncGenerate.get_hashed_params_dict` |
 
 ## Tests
@@ -478,6 +523,11 @@ receives falls back to its own defaults rather than applying the document.
 | The image dry-run `resolved` body and compatibility | `tests/integration/test_image_style_application.py`, `TestImageDryRunResolvedRequest` |
 | The quote cache key tells a styled request apart and is stable across validation | `tests/unit/test_dry_run_kudos_quote.py`, `TestQuoteCacheKey`, `TestTextQuoteCacheKey` |
 | `shared_key` served to the owner only, and never on the list | `tests/integration/test_text_styles.py`, `TestTextStyleSharedKeyVisibility`; `tests/integration/test_image_styles.py`, `TestImageStyleSharedKeyVisibility` |
+| A styled request is logged with its owner, requester and client agent, and counted with bounded labels | `tests/integration/test_text_style_application.py`, `TestStyleApplicationTelemetry` |
+| Context fit outcomes are counted | `tests/integration/test_text_style_application.py`, `TestContextFitTelemetry` |
+| Style writes are logged | `tests/integration/test_text_styles.py`, `TestTextStyleWriteLogs` |
+| Author credits and forgiven surcharges are counted | `tests/unit/test_kudos_ledger.py`, `TestStyleRewardOutcomeCounters` |
+| API refusals are counted by return code and route | `tests/integration/test_malformed_requests.py`, `test_a_refusal_is_counted_by_return_code_and_route` |
 | A write to a style is served by its single-style reads straight away | `tests/integration/test_text_styles.py`, `TestTextStyleReadCache`; `tests/integration/test_image_styles.py`, `TestImageStyleReadCache` |
 
 ## Sharp edges

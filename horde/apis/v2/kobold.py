@@ -9,6 +9,7 @@ from flask_restx import Resource, reqparse
 
 import horde.apis.limiter_api as lim
 from horde import exceptions as e
+from horde import metrics
 from horde.apis.models.kobold_v2 import TextModels, TextParsers
 from horde.apis.v2.base import (
     GenerateTemplate,
@@ -19,7 +20,7 @@ from horde.apis.v2.base import (
     commit_request_cancellation,
 )
 from horde.classes.base import settings
-from horde.classes.base.style_application import format_text_style_prompt
+from horde.classes.base.style_application import count_literal_text_template_fields, format_text_style_prompt
 from horde.classes.base.style_contract import (
     ParameterCeilingBound,
     StyleContractVocabulary,
@@ -36,6 +37,7 @@ from horde.classes.kobold.request_fit import (
     MAX_CONTEXT_LENGTH_PARAMETER,
     MAX_LENGTH_PARAMETER,
     ContextFit,
+    ContextFitOutcome,
     context_growth_upper_bound,
     estimate_prompt_tokens,
     fit_context_length,
@@ -252,6 +254,7 @@ class TextAsyncGenerate(GenerateTemplate):
         self.apply_context_fit()
         super().validate()
         self.decide_style_surcharge()
+        self.report_style_application()
         param_validator = ParamValidator(self.prompt, self.args.models, self.params, self.user)
         self.warnings = param_validator.validate_text_params()
         if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
@@ -292,6 +295,7 @@ class TextAsyncGenerate(GenerateTemplate):
             raise e.BadRequest("Image styles cannot be used on text requests", rc="StyleMismatch")
         self.models = self.existing_style.get_model_names()
         resolved_template_fields = self.apply_style_contract(self.existing_style)
+        self.literal_template_fields = count_literal_text_template_fields(self.existing_style.prompt)
         self.prompt = format_text_style_prompt(
             template=self.existing_style.prompt,
             prompt=self.prompt,
@@ -309,35 +313,57 @@ class TextAsyncGenerate(GenerateTemplate):
         is. Under ``ignore`` an over-long prompt is sent unchanged and the worker cuts the front of it
         away, which is how every text request has behaved.
         """
-        if self.context_fit is ContextFit.IGNORE:
-            return
-
         max_length = self.params.get(MAX_LENGTH_PARAMETER, DEFAULT_MAX_LENGTH)
         max_context_length = self.params.get(MAX_CONTEXT_LENGTH_PARAMETER, DEFAULT_MAX_CONTEXT_LENGTH)
         estimated_prompt_tokens = estimate_prompt_tokens(self.prompt)
         # Checked first so a prompt that already fits does not query the worker pool.
-        if prompt_fits_context(
+        prompt_fits = prompt_fits_context(
             estimated_prompt_tokens=estimated_prompt_tokens,
             max_length=max_length,
             max_context_length=max_context_length,
-        ):
+        )
+        if prompt_fits:
+            self.count_context_fit(ContextFitOutcome.FITS)
+            return
+        if self.context_fit is ContextFit.IGNORE:
+            self.count_context_fit(ContextFitOutcome.SENT_OVERLONG)
             return
 
-        fitted_context_length = fit_context_length(
-            estimated_prompt_tokens=estimated_prompt_tokens,
-            max_length=max_length,
-            max_context_length=max_context_length,
-            context_fit=self.context_fit,
-            upper_bound=self.get_context_growth_upper_bound(requested_max_context_length=max_context_length),
-        )
+        try:
+            fitted_context_length = fit_context_length(
+                estimated_prompt_tokens=estimated_prompt_tokens,
+                max_length=max_length,
+                max_context_length=max_context_length,
+                context_fit=self.context_fit,
+                upper_bound=self.get_context_growth_upper_bound(requested_max_context_length=max_context_length),
+            )
+        except e.BadRequest:
+            self.count_context_fit(ContextFitOutcome.REFUSED)
+            raise
         if fitted_context_length == max_context_length:
+            self.count_context_fit(ContextFitOutcome.FITS)
             return
+        self.count_context_fit(ContextFitOutcome.GROWN)
 
         # Copied before writing, since self.params may still be the parsed request body; the quote,
         # the hash and the waiting prompt all read the params back off self.
         self.params = dict(self.params)
         self.params[MAX_CONTEXT_LENGTH_PARAMETER] = fitted_context_length
         logger.debug(f"Context grown from {max_context_length} to {fitted_context_length} to fit the prompt.")
+
+    def count_context_fit(self, outcome: ContextFitOutcome) -> None:
+        """Count what sizing this request against its prompt came to.
+
+        Args:
+            outcome: The result of the sizing.
+        """
+        metrics.text_context_fit.add(
+            1,
+            {
+                "horde.context_fit.mode": self.context_fit.value,
+                "horde.context_fit.outcome": outcome.value,
+            },
+        )
 
     def get_context_growth_upper_bound(self, *, requested_max_context_length):
         """Return the largest context this request may grow to.

@@ -193,6 +193,7 @@ def project_style_reward(reward: StyleReward, *, forgiven: Decimal) -> None:
     if kudos_projection_is_async():
         return
     credit = reward.collected(forgiven)
+    reward.count_outcome(credit)
     if credit <= 0:
         return
     from horde.classes.base.user import User

@@ -407,7 +407,18 @@ class TestRoundTrip:
 
 
 class TestStoredDeclarationValidation:
-    """A stored declaration that no longer validates is a client error naming the style."""
+    """A stored declaration that no longer validates is a client error identifying the style."""
+
+    def test_a_stored_declaration_that_no_longer_validates_logs_a_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import horde.classes.base.style_contract as style_contract_module
+
+        warnings: list[str] = []
+        monkeypatch.setattr(style_contract_module.logger, "warning", warnings.append)
+        with pytest.raises(e.BadRequest):
+            load_template_fields([{"name": "p", "description": "reserved"}], style_name="drifted style")
+
+        assert len(warnings) == 1
+        assert warnings[0].startswith("Stored style declaration invalid: style 'drifted style' template_fields:")
 
     def test_a_stored_policy_naming_a_parameter_outside_the_vocabulary_is_rejected(self):
         stored_policy = {"override": "listed", "overridable": ["max_tokens"]}
