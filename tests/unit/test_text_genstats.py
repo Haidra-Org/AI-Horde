@@ -10,6 +10,7 @@ failed insert is rolled back and logged without failing the worker's submit.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import pytest
@@ -27,13 +28,14 @@ pytestmark = pytest.mark.unit
 _MODEL = "elinas/chronos-70b-v2"
 
 
-def _make_text_wp(user: Any) -> TextWaitingPrompt:
+def _make_text_wp(user: Any, *, style_id: uuid.UUID | None = None) -> TextWaitingPrompt:
     wp = TextWaitingPrompt(
         [],
         [_MODEL],
         prompt="a unit-test text prompt",
         user_id=user.id,
         params={"n": 1, "max_length": 80, "max_context_length": 1024},
+        style_id=style_id,
     )
     db.session.commit()
     return wp
@@ -99,3 +101,30 @@ class TestStatisticWriteIsBestEffort:
 
         assert errors == []
         assert db.session.query(TextGenerationStatistic).count() == rows_before + 1
+
+
+class TestStatisticStyle:
+    """The statistic records the style its request ran under."""
+
+    @staticmethod
+    def _newest_statistic_style(procgen: TextProcessingGeneration) -> uuid.UUID | None:
+        record_text_statistic(procgen)
+        newest = db.session.query(TextGenerationStatistic).order_by(TextGenerationStatistic.id.desc()).first()
+        return newest.style_id
+
+    def test_a_styled_request_records_its_style(self, fake_redis, make_user) -> None:
+        user = make_user()
+        style_id = uuid.uuid4()
+        wp = _make_text_wp(user, style_id=style_id)
+        procgen = TextProcessingGeneration(wp_id=wp.id, worker_id=_make_text_worker(user).id, model=_MODEL)
+        db.session.commit()
+
+        assert self._newest_statistic_style(procgen) == style_id
+
+    def test_an_unstyled_request_records_no_style(self, fake_redis, make_user) -> None:
+        user = make_user()
+        wp = _make_text_wp(user)
+        procgen = TextProcessingGeneration(wp_id=wp.id, worker_id=_make_text_worker(user).id, model=_MODEL)
+        db.session.commit()
+
+        assert self._newest_statistic_style(procgen) is None

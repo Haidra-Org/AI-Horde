@@ -5,10 +5,13 @@
 from datetime import datetime
 
 from sqlalchemy import Enum
+from sqlalchemy.dialects.postgresql import UUID
 
 from horde.enums import ImageGenState
-from horde.flask import db
+from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
+
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # noqa E731
 
 
 class ImageGenerationStatisticPP(db.Model):
@@ -80,6 +83,9 @@ class ImageGenerationStatistic(db.Model):
     state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True)
     client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
+    # The style the generation ran under, drawn from a collection when the request specified one. No foreign
+    # key: the statistic outlives a deleted style, and an id is what per-style analysis groups by.
+    style_id = db.Column(uuid_column_type(), nullable=True)
     post_processors = db.relationship(
         "ImageGenerationStatisticPP",
         back_populates="imgstat",
@@ -130,6 +136,7 @@ def record_image_statistic(procgen):
         nsfw=procgen.wp.nsfw,
         bridge_agent=procgen.worker.bridge_agent,
         client_agent=procgen.wp.client_agent,
+        style_id=procgen.wp.style_id,
         state=state,
     )
     db.session.add(statistic)

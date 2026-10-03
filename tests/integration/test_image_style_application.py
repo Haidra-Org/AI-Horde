@@ -908,3 +908,47 @@ class TestImageStyleCollection:
 
             details = client.get(f"/api/v2/collections/{collection_id}", headers=request_headers).get_json()
             assert details["use_count"] == 1
+
+
+def waiting_prompt_style_id(app: Flask, request_id: str) -> str | None:
+    """Return the style a queued request's waiting prompt records.
+
+    Args:
+        app: The Flask app, for the database session.
+        request_id: The queued request's id.
+
+    Returns:
+        The recorded style id as a string, or None when the request runs under no style.
+    """
+    from horde.classes.base.waiting_prompt import WaitingPrompt
+    from horde.flask import db
+
+    with app.app_context():
+        style_id = db.session.query(WaitingPrompt.style_id).filter(WaitingPrompt.id == request_id).scalar()
+        return str(style_id) if style_id is not None else None
+
+
+class TestImageStyleAttribution:
+    """A queued request records the style it runs under, for the generation statistics."""
+
+    def test_a_request_under_a_style_records_it(self, app: Flask, client: FlaskClient, request_headers: dict[str, str]) -> None:
+        with created_style(client, request_headers, style_body("image attributed")) as style_id:
+            with queued_request(client, request_headers, style=style_id) as request_id:
+                assert waiting_prompt_style_id(app, request_id) == style_id
+
+    def test_a_request_under_a_collection_records_the_drawn_style(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+    ) -> None:
+        with (
+            created_style(client, request_headers, style_body("image attributed member")) as style_id,
+            created_collection(client, request_headers, name="image attributed collection", style_ids=[style_id]) as collection_id,
+        ):
+            with queued_request(client, request_headers, style=collection_id) as request_id:
+                assert waiting_prompt_style_id(app, request_id) == style_id
+
+    def test_an_unstyled_request_records_no_style(self, app: Flask, client: FlaskClient, request_headers: dict[str, str]) -> None:
+        with queued_request(client, request_headers) as request_id:
+            assert waiting_prompt_style_id(app, request_id) is None
