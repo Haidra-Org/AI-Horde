@@ -23,7 +23,7 @@ import re
 import secrets
 import string
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -147,6 +147,30 @@ def _raise_if_above_ceiling(policy: StyleParameterPolicy, parameter_name: str, c
             f"'{parameter_name}' is {client_value}, above the maximum of {ceiling} this style allows.",
             rc="StyleParameterAboveCeiling",
         )
+
+
+def template_fields_fit(
+    *,
+    declared_fields: Sequence[StyleTemplateField],
+    supplied_field_names: Collection[str],
+) -> bool:
+    """Report whether a style accepts the template fields a request supplies.
+
+    A style accepts them when it declares every field supplied and every field it requires is among them.
+    This decides which of a collection's styles a request can run under, without the value checks
+    ``resolve_template_field_values`` makes once the style is chosen.
+
+    Args:
+        declared_fields: The fields the style declares, empty for a style that declares none.
+        supplied_field_names: The fields the request supplies.
+
+    Returns:
+        True when the request could run under the style as far as its template fields go.
+    """
+    declared_names = {declaration.name for declaration in declared_fields}
+    required_names = {declaration.name for declaration in declared_fields if declaration.required}
+    supplied_names = set(supplied_field_names)
+    return supplied_names <= declared_names and required_names <= supplied_names
 
 
 def resolve_template_field_values(

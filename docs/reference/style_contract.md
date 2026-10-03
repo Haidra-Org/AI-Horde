@@ -30,7 +30,12 @@ they existed.
 
 `GenerateTemplate.apply_style` resolves the style by UUID or name. When that is a `StyleCollection`,
 `GenerateTemplate.draw_collection_style` draws one of its styles at random and counts a use of the
-collection, and the request runs under the drawn style from there on. A collection has no prompt,
+collection, and the request runs under the drawn style from there on. The draw is only among the styles
+that accept the request's template fields (`template_fields_fit`): each declares every field the
+request supplies, and the request supplies every field it requires. A collection's styles can declare
+different fields, and drawing from all of them would make the same request succeed or fail by chance.
+A style whose stored declaration no longer validates is left out of the draw. When no style fits, the
+request is refused with `TemplateFieldsMatchNoCollectionStyle`. A collection has no prompt,
 params or shared key of its own. `apply_style` then adopts the style's shared key when it carries a
 valid one. Each gentype rejects a style of the other type (`StyleMismatch`), and:
 
@@ -466,6 +471,7 @@ receives falls back to its own defaults rather than applying the document.
 | The surcharge on someone else's style, and none on your own | `tests/integration/test_text_style_application.py`, `TestTextStyleQuote` |
 | Only a queued request credits the style's author; a dry run or a refused request does not | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`; `tests/integration/test_image_style_application.py`, `TestImageStyleAuthorCredit` |
 | A request under a collection runs under one of its styles and counts a use of the collection | `tests/integration/test_text_style_application.py`, `TestTextStyleCollection`; `tests/integration/test_image_style_application.py`, `TestImageStyleCollection` |
+| A collection draws only a style that accepts the request's template fields, and refuses fields none accepts | `tests/unit/test_style_application.py`, `TestTemplateFieldsFit`; `tests/integration/test_text_style_application.py`, `TestTextStyleCollectionTemplateFields` |
 | A surcharge the floor forgives is not credited, in either mode, and a cancel keeps what was collected | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`, `TestTextStyleAuthorCreditInShadowMode`; `tests/unit/test_kudos_ledger.py`, `TestStyleRewardAttribution` |
 | The published contract matches the vocabulary the endpoints validate against and the write limits their routes enforce | `tests/integration/test_style_contract_endpoint.py` |
 | A policy applied to a live image request, including the size fallback | `tests/integration/test_image_style_application.py`, `TestImageStyleParameterPolicy` |

@@ -210,6 +210,7 @@ The errors returned by the AI horde are always in this json format
 | StylesRequiresCustomizer | Only customizers and trusted users can create styles |
 | TemplateFieldMissing | The style requires a template field the request did not supply |
 | TemplateFieldUnknown | The request supplied a template field the style does not declare |
+| TemplateFieldsMatchNoCollectionStyle | None of the collection's styles accepts the template fields the request supplies |
 | TemplateFieldsRequireStyle | Template fields can only be sent alongside a style |
 | ThingNotFound | No item exists with the given ID |
 | TokenOverflow | More tokens were requested than the context length allows |

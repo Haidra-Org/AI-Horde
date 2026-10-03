@@ -1367,3 +1367,48 @@ class TestTextStyleCollection:
 
             details = client.get(f"/api/v2/collections/{collection_id}", headers=request_headers).get_json()
             assert details["use_count"] == 1
+
+
+class TestTextStyleCollectionTemplateFields:
+    """A collection whose styles declare different template fields draws only a style that accepts the request's."""
+
+    DRAWS = 8
+    """How many requests each case sends, so a draw that ignored the fields would show up."""
+
+    def test_each_request_runs_under_a_style_that_accepts_its_fields(self, client, request_headers: dict[str, str]) -> None:
+        captioned_body = style_body("collection captioned", prompt="{p} {caption} {tags}", template_fields=TEMPLATE_FIELDS)
+        with (
+            created_style(client, request_headers, captioned_body) as captioned_style_id,
+            created_style(client, request_headers, style_body("collection plain")) as plain_style_id,
+            created_collection(
+                client,
+                request_headers,
+                name="collection mixed fields",
+                style_ids=[captioned_style_id, plain_style_id],
+            ) as collection_id,
+        ):
+            with_caption = {
+                post_dry_run(client, request_headers, style=collection_id, template_fields={"caption": "a lighthouse"}).get_json()[
+                    "resolved"
+                ]["style"]["id"]
+                for _ in range(self.DRAWS)
+            }
+            without_fields = {
+                post_dry_run(client, request_headers, style=collection_id).get_json()["resolved"]["style"]["id"] for _ in range(self.DRAWS)
+            }
+
+            assert with_caption == {captioned_style_id}
+            assert without_fields == {plain_style_id}
+
+    def test_fields_no_style_accepts_are_refused_every_time(self, client, request_headers: dict[str, str]) -> None:
+        captioned_body = style_body("collection refusing", prompt="{p} {caption}", template_fields=TEMPLATE_FIELDS)
+        with (
+            created_style(client, request_headers, captioned_body) as captioned_style_id,
+            created_collection(client, request_headers, name="collection refusing", style_ids=[captioned_style_id]) as collection_id,
+        ):
+            return_codes = {
+                post_dry_run(client, request_headers, style=collection_id, template_fields={"mood": "calm"}).get_json()["rc"]
+                for _ in range(self.DRAWS)
+            }
+
+            assert return_codes == {"TemplateFieldsMatchNoCollectionStyle"}
