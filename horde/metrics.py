@@ -605,6 +605,13 @@ submit_outcomes = logfire.metric_counter(
     description="/generate/submit outcomes",
 )
 
+# --- API refusals -------------------------------------------------------------
+api_rejections = logfire.metric_counter(
+    "horde.api.rejections",
+    unit="1",
+    description="Client errors the API returned, split by return code, HTTP status, route and method",
+)
+
 # --- /generate/check & /generate/status --------------------------------------
 check_duration = _seconds_histogram(
     "horde.generate.check.duration",
