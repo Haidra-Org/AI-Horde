@@ -14,6 +14,7 @@ import pytest
 from horde import exceptions as e
 from horde.classes.base.style_application import (
     MAX_TEMPLATE_FIELD_WORDS,
+    count_literal_text_template_fields,
     format_text_style_prompt,
     merge_client_parameters,
     resolve_template_field_values,
@@ -414,6 +415,19 @@ class TestTextPromptFormatting:
             format_text_style_prompt(template="{p} and a lone {", prompt="a lighthouse", field_values={})
 
         assert raised.value.rc == "StyleDeclarationInvalid"
+
+
+class TestLiteralTemplateFieldCount:
+    """How many fields of a stored text template are sent as written instead of filled in."""
+
+    def test_bare_names_and_protected_placeholders_count_nothing(self) -> None:
+        assert count_literal_text_template_fields("{{[INPUT]}}{p} {tags} {{literal}}") == 0
+
+    def test_each_field_that_is_more_than_a_bare_name_counts(self) -> None:
+        assert count_literal_text_template_fields("{p:>20} {p!r} {p.x} {} {p}") == 4
+
+    def test_a_template_that_does_not_parse_counts_nothing(self) -> None:
+        assert count_literal_text_template_fields("{p} {") == 0
 
 
 class TestTextTemplateFieldValidation:

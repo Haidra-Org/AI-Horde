@@ -17,6 +17,7 @@ from horde.apis.v2.styles import (
     StyleContractArgs,
     StyleTemplate,
     api,
+    describe_style,
     request_carries_a_user_key,
 )
 from horde.classes.base.style import Style
@@ -174,6 +175,7 @@ class TextStyle(TextStyleContractArgs, StyleTemplate):
         new_style.create()
         new_style.set_models(self.models)
         new_style.set_tags(self.tags)
+        logger.info(f"Style created: {describe_style(new_style)} by {self.user.get_unique_alias()}")
         return {
             "id": new_style.id,
             "message": "OK",

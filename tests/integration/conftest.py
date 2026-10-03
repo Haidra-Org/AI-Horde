@@ -231,6 +231,24 @@ def settle_kudos(app: Flask) -> Callable[[], int]:
 
 
 @pytest.fixture
+def log_records() -> Iterator[list[tuple[str, str]]]:
+    """Capture every log record emitted during a test as its level name and message.
+
+    Yields:
+        The captured records, in the order they were logged.
+    """
+    from horde.logger import logger
+
+    records: list[tuple[str, str]] = []
+    handler_id = logger.add(
+        lambda message: records.append((message.record["level"].name, message.record["message"])),
+        level="DEBUG",
+    )
+    yield records
+    logger.remove(handler_id)
+
+
+@pytest.fixture
 def request_headers(api_key: str, CIVERSION: str) -> dict[str, str]:
     return {
         "apikey": api_key,

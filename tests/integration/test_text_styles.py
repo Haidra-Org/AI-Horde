@@ -779,3 +779,29 @@ class TestTextStyleReadCache:
         assert deleted.status_code == 200, deleted.get_data(as_text=True)
 
         assert client.get(f"/api/v2/styles/text/{style_id}", headers=anonymous_headers).status_code == 404
+
+
+class TestTextStyleWriteLogs:
+    """What writing a style leaves in the logs."""
+
+    def test_a_create_a_patch_and_a_delete_are_each_logged(
+        self,
+        client,
+        request_headers: dict[str, str],
+        log_records: list[tuple[str, str]],
+    ) -> None:
+        author_alias = client.get("/api/v2/find_user", headers=request_headers).get_json()["username"]
+        created = post_style(client, request_headers, style_body("write log style"))
+        assert created.status_code == 200, created.get_data(as_text=True)
+        style_id = created.get_json()["id"]
+        patched = client.patch(f"/api/v2/styles/text/{style_id}", json={"info": "Patched info."}, headers=request_headers)
+        assert patched.status_code == 200, patched.get_data(as_text=True)
+        deleted = client.delete(f"/api/v2/styles/text/{style_id}", headers=request_headers)
+        assert deleted.status_code == 200, deleted.get_data(as_text=True)
+
+        write_lines = [message for level, message in log_records if level == "INFO" and message.startswith("Style ")]
+        assert [line.split(":")[0] for line in write_lines] == ["Style created", "Style patched", "Style deleted"]
+        for line in write_lines:
+            assert f"style {style_id} 'write log style' type text" in line
+            assert f"by {author_alias}" in line
+        assert write_lines[1].endswith("fields=info")

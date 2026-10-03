@@ -1412,3 +1412,189 @@ class TestTextStyleCollectionTemplateFields:
             }
 
             assert return_codes == {"TemplateFieldsMatchNoCollectionStyle"}
+
+
+class _RecordingCounter:
+    """Stands in for a metric counter and keeps the attributes of each addition."""
+
+    def __init__(self) -> None:
+        self.attributes: list[dict[str, Any]] = []
+
+    def add(self, amount: float, attributes: dict[str, Any]) -> None:
+        self.attributes.append(attributes)
+
+
+def style_applied_lines(log_records: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Return the captured log records that report a style application.
+
+    Args:
+        log_records: Every record captured during the test.
+
+    Returns:
+        The style application records.
+    """
+    return [(level, message) for level, message in log_records if message.startswith("Style applied:")]
+
+
+class TestStyleApplicationTelemetry:
+    """What a request under a style leaves in the logs and metrics."""
+
+    def test_a_queued_request_logs_the_style_its_owner_requester_and_agent(
+        self,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        log_records: list[tuple[str, str]],
+    ) -> None:
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        requester_alias = client.get("/api/v2/find_user", headers=request_headers).get_json()["username"]
+        with created_style(client, owner_headers, style_body("telemetry queued")) as style_id:
+            with queued_request(client, request_headers, style=style_id):
+                pass
+
+        ((level, message),) = style_applied_lines(log_records)
+        assert level == "INFO"
+        assert f"style {style_id} 'telemetry queued'" in message
+        assert f"owner {owner.alias}" in message
+        assert f"requester {requester_alias}" in message
+        assert f"agent '{request_headers['Client-Agent']}'" in message
+        assert "collection none" in message
+        assert "surcharge=True" in message
+        assert "dry_run=False" in message
+
+    def test_a_dry_run_is_logged_at_debug(
+        self,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        log_records: list[tuple[str, str]],
+    ) -> None:
+        with created_style(client, request_headers, style_body("telemetry dry run")) as style_id:
+            assert post_dry_run(client, request_headers, style=style_id).status_code == 200
+
+        ((level, message),) = style_applied_lines(log_records)
+        assert level == "DEBUG"
+        assert "dry_run=True" in message
+        assert "surcharge=False" in message
+
+    def test_a_request_under_a_collection_logs_the_collection(
+        self,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        log_records: list[tuple[str, str]],
+    ) -> None:
+        with (
+            created_style(client, request_headers, style_body("telemetry collected")) as style_id,
+            created_collection(client, request_headers, name="telemetry collection", style_ids=[style_id]) as collection_id,
+        ):
+            with queued_request(client, request_headers, style=collection_id):
+                pass
+
+        ((_, message),) = style_applied_lines(log_records)
+        assert f"style {style_id}" in message
+        assert f"collection {collection_id}" in message
+
+    def test_styled_requests_are_counted_with_bounded_labels(
+        self,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import horde.metrics as metrics_module
+
+        counter = _RecordingCounter()
+        monkeypatch.setattr(metrics_module, "style_applications", counter)
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        body = style_body(
+            "telemetry counted",
+            prompt="{p} {caption}",
+            parameter_policy={"override": "listed", "overridable": ["max_length"]},
+            template_fields=TEMPLATE_FIELDS,
+        )
+        with created_style(client, owner_headers, body) as style_id:
+            response = post_dry_run(client, request_headers, style=style_id, template_fields={"caption": "a lighthouse"})
+            assert response.status_code == 200, response.get_data(as_text=True)
+
+        assert counter.attributes == [
+            {
+                "horde.gentype": "text",
+                "horde.style.source": "style",
+                "horde.style.policy": "listed",
+                "horde.style.template_fields": "declared",
+                "horde.style.surcharged": "true",
+                "horde.dry_run": "true",
+            },
+        ]
+
+
+class TestContextFitTelemetry:
+    """How sizing a text request against its prompt is counted."""
+
+    over_long_prompt = "filler text " * 400
+    """Around 1600 estimated tokens, well past the 1024 context the cases below ask for."""
+
+    @pytest.fixture
+    def context_fit_counter(self, monkeypatch: pytest.MonkeyPatch) -> _RecordingCounter:
+        """Replace the context fit counter with one that records its additions."""
+        import horde.metrics as metrics_module
+
+        counter = _RecordingCounter()
+        monkeypatch.setattr(metrics_module, "text_context_fit", counter)
+        return counter
+
+    def test_an_over_long_prompt_under_ignore_is_counted_as_sent_overlong(
+        self,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        context_fit_counter: _RecordingCounter,
+    ) -> None:
+        with queued_request(
+            client,
+            request_headers,
+            prompt=self.over_long_prompt,
+            params={"max_length": 240, "max_context_length": 1024},
+        ):
+            pass
+
+        assert context_fit_counter.attributes == [
+            {"horde.context_fit.mode": "ignore", "horde.context_fit.outcome": "sent_overlong"},
+        ]
+
+    def test_a_refused_prompt_under_reject_is_counted_as_refused(
+        self,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        context_fit_counter: _RecordingCounter,
+    ) -> None:
+        response = post_request(
+            client,
+            request_headers,
+            prompt=self.over_long_prompt,
+            context_fit="reject",
+            params={"max_length": 240, "max_context_length": 1024},
+        )
+        assert response.status_code == 400, response.get_data(as_text=True)
+
+        assert context_fit_counter.attributes == [
+            {"horde.context_fit.mode": "reject", "horde.context_fit.outcome": "refused"},
+        ]
+
+    def test_a_prompt_that_fits_is_counted_as_fitting(
+        self,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        context_fit_counter: _RecordingCounter,
+    ) -> None:
+        response = post_dry_run(
+            client,
+            request_headers,
+            context_fit="reject",
+            params={"max_length": 80, "max_context_length": 1024},
+        )
+        assert response.status_code == 200, response.get_data(as_text=True)
+
+        assert context_fit_counter.attributes == [
+            {"horde.context_fit.mode": "reject", "horde.context_fit.outcome": "fits"},
+        ]

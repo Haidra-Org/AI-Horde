@@ -913,3 +913,38 @@ class TestApplierLag:
         lag = kudos_applier_lag(now=datetime(2026, 1, 1, 0, 0, 30))
 
         assert lag == pytest.approx(30, abs=1)
+
+
+class TestStyleRewardOutcomeCounters:
+    """How the credited and forgiven parts of a style surcharge are counted."""
+
+    @pytest.fixture
+    def recorded(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[tuple[float, dict[str, str]]]]:
+        """Replace both counters with recorders and return what each recorded."""
+        import horde.metrics as metrics_module
+
+        recorded: dict[str, list[tuple[float, dict[str, str]]]] = {"credits": [], "forgiven": []}
+
+        class _Recorder:
+            def __init__(self, key: str) -> None:
+                self.key = key
+
+            def add(self, amount: float, attributes: dict[str, str]) -> None:
+                recorded[self.key].append((amount, attributes))
+
+        monkeypatch.setattr(metrics_module, "style_author_credits", _Recorder("credits"))
+        monkeypatch.setattr(metrics_module, "style_forgiven_surcharges", _Recorder("forgiven"))
+        return recorded
+
+    def test_a_partly_forgiven_surcharge_counts_both_parts(self, recorded) -> None:
+        StyleReward(author_id=1, amount=Decimal(2), style_type="text").count_outcome(Decimal(1))
+
+        assert recorded == {
+            "credits": [(1.0, {"horde.style.type": "text"})],
+            "forgiven": [(1.0, {"horde.style.type": "text"})],
+        }
+
+    def test_a_wholly_forgiven_surcharge_counts_no_credit(self, recorded) -> None:
+        StyleReward(author_id=1, amount=Decimal(2), style_type="image").count_outcome(Decimal(0))
+
+        assert recorded == {"credits": [], "forgiven": [(2.0, {"horde.style.type": "image"})]}

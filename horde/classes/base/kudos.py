@@ -166,6 +166,21 @@ class StyleReward:
             style_type=str(detail[KudosAuditDetail.STYLE_TYPE]),
         )
 
+    def count_outcome(self, credit: Decimal) -> None:
+        """Count the part of the surcharge credited to the author and the part the floor forgave.
+
+        Args:
+            credit: The part of the surcharge the author is credited.
+        """
+        from horde import metrics
+
+        attributes = {"horde.style.type": self.style_type}
+        if credit > 0:
+            metrics.style_author_credits.add(float(credit), attributes)
+        forgiven = self.amount - credit
+        if forgiven > 0:
+            metrics.style_forgiven_surcharges.add(float(forgiven), attributes)
+
     def collected(self, forgiven: Decimal) -> Decimal:
         """Return the part of the surcharge the debit collected.
 

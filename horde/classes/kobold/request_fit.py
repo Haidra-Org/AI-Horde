@@ -61,6 +61,22 @@ class ContextFit(enum.StrEnum):
     """Raise ``max_context_length`` until the prompt fits, and charge for the larger context."""
 
 
+class ContextFitOutcome(enum.StrEnum):
+    """What sizing a text request against its prompt came to, as counted in ``horde.text.context_fit``."""
+
+    FITS = "fits"
+    """The prompt fit the requested context, so nothing changed."""
+
+    SENT_OVERLONG = "sent_overlong"
+    """The prompt did not fit, and under ``ignore`` it was sent anyway."""
+
+    GROWN = "grown"
+    """The context was raised so the prompt fits."""
+
+    REFUSED = "refused"
+    """The request was refused with ``PromptExceedsContext``."""
+
+
 def parse_context_fit(raw_context_fit: object) -> ContextFit:
     """Resolve the request's ``context_fit``, defaulting to the long-standing behaviour.
 

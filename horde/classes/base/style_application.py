@@ -290,6 +290,31 @@ def format_text_style_prompt(
     return _restore_protected_placeholders("".join(formatted_parts), protected_placeholders)
 
 
+def count_literal_text_template_fields(template: str) -> int:
+    """Return how many replacement fields in a stored text template are sent as written.
+
+    A field that is more than a bare name is refused when a style is written, so only a template stored
+    before that rule has any. ``format_text_style_prompt`` sends such a field as written instead of
+    evaluating it.
+
+    Args:
+        template: The style's prompt template.
+
+    Returns:
+        The number of fields that are more than a bare name, or 0 when the template does not parse.
+    """
+    shielded_template, _protected_placeholders = _shield_protected_placeholders(template)
+    try:
+        template_parts = list(TEXT_TEMPLATE_FORMATTER.parse(shielded_template))
+    except ValueError:
+        return 0
+    return sum(
+        1
+        for _literal_text, field_name, format_spec, conversion in template_parts
+        if field_name is not None and not _is_plain_field(field_name, format_spec, conversion)
+    )
+
+
 def validate_text_template_fields(template: str) -> None:
     """Validate that every replacement field in a text template is a bare name.
 

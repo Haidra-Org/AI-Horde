@@ -18,6 +18,7 @@ from flask import render_template, request
 from flask_restx import Namespace, Resource, reqparse
 from flask_restx.reqparse import ParseResult
 from markdownify import markdownify
+from opentelemetry import trace
 from sqlalchemy import or_, text
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm.exc import StaleDataError
@@ -25,7 +26,7 @@ from sqlalchemy.orm.exc import StaleDataError
 import horde.apis.limiter_api as lim
 import horde.classes.base.stats as stats
 from horde import exceptions as e
-from horde import r2
+from horde import metrics, r2
 from horde.apis.models.v2 import Models, Parsers
 from horde.apis.request_utils import get_current_passkey_owner, get_remoteaddr
 from horde.argparser import args
@@ -105,6 +106,9 @@ parsers = Parsers()
 
 STYLE_OWNER_REWARD = 2
 """Kudos a request under someone else's style pays on top of its quote, and its style's author receives."""
+
+UNDECLARED_STYLE_DECLARATION = "undeclared"
+"""The policy label for a style that declares no ``parameter_policy``, in logs and metric attributes."""
 
 
 def assert_submitting_key(apikey: str, wp: WaitingPrompt) -> None:
@@ -290,6 +294,9 @@ class GenerateTemplate(Resource):
         # kudos cache never reaches it, and reports the request as it arrived.
         self.prompt = self.args.prompt
         self.existing_style = None
+        self.style_collection = None
+        self.resolved_template_fields = None
+        self.literal_template_fields = 0
         if self.args.params:
             self.params = self.args.params
         self.models = []
@@ -753,6 +760,7 @@ class GenerateTemplate(Resource):
         if not self.existing_style:
             raise e.ThingNotFound("Style", self.args.style)
         if isinstance(self.existing_style, StyleCollection):
+            self.style_collection = self.existing_style
             self.existing_style = self.draw_collection_style(self.existing_style)
         # If there's an attached shared key to the style, and it's not empty or expired, we use it.
         if self.existing_style.sharedkey and self.existing_style.sharedkey.is_valid()[0] is True:
@@ -814,16 +822,17 @@ class GenerateTemplate(Resource):
         try:
             declared_fields = load_template_fields(style.template_fields, style_name=style.name)
         except e.BadRequest:
+            logger.info(f"Style {style.id} '{style.name}' left out of a collection draw: its stored template_fields no longer validate")
             return False
         return template_fields_fit(declared_fields=declared_fields, supplied_field_names=supplied_fields.keys())
 
     def decide_style_surcharge(self) -> None:
         """Mutate the request so it pays the style surcharge when it runs under someone else's style.
 
-        A request under its own author's style pays nothing extra. The comparison needs both the style
-        and the user, and ``apply_style`` runs before the shared validation resolves the user, so each
+        A request under a style its requester authored pays nothing extra. The comparison needs both the
+        style and the user, and ``apply_style`` runs before the shared validation resolves the user, so each
         gentype calls this after ``super().validate()``. The two are compared by id, since the shared
-        validation resolves the user inside an app context of its own and the two rows can be separate
+        validation resolves the user inside a separate app context and the two rows can be separate
         instances.
         """
         if self.existing_style is None:
@@ -831,6 +840,63 @@ class GenerateTemplate(Resource):
         if self.existing_style.user_id == self.user.id:
             return
         self.style_kudos = True
+
+    def report_style_application(self) -> None:
+        """Log and count the style this request runs under, once the requesting user is known.
+
+        A queued request is logged at info and a dry run at debug, since clients preview a styled
+        request repeatedly while its inputs change. Both are counted. The style, its owner and the
+        requester go to the log line and the span; the counter carries only bounded labels.
+
+        Side Effects:
+            Writes a log line, adds to ``horde.style.applications`` and sets style attributes on the
+            current span.
+        """
+        if self.existing_style is None:
+            return
+        style = self.existing_style
+        policy_mode = UNDECLARED_STYLE_DECLARATION
+        if self.style_parameter_policy is not None:
+            policy_mode = self.style_parameter_policy.override.value
+        declared_field_count = 0
+        supplied_field_count = 0
+        if self.resolved_template_fields is not None:
+            declared_field_count = len(self.resolved_template_fields.declared_names)
+            supplied_field_count = len(self.resolved_template_fields.values)
+        collection_id = str(self.style_collection.id) if self.style_collection is not None else None
+        dry_run = bool(self.args.dry_run)
+        owner_alias = style.user.get_unique_alias()
+        log_line = (
+            f"Style applied: style {style.id} '{style.name}' type {style.style_type} owner {owner_alias} "
+            f"requester {self.user.get_unique_alias()} agent '{self.args['Client-Agent']}' "
+            f"collection {collection_id or 'none'} policy '{policy_mode}' "
+            f"template_fields={supplied_field_count}/{declared_field_count} "
+            f"literal_template_fields={self.literal_template_fields} surcharge={self.style_kudos} dry_run={dry_run}"
+        )
+        if dry_run:
+            logger.debug(log_line)
+        else:
+            logger.info(log_line)
+        metrics.style_applications.add(
+            1,
+            {
+                "horde.gentype": self.gentype,
+                "horde.style.source": "collection" if collection_id is not None else "style",
+                "horde.style.policy": policy_mode,
+                "horde.style.template_fields": "declared" if declared_field_count else "none",
+                "horde.style.surcharged": str(self.style_kudos).lower(),
+                "horde.dry_run": str(dry_run).lower(),
+            },
+        )
+        trace.get_current_span().set_attributes(
+            {
+                "horde.style.id": str(style.id),
+                "horde.style.owner_id": style.user_id,
+                "horde.style.collection_id": collection_id or "",
+                "horde.style.policy": policy_mode,
+                "horde.style.surcharged": self.style_kudos,
+            },
+        )
 
     def style_reward(self) -> StyleReward | None:
         """Return the style surcharge this request's activation debit includes, and its author.
@@ -897,6 +963,7 @@ class GenerateTemplate(Resource):
             declared_fields=load_template_fields(style.template_fields, style_name=style.name),
             supplied_fields=self.get_supplied_template_fields(),
         )
+        self.resolved_template_fields = resolved_template_fields
         self.params = merge_client_parameters(
             style_parameters=copy.deepcopy(style.params),
             client_parameters=self.params,

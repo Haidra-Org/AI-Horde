@@ -108,6 +108,55 @@ def resolve_collection_styles(style_references: Sequence[str]) -> tuple[list[Sty
     return styles, styles[0].style_type
 
 
+def describe_style(style: Style) -> str:
+    """Return the summary of a style that style write log lines carry.
+
+    Args:
+        style: The style written.
+
+    Returns:
+        The style's id, name, type, policy mode, declared field count and visibility.
+    """
+    stored_policy = style.parameter_policy if isinstance(style.parameter_policy, dict) else {}
+    stored_fields = style.template_fields if isinstance(style.template_fields, list) else []
+    policy_mode = stored_policy.get("override", "undeclared")
+    return (
+        f"style {style.id} '{style.name}' type {style.style_type} policy '{policy_mode}' "
+        f"template_fields={len(stored_fields)} public={style.public} nsfw={style.nsfw}"
+    )
+
+
+def describe_collection(collection: StyleCollection) -> str:
+    """Return the summary of a collection that collection write log lines carry.
+
+    Args:
+        collection: The collection written.
+
+    Returns:
+        The collection's id, name, type, style count and visibility.
+    """
+    return (
+        f"collection {collection.id} '{collection.name}' type {collection.style_type} "
+        f"styles={len(collection.styles)} public={collection.public}"
+    )
+
+
+STYLE_PATCH_FIELDS = (
+    "name",
+    "info",
+    "public",
+    "nsfw",
+    "prompt",
+    "params",
+    "parameter_policy",
+    "template_fields",
+    "models",
+    "tags",
+    "sharedkey",
+)
+"""The style PATCH arguments a patch log line lists when the request carries them."""
+
+
 ## Styles
 
 
@@ -401,6 +450,8 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
         self.existing_style.set_models(self.models)
         self.existing_style.set_tags(self.tags)
         clear_cached_responses(style_read_cache_keys(self.existing_style, names=(previous_name, self.existing_style.name)))
+        patched_fields = ",".join(field for field in STYLE_PATCH_FIELDS if self.args.get(field) is not None)
+        logger.info(f"Style patched: {describe_style(self.existing_style)} by {self.user.get_unique_alias()} fields={patched_fields}")
         return {
             "id": self.existing_style.id,
             "message": "OK",
@@ -434,8 +485,10 @@ class SingleStyleTemplate(SingleStyleTemplateGet):
             logger.info(f"Moderator {self.user.moderator} deleted style {self.existing_style.id}")
         # Read from the style before the delete removes it.
         cached_read_keys = style_read_cache_keys(self.existing_style, names=(self.existing_style.name,))
+        deleted_style = describe_style(self.existing_style)
         self.existing_style.delete()
         clear_cached_responses(cached_read_keys)
+        logger.info(f"Style deleted: {deleted_style} by {self.user.get_unique_alias()}")
         return ({"message": "OK"}, 200)
 
 
@@ -625,6 +678,7 @@ class Collection(Resource):
             public=self.args.public,
         )
         new_collection.create(self.styles)
+        logger.info(f"Collection created: {describe_collection(new_collection)} by {self.user.get_unique_alias()}")
         return {
             "id": new_collection.id,
             "message": "OK",
@@ -761,6 +815,7 @@ class SingleCollection(SingleCollectionGet):
                 "message": "OK",
             }, 200
         db.session.commit()
+        logger.info(f"Collection patched: {describe_collection(self.existing_collection)} by {self.user.get_unique_alias()}")
         return {
             "id": self.existing_collection.id,
             "message": "OK",
@@ -789,7 +844,9 @@ class SingleCollection(SingleCollectionGet):
             raise e.Forbidden(f"This Collection is not owned by user {self.user.get_unique_alias()}")
         if self.existing_collection.user_id != self.user.id and self.user.moderator:
             logger.info(f"Moderator {self.user.moderator} deleted collection {self.existing_collection.id}")
+        deleted_collection = describe_collection(self.existing_collection)
         self.existing_collection.delete()
+        logger.info(f"Collection deleted: {deleted_collection} by {self.user.get_unique_alias()}")
         return ({"message": "OK"}, 200)
 
 

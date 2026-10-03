@@ -17,6 +17,7 @@ from horde.apis.v2.styles import (
     StyleTemplate,
     api,
     clear_cached_responses,
+    describe_style,
     request_carries_a_user_key,
     style_read_cache_keys,
 )
@@ -174,6 +175,7 @@ class ImageStyle(ImageStyleContractArgs, StyleTemplate):
         new_style.create()
         new_style.set_models(self.models)
         new_style.set_tags(self.tags)
+        logger.info(f"Style created: {describe_style(new_style)} by {self.user.get_unique_alias()}")
         return {
             "id": new_style.id,
             "message": "OK",
@@ -374,6 +376,10 @@ class ImageStyleExample(Resource):
         db.session.add(new_example)
         db.session.commit()
         clear_cached_responses(style_read_cache_keys(self.existing_style, names=(self.existing_style.name,)))
+        logger.info(
+            f"Style example added: style {self.existing_style.id} example {new_example.id} "
+            f"by {self.user.get_unique_alias()} primary={new_example.primary}",
+        )
         return {
             "id": new_example.id,
             "message": "OK",
@@ -453,6 +459,10 @@ class SingleImageStyleExample(Resource):
             self.example.url = self.args.url
         db.session.commit()
         clear_cached_responses(style_read_cache_keys(self.existing_style, names=(self.existing_style.name,)))
+        logger.info(
+            f"Style example patched: style {self.existing_style.id} example {self.example.id} "
+            f"by {self.user.get_unique_alias()} primary={self.example.primary}",
+        )
         return {
             "id": self.example.id,
             "message": "OK",
@@ -488,7 +498,11 @@ class SingleImageStyleExample(Resource):
             for example in self.existing_style.examples:
                 if example.id != self.example.id:
                     example.primary = True
+        deleted_example_id = self.example.id
         db.session.delete(self.example)
         db.session.commit()
         clear_cached_responses(style_read_cache_keys(self.existing_style, names=(self.existing_style.name,)))
+        logger.info(
+            f"Style example deleted: style {self.existing_style.id} example {deleted_example_id} by {self.user.get_unique_alias()}",
+        )
         return ({"message": "OK"}, 200)

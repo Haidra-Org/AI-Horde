@@ -772,6 +772,7 @@ def _credit_style_authors(
         remaining = unattributed.get(row.user_id, Decimal(0))
         credit = reward.collected(remaining)
         unattributed[row.user_id] = remaining - (reward.amount - credit)
+        reward.count_outcome(credit)
         if credit <= 0:
             continue
         author = users_by_id.get(reward.author_id)

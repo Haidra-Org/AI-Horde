@@ -605,6 +605,31 @@ submit_outcomes = logfire.metric_counter(
     description="/generate/submit outcomes",
 )
 
+# --- styles ------------------------------------------------------------------
+style_applications = logfire.metric_counter(
+    "horde.style.applications",
+    unit="1",
+    description=(
+        "Generate requests that ran under a style, split by gentype, whether a collection supplied the style, "
+        "the style's policy mode, whether it declares template fields, whether the surcharge applied, and dry run"
+    ),
+)
+style_author_credits = logfire.metric_counter(
+    "horde.style.author_credits",
+    unit="kudos",
+    description="Kudos credited to style authors from the surcharge their requesters paid, split by style type",
+)
+style_forgiven_surcharges = logfire.metric_counter(
+    "horde.style.forgiven_surcharges",
+    unit="kudos",
+    description="Style surcharge the minimum-balance floor forgave, and so was not credited, split by style type",
+)
+text_context_fit = logfire.metric_counter(
+    "horde.text.context_fit",
+    unit="1",
+    description="Text requests sized against their prompt, split by context_fit mode and outcome",
+)
+
 # --- API refusals -------------------------------------------------------------
 api_rejections = logfire.metric_counter(
     "horde.api.rejections",

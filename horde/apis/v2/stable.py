@@ -197,6 +197,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             self.models = ["stable_diffusion"]
         super().validate()
         self.decide_style_surcharge()
+        self.report_style_application()
         # Validated against the models the job will actually run on, which is what ImageWaitingPrompt is
         # built with below. A style replaces both the params and the model list, so reading the request's
         # own list here would check the style's settings against models it is not going to use.

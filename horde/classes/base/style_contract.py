@@ -39,6 +39,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from horde import exceptions as e
+from horde.logger import logger
 
 MAX_TEMPLATE_FIELDS = 16
 """Maximum number of placeholders a single style may declare."""
@@ -483,8 +484,12 @@ def _as_invalid_stored_declaration(error: ValidationError, *, subject: str, styl
     Raises:
         horde.exceptions.BadRequest: Always, with the ``StyleDeclarationInvalid`` return code.
     """
+    reasons = _validation_reasons(error)
+    # A stored declaration only stops validating when the rules or a params model change after the style
+    # was written, so every occurrence is a style its author has to fix.
+    logger.warning(f"Stored style declaration invalid: style '{style_name}' {subject}: {reasons}")
     raise e.BadRequest(
-        f"Style '{style_name}' cannot be applied because its stored '{subject}' is not valid. {_validation_reasons(error)}.",
+        f"Style '{style_name}' cannot be applied because its stored '{subject}' is not valid. {reasons}.",
         rc="StyleDeclarationInvalid",
     )
 
