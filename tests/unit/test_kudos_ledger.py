@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -33,18 +34,19 @@ from sqlalchemy import text
 from horde.classes.base.kudos import (
     KudosLedger,
     KudosStatEvent,
+    StyleReward,
     emit_kudos_ledger_entry,
     emit_kudos_stat_event,
     kudos_event,
 )
-from horde.classes.base.user import User, UserStats
+from horde.classes.base.user import User, UserRecords, UserStats
 from horde.classes.base.worker import WorkerTemplate
 from horde.database.kudos_ledger import (
     apply_pending_kudos,
     kudos_applier_lag,
     prune_applied_kudos_ledger,
 )
-from horde.enums import KudosEntryType, KudosStatRecord, KudosUnit, UserRoleTypes
+from horde.enums import KudosEntryType, KudosStatRecord, KudosUnit, UserRecordTypes, UserRoleTypes
 from horde.flask import db
 
 
@@ -235,6 +237,93 @@ class TestStyleRewardEmission:
         assert len(rows) == 1
         assert rows[0].amount == 2
         assert rows[0].entry_type == KudosEntryType.STYLE_REWARD
+
+
+STYLE_SURCHARGE = Decimal(2)
+"""The style surcharge the attribution cases carry on an activation debit."""
+
+ACTIVATION_DEBIT = 3
+"""An activation debit made of a one-kudo horde tax and the style surcharge."""
+
+
+class TestStyleRewardAttribution:
+    """The applier credits a style's author only the part of the surcharge the requester's debit collected."""
+
+    def _debit_with_surcharge(self, requester: User, author: User) -> None:
+        with kudos_event():
+            requester.record_usage(
+                raw_things=0,
+                kudos=ACTIVATION_DEBIT,
+                usage_type="text",
+                style_reward=StyleReward(author_id=author.id, amount=STYLE_SURCHARGE, style_type="text"),
+            )
+
+    def _style_rewards(self, db_session: Any, author: User) -> list[KudosLedger]:
+        return _ledger_rows(db_session, user_id=author.id, entry_type=KudosEntryType.STYLE_REWARD)
+
+    def test_a_funded_debit_credits_the_whole_surcharge(self, db_session, make_user):
+        requester = make_user(kudos=1000)
+        author = make_user(kudos=100)
+        self._debit_with_surcharge(requester, author)
+        db_session.commit()
+
+        _settle_all(db_session)
+
+        db_session.refresh(author)
+        assert author.kudos == 100 + STYLE_SURCHARGE
+        assert [row.amount for row in self._style_rewards(db_session, author)] == [STYLE_SURCHARGE]
+
+    def test_a_debit_the_floor_forgives_credits_nothing(self, db_session, make_user):
+        requester = make_user()
+        requester.kudos = requester.get_min_kudos()
+        author = make_user(kudos=100)
+        self._debit_with_surcharge(requester, author)
+        db_session.commit()
+
+        _settle_all(db_session)
+
+        db_session.refresh(author)
+        assert author.kudos == 100
+        assert self._style_rewards(db_session, author) == []
+
+    def test_the_forgiven_part_is_taken_from_the_surcharge_first(self, db_session, make_user):
+        """Headroom of the horde tax plus one kudo leaves one kudo of the surcharge forgiven."""
+        requester = make_user()
+        requester.kudos = requester.get_min_kudos() + ACTIVATION_DEBIT - 1
+        author = make_user(kudos=100)
+        self._debit_with_surcharge(requester, author)
+        db_session.commit()
+
+        _settle_all(db_session)
+
+        db_session.refresh(author)
+        assert author.kudos == 100 + STYLE_SURCHARGE - 1
+
+    def test_one_batch_attributes_the_forgiven_amount_in_posting_order(self, db_session, make_user):
+        """Two debits short by three in total: the first surcharge absorbs two, the second the remaining one."""
+        requester = make_user()
+        requester.kudos = requester.get_min_kudos() + 2 * ACTIVATION_DEBIT - 3
+        author = make_user(kudos=100)
+        self._debit_with_surcharge(requester, author)
+        self._debit_with_surcharge(requester, author)
+        db_session.commit()
+
+        _settle_all(db_session)
+
+        db_session.refresh(author)
+        assert author.kudos == 100 + 1
+        assert [row.amount for row in self._style_rewards(db_session, author)] == [Decimal(1)]
+
+    def test_a_credit_counts_once_in_the_authors_style_record(self, db_session, make_user):
+        requester = make_user(kudos=1000)
+        author = make_user(kudos=100)
+        self._debit_with_surcharge(requester, author)
+        db_session.commit()
+
+        _settle_all(db_session)
+
+        record = db_session.query(UserRecords).filter_by(user_id=author.id, record_type=UserRecordTypes.STYLE, record="text").one()
+        assert record.value == 1
 
 
 class TestAwardEmission:

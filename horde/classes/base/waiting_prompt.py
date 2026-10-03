@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta
+from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -23,10 +24,11 @@ from sqlalchemy.sql import expression
 
 from horde import vars as hv
 from horde.bridge_reference import check_bridge_capability
-from horde.classes.base.kudos import kudos_event
+from horde.classes.base.kudos import StyleReward, kudos_event
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
+from horde.database.kudos_legacy_projection import project_style_reward
 from horde.enums import RequestTerminalOutcome
 from horde.exceptions import is_deadlock_error
 from horde.flask import SQLITE_MODE, db
@@ -252,7 +254,17 @@ class WaitingPrompt(db.Model):
         downgrade_wp_priority: bool = False,
         extra_source_images: list[dict[str, object]] | None = None,
         kudos_adjustment: float = 0,
+        *,
+        style_reward: StyleReward | None = None,
     ) -> None:
+        """Put the request on the queue and debit its horde tax.
+
+        Args:
+            downgrade_wp_priority: Queue the request at anonymous priority.
+            extra_source_images: The request's extra source images, each of which adds to the horde tax.
+            kudos_adjustment: An extra charge added to the horde tax.
+            style_reward: The style surcharge ``kudos_adjustment`` includes and the style author it is owed to.
+        """
         with logfire.span("horde.wp.activate", wp_id=str(self.id)):
             t0 = time.monotonic()
             wp_type = getattr(self, "wp_type", "unknown")
@@ -260,7 +272,12 @@ class WaitingPrompt(db.Model):
             try:
                 for attempt in range(1, WP_ACTIVATION_MAX_ATTEMPTS + 1):
                     try:
-                        self._activate(downgrade_wp_priority, extra_source_images, kudos_adjustment)
+                        self._activate(
+                            downgrade_wp_priority,
+                            extra_source_images,
+                            kudos_adjustment,
+                            style_reward=style_reward,
+                        )
                         break
                     except OperationalError as error:
                         if not is_deadlock_error(error) or attempt == WP_ACTIVATION_MAX_ATTEMPTS:
@@ -286,6 +303,8 @@ class WaitingPrompt(db.Model):
         downgrade_wp_priority: bool = False,
         extra_source_images: list[dict[str, object]] | None = None,
         kudos_adjustment: float = 0,
+        *,
+        style_reward: StyleReward | None = None,
     ) -> None:
         """We separate the activation from __init__ as often we want to check if there's a valid worker for it
         Before we add it to the queue
@@ -318,7 +337,18 @@ class WaitingPrompt(db.Model):
             _t_ru = time.monotonic()
             try:
                 with kudos_event(job_id=self.id, wp_type=self.wp_type):
-                    self.record_usage(raw_things=0, kudos=horde_tax, usage_type=self.wp_type, avoid_burn=True)
+                    forgiven = self.record_usage(
+                        raw_things=0,
+                        kudos=horde_tax,
+                        usage_type=self.wp_type,
+                        avoid_burn=True,
+                        style_reward=style_reward,
+                    )
+                    # The author is owed only what the debit collected. Shadow mode applies the floor
+                    # inline and so knows the forgiven part here; ledger mode credits nothing here and
+                    # the applier credits the author when it folds the debit.
+                    if style_reward is not None:
+                        project_style_reward(style_reward, forgiven=forgiven)
             finally:
                 wp_activate_base_record_usage_duration.record(time.monotonic() - _t_ru, {})
         # logger.debug(f"wp {self.id} initiated and paying horde tax: {horde_tax}")
@@ -842,24 +872,39 @@ class WaitingPrompt(db.Model):
         usage_type: str,
         avoid_burn: bool = False,
         commit: bool = True,
-    ) -> None:
+        *,
+        style_reward: StyleReward | None = None,
+    ) -> Decimal:
         """Record that we received a requested generation and how much kudos it costs us
         We use 'thing' here as we do not care what type of thing we're recording at this point
         This avoids me having to extend this just to change a var name
+
+        Args:
+            raw_things: The things generated.
+            kudos: The kudos to debit, before any extra burn.
+            usage_type: The record the usage counts under.
+            avoid_burn: Debit ``kudos`` without the extra burn.
+            commit: Commit the session afterwards.
+            style_reward: The style surcharge ``kudos`` includes, carried to the requester's debit.
+
+        Returns:
+            The part of the debit the minimum-balance floor forgave inline (see ``User.record_usage``).
         """
         if not avoid_burn:
             kudos = self.calculate_extra_kudos_burn(kudos)
         if self.sharedkey_id is not None:
             self.sharedkey.consume_kudos(kudos, commit=False)
-        self.user.record_usage(
+        forgiven = self.user.record_usage(
             raw_things,
             kudos,
             usage_type,
             commit=False,
             reservation_id=f"upfront:{self.id}",
+            style_reward=style_reward,
         )
         self.consumed_kudos = round(self.consumed_kudos + kudos, 2)
         self.refresh(commit=commit)
+        return forgiven
 
     def extrapolate_dry_run_kudos(self, extra_source_images_count=0, kudos_adjustment=0):
         kudos = self.calculate_kudos()

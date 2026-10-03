@@ -492,6 +492,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             source_mask=self.source_mask,
             extra_source_images=self.args.extra_source_images,
             kudos_adjustment=STYLE_OWNER_REWARD if self.style_kudos is True else 0,
+            style_reward=self.style_reward(),
         )
 
     def style_contract_vocabulary(self) -> StyleContractVocabulary:

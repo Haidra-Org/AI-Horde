@@ -19,7 +19,7 @@ from __future__ import annotations
 import contextlib
 import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
@@ -46,7 +46,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import and_, column, false, true
 
-from horde.enums import KudosEntryType, KudosLedgerMode, KudosStatEventQuarantineReason, KudosUnit
+from horde.enums import KudosAuditDetail, KudosEntryType, KudosLedgerMode, KudosStatEventQuarantineReason, KudosUnit
 from horde.flask import db
 
 if TYPE_CHECKING:
@@ -115,6 +115,70 @@ def _coerce_uuid(value: uuid.UUID | str | None) -> uuid.UUID | None:
     if isinstance(value, uuid.UUID):
         return value
     return uuid.UUID(str(value))
+
+
+@dataclass(frozen=True)
+class StyleReward:
+    """The style surcharge an activation debit includes, and the style author it is owed to.
+
+    The surcharge is collected through the requester's activation debit, and the minimum-balance floor can
+    forgive part or all of that debit. The author is credited only what the debit collected, with the
+    forgiven amount attributed to the surcharge first.
+    """
+
+    author_id: int
+    """The user id of the style's author."""
+    amount: Decimal
+    """The surcharge the activation debit includes."""
+    style_type: str
+    """The style's type (``text`` or ``image``), which is the record the author's style count is kept under."""
+
+    def audit_detail(self) -> KudosAuditMetadata:
+        """Return the activation debit's detail entries that carry this reward to the applier.
+
+        Returns:
+            The detail entries, keyed by :class:`~horde.enums.KudosAuditDetail` members.
+        """
+        return {
+            KudosAuditDetail.STYLE_AUTHOR_ID: self.author_id,
+            KudosAuditDetail.STYLE_SURCHARGE: str(self.amount),
+            KudosAuditDetail.STYLE_TYPE: self.style_type,
+        }
+
+    @classmethod
+    def from_audit_detail(cls, detail: Mapping[str, object] | None) -> StyleReward | None:
+        """Read the reward a posting's detail carries.
+
+        Args:
+            detail: The posting's audit detail.
+
+        Returns:
+            The reward, or None when the posting carries none.
+        """
+        if not detail:
+            return None
+        author_id = detail.get(KudosAuditDetail.STYLE_AUTHOR_ID)
+        if author_id is None:
+            return None
+        return cls(
+            author_id=int(str(author_id)),
+            amount=Decimal(str(detail[KudosAuditDetail.STYLE_SURCHARGE])),
+            style_type=str(detail[KudosAuditDetail.STYLE_TYPE]),
+        )
+
+    def collected(self, forgiven: Decimal) -> Decimal:
+        """Return the part of the surcharge the debit collected.
+
+        Args:
+            forgiven: The floor-forgiven amount not yet attributed to another surcharge of the same
+                requester. The forgiven amount is attributed to the surcharge first, so up to the whole
+                surcharge is absorbed before any of the base charge is.
+
+        Returns:
+            The surcharge minus the part of it the floor absorbed, never negative.
+        """
+        absorbed = min(self.amount, max(forgiven, Decimal(0)))
+        return self.amount - absorbed
 
 
 class KudosLedger(db.Model):  # type: ignore[name-defined,misc]
@@ -456,7 +520,8 @@ def emit_kudos_ledger_entry(
         amount: Signed currency delta applied to the target balance.
         user_id: Target user's required database id.
         escrow: Route a user posting into the evaluation escrow balance.
-        detail: Optional audit metadata; written but not read by the applier.
+        detail: Optional audit metadata. The applier reads only the documented
+            :class:`~horde.enums.KudosAuditDetail` keys.
         force_projection: Leave the posting unapplied even in shadow mode. This
             is reserved for projector-authored recovery/floor movements.
         commit: Commit the session after adding the row.

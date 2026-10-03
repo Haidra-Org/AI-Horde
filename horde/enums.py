@@ -25,7 +25,8 @@ class KudosEntryType(enum.StrEnum):
     * ``TRANSFER`` -- a user-to-user gift: source debit and destination credit.
     * ``ADMIN_ADJUSTMENT`` -- an administrator balance delta.
     * ``AWARD`` -- an award or recurring monthly-kudos credit.
-    * ``STYLE_REWARD`` -- the fixed style-owner credit on a styled generation.
+    * ``STYLE_REWARD`` is the style-owner credit for the part of a style surcharge
+      that the requester's activation debit collected.
     * ``STAT_RECORD`` -- a per-user records movement (request/fulfilment counts
       and scaled thing totals); denominated in ``count`` or ``things``, not kudos.
     * ``STAT_CONTRIBUTION`` -- a worker aggregate movement (contributions things,
@@ -102,6 +103,12 @@ class KudosAuditDetail(enum.StrEnum):
     RESERVATION_ID = "reservation_id"
     SNAPSHOT_ID = "snapshot_id"
     TOUCH_LAST_ACTIVE = "touch_last_active"
+    STYLE_AUTHOR_ID = "style_author_id"
+    """On an activation debit, the user id of the author of the style the request runs under."""
+    STYLE_SURCHARGE = "style_surcharge"
+    """On an activation debit, the part of the debit that is the style surcharge owed to the author."""
+    STYLE_TYPE = "style_type"
+    """On an activation debit, the style's type, which is the record the author's style count is kept under."""
 
 
 class State(enum.Enum):
