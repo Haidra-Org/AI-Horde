@@ -2,10 +2,18 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from flask import has_request_context, request
 from werkzeug import exceptions as wze
 
+from horde import metrics
 from horde.logger import logger
 from horde.vars import horde_title
+
+UNLISTED_RETURN_CODE = "Unlisted"
+"""The return code label a refusal is counted under when its code is not in ``KNOWN_RC``, which keeps the label bounded."""
+
+UNMATCHED_ROUTE = "unmatched"
+"""The route label a refusal is counted under when it was raised outside a matched route."""
 
 KNOWN_RC = [
     "MissingPrompt",
@@ -633,10 +641,41 @@ class MaintenanceMode(wze.BadRequest):
         self.rc = rc
 
 
+def rejection_attributes(error: wze.HTTPException) -> dict[str, str | int]:
+    """Return the metric attributes a refusal is counted under.
+
+    The route is the matched URL rule, not the request path, so the label stays bounded by the number of
+    routes.
+
+    Args:
+        error: The refusal being returned.
+
+    Returns:
+        The return code, HTTP status, route and method.
+    """
+    return_code = getattr(error, "rc", None)
+    route = UNMATCHED_ROUTE
+    method = UNMATCHED_ROUTE
+    if has_request_context():
+        method = request.method
+        if request.url_rule is not None:
+            route = request.url_rule.rule
+    return {
+        "horde.rc": return_code if return_code in KNOWN_RC else UNLISTED_RETURN_CODE,
+        "http.response.status_code": error.code,
+        "http.route": route,
+        "http.request.method": method,
+    }
+
+
 def handle_bad_requests(error):
     """Namespace error handler"""
+    metrics.api_rejections.add(1, rejection_attributes(error))
     if error.log:
         logger.warning(f"{error.rc}: {error.log}")
+    else:
+        # The counter carries the volume; the line is for following one refusal while debugging.
+        logger.debug(f"{error.rc}: {error.specific}")
     return (
         {
             "message": error.specific,

@@ -251,3 +251,51 @@ def test_nul_byte_payload_is_rejected_cleanly(client, auth):
     )
     assert resp.status_code == 400
     assert resp.get_json()["rc"] == "NulByteInPayload"
+
+
+class _RecordingCounter:
+    """Stands in for a metric counter and keeps what was added."""
+
+    def __init__(self) -> None:
+        self.additions: list[tuple[int, dict]] = []
+
+    def add(self, amount: int, attributes: dict) -> None:
+        self.additions.append((amount, attributes))
+
+
+@pytest.fixture
+def rejection_counter(monkeypatch: pytest.MonkeyPatch) -> _RecordingCounter:
+    """Replace the API refusal counter with one that records its additions."""
+    import horde.metrics as metrics_module
+
+    counter = _RecordingCounter()
+    monkeypatch.setattr(metrics_module, "api_rejections", counter)
+    return counter
+
+
+def test_a_refusal_is_counted_by_return_code_and_route(client, auth, rejection_counter) -> None:
+    response = client.get("/api/v2/styles/image/00000000-0000-0000-0000-000000000000", headers=auth)
+    assert response.status_code == 404, response.get_data(as_text=True)
+
+    assert rejection_counter.additions == [
+        (
+            1,
+            {
+                "horde.rc": "Unlisted",
+                "http.response.status_code": 404,
+                "http.route": "/api/v2/styles/image/<string:style_id>",
+                "http.request.method": "GET",
+            },
+        ),
+    ]
+
+
+def test_a_listed_return_code_is_counted_as_itself(client, auth, rejection_counter) -> None:
+    response = client.post(
+        "/api/v2/generate/text/async",
+        json={"prompt": "a prompt", "template_fields": {"tone": "plain"}},
+        headers=auth,
+    )
+    assert response.status_code == 400, response.get_data(as_text=True)
+
+    assert [attributes["horde.rc"] for _, attributes in rejection_counter.additions] == ["TemplateFieldsRequireStyle"]
