@@ -17,6 +17,7 @@ from horde.classes.base.style_application import (
     format_text_style_prompt,
     merge_client_parameters,
     resolve_template_field_values,
+    template_fields_fit,
     validate_text_template_fields,
 )
 from horde.classes.base.style_contract import StyleParameterPolicy, StyleTemplateField
@@ -263,6 +264,31 @@ class TestTemplateFields:
             )
 
         assert rejection.value.rc == "InvalidPromptSize"
+
+
+class TestTemplateFieldsFit:
+    """Which styles accept the template fields a request supplies, for drawing from a collection."""
+
+    declared = (
+        StyleTemplateField(name="caption", description="What the picture shows", required=True),
+        StyleTemplateField(name="tags", description="Comma-separated tags", required=False),
+    )
+
+    def test_the_required_fields_alone_fit(self) -> None:
+        assert template_fields_fit(declared_fields=self.declared, supplied_field_names=["caption"])
+
+    def test_required_and_optional_fields_together_fit(self) -> None:
+        assert template_fields_fit(declared_fields=self.declared, supplied_field_names=["caption", "tags"])
+
+    def test_leaving_out_a_required_field_does_not_fit(self) -> None:
+        assert not template_fields_fit(declared_fields=self.declared, supplied_field_names=["tags"])
+
+    def test_a_field_the_style_does_not_declare_does_not_fit(self) -> None:
+        assert not template_fields_fit(declared_fields=self.declared, supplied_field_names=["caption", "mood"])
+
+    def test_a_style_declaring_nothing_fits_only_a_request_supplying_nothing(self) -> None:
+        assert template_fields_fit(declared_fields=(), supplied_field_names=[])
+        assert not template_fields_fit(declared_fields=(), supplied_field_names=["caption"])
 
 
 class TestTextPromptFormatting:

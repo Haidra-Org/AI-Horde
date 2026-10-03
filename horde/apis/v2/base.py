@@ -7,6 +7,7 @@ import json
 import os
 import random
 import time
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -36,6 +37,7 @@ from horde.classes.base.style import Style, StyleCollection
 from horde.classes.base.style_application import (
     merge_client_parameters,
     resolve_template_field_values,
+    template_fields_fit,
 )
 from horde.classes.base.style_contract import (
     StyleContractVocabulary,
@@ -760,21 +762,60 @@ class GenerateTemplate(Resource):
         """Return a style drawn at random from a collection, and count the collection's use.
 
         A collection has no prompt, params or shared key of its own, so the request runs under the drawn
-        style from here on, and each gentype checks that style against the request type.
+        style from here on, and each gentype checks that style against the request type. The draw is
+        only among the styles that accept the request's template fields: a collection's styles can
+        declare different fields, and drawing from all of them would make the same request succeed or
+        fail by chance.
 
         Args:
             collection: The collection the request specified.
 
         Returns:
-            One of the collection's styles.
+            One of the collection's styles that accepts the request's template fields.
 
         Raises:
-            horde.exceptions.BadRequest: If every style the collection held has been deleted.
+            horde.exceptions.BadRequest: If every style the collection held has been deleted, or with the
+                ``TemplateFieldsMatchNoCollectionStyle`` return code if none of its styles accepts the
+                request's template fields.
         """
         if not collection.styles:
             raise e.BadRequest(f"Collection '{collection.name}' holds no styles.")
+        supplied_fields = self.get_supplied_template_fields()
+        if supplied_fields is None:
+            supplied_fields = {}
+        if not isinstance(supplied_fields, Mapping):
+            # A malformed object is refused once a style is drawn, by the same check a single style uses.
+            fitting_styles = list(collection.styles)
+        else:
+            fitting_styles = [style for style in collection.styles if self._accepts_template_fields(style, supplied_fields)]
+        if not fitting_styles:
+            raise e.BadRequest(
+                f"No style in collection '{collection.name}' accepts the template fields this request supplies. "
+                "Each style's template_fields lists the fields it declares and which are required.",
+                rc="TemplateFieldsMatchNoCollectionStyle",
+            )
         collection.use_count += 1
-        return random.choice(collection.styles)
+        return random.choice(fitting_styles)
+
+    @staticmethod
+    def _accepts_template_fields(style: Style, supplied_fields: Mapping[str, object]) -> bool:
+        """Report whether a collection's style accepts the template fields a request supplies.
+
+        A style whose stored declaration no longer validates accepts nothing, so it is left out of the draw
+        rather than failing the request when drawn.
+
+        Args:
+            style: One of the collection's styles.
+            supplied_fields: The ``template_fields`` object from the request body.
+
+        Returns:
+            True when the request could run under the style as far as its template fields go.
+        """
+        try:
+            declared_fields = load_template_fields(style.template_fields, style_name=style.name)
+        except e.BadRequest:
+            return False
+        return template_fields_fit(declared_fields=declared_fields, supplied_field_names=supplied_fields.keys())
 
     def decide_style_surcharge(self) -> None:
         """Mutate the request so it pays the style surcharge when it runs under someone else's style.

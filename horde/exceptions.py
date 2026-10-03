@@ -157,6 +157,7 @@ KNOWN_RC = [
     "StylesAnonForbidden",
     "StylePromptMissingVars",
     "StylePromptFieldInvalid",
+    "TemplateFieldsMatchNoCollectionStyle",
     "StylesRequiresCustomizer",
     "StyleMismatch",
     "StyleGetMistmatch",
