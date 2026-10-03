@@ -55,7 +55,7 @@ class StripeCache(PrimaryTimedFunction):
             return 20_000
         if product_name == "Recognised":
             return 75_000
-        if product_name == "Cherised":
+        if product_name == "Cherished":
             return 200_000
         if product_name == "Treasured":
             return 700_000
