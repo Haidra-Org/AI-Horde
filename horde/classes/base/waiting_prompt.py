@@ -199,6 +199,9 @@ class WaitingPrompt(db.Model):
         nullable=True,
     )
     sharedkey = db.relationship("UserSharedKey", back_populates="waiting_prompts")
+    # The style the request runs under, drawn from a collection when the request specified one. Copied to
+    # the generation statistics on submit. No foreign key, so deleting a style leaves running requests alone.
+    style_id = db.Column(uuid_column_type(), nullable=True)
     proxied_account = db.Column(db.String(255), nullable=True)
 
     tricked_workers: Mapped[list[WPTrickedWorkers]] = relationship(

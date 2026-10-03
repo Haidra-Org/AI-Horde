@@ -5,11 +5,14 @@
 from datetime import datetime
 
 from sqlalchemy import Enum
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.exc import SQLAlchemyError
 
 from horde.enums import ImageGenState
-from horde.flask import db
+from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
+
+uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # noqa E731
 
 
 def record_text_statistic(procgen):
@@ -37,6 +40,7 @@ def record_text_statistic(procgen):
         prompt_length=len(procgen.wp.prompt),
         bridge_agent=procgen.worker.bridge_agent,
         client_agent=procgen.wp.client_agent,
+        style_id=procgen.wp.style_id,
         state=state,
     )
     try:
@@ -64,6 +68,9 @@ class TextGenerationStatistic(db.Model):
     client_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
     state = db.Column(Enum(ImageGenState), default=ImageGenState.OK, nullable=False, index=True)
+    # The style the generation ran under, drawn from a collection when the request specified one. No foreign
+    # key: the statistic outlives a deleted style, and an id is what per-style analysis groups by.
+    style_id = db.Column(uuid_column_type(), nullable=True)
 
 
 class CompiledTextGensStatsTotals(db.Model):

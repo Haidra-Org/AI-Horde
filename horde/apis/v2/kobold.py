@@ -161,6 +161,7 @@ class TextAsyncGenerate(GenerateTemplate):
             safe_ip=True,
             client_agent=self.args["Client-Agent"],
             sharedkey_id=self.sharedkey.id if self.sharedkey else None,
+            style_id=self.existing_style.id if self.existing_style is not None else None,
             proxied_account=self.args["proxied_account"],
             webhook=self.args.webhook,
         )

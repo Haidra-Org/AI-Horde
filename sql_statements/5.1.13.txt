@@ -20,3 +20,22 @@ COMMENT ON COLUMN styles.parameter_policy IS
   'Which generation params a request under this style may set, and the ceilings it may not exceed. Null means none.';
 COMMENT ON COLUMN styles.template_fields IS
   'The placeholders this style''s prompt accepts from the request, beyond {p}. Null means none.';
+
+-- The style a generation ran under, recorded on the waiting prompt and copied to
+-- the generation statistic on submit, so style use can be analysed per style. A
+-- collection request records the style drawn from it. Nullable with no default
+-- and no foreign key, so these are catalogue-only changes as well, and a deleted
+-- style leaves its statistics in place.
+ALTER TABLE waiting_prompts
+  ADD COLUMN IF NOT EXISTS style_id UUID NULL;
+ALTER TABLE image_gen_stats
+  ADD COLUMN IF NOT EXISTS style_id UUID NULL;
+ALTER TABLE text_gen_stats
+  ADD COLUMN IF NOT EXISTS style_id UUID NULL;
+
+COMMENT ON COLUMN waiting_prompts.style_id IS
+  'The style the request runs under, drawn from a collection when the request specified one. Null when unstyled.';
+COMMENT ON COLUMN image_gen_stats.style_id IS
+  'The style the generation ran under. Null when unstyled.';
+COMMENT ON COLUMN text_gen_stats.style_id IS
+  'The style the generation ran under. Null when unstyled.';

@@ -478,6 +478,7 @@ The span that validates a styled generate request carries `horde.style.id`, `hor
 | Worker context ceiling | `horde/database/functions.py` | `get_highest_text_worker_max_context_length` |
 | Text pricing | `horde/classes/kobold/waiting_prompt.py` | `TextWaitingPrompt.calculate_kudos` |
 | Style columns | `horde/classes/base/style.py` | `Style.parameter_policy`, `Style.template_fields` |
+| The style a generation ran under | `horde/classes/base/waiting_prompt.py`, `horde/classes/stable/genstats.py`, `horde/classes/kobold/genstats.py` | `WaitingPrompt.style_id`, `ImageGenerationStatistic.style_id`, `TextGenerationStatistic.style_id` |
 | The owner-only `shared_key` on a served style | `horde/apis/v2/styles.py`, `horde/classes/base/style.py` | `SingleStyleTemplateGet.get_existing_style`, `Style.get_details` |
 | Style application log line, counter and span attributes | `horde/apis/v2/base.py` | `GenerateTemplate.report_style_application` |
 | Style and collection write log lines | `horde/apis/v2/styles.py` | `describe_style`, `describe_collection`, `STYLE_PATCH_FIELDS` |
@@ -527,6 +528,7 @@ The span that validates a styled generate request carries `horde.style.id`, `hor
 | Context fit outcomes are counted | `tests/integration/test_text_style_application.py`, `TestContextFitTelemetry` |
 | Style writes are logged | `tests/integration/test_text_styles.py`, `TestTextStyleWriteLogs` |
 | Author credits and forgiven surcharges are counted | `tests/unit/test_kudos_ledger.py`, `TestStyleRewardOutcomeCounters` |
+| A queued request records its style, and its generation statistic copies it | `tests/integration/test_text_style_application.py`, `TestTextStyleAttribution`; `tests/integration/test_image_style_application.py`, `TestImageStyleAttribution`; `tests/unit/test_text_genstats.py`, `TestStatisticStyle` |
 | API refusals are counted by return code and route | `tests/integration/test_malformed_requests.py`, `test_a_refusal_is_counted_by_return_code_and_route` |
 | A write to a style is served by its single-style reads straight away | `tests/integration/test_text_styles.py`, `TestTextStyleReadCache`; `tests/integration/test_image_styles.py`, `TestImageStyleReadCache` |
 
@@ -560,7 +562,13 @@ The span that validates a styled generate request carries `horde.style.id`, `hor
 ## Schema
 
 `sql_statements/5.1.13.txt` adds `styles.parameter_policy` and `styles.template_fields`, both nullable
-`JSONB` with no default, along with column comments. Files at the `sql_statements/` level are run by
-hand with psql rather than by the application; run it in autocommit with `-v ON_ERROR_STOP=1`. Adding a
-nullable column with no default is a catalogue-only change in PostgreSQL, so the migration takes only a
-brief lock and can be applied before the code that reads the columns is deployed.
+`JSONB` with no default, along with column comments. It also adds a nullable `style_id` UUID to
+`waiting_prompts`, `image_gen_stats` and `text_gen_stats`. A queued request records the style it runs
+under, the style drawn from a collection when the request specified one, and the generation statistic
+copies it on submit, so style use can be grouped per style. The column has no foreign key, so a deleted
+style leaves its statistics in place, and no index.
+
+Files at the `sql_statements/` level are run by hand with psql rather than by the application. Run it in
+autocommit with `-v ON_ERROR_STOP=1`. Adding a nullable column with no default is a catalogue-only change
+in PostgreSQL, so the migration takes only a brief lock on each table and can be applied before the code
+that reads the columns is deployed.
