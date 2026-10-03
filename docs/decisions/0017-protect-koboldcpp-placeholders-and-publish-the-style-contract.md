@@ -101,12 +101,12 @@ context sizing all resolve before the waiting prompt is built, and the worker re
 payload. There is no worker behaviour to make a claim about.
 
 The surcharge decision moves out of `apply_style` into `GenerateTemplate.decide_style_surcharge`,
-which both gentypes call after `super().validate()` has resolved the user. A request under its own
-author's style is neither charged the 2 kudos nor credits the author; a request under someone else's
-style does both. The surcharge rides the requester's activation debit, and the author is credited
+which both gentypes call after `super().validate()` has resolved the user. A request under a style its
+requester authored is neither charged the 2 kudos nor credits the author, and a request under someone
+else's style does both. The surcharge rides the requester's activation debit, and the author is credited
 from that debit only the part of the surcharge it collected, so a dry run or a refused request pays
 no one and a surcharge the minimum-balance floor forgives is not credited. The kudos applier credits
-the author in ledger mode; activation credits inline in shadow mode.
+the author in ledger mode, and activation credits inline in shadow mode.
 
 ### Consequences
 

@@ -31,16 +31,15 @@ they existed.
 `GenerateTemplate.apply_style` resolves the style by UUID or name. When that is a `StyleCollection`,
 `GenerateTemplate.draw_collection_style` draws one of its styles at random and counts a use of the
 collection, and the request runs under the drawn style from there on. The draw is only among the styles
-that accept the request's template fields (`template_fields_fit`): each declares every field the
-request supplies, and the request supplies every field it requires. A collection's styles can declare
-different fields, and drawing from all of them would make the same request succeed or fail by chance.
-A style whose stored declaration no longer validates is left out of the draw. When no style fits, the
-request is refused with `TemplateFieldsMatchNoCollectionStyle`. A collection has no prompt,
-params or shared key of its own. `apply_style` then adopts the style's shared key when it carries a
-valid one. Each gentype rejects a style of the other type (`StyleMismatch`), and:
+that declare every field the request supplies and require no field it leaves out
+(`template_fields_fit`). A collection's styles can declare different fields, and drawing from all of
+them would make the same request succeed or fail by chance. A style whose stored declaration no longer
+validates is left out of the draw. When no style fits, the request is refused with
+`TemplateFieldsMatchNoCollectionStyle`. A collection carries no prompt, params or shared key, so
+`apply_style` then adopts the drawn style's shared key when it carries a valid one. Each gentype rejects a style of the other type (`StyleMismatch`), and:
 
 - replaces the request's models with the style's;
-- fills the style's prompt template, which must contain `{p}` for the request's own prompt, and for an
+- fills the style's prompt template, which must contain `{p}` for the request's prompt, and for an
   image style `{np}` for its negative prompt;
 - merges the request's params into the style's under the style's `parameter_policy`;
 - replaces the request's `nsfw` flag with the style's;
@@ -52,19 +51,19 @@ The style's params are the starting point and the request's params are discarded
 
 The two gentypes differ in how the template is filled, covered under [prompt template
 rules](#prompt-template-rules) below. An image request's prompt is split at `###` into the positive
-and negative halves before formatting, and a template carrying `{np}` without a `###` of its own gets
-one in front of the negative half.
+and negative halves before formatting, and a template carrying `{np}` but no `###` gets one in front
+of the negative half.
 
 Using someone else's style adds `STYLE_OWNER_REWARD` (2 kudos) to the request's quote, through the
 `kudos_adjustment` argument that `GenerateTemplate` passes to `WaitingPrompt.activate` and to
 `extrapolate_dry_run_kudos`, and credits the style's owner the part of that amount the requester's
-debit collected (`User.record_style`). A request running under its own author's style is neither
+debit collected (`User.record_style`). A request under a style its requester authored is neither
 charged the surcharge nor credits the author.
 
 The comparison needs both the style and the requesting user, and `apply_style` runs before the user is
 resolved, so `GenerateTemplate.decide_style_surcharge` makes it after the shared `super().validate()`
 on each gentype. The two rows are compared by id, since the shared validation resolves the user inside
-an app context of its own.
+a separate app context.
 
 The request path does not credit the owner itself. `GenerateTemplate.style_reward` builds a
 `StyleReward` (the author's id, the surcharge and the style type), which `WaitingPrompt.activate`
@@ -72,8 +71,8 @@ carries onto the requester's activation debit. The minimum-balance floor can for
 that debit, as it does for the anonymous user and for any account at its minimum, so the owner is
 credited only the surcharge minus whatever part of it the floor forgave, with the forgiven amount
 taken from the surcharge first. In ledger mode the floor is applied when the kudos applier folds the
-debit, so the applier credits the owner from the debit's detail; in shadow mode the floor is applied
-inline and `project_style_reward` credits the owner during activation. A dry run quotes the surcharge
+debit, so the applier credits the owner from the debit's detail. In shadow mode the floor is applied
+inline, and `project_style_reward` credits the owner during activation. A dry run quotes the surcharge
 but credits nothing, and neither does a request refused at any point before activation.
 
 The surcharge is not refunded when the request is cancelled, as the base horde tax is not, so the
@@ -96,8 +95,8 @@ the empty string. What differs is how much of the rest of the template is left a
 | --- | --- | --- |
 | Filled by the horde | `{p}` | `{p}`, `{np}` |
 | Declared placeholders filled | Yes | Yes |
-| A brace outside those | Python format string grammar: `{{` and `}}` are one literal brace each, and any other bare `{name}` is a placeholder that empties when nothing fills it | Literal: every brace is doubled before formatting and only the filled placeholders are put back |
-| A field that is more than a bare name | Refused when the style is written (`StylePromptFieldInvalid`); one already stored is sent as written | Literal, like any other brace |
+| A brace outside those | Python format string grammar, in which `{{` and `}}` are one literal brace each and any other bare `{name}` is a placeholder that empties when nothing fills it | Literal. Every brace is doubled before formatting and only the filled placeholders are put back |
+| A field that is more than a bare name | Refused when the style is written (`StylePromptFieldInvalid`). One already stored is sent as written | Literal, like any other brace |
 | Protected patterns | `\{\{\[[A-Z_]+\]\}\}` | None |
 
 A text template is parsed with `string.Formatter`, so a template written for a Python format string
@@ -374,7 +373,7 @@ The `text` section as served:
         "description": "An instruct placeholder a text backend fills in when it builds its own prompt, such as '{{[INPUT]}}' or '{{[OUTPUT]}}'."
       }
     ],
-    "brace_handling": "A doubled brace is one literal brace, '{p}' and the placeholders this style declares are filled in, and a placeholder nothing fills becomes the empty string. A placeholder is a bare name: one with a format spec, a conversion, attribute or index access, or no name is refused. The protected patterns below are the exception and are left exactly as written.",
+    "brace_handling": "A doubled brace is one literal brace, '{p}' and the placeholders this style declares are filled in, and a placeholder nothing fills becomes the empty string. A placeholder is a bare name, and one with a format spec, a conversion, attribute or index access, or no name is refused. The protected patterns below are the exception and are left exactly as written.",
     "overridable_parameters": [
       "dynatemp_exponent", "dynatemp_range", "frmtadsnsp", "frmtrmblln", "frmtrmspch",
       "frmttriminc", "max_context_length", "max_length", "min_p", "rep_pen", "rep_pen_range",
@@ -469,9 +468,9 @@ receives falls back to its own defaults rather than applying the document.
 | Which text templates a style may be written with, and how a stored field that is more than a bare name is sent | `tests/unit/test_style_application.py`, `TestTextTemplateFieldValidation`, `TestTextPromptFormatting`; `tests/integration/test_text_styles.py`, `TestTextStyleWriteReturnCodes` |
 | An instruct placeholder reaching a live text request unchanged | `tests/integration/test_text_style_application.py`, `TestTextStyleInstructPlaceholders` |
 | The surcharge on someone else's style, and none on your own | `tests/integration/test_text_style_application.py`, `TestTextStyleQuote` |
-| Only a queued request credits the style's author; a dry run or a refused request does not | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`; `tests/integration/test_image_style_application.py`, `TestImageStyleAuthorCredit` |
+| Only a queued request credits the style's author, and a dry run or a refused request credits nothing | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`; `tests/integration/test_image_style_application.py`, `TestImageStyleAuthorCredit` |
 | A request under a collection runs under one of its styles and counts a use of the collection | `tests/integration/test_text_style_application.py`, `TestTextStyleCollection`; `tests/integration/test_image_style_application.py`, `TestImageStyleCollection` |
-| A collection draws only a style that accepts the request's template fields, and refuses fields none accepts | `tests/unit/test_style_application.py`, `TestTemplateFieldsFit`; `tests/integration/test_text_style_application.py`, `TestTextStyleCollectionTemplateFields` |
+| A collection draws only a style whose declared fields fit the request's, and refuses fields no style fits | `tests/unit/test_style_application.py`, `TestTemplateFieldsFit`; `tests/integration/test_text_style_application.py`, `TestTextStyleCollectionTemplateFields` |
 | A surcharge the floor forgives is not credited, in either mode, and a cancel keeps what was collected | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`, `TestTextStyleAuthorCreditInShadowMode`; `tests/unit/test_kudos_ledger.py`, `TestStyleRewardAttribution` |
 | The published contract matches the vocabulary the endpoints validate against and the write limits their routes enforce | `tests/integration/test_style_contract_endpoint.py` |
 | A policy applied to a live image request, including the size fallback | `tests/integration/test_image_style_application.py`, `TestImageStyleParameterPolicy` |
@@ -485,10 +484,10 @@ receives falls back to its own defaults rather than applying the document.
 
 - A style does not keep the order of its models. `Style.parse_models` returns a `set` after trimming
   the list to five, and `set_models` writes the rows from that set, so the order a style is created
-  with is not the order `get_model_names` reads back. A request that uses the style has its own model
-  list replaced by that unordered one, and text pricing is based on whichever model is first, so the
+  with is not the order `get_model_names` reads back. A request that uses the style has its model list
+  replaced by that unordered one, and text pricing is based on whichever model is first, so the
   quote for a multi-model text style depends on an order the author did not choose.
-- Style writes are rate limited per address, not per account. Creating a style of either type is held
+- Style write limits are kept per address, with no per-account limit. Creating a style of either type is held
   to 20 an hour and 2 a second, and patching or deleting one to 90 a minute and 2 a second. Every limit
   is keyed on the address, the method and the request path, so the modify limits count each style
   separately. A client creating several styles in a loop hits the per-second limit first, and the

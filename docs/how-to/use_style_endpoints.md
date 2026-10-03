@@ -27,7 +27,10 @@ style, `template_fields`; a dry run under each that returns the request as the h
 both styles either kept or deleted again.
 
 The rules these procedures work within are in the [style contract
-reference](../reference/style_contract.md). [ADR
+reference](../reference/style_contract.md). A frontend building authoring controls and request forms
+from the contract follows [adding styles to a frontend](add_styles_to_a_frontend.md), and a client that
+integrated styles before the contract checks [the update for existing
+integrations](update_a_style_integration.md). [ADR
 17](../decisions/0017-protect-koboldcpp-placeholders-and-publish-the-style-contract.md) records why
 the contract is published and why a text template protects instruct placeholders.
 
@@ -235,8 +238,8 @@ that takes a new style.
 - Two style writes a second per address and route, and on top of that 20 creations an hour, or 90
   patches or deletions of one style a minute. A client creating several styles in a loop hits the
   per-second limit first and gets 429. Pace the writes against the `style_create_rate_limits` and
-  `style_modify_rate_limits` the contract publishes: at least half a second between writes, and on a
-  429 back off for the window the limit covers before the next attempt rather than retrying at once.
+  `style_modify_rate_limits` the contract publishes. Leave at least half a second between writes, and on
+  a 429 back off for the window the limit covers instead of retrying at once.
 - A style does not keep the order of its models. The list is trimmed to five and stored as a set, so
   the order read back is not the order sent. Text pricing uses whichever model comes first, so a
   multi-model text style can quote differently from one run to the next. Use one model per style where
@@ -245,18 +248,18 @@ that takes a new style.
   `about {subject}` produces the bare label `about ` when nothing fills it. Write the label into the
   placeholder's value, or make the field required.
 - A ceiling is only accepted on a param the request can set. Under `none`, and under `listed` for a
-  param not in `overridable`, the style's own value is always used, so a ceiling there is rejected with
+  param not in `overridable`, the style's value is always used, so a ceiling there is rejected with
   400 when the style is written. The one exception is `n`, which comes from the request under every
   mode and may be capped under every mode.
 - Under `listed`, a param the request sets that is not in `overridable` is ignored without an error,
   the same as under `none`. A dry run's `resolved.params` shows which values the request kept.
 - `n` can never be handed over by a policy. It always comes from the request, defaults to 1, and
   listing it in `overridable` is rejected.
-- Using someone else's style adds 2 kudos to the quote and credits that style's owner what the
-  request actually paid of those 2 once it is queued. A requester at their minimum balance, such as
+- Using someone else's style adds 2 kudos to the quote and credits that style's owner the part of
+  those 2 the request paid, once it is queued. A requester at their minimum balance, such as
   the anonymous user, has the charge forgiven and credits the owner nothing. A dry run or a refused
-  request credits nothing, and cancelling a queued request does not refund the 2. Using your own style
-  costs the same as the unstyled request.
+  request credits nothing, and cancelling a queued request does not refund the 2. A style you authored
+  costs nothing extra to use.
 - A text template's braces are format specifiers. `{{` is one literal brace, an unknown `{word}`
   becomes the empty string, a placeholder with a format spec, a conversion, attribute or index access
   or no name at all is refused with `StylePromptFieldInvalid`, and only `{{[NAME]}}` with uppercase letters and underscores between the
