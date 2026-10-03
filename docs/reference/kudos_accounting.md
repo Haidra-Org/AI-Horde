@@ -114,8 +114,8 @@ meaning as their currency counterparts. The remaining fields define a counter pr
 | `KudosAuditDetail` | `reason`, `reservation_id`, `snapshot_id`, `touch_last_active`, `style_author_id`, `style_surcharge`, `style_type` |
 
 The three `style_*` keys appear together on a waiting-prompt activation debit whose request runs under someone else's
-style: the author's user id, the part of the debit that is the style surcharge (a decimal string), and the style type
-(`text` or `image`), which is the user-record dimension the author's style count is kept under. They are written and
+style. They carry the author's user id, the part of the debit that is the style surcharge (a decimal string), and the
+style type (`text` or `image`), which is the user-record dimension the author's style count is kept under. They are written and
 read through `StyleReward.audit_detail` and `StyleReward.from_audit_detail`.
 
 Do not add an untyped string discriminator when one of these axes describes it. Add or extend the enum and teach the
@@ -133,7 +133,7 @@ An entry type answers “why did this posting exist?” The sign and target answ
 | `TRANSFER` | Paired source debit and destination credit for a user gift |
 | `ADMIN_ADJUSTMENT` | Signed administrator adjustment |
 | `AWARD` | Monthly, rating/aesthetic, and other application award credits |
-| `STYLE_REWARD` | Style-owner currency reward for the part of the style surcharge the requester's activation debit collected; style object's own counters remain separate |
+| `STYLE_REWARD` | Style-owner currency reward for the part of the style surcharge the requester's activation debit collected. The style object's counters remain separate |
 | `STAT_RECORD` | User record counts or thing totals |
 | `STAT_CONTRIBUTION` | Worker/team contribution and fulfilment aggregates |
 | `STAT_ACTIVITY` | Asynchronous user `last_active` touch |
@@ -230,12 +230,12 @@ Two interrogation contracts in that table correct behaviour the inline implement
 | `teams.fulfilments` | Team-stamped fulfilment events | Sum per captured team ID |
 | Reservation remainder/release time | Currency debit metadata or completed transfer event | Consume request holds by debit; release transfer hold only after every event posting is applied |
 | Trusted user role and worker pause state | Projected escrow crossing threshold | Promote eligible mature user, unpause workers, then emit the escrow drain pair |
-| Style author credit | Activation debits carrying the `style_*` detail keys | After the user fold, attribute each requester's floor difference to their surcharges in id order, each absorbing up to its whole amount; emit the author's `STYLE_REWARD` posting and style record for any remainder, folded by a later cycle |
+| Style author credit | Activation debits carrying the `style_*` detail keys | After the user fold, attribute each requester's floor difference to their surcharges in id order, each absorbing up to its whole amount. Emit the author's `STYLE_REWARD` posting and style record for any remainder, folded by a later cycle |
 
-A surcharge the floor forgave is not credited to the style's author: the requester paid none of it, so crediting it
-would create currency. The floor difference is computed per user per batch, so a requester's credits in the same
+A surcharge the floor forgave is not credited to the style's author, since the requester paid none of it and crediting
+it would create currency. The floor difference is computed per user per batch, so a requester's credits in the same
 batch reduce what the floor forgives. In shadow mode the same attribution runs inline during activation from the floor
-adjustment `User.modify_kudos` returns; in ledger mode that return is zero and only the applier credits, so a request
+adjustment `User.modify_kudos` returns. In ledger mode that return is zero and only the applier credits, so a request
 never credits its author twice.
 
 Currency rows and statistic rows are each claimed in a bounded batch. A single event may cross a batch boundary;
