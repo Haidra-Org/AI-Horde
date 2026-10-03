@@ -252,9 +252,11 @@ that takes a new style.
   the same as under `none`. A dry run's `resolved.params` shows which values the request kept.
 - `n` can never be handed over by a policy. It always comes from the request, defaults to 1, and
   listing it in `overridable` is rejected.
-- Using someone else's style adds 2 kudos to the quote and credits that style's owner 2 once the
-  request is queued. A dry run or a refused request credits nothing. Using your own style costs the
-  same as the unstyled request.
+- Using someone else's style adds 2 kudos to the quote and credits that style's owner what the
+  request actually paid of those 2 once it is queued. A requester at their minimum balance, such as
+  the anonymous user, has the charge forgiven and credits the owner nothing. A dry run or a refused
+  request credits nothing, and cancelling a queued request does not refund the 2. Using your own style
+  costs the same as the unstyled request.
 - A text template's braces are format specifiers. `{{` is one literal brace, an unknown `{word}`
   becomes the empty string, a placeholder with a format spec, a conversion, attribute or index access
   or no name at all is refused with `StylePromptFieldInvalid`, and only `{{[NAME]}}` with uppercase letters and underscores between the

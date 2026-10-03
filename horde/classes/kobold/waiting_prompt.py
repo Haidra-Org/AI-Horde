@@ -4,11 +4,13 @@
 
 import math
 import os
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.sql import expression
 
 from horde import vars as hv
+from horde.classes.base.kudos import StyleReward
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.flask import db
 from horde.logger import logger
@@ -63,10 +65,24 @@ class TextWaitingPrompt(WaitingPrompt):
         self.gen_payload["n"] = 1
         db.session.commit()
 
-    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None, extra_source_images=None, kudos_adjustment=0):
+    def activate(
+        self,
+        downgrade_wp_priority=False,
+        source_image=None,
+        source_mask=None,
+        extra_source_images=None,
+        kudos_adjustment=0,
+        *,
+        style_reward: StyleReward | None = None,
+    ):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
-        super().activate(downgrade_wp_priority, extra_source_images=extra_source_images, kudos_adjustment=kudos_adjustment)
+        super().activate(
+            downgrade_wp_priority,
+            extra_source_images=extra_source_images,
+            kudos_adjustment=kudos_adjustment,
+            style_reward=style_reward,
+        )
         proxied_account = ""
         if self.proxied_account:
             proxied_account = f":{self.proxied_account}"
@@ -93,9 +109,25 @@ class TextWaitingPrompt(WaitingPrompt):
         ret_dict = super().get_status(**kwargs)
         return ret_dict
 
-    def record_usage(self, raw_things, kudos, usage_type="text", avoid_burn=False, commit=True):
+    def record_usage(
+        self,
+        raw_things,
+        kudos,
+        usage_type="text",
+        avoid_burn=False,
+        commit=True,
+        *,
+        style_reward: StyleReward | None = None,
+    ) -> Decimal:
         """I need to extend this to point it to record_text_usage()"""
-        super().record_usage(raw_things, kudos, usage_type, avoid_burn=avoid_burn, commit=commit)
+        return super().record_usage(
+            raw_things,
+            kudos,
+            usage_type,
+            avoid_burn=avoid_burn,
+            commit=commit,
+            style_reward=style_reward,
+        )
 
     def require_upfront_kudos(self, counted_totals, total_threads):
         """Returns A tuple

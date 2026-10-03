@@ -52,17 +52,27 @@ one in front of the negative half.
 
 Using someone else's style adds `STYLE_OWNER_REWARD` (2 kudos) to the request's quote, through the
 `kudos_adjustment` argument that `GenerateTemplate` passes to `WaitingPrompt.activate` and to
-`extrapolate_dry_run_kudos`, and credits the style's owner the same amount (`User.record_style`). A
-request running under its own author's style is neither charged the surcharge nor credits the author.
+`extrapolate_dry_run_kudos`, and credits the style's owner the part of that amount the requester's
+debit collected (`User.record_style`). A request running under its own author's style is neither
+charged the surcharge nor credits the author.
 
 The comparison needs both the style and the requesting user, and `apply_style` runs before the user is
 resolved, so `GenerateTemplate.decide_style_surcharge` makes it after the shared `super().validate()`
 on each gentype. The two rows are compared by id, since the shared validation resolves the user inside
 an app context of its own.
 
-The owner is credited by `GenerateTemplate.pay_style_owner`, which runs only after the waiting prompt
-is activated and the surcharge debited. A dry run quotes the surcharge but credits nothing, and neither
-does a request refused at any point before activation.
+The request path does not credit the owner itself. `GenerateTemplate.style_reward` builds a
+`StyleReward` (the author's id, the surcharge and the style type), which `WaitingPrompt.activate`
+carries onto the requester's activation debit. The minimum-balance floor can forgive part or all of
+that debit, as it does for the anonymous user and for any account at its minimum, so the owner is
+credited only the surcharge minus whatever part of it the floor forgave, with the forgiven amount
+taken from the surcharge first. In ledger mode the floor is applied when the kudos applier folds the
+debit, so the applier credits the owner from the debit's detail; in shadow mode the floor is applied
+inline and `project_style_reward` credits the owner during activation. A dry run quotes the surcharge
+but credits nothing, and neither does a request refused at any point before activation.
+
+The surcharge is not refunded when the request is cancelled, as the base horde tax is not, so the
+owner keeps whatever was collected.
 
 A style may carry a shared key. When it does and the key is valid, `GenerateTemplate.apply_style`
 adopts it as the request's key, so the style's owner pays. The per-job limits on that key are then not
@@ -410,7 +420,8 @@ receives falls back to its own defaults rather than applying the document.
 | The published contract | `horde/style_contract_document.py` | `compile_style_contract`, `published_style_contract`, `SCHEMA_VERSION` |
 | The endpoint that serves it | `horde/apis/v2/styles.py` | `StyleContract.get` |
 | The contract's response shape | `horde/apis/models/v2.py` | `response_model_style_contract`, `model_style_contract_type` |
-| The style surcharge and the owner comparison | `horde/apis/v2/kobold.py`, `horde/apis/v2/stable.py` | `TextAsyncGenerate.credit_style_owner`, `ImageAsyncGenerate.credit_style_owner` |
+| The style surcharge and the owner comparison | `horde/apis/v2/base.py` | `GenerateTemplate.decide_style_surcharge`, `GenerateTemplate.style_reward` |
+| Crediting the owner what the surcharge collected | `horde/database/kudos_ledger.py`, `horde/database/kudos_legacy_projection.py`, `horde/classes/base/kudos.py` | `_credit_style_authors`, `project_style_reward`, `StyleReward.collected` |
 | Token estimate and fit rule | `horde/classes/kobold/request_fit.py` | `estimate_prompt_tokens`, `prompt_fits_context` |
 | Context sizing and its bound | `horde/classes/kobold/request_fit.py` | `fit_context_length`, `context_growth_upper_bound` |
 | Shared merge, resolution and dry-run body | `horde/apis/v2/base.py` | `GenerateTemplate.apply_style_contract`, `GenerateTemplate.get_resolved_request`, `GenerateTemplate.dry_run_answerable_from_cache` |
@@ -455,6 +466,7 @@ receives falls back to its own defaults rather than applying the document.
 | The surcharge on someone else's style, and none on your own | `tests/integration/test_text_style_application.py`, `TestTextStyleQuote` |
 | Only a queued request credits the style's author; a dry run or a refused request does not | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`; `tests/integration/test_image_style_application.py`, `TestImageStyleAuthorCredit` |
 | A request under a collection runs under one of its styles and counts a use of the collection | `tests/integration/test_text_style_application.py`, `TestTextStyleCollection`; `tests/integration/test_image_style_application.py`, `TestImageStyleCollection` |
+| A surcharge the floor forgives is not credited, in either mode, and a cancel keeps what was collected | `tests/integration/test_text_style_application.py`, `TestTextStyleAuthorCredit`, `TestTextStyleAuthorCreditInShadowMode`; `tests/unit/test_kudos_ledger.py`, `TestStyleRewardAttribution` |
 | The published contract matches the vocabulary the endpoints validate against and the write limits their routes enforce | `tests/integration/test_style_contract_endpoint.py` |
 | A policy applied to a live image request, including the size fallback | `tests/integration/test_image_style_application.py`, `TestImageStyleParameterPolicy` |
 | Placeholders applied to a live image request | `tests/integration/test_image_style_application.py`, `TestImageStyleTemplateFields` |

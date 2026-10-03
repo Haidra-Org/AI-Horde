@@ -22,6 +22,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from horde import vars as hv
 from horde.classes.base.kudos import (
     KudosAmount,
+    StyleReward,
     emit_kudos_ledger_entry,
     emit_kudos_stat_event,
     get_kudos_trust_threshold,
@@ -880,14 +881,35 @@ class User(db.Model):
         usage_type: str,
         commit: bool = True,
         reservation_id: str | None = None,
-    ) -> None:
-        detail = {KudosAuditDetail.RESERVATION_ID: reservation_id} if reservation_id is not None else None
-        self.modify_kudos(
+        *,
+        style_reward: StyleReward | None = None,
+    ) -> Decimal:
+        """Debit a request's cost and count the request and its usage in the user's records.
+
+        Args:
+            raw_things: The things the request generates, before the usage multiplier.
+            kudos: The kudos to debit.
+            usage_type: The record the request and usage counts are kept under.
+            commit: Commit the session afterwards.
+            reservation_id: The admission hold the debit consumes.
+            style_reward: The style surcharge ``kudos`` includes, carried on the debit's detail so the
+                applier can credit the style's author what the debit collected.
+
+        Returns:
+            The part of the debit the minimum-balance floor forgave inline, which is only ever nonzero in
+            shadow mode. In ledger mode the applier applies the floor when it folds the debit.
+        """
+        detail: dict[str, object] = {}
+        if reservation_id is not None:
+            detail[KudosAuditDetail.RESERVATION_ID] = reservation_id
+        if style_reward is not None:
+            detail.update(style_reward.audit_detail())
+        floor_adjustment = self.modify_kudos(
             -kudos,
             "accumulated",
             commit=False,
             entry_type=KudosEntryType.GENERATION,
-            detail=detail,
+            detail=detail or None,
         )
         if reservation_id is not None:
             consume_user_reservation(reservation_id, kudos)
@@ -906,6 +928,7 @@ class User(db.Model):
         )
         if commit:
             db.session.commit()
+        return floor_adjustment
 
     def record_contributions(self, raw_things, kudos, contrib_type, commit=True):
         self.update_user_record(
@@ -952,7 +975,15 @@ class User(db.Model):
         if commit:
             db.session.commit()
 
-    def record_style(self, kudos, contrib_type):
+    def record_style(self, kudos: KudosAmount, contrib_type: str, *, commit: bool = True) -> None:
+        """Credit the user for a request that ran under one of their styles.
+
+        Args:
+            kudos: The part of the style surcharge the request collected.
+            contrib_type: The style's type, which is the record the style count is kept under.
+            commit: Commit the session afterwards. The kudos applier passes False, since it credits
+                inside its fold transaction.
+        """
         self.update_user_record(
             record_type=UserRecordTypes.STYLE,
             record=contrib_type,
@@ -960,7 +991,8 @@ class User(db.Model):
             commit=False,
         )
         self.modify_kudos(kudos, "styled", commit=False, entry_type=KudosEntryType.STYLE_REWARD)
-        db.session.commit()
+        if commit:
+            db.session.commit()
 
     def promotion_status(self, threshold: int | float | Decimal | None) -> PromotionStatus:
         """Decide automatic promotion to trusted without applying it.
@@ -1111,7 +1143,20 @@ class User(db.Model):
         commit: bool = True,
         entry_type: KudosEntryType = KudosEntryType.ADMIN_ADJUSTMENT,
         detail: dict[str, object] | None = None,
-    ) -> None:
+    ) -> Decimal:
+        """Record a signed movement of the user's spendable balance.
+
+        Args:
+            kudos: The signed amount.
+            action: The per-action statistics bucket the movement counts under.
+            commit: Commit the session afterwards.
+            entry_type: The producing event's classification.
+            detail: Audit metadata for the movement's posting.
+
+        Returns:
+            The amount the minimum-balance floor forgave inline. Only shadow mode applies the floor inline;
+            in ledger mode this is zero and the applier applies the floor when it folds the posting.
+        """
         # The spendable balance is applier-maintained: record the movement as a
         # signed ledger posting instead of mutating users.kudos here. The floor
         # clamp (ensure_kudos_positive) is reproduced by the applier at fold time.
@@ -1139,6 +1184,7 @@ class User(db.Model):
         )
         if commit:
             db.session.commit()
+        return floor_adjustment
 
     def modify_evaluating_kudos(
         self,

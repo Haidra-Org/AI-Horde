@@ -39,6 +39,7 @@ from horde.classes.base.kudos import (
     KudosLedgerApplierState,
     KudosReservation,
     KudosStatEvent,
+    StyleReward,
     emit_kudos_ledger_entry,
     emit_kudos_stat_event,
     get_kudos_ledger_mode,
@@ -225,9 +226,10 @@ def apply_pending_kudos(
 
     Returns:
         The number of rows folded or quarantined this cycle plus any
-        promotion-drain postings emitted (see :func:`_drain_trusted_escrow`). A
-        return of 0 means no drainable unapplied rows remain and no trusted
-        escrow needs draining, so a caller folding to quiescence can stop.
+        promotion-drain postings (see :func:`_drain_trusted_escrow`) and
+        style-author credit postings (see :func:`_credit_style_authors`)
+        emitted. A return of 0 means no drainable unapplied rows remain and no
+        trusted escrow needs draining, so a caller folding to quiescence can stop.
     """
     if now is None:
         now = datetime.utcnow()
@@ -300,6 +302,7 @@ def apply_pending_kudos(
     team_kudos_deltas: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
     team_contribution_deltas: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
     team_fulfilment_deltas: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
+    style_credits = 0
 
     if rows or stat_rows:
         user_balance_deltas: dict[int, Decimal] = defaultdict(Decimal)
@@ -315,6 +318,9 @@ def apply_pending_kudos(
         reservation_consumptions: dict[str, Decimal] = defaultdict(Decimal)
         folded_ids = [row.id for row in rows]
         folded_stat_ids = [row.id for row in stat_rows]
+        # Rows are claimed in id order, so this keeps each requester's surcharges in the order their
+        # debits were posted, which is the order the floor is attributed to them in.
+        style_debits: list[tuple[KudosLedger, StyleReward]] = []
         for row in rows:
             if row.escrow:
                 user_escrow_deltas[row.user_id] += row.amount
@@ -323,6 +329,9 @@ def apply_pending_kudos(
             reservation_id = row.detail.get(KudosAuditDetail.RESERVATION_ID) if row.detail else None
             if row.amount < 0 and isinstance(reservation_id, str):
                 reservation_consumptions[reservation_id] += -row.amount
+            style_reward = StyleReward.from_audit_detail(row.detail)
+            if style_reward is not None:
+                style_debits.append((row, style_reward))
 
         for row in stat_rows:
             if row.user_id is not None and row.detail and row.detail.get(KudosAuditDetail.TOUCH_LAST_ACTIVE):
@@ -360,7 +369,8 @@ def apply_pending_kudos(
         # queueing pops behind the fold transaction. They run at the end of the
         # cycle instead.
         phase_t = time.monotonic()
-        _apply_user_deltas(user_balance_deltas, user_escrow_deltas, user_last_active)
+        floor_forgiven = _apply_user_deltas(user_balance_deltas, user_escrow_deltas, user_last_active)
+        style_credits = _credit_style_authors(style_debits, floor_forgiven)
         kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "user_fold"})
         phase_t = time.monotonic()
         _apply_user_stats_deltas(user_stats_deltas)
@@ -467,7 +477,7 @@ def apply_pending_kudos(
     # Quarantine is durable queue progress too. Including it keeps catch-up,
     # explicit drain, and ledger->shadow transition loops moving when a claimed
     # batch consists entirely of poison events.
-    return len(rows) + len(stat_rows) + len(quarantined_rows) + drained
+    return len(rows) + len(stat_rows) + len(quarantined_rows) + drained + style_credits
 
 
 def _mark_applied(folded_ids: list[int]) -> None:
@@ -646,11 +656,17 @@ def _apply_user_deltas(
     balance_deltas: dict[int, Decimal],
     escrow_deltas: dict[int, Decimal],
     last_active: dict[int, datetime] | None = None,
-) -> None:
+) -> dict[int, Decimal]:
+    """Write the batch's folded balances, escrows and activity times, flooring each spendable balance.
+
+    Returns:
+        The amount the floor forgave this batch, per user it forgave anything for.
+    """
     activity = last_active or {}
     user_ids = set(balance_deltas) | set(escrow_deltas) | set(activity)
+    forgiven: dict[int, Decimal] = {}
     if not user_ids:
-        return
+        return forgiven
     users = db.session.query(User).filter(User.id.in_(user_ids)).order_by(User.id.asc()).all()
     floor_adjustment_count = 0
     floor_adjustment_total = Decimal("0")
@@ -679,6 +695,7 @@ def _apply_user_deltas(
                     detail={KudosAuditDetail.REASON: "minimum_balance_floor"},
                 )
                 correction.applied = True
+                forgiven[user.id] = Decimal(str(created))
                 # The FLOOR_ADJUSTMENT posting is the durable per-user audit
                 # record. Avoid a redundant log line here: a catch-up batch can
                 # floor hundreds of users, and formatting/writing one line per
@@ -721,6 +738,52 @@ def _apply_user_deltas(
         logger.info(
             f"Kudos floor adjustments created {floor_adjustment_total} kudos across {floor_adjustment_count} users this batch",
         )
+    return forgiven
+
+
+def _credit_style_authors(
+    style_debits: list[tuple[KudosLedger, StyleReward]],
+    floor_forgiven: Mapping[int, Decimal],
+) -> int:
+    """Credit each style author the part of their surcharge the requester's debit collected.
+
+    The floor is applied to a requester's whole batch, so the amount it forgave is attributed across that
+    requester's surcharges in posting order, each absorbing up to its whole amount before the next. A
+    surcharge the floor absorbed in full credits nothing: crediting it would mint kudos for a request
+    whose requester paid none. Each credit is posted unapplied, like the escrow drain pairs, and a later
+    cycle folds it.
+
+    Args:
+        style_debits: The batch's activation debits that carry a style surcharge, with their rewards, in id
+            order.
+        floor_forgiven: The amount the floor forgave this batch, per requester.
+
+    Returns:
+        The number of currency postings emitted, one per credited author.
+    """
+    if not style_debits:
+        return 0
+    involved_user_ids = {row.user_id for row, _ in style_debits} | {reward.author_id for _, reward in style_debits}
+    users_by_id = {user.id: user for user in db.session.query(User).filter(User.id.in_(involved_user_ids)).all()}
+    unattributed = dict(floor_forgiven)
+    emitted = 0
+    skipped = 0
+    for row, reward in style_debits:
+        remaining = unattributed.get(row.user_id, Decimal(0))
+        credit = reward.collected(remaining)
+        unattributed[row.user_id] = remaining - (reward.amount - credit)
+        if credit <= 0:
+            continue
+        author = users_by_id.get(reward.author_id)
+        if row.user_id not in users_by_id or author is None:
+            skipped += 1
+            continue
+        with kudos_event(job_id=row.job_id, wp_type=row.wp_type):
+            author.record_style(credit, reward.style_type, commit=False)
+        emitted += 1
+    if skipped:
+        logger.warning(f"Kudos applier skipped {skipped} style author credits whose requester or author no longer exists")
+    return emitted
 
 
 def _apply_worker_deltas(worker_deltas: dict[uuid.UUID, Decimal]) -> None:

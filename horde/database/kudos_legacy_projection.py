@@ -17,7 +17,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
-from horde.classes.base.kudos import KudosAmount, kudos_projection_is_async
+from loguru import logger
+
+from horde.classes.base.kudos import KudosAmount, StyleReward, kudos_projection_is_async
 from horde.enums import KudosEntryType, UserRecordTypes
 
 
@@ -44,8 +46,8 @@ class LegacyUser(Protocol):
         commit: bool = True,
         entry_type: KudosEntryType = ...,
         detail: dict[str, object] | None = None,
-    ) -> None:
-        """Emit and project a spendable-balance movement."""
+    ) -> Decimal:
+        """Emit and project a spendable-balance movement, returning the amount the floor forgave inline."""
         ...
 
 
@@ -175,6 +177,32 @@ def project_trust_promotion(user: LegacyUser) -> None:
             entry_type=KudosEntryType.EVALUATION_PROMOTION,
         )
     db.session.commit()
+
+
+def project_style_reward(reward: StyleReward, *, forgiven: Decimal) -> None:
+    """Credit a style's author inline for an activation debit while shadowing.
+
+    In ledger mode the floor is applied only when the applier folds the debit, so the applier credits the
+    author from the debit's detail (see :mod:`horde.database.kudos_ledger`) and this does nothing. That
+    split is what keeps a request from crediting its author twice.
+
+    Args:
+        reward: The style surcharge the activation debit included.
+        forgiven: The part of the activation debit the floor forgave inline.
+    """
+    if kudos_projection_is_async():
+        return
+    credit = reward.collected(forgiven)
+    if credit <= 0:
+        return
+    from horde.classes.base.user import User
+    from horde.flask import db
+
+    author = db.session.get(User, reward.author_id)
+    if author is None:
+        logger.warning(f"Style author {reward.author_id} no longer exists; their style surcharge credit is skipped")
+        return
+    author.record_style(credit, reward.style_type, commit=False)
 
 
 def project_worker_contribution(worker: LegacyWorker, amount: float) -> None:

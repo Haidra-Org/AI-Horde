@@ -9,6 +9,7 @@ import math
 import os
 import random
 import time
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import logfire
@@ -19,6 +20,7 @@ from sqlalchemy.sql import expression
 from horde import vars as hv
 from horde.baseline_policy import kudos_multiplier, policy
 from horde.bridge_reference import check_bridge_capability
+from horde.classes.base.kudos import StyleReward
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.stable.kudos import KudosModel
 from horde.consts import (
@@ -295,10 +297,24 @@ class ImageWaitingPrompt(WaitingPrompt):
         # logger.debug([payload,prompt_payload])
         return prompt_payload
 
-    def activate(self, downgrade_wp_priority=False, source_image=None, source_mask=None, extra_source_images=None, kudos_adjustment=0):
+    def activate(
+        self,
+        downgrade_wp_priority=False,
+        source_image=None,
+        source_mask=None,
+        extra_source_images=None,
+        kudos_adjustment=0,
+        *,
+        style_reward: StyleReward | None = None,
+    ):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
-        super().activate(downgrade_wp_priority, extra_source_images=extra_source_images, kudos_adjustment=kudos_adjustment)
+        super().activate(
+            downgrade_wp_priority,
+            extra_source_images=extra_source_images,
+            kudos_adjustment=kudos_adjustment,
+            style_reward=style_reward,
+        )
         _t_post = time.monotonic()
         try:
             if source_image or source_mask:
@@ -407,9 +423,9 @@ class ImageWaitingPrompt(WaitingPrompt):
             kudos = kudos * 1.1
         return kudos
 
-    def record_usage(self, **kwargs):
+    def record_usage(self, **kwargs) -> Decimal:
         kwargs["usage_type"] = "image"
-        super().record_usage(**kwargs)
+        return super().record_usage(**kwargs)
 
     # We can calculate the kudos in advance as they model doesn't affect them
     def calculate_kudos(self):

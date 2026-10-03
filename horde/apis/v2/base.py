@@ -8,6 +8,7 @@ import os
 import random
 import time
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import logfire
@@ -29,6 +30,7 @@ from horde.apis.request_utils import get_current_passkey_owner, get_remoteaddr
 from horde.argparser import args
 from horde.classes.base import settings
 from horde.classes.base.detection import Filter
+from horde.classes.base.kudos import StyleReward
 from horde.classes.base.news import News
 from horde.classes.base.style import Style, StyleCollection
 from horde.classes.base.style_application import (
@@ -336,7 +338,6 @@ class GenerateTemplate(Resource):
                 self.activate_waiting_prompt()
             finally:
                 generate_activate_wp_duration.record(time.monotonic() - ta, {"horde.gentype": self.gentype})
-        self.pay_style_owner()
         # We use the wp.kudos to avoid calling the model twice.
         self.kudos = self.wp.kudos
 
@@ -739,6 +740,7 @@ class GenerateTemplate(Resource):
             self.downgrade_wp_priority,
             extra_source_images=self.args.extra_source_images,
             kudos_adjustment=STYLE_OWNER_REWARD if self.style_kudos is True else 0,
+            style_reward=self.style_reward(),
         )
 
     def apply_style(self):
@@ -789,18 +791,23 @@ class GenerateTemplate(Resource):
             return
         self.style_kudos = True
 
-    def pay_style_owner(self) -> None:
-        """Credit the style's author with the surcharge this request paid.
+    def style_reward(self) -> StyleReward | None:
+        """Return the style surcharge this request's activation debit includes, and its author.
 
-        Runs only once the waiting prompt is active, which is also when the surcharge is debited. A dry
-        run or a request refused at any point before activation pays no surcharge, so it credits nothing.
+        The reward rides the activation debit, so a dry run or a request refused before activation credits
+        nobody. The author is credited from the debit only what it collected: the minimum-balance floor can
+        forgive the surcharge, and a forgiven surcharge is not credited.
 
-        Side Effects:
-            Commits a ``STYLE_REWARD`` ledger posting for the author and bumps their style record.
+        Returns:
+            The reward, or None when the request pays no surcharge.
         """
         if not self.style_kudos:
-            return
-        self.existing_style.user.record_style(STYLE_OWNER_REWARD, self.existing_style.style_type)
+            return None
+        return StyleReward(
+            author_id=self.existing_style.user_id,
+            amount=Decimal(STYLE_OWNER_REWARD),
+            style_type=self.existing_style.style_type,
+        )
 
     def get_supplied_template_fields(self):
         """Return the template field values this request carried.

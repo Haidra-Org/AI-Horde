@@ -103,8 +103,10 @@ payload. There is no worker behaviour to make a claim about.
 The surcharge decision moves out of `apply_style` into `GenerateTemplate.decide_style_surcharge`,
 which both gentypes call after `super().validate()` has resolved the user. A request under its own
 author's style is neither charged the 2 kudos nor credits the author; a request under someone else's
-style does both. The author is credited by `GenerateTemplate.pay_style_owner` once the waiting prompt
-is active, which is also when the surcharge is debited, so a dry run or a refused request pays no one.
+style does both. The surcharge rides the requester's activation debit, and the author is credited
+from that debit only the part of the surcharge it collected, so a dry run or a refused request pays
+no one and a surcharge the minimum-balance floor forgives is not credited. The kudos applier credits
+the author in ledger mode; activation credits inline in shadow mode.
 
 ### Consequences
 

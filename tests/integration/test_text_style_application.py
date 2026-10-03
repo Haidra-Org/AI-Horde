@@ -39,6 +39,15 @@ TEMPLATE_FIELDS = [
 STYLED_REQUEST_COUNT = 20
 """How many requests the author credit record cases queue under one style."""
 
+ACTIVATION_HORDE_TAX = 1
+"""The base horde tax a text request pays when it is queued, before any style surcharge."""
+
+ANONYMOUS_API_KEY = "0000000000"
+"""The public key anonymous requests are submitted with."""
+
+ANONYMOUS_USER_ID = 0
+"""The id of the user anonymous requests are charged to."""
+
 WORKER_NAME = "CICD Style Scribe"
 
 WORKER_MAX_CONTEXT_LENGTH = 4096
@@ -256,6 +265,60 @@ def style_record(client: FlaskClient, user_id: int) -> float:
     response = client.get(f"/api/v2/users/{user_id}")
     assert response.status_code == 200, response.get_data(as_text=True)
     return response.get_json()["records"].get("style", {}).get("text", 0)
+
+
+@contextmanager
+def balance_pinned(app: Flask, settle_kudos: Callable[[], int], user_id: int, *, above_floor: int) -> Iterator[None]:
+    """Pin a user's balance to a set distance above their minimum for the block, and put it back afterwards.
+
+    Everything pending is folded first, so no earlier posting shifts the pinned balance. The balance is written
+    directly, which no ledger posting records, so the floor arithmetic of the cases is exact.
+
+    Args:
+        app: The Flask app, for the database session.
+        settle_kudos: The fixture helper that folds pending ledger postings.
+        user_id: The user whose balance to pin.
+        above_floor: How far above the user's minimum balance to pin it.
+
+    Yields:
+        Nothing. The previous balance is written back afterwards.
+    """
+    from horde.database import functions as database
+    from horde.flask import db
+
+    settle_kudos()
+    with app.app_context():
+        user = database.find_user_by_id(user_id)
+        previous_balance = user.kudos
+        user.kudos = user.get_min_kudos() + above_floor
+        db.session.commit()
+    try:
+        yield
+    finally:
+        settle_kudos()
+        with app.app_context():
+            user = database.find_user_by_id(user_id)
+            user.kudos = previous_balance
+            db.session.commit()
+
+
+@pytest.fixture
+def shadow_mode(app: Flask) -> Iterator[None]:
+    """Run the case with kudos movements projected inline, and put the ledger mode back afterwards.
+
+    Yields:
+        Nothing.
+    """
+    from horde.classes.base.kudos import set_kudos_ledger_mode
+    from horde.enums import KudosLedgerMode
+
+    with app.app_context():
+        set_kudos_ledger_mode(KudosLedgerMode.SHADOW)
+    try:
+        yield
+    finally:
+        with app.app_context():
+            set_kudos_ledger_mode(KudosLedgerMode.LEDGER)
 
 
 class TestTextStyleParams:
@@ -482,6 +545,183 @@ class TestTextStyleAuthorCredit:
             balance_after = settled_kudos(app, settle_kudos, owner.id)
             assert style_record(client, owner.id) == STYLED_REQUEST_COUNT
             assert balance_after == balance_before + STYLED_REQUEST_COUNT * STYLE_KUDOS_SURCHARGE
+
+    def test_a_cancelled_request_keeps_the_authors_credit(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """The surcharge is not refunded on cancel, so the author keeps the credit and the record count."""
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, owner_headers, style_body("text credit cancelled")) as style_id:
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            with queued_request(client, request_headers, style=style_id):
+                pass
+
+            assert settled_kudos(app, settle_kudos, owner.id) == balance_before + STYLE_KUDOS_SURCHARGE
+            assert style_record(client, owner.id) == 1
+
+    def test_an_anonymous_request_pays_the_author_nothing(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """An anonymous request at the anonymous minimum balance credits the author nothing, even when cancelled.
+
+        The floor forgives the whole debit, surcharge included, so nothing was collected to credit, and the
+        author's style record does not move either.
+        """
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        anonymous_headers = {"apikey": ANONYMOUS_API_KEY, "Client-Agent": request_headers["Client-Agent"]}
+        with (
+            created_style(client, owner_headers, style_body("text credit anonymous")) as style_id,
+            balance_pinned(app, settle_kudos, ANONYMOUS_USER_ID, above_floor=0),
+        ):
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            with queued_request(client, anonymous_headers, style=style_id):
+                pass
+
+            assert settled_kudos(app, settle_kudos, owner.id) == balance_before
+            assert style_record(client, owner.id) == 0
+
+    def test_a_requester_at_their_minimum_balance_pays_the_author_nothing(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """A registered requester with no headroom above their minimum balance credits the author nothing."""
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        requester = make_api_user()
+        requester_headers = {"apikey": requester.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with (
+            created_style(client, owner_headers, style_body("text credit at floor")) as style_id,
+            balance_pinned(app, settle_kudos, requester.id, above_floor=0),
+        ):
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            with queued_request(client, requester_headers, style=style_id):
+                assert settled_kudos(app, settle_kudos, owner.id) == balance_before
+
+            assert style_record(client, owner.id) == 0
+
+    def test_a_requester_short_of_the_surcharge_pays_the_author_what_they_had(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """A requester whose headroom covers the horde tax and part of the surcharge credits only that part.
+
+        The floor forgives what the requester's headroom does not cover, and the forgiven amount is taken out
+        of the surcharge first. A partly collected surcharge still counts once in the author's record.
+        """
+        collected_surcharge = 1
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        requester = make_api_user()
+        requester_headers = {"apikey": requester.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        headroom = ACTIVATION_HORDE_TAX + collected_surcharge
+        with (
+            created_style(client, owner_headers, style_body("text credit partial")) as style_id,
+            balance_pinned(app, settle_kudos, requester.id, above_floor=headroom),
+        ):
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            with queued_request(client, requester_headers, style=style_id):
+                assert settled_kudos(app, settle_kudos, owner.id) == balance_before + collected_surcharge
+
+            assert style_record(client, owner.id) == 1
+
+
+class TestTextStyleAuthorCreditInShadowMode:
+    """The author's credit when kudos movements are projected inline rather than by the applier."""
+
+    def test_an_anonymous_request_pays_the_author_nothing(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+        shadow_mode: None,
+    ) -> None:
+        """An anonymous request at the anonymous minimum balance credits the author nothing."""
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        anonymous_headers = {"apikey": ANONYMOUS_API_KEY, "Client-Agent": request_headers["Client-Agent"]}
+        with (
+            created_style(client, owner_headers, style_body("shadow credit anonymous")) as style_id,
+            balance_pinned(app, settle_kudos, ANONYMOUS_USER_ID, above_floor=0),
+        ):
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            with queued_request(client, anonymous_headers, style=style_id):
+                pass
+
+            assert settled_kudos(app, settle_kudos, owner.id) == balance_before
+            assert style_record(client, owner.id) == 0
+
+    def test_a_funded_request_pays_the_author_the_surcharge_once(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+        shadow_mode: None,
+    ) -> None:
+        """A funded request credits the author the whole surcharge once, inline, and the applier adds nothing."""
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        with created_style(client, owner_headers, style_body("shadow credit funded")) as style_id:
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            with queued_request(client, request_headers, style=style_id):
+                pass
+
+            assert settled_kudos(app, settle_kudos, owner.id) == balance_before + STYLE_KUDOS_SURCHARGE
+            assert style_record(client, owner.id) == 1
+
+    def test_a_requester_short_of_the_surcharge_pays_the_author_what_they_had(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        request_headers: dict[str, str],
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+        shadow_mode: None,
+    ) -> None:
+        """The inline floor is attributed to the surcharge first, as the applier's is."""
+        collected_surcharge = 1
+        owner = make_api_user(trusted=True, customizer=True, kudos=100)
+        owner_headers = {"apikey": owner.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        requester = make_api_user()
+        requester_headers = {"apikey": requester.api_key, "Client-Agent": request_headers["Client-Agent"]}
+        headroom = ACTIVATION_HORDE_TAX + collected_surcharge
+        with (
+            created_style(client, owner_headers, style_body("shadow credit partial")) as style_id,
+            balance_pinned(app, settle_kudos, requester.id, above_floor=headroom),
+        ):
+            balance_before = settled_kudos(app, settle_kudos, owner.id)
+
+            with queued_request(client, requester_headers, style=style_id):
+                assert settled_kudos(app, settle_kudos, owner.id) == balance_before + collected_surcharge
 
 
 class TestTextStyleTypeMismatch:
