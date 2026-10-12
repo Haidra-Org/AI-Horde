@@ -24,6 +24,7 @@ from horde.consts import (
     KNOWN_SOLVER_TYPES,
     KNOWN_WORKFLOWS,
 )
+from horde.enums import State
 from horde.vars import horde_title
 
 
@@ -1078,6 +1079,7 @@ class ImageModels(v2.Models):
                 "state": fields.String(
                     title="Interrogation State",
                     description="The overall status of this interrogation.",
+                    enum=[state.name.lower() for state in State],
                 ),
                 "result": fields.Nested(self.response_model_interrogation_form_result, skip_none=True),
                 "payload": fields.Nested(
@@ -1097,6 +1099,7 @@ class ImageModels(v2.Models):
                 "state": fields.String(
                     title="Interrogation State",
                     description="The overall status of this interrogation.",
+                    enum=[state.name.lower() for state in State],
                 ),
                 "forms": fields.List(fields.Nested(self.response_model_interrogation_form_status, skip_none=True)),
             },
