@@ -454,7 +454,7 @@ class ProcessingGeneration(db.Model):
     # Extendable function to be able to dynamically adjust the amount of things
     # based on what the worker actually returned.
     # Typically needed for LLMs using EOS tokens etc
-    def get_things_count(self, generation):
+    def get_things_count(self, generation, things_max):
         return self.wp.things
 
     def send_webhook(self, kudos: float) -> None:
