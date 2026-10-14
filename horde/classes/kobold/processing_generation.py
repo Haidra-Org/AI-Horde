@@ -102,7 +102,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         # This formula creates an exponential increase on the kudos consumption, based on the context requested
         # 1024 context is considered the base.
         # The reason is that higher context has exponential VRAM requirements
-        actual_context_length = self.get_things_count(self.wp.prompt)
+        actual_context_length = self.get_things_count(self.wp.prompt, things_max=self.wp.max_context_length)
         context_multiplier = 1.2 + (2.2 ** (math.log2(actual_context_length / 1024)))
         # Prevent shenanigans
         if context_multiplier > 30:
@@ -193,18 +193,20 @@ class TextProcessingGeneration(ProcessingGeneration):
         submit_genstats_record_duration.record(time.monotonic() - genstats_t0, {"horde.gentype": "text"})
         return kudos
 
-    def get_things_count(self, generation=None):
+    def get_things_count(self, generation=None, things_max=None):
         if generation is None:
             if self.generation is None:
                 return 0
             generation = self.generation
+        if things_max is None:
+            things_max = self.wp.things
         quick_token_count = math.ceil(len(generation) / 4)
         if quick_token_count < 20:
             quick_token_count = 20
-        if self.wp.things > quick_token_count:
+        if things_max > quick_token_count:
             # logger.debug([self.wp.things,quick_token_count])
             return quick_token_count
-        return self.wp.things
+        return things_max
 
     def record(self, things_per_sec, kudos):
         # Extended function to try and catch workers using unreasonable
