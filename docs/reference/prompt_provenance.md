@@ -42,6 +42,12 @@ style is applied or the replacement filter rewrites the text.
 | `WaitingPrompt.submitted_prompt` | Parsed submission string, before styles or moderation               | Authenticated request owner, evidence capture    |
 | Event `moderation_prompt`        | Input to moderation after style expansion                           | Moderator evidence review                        |
 | Event `effective_prompt`         | Prompt a worker received; `null` for a rejection                    | Moderator evidence review                        |
+| `TextWaitingPrompt.messages`     | A chat request's worker input, after moderation                     | Generation and worker code                       |
+
+On a chat request, `prompt` and `submitted_prompt` hold the messages flattened into one string, after and before
+moderation. The flattened `prompt` is an estimate that sizing, kudos and moderation read; workers receive `messages`
+instead, and every rewrite of `prompt` is mirrored onto them. Moderation evidence for a chat request records the
+flattened strings. See the [chat requests reference](chat_requests.md).
 
 `submitted_prompt` is captured in `GenerateTemplate._post_inner` before the subclass `validate()` runs, because that
 is where styles and moderation are applied. Each constructor path receives the captured string explicitly: the waiting
@@ -67,7 +73,8 @@ filter rewrite, a row without provenance omits the prompt, and the response is n
 ## Retrieval responses
 
 `GET /api/v2/generate/request/<id>` and `GET /api/v2/generate/text/request/<id>` return the original prompt alongside
-normalized parameters, under `Cache-Control: private, no-store`. The response uses the generation input shape. It is
+normalized parameters, under `Cache-Control: private, no-store`. Chat requests have no retrieval route, and the text
+route reports a chat request's id as not found. The response uses the generation input shape. It is
 an approximation: parameters carry defaults and any style's overrides, while the prompt is the pre-style submission. A
 client reproducing a styled request needs the style it originally specified.
 

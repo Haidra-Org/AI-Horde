@@ -36,6 +36,7 @@ nav = [
         { "Moderation operations" = "reference/moderation_operations.md" },
         { "Style contract" = "reference/style_contract.md" },
         { "Outbound requests" = "reference/outbound_requests.md" },
+        { "Chat requests" = "reference/chat_requests.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },
@@ -46,6 +47,7 @@ nav = [
         { "Use the style endpoints" = "how-to/use_style_endpoints.md" },
         { "Add styles to a frontend" = "how-to/add_styles_to_a_frontend.md" },
         { "Update a style integration" = "how-to/update_a_style_integration.md" },
+        { "Run the OpenAI-compatible chat front" = "how-to/run_openai_chat_front.md" },
     ] },
     { "Decisions" = "decisions/index.md" },
     { "Concepts" = [

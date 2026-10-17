@@ -24,5 +24,6 @@ The concepts they assume (what a worker is, what a job's lifecycle means) are in
 | [Image baseline policy reference](baseline_policy.md) | The two authorities a baseline-dependent request is checked against, what each one decides, and what applies to a baseline with no record. |
 | [Image model reference loader reference](model_reference.md) | Where the image model reference comes from, how beta (pending) models are merged over it, the environment that configures both, and what the loader exposes. |
 | [Style contract reference](style_contract.md) | What an image or text style may declare about the params a request may set and the placeholders its prompt accepts, and how a text request is sized against the prompt it ends up sending. |
+| [Chat requests reference](chat_requests.md) | Chat routes and their text mapping, known models, operation keys, chat declaration on pop, chat job payload, structured submit, pricing, chat model list, admission flag and completion signal. |
 | [Outbound requests reference](outbound_requests.md) | Which client-supplied URLs the horde requests, the address check every hop passes, and the timeouts, redirect limits and byte caps of image fetches and webhooks. |
 <!-- END GENERATED: documents -->

@@ -21,4 +21,5 @@ the ordered steps, the checks between them, and the way back if a step fails.
 | [Use the style endpoints](use_style_endpoints.md) | Read the published style contract, create text and image styles that declare a policy and placeholders, and send requests under them. |
 | [Add style authoring and styled requests to a frontend](add_styles_to_a_frontend.md) | Build style authoring controls from the published style contract, build request inputs from a style's declarations, preview with a dry run, and handle collections and style errors. |
 | [Update an existing style integration](update_a_style_integration.md) | The changes in AI Horde 5.1.13 that a client already using styles can observe, what to change for each, and how to check it. |
+| [Run the OpenAI-compatible chat front](run_openai_chat_front.md) | Configure and start the horde.oai process that serves /v1/chat/completions and /v1/models in front of a horde, then check it with a real request. |
 <!-- END GENERATED: documents -->

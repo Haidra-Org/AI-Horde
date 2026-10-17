@@ -61,6 +61,7 @@ procedure for one subject sit together.
 ### operations
 
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
+- How-to: [Run the OpenAI-compatible chat front](how-to/run_openai_chat_front.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 - Reference: [Outbound requests reference](reference/outbound_requests.md)
 
@@ -70,9 +71,11 @@ procedure for one subject sit together.
 - How-to: [Use the style endpoints](how-to/use_style_endpoints.md)
 - How-to: [Add style authoring and styled requests to a frontend](how-to/add_styles_to_a_frontend.md)
 - How-to: [Update an existing style integration](how-to/update_a_style_integration.md)
+- How-to: [Run the OpenAI-compatible chat front](how-to/run_openai_chat_front.md)
 - Reference: [Prompt provenance reference](reference/prompt_provenance.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 - Reference: [Style contract reference](reference/style_contract.md)
+- Reference: [Chat requests reference](reference/chat_requests.md)
 - Reference: [Outbound requests reference](reference/outbound_requests.md)
 
 ### workers
@@ -81,4 +84,5 @@ procedure for one subject sit together.
 - How-to: [Add an image baseline](how-to/add_image_baseline.md)
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
 - Reference: [Image model reference loader reference](reference/model_reference.md)
+- Reference: [Chat requests reference](reference/chat_requests.md)
 <!-- END GENERATED: topics -->
