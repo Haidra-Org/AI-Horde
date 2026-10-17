@@ -1,0 +1,426 @@
+# SPDX-FileCopyrightText: 2026 Tazlin
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+"""Behavior of the chat front's error scenarios: status, headers, ``code``, ``param`` and ``metadata`` per scenario."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+
+import httpx
+import pytest
+import respx
+
+from horde.oai.app import create_app
+from horde.oai.settings import FrontSettings
+from tests.unit.oai.conftest import (
+    FAST_TEST_SETTINGS,
+    FRONT_URL,
+    HORDE_URL,
+    REQUEST_ID,
+    StartFront,
+    build_chat_body,
+    call_raw,
+    done_status,
+    response_body,
+    response_status,
+    wait_for_call,
+    waiting_status,
+)
+from tests.unit.oai.test_chat_front import data_payloads, parse_sse_events
+
+pytestmark = pytest.mark.asyncio
+
+SHOULD_RETRY: str = "x-should-retry"
+"""The retry-suppression header."""
+
+
+def chunked_body(chat_body: dict[str, object], *, chunk_bytes: int = 64) -> list[bytes]:
+    """Return ``chat_body`` encoded and split into chunks with no declared length."""
+    encoded_body = json.dumps(chat_body).encode()
+    return [encoded_body[offset : offset + chunk_bytes] for offset in range(0, len(encoded_body), chunk_bytes)]
+
+
+async def test_body_over_the_declared_limit_is_413_before_parsing(start_front: StartFront) -> None:
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"max_body_bytes": 100})) as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "RequestTooLarge"
+    assert SHOULD_RETRY not in response.headers
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_chunked_body_over_the_limit_is_413_while_received(start_front: StartFront) -> None:
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"max_body_bytes": 100})) as front:
+        _app_task, sent_messages = await call_raw(front.app, body_chunks=chunked_body(build_chat_body()))
+
+    assert response_status(sent_messages) == 413
+    assert json.loads(response_body(sent_messages))["error"]["code"] == "RequestTooLarge"
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_slow_body_is_408_after_the_read_timeout(start_front: StartFront) -> None:
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"body_read_timeout_seconds": 0.1})) as front:
+        _app_task, sent_messages = await call_raw(
+            front.app,
+            body_chunks=chunked_body(build_chat_body()),
+            chunk_delay_seconds=0.05,
+        )
+
+    assert response_status(sent_messages) == 408
+    error = json.loads(response_body(sent_messages))["error"]
+    assert error["code"] == "RequestBodyTimeout"
+    assert error["type"] == "timeout_error"
+    assert all(header_name != SHOULD_RETRY.encode() for header_name, _ in sent_messages[0]["headers"])
+    assert front.horde.submit_route.call_count == 0
+    assert front.inflight == 0
+
+
+@pytest.mark.parametrize("raw_body", [b"{not json", b"[1, 2]"])
+async def test_invalid_json_or_a_non_object_is_a_bad_request(start_front: StartFront, raw_body: bytes) -> None:
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", content=raw_body, headers={"Content-Type": "application/json"})
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "message": response.json()["error"]["message"],
+            "type": "invalid_request_error",
+            "param": None,
+            "code": "BadRequest",
+            "metadata": {},
+        },
+    }
+
+
+@pytest.mark.parametrize("authorization", ["Basic dXNlcjpwYXNz", "Bearer", "Bearer ", "Bearer two words"])
+async def test_malformed_authorization_is_401_not_anonymous(start_front: StartFront, authorization: str) -> None:
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(), headers={"Authorization": authorization})
+
+    assert response.status_code == 401
+    assert response.json()["error"]["type"] == "authentication_error"
+    assert response.json()["error"]["code"] == "InvalidAuthorizationHeader"
+    assert front.horde.submit_route.call_count == 0
+
+
+@pytest.mark.parametrize(
+    ("horde_status", "horde_rc", "expected_type", "expected_code"),
+    [
+        (401, "InvalidAPIKey", "authentication_error", "InvalidAPIKey"),
+        (402, "KudosUpfront", "api_error", "KudosUpfront"),
+        (403, "CorruptPrompt", "permission_error", "CorruptPrompt"),
+        (404, "RequestNotFound", "not_found_error", "RequestNotFound"),
+    ],
+)
+async def test_horde_refusal_at_submit_keeps_its_status_and_rc(
+    start_front: StartFront,
+    horde_status: int,
+    horde_rc: str,
+    expected_type: str,
+    expected_code: str,
+) -> None:
+    async with start_front() as front:
+        front.horde.submit_route.respond(horde_status, json={"message": "Refused.", "rc": horde_rc})
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == horde_status
+    error = response.json()["error"]
+    assert error["type"] == expected_type
+    assert error["code"] == expected_code
+    assert error["metadata"] == {"rc": horde_rc}
+    assert SHOULD_RETRY not in response.headers
+    assert front.inflight == 0
+
+
+async def test_horde_rate_limit_passes_through_with_its_headers(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.submit_route.respond(
+            429,
+            json={"message": "Too many prompts.", "rc": "TooManyPrompts"},
+            headers={"Retry-After": "7", "X-RateLimit-Limit": "2", "X-RateLimit-Remaining": "0"},
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "7"
+    assert response.headers["x-ratelimit-limit"] == "2"
+    assert response.headers["x-ratelimit-remaining"] == "0"
+    assert SHOULD_RETRY not in response.headers
+    assert response.json() == {
+        "error": {
+            "message": "Too many prompts.",
+            "type": "rate_limit_error",
+            "param": None,
+            "code": "TooManyPrompts",
+            "metadata": {"rc": "TooManyPrompts", "retry_after": 7},
+        },
+    }
+
+
+async def test_chat_admission_disabled_is_503_with_retry_after(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.submit_route.respond(503, json={"message": "Chat is switched off.", "rc": "ChatAdmissionDisabled"})
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "30"
+    assert response.json()["error"]["code"] == "ChatAdmissionDisabled"
+    assert SHOULD_RETRY not in response.headers
+
+
+async def test_horde_unreachable_before_send_is_a_retriable_502() -> None:
+    unreachable_settings = FrontSettings(horde_urls=(HORDE_URL, "http://horde-second.test/api"))
+    with respx.mock(assert_all_called=False) as router:
+        first_route = router.post(f"{HORDE_URL}/v2/generate/chat/async").mock(side_effect=httpx.ConnectError("refused"))
+        second_route = router.post("http://horde-second.test/api/v2/generate/chat/async").mock(side_effect=httpx.ConnectError("refused"))
+        async with httpx.AsyncClient() as horde_http_client:
+            app = create_app(unreachable_settings, http_client=horde_http_client, cancel_http_client=horde_http_client)
+            async with app.router.lifespan_context(app):
+                transport = httpx.ASGITransport(app=app)
+                async with httpx.AsyncClient(transport=transport, base_url=FRONT_URL) as front_client:
+                    response = await front_client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "HordeUnavailable"
+    assert response.json()["error"]["metadata"] == {}
+    assert SHOULD_RETRY not in response.headers
+    assert first_route.call_count == 1
+    assert second_route.call_count == 1
+
+
+@pytest.mark.parametrize("transport_error", [httpx.ReadTimeout("slow"), httpx.ReadError("reset")])
+async def test_submit_lost_after_send_is_502_without_retry(start_front: StartFront, transport_error: httpx.TransportError) -> None:
+    async with start_front() as front:
+        front.horde.submit_route.mock(side_effect=transport_error)
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 502
+    assert response.headers[SHOULD_RETRY] == "false"
+    error = response.json()["error"]
+    assert error["code"] == "HordeUnavailable"
+    assert error["metadata"] == {"submit_outcome": "unknown"}
+    assert front.horde.submit_route.call_count == 1
+    assert front.inflight == 0
+
+
+async def test_front_at_capacity_is_503_with_retry_after_and_no_submit(start_front: StartFront) -> None:
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"max_inflight": 1})) as front:
+        first_request = asyncio.create_task(front.client.post("/v1/chat/completions", json=build_chat_body()))
+        await wait_for_call(lambda: front.horde.status_route.call_count)
+        refused = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        await front.horde.finish_later(0)
+        first_response = await first_request
+
+    assert refused.status_code == 503
+    assert refused.headers["retry-after"] == "5"
+    assert SHOULD_RETRY not in refused.headers
+    assert refused.json()["error"]["code"] == "FrontAtCapacity"
+    assert refused.json()["error"]["metadata"] == {"retry_after": 5}
+    assert first_response.status_code == 200
+    assert front.horde.submit_route.call_count == 1
+
+
+async def test_deadline_with_the_request_still_waiting_is_408_without_retry_and_cancels(start_front: StartFront) -> None:
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"nonstream_timeout_seconds": 0.3})) as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 408
+    assert response.headers[SHOULD_RETRY] == "false"
+    error = response.json()["error"]
+    assert error["code"] == "ChatRequestTimeout"
+    assert error["type"] == "timeout_error"
+    assert error["metadata"] == {"request_id": REQUEST_ID}
+    assert front.horde.cancel_route.call_count == 1
+
+
+async def test_faulted_request_is_502_without_retry(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = {**waiting_status(), "faulted": True}
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 502
+    assert response.headers[SHOULD_RETRY] == "false"
+    assert response.json()["error"]["code"] == "ChatRequestFaulted"
+    assert response.json()["error"]["metadata"] == {"request_id": REQUEST_ID}
+    assert front.horde.cancel_route.call_count == 0
+
+
+async def test_faulted_signal_then_missing_status_is_an_expired_faulted_request(start_front: StartFront) -> None:
+    async def expire() -> None:
+        await asyncio.sleep(0.1)
+        front.horde.status_code = 404
+        front.horde.status_payload = {"message": "Request not found.", "rc": "RequestNotFound"}
+        await front.horde.publish("faulted")
+
+    async with start_front() as front:
+        expirer = asyncio.create_task(expire())
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        await expirer
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "ChatRequestFaulted"
+
+
+async def test_status_404_without_a_faulted_signal_passes_through_without_retry(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_code = 404
+        front.horde.status_payload = {"message": "Request not found.", "rc": "RequestNotFound"}
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 404
+    assert response.headers[SHOULD_RETRY] == "false"
+    assert response.json()["error"]["metadata"] == {"request_id": REQUEST_ID, "rc": "RequestNotFound"}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_no_eligible_worker_past_the_grace_is_503_and_cancels(start_front: StartFront, stream: bool) -> None:
+    fail_fast_settings = FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 0.2})
+    async with start_front(fail_fast_settings) as front:
+        front.horde.status_payload = waiting_status(is_possible=False)
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream))
+
+    assert front.horde.cancel_route.call_count == 1
+    assert response.headers[SHOULD_RETRY] == "false"
+    if stream:
+        assert response.status_code == 200
+        payloads = data_payloads(parse_sse_events(response.text))
+        assert json.loads(payloads[0])["error"]["code"] == "no_eligible_worker"
+        assert payloads[-1] == "[DONE]"
+    else:
+        assert response.status_code == 503
+        assert response.headers["retry-after"] == "30"
+        assert response.json()["error"]["code"] == "no_eligible_worker"
+        assert response.json()["error"]["metadata"] == {"request_id": REQUEST_ID, "retry_after": 30}
+
+
+async def test_no_eligible_worker_does_not_fail_while_a_worker_is_processing(start_front: StartFront) -> None:
+    fail_fast_settings = FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 0.1, "fallback_poll_seconds": 0.05})
+    async with start_front(fail_fast_settings, with_redis=False) as front:
+        front.horde.status_payload = waiting_status(is_possible=False, processing=1)
+        finisher = asyncio.create_task(front.horde.finish_later(0.4, signal=False))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        await finisher
+
+    assert response.status_code == 200
+    assert front.horde.cancel_route.call_count == 0
+
+
+async def test_stream_error_event_writes_explicit_nulls_and_no_choice(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_code = 404
+        front.horde.status_payload = {"detail": "gone"}
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=True))
+
+    assert response.status_code == 200
+    payloads = data_payloads(parse_sse_events(response.text))
+    assert payloads[-1] == "[DONE]"
+    assert len(payloads) == 2
+    assert '"param":null' in payloads[0]
+    assert '"code":null' in payloads[0]
+    error_event = json.loads(payloads[0])
+    assert error_event == {
+        "error": {
+            "message": error_event["error"]["message"],
+            "type": "not_found_error",
+            "param": None,
+            "code": None,
+            "metadata": {"request_id": REQUEST_ID},
+        },
+    }
+    assert "choices" not in error_event
+
+
+@pytest.mark.parametrize("failure", ["faulted", "timeout"])
+async def test_stream_failure_after_headers_is_an_error_event_then_done(start_front: StartFront, failure: str) -> None:
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"stream_timeout_seconds": 0.3})) as front:
+        if failure == "faulted":
+            front.horde.status_payload = {**waiting_status(), "faulted": True}
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=True))
+
+    assert response.status_code == 200
+    assert response.headers[SHOULD_RETRY] == "false"
+    payloads = data_payloads(parse_sse_events(response.text))
+    expected_code = "ChatRequestFaulted" if failure == "faulted" else "ChatRequestTimeout"
+    assert json.loads(payloads[0])["error"]["code"] == expected_code
+    assert payloads[-1] == "[DONE]"
+    assert front.horde.cancel_route.call_count == (1 if failure == "timeout" else 0)
+
+
+async def test_completed_non_streamed_response_carries_no_retry_header(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 200
+    assert SHOULD_RETRY not in response.headers
+
+
+@pytest.mark.parametrize("failure", [httpx.Response(503, json={"message": "Unavailable"}), httpx.ReadTimeout("slow")])
+async def test_failed_fail_fast_recheck_does_not_cancel_from_stale_status(start_front: StartFront, failure: object) -> None:
+    settings = FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 0.02, "signal_recheck_seconds": 0.02})
+    async with start_front(settings, with_redis=False) as front:
+        front.horde.status_route.mock(
+            side_effect=[
+                httpx.Response(200, json=waiting_status(is_possible=False)),
+                failure,
+                httpx.Response(200, json=done_status()),
+            ]
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+    assert response.status_code == 200
+    assert front.horde.status_route.call_count == 3
+    assert front.horde.cancel_route.call_count == 0
+
+
+@pytest.mark.parametrize("token", [b"caf\xe9", b"key\x00", b"key\x7f", b"key\tpart"])
+async def test_non_ascii_or_control_bearer_token_is_401(start_front: StartFront, token: bytes) -> None:
+    async with start_front() as front:
+        _, messages = await call_raw(
+            front.app, body_chunks=[json.dumps(build_chat_body()).encode()], headers=[(b"authorization", b"Bearer " + token)]
+        )
+    assert response_status(messages) == 401
+    assert json.loads(response_body(messages))["error"]["code"] == "InvalidAuthorizationHeader"
+    assert front.horde.submit_route.call_count == 0
+    assert front.inflight == 0
+
+
+@pytest.mark.parametrize("field", ["temperature", "top_p", "frequency_penalty", "presence_penalty"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+async def test_nonfinite_sampling_value_is_refused_before_forwarding(start_front: StartFront, field: str, value: float) -> None:
+    async with start_front() as front:
+        body = {**build_chat_body(), field: value}
+        response = await front.client.post("/v1/chat/completions", content=json.dumps(body), headers={"Content-Type": "application/json"})
+    assert response.status_code == 400
+    assert front.horde.submit_route.call_count == 0
+    assert front.inflight == 0
+
+
+@pytest.mark.parametrize("publish_fault", [False, True])
+async def test_missing_previously_visible_status_reconciles_expiry_within_a_bound(start_front: StartFront, publish_fault: bool) -> None:
+    settings = FAST_TEST_SETTINGS.model_copy(update={"fallback_poll_seconds": 0.02, "signal_recheck_seconds": 0.1})
+    missing_read = asyncio.Event()
+    reads = 0
+
+    async def answer(_request: httpx.Request) -> httpx.Response:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            return httpx.Response(200, json=waiting_status(wait_time=0))
+        missing_read.set()
+        return httpx.Response(404, json={"message": "Gone", "rc": "RequestNotFound"})
+
+    async with start_front(settings) as front:
+        front.horde.status_route.mock(side_effect=answer)
+        request = asyncio.create_task(front.client.post("/v1/chat/completions", json=build_chat_body()))
+        await asyncio.wait_for(missing_read.wait(), timeout=1)
+        if publish_fault:
+            await asyncio.sleep(0.02)
+            await front.horde.publish("faulted")
+        response = await asyncio.wait_for(request, timeout=0.5)
+    assert response.status_code == (502 if publish_fault else 404)
+    assert response.json()["error"]["code"] == ("ChatRequestFaulted" if publish_fault else "RequestNotFound")
+    assert response.headers[SHOULD_RETRY] == "false"

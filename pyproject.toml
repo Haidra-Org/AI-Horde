@@ -64,6 +64,20 @@ dependencies = [
     "logfire[flask,sqlalchemy,redis,requests]==4.32.1",
     "chardet<6",
     "pycurl>=7.45.7,<8",
+    # The OpenAI-compatible chat front (horde/oai) is an ASGI app, so one process holds thousands of waiting requests and streams.
+    "fastapi",
+    # Serves the horde/oai ASGI app.
+    "uvicorn",
+    # The horde/oai front calls the Horde API asynchronously through it.
+    "httpx",
+    # Server-sent events for the horde/oai streaming responses.
+    "sse-starlette",
+    # Reads the horde/oai front's HORDE_OAI_* settings into a validated model.
+    "pydantic-settings",
+    # httpcore tries to import sniffio on every request to detect the async library. Current anyio no longer
+    # depends on sniffio, and a failed import is never cached, so without it every Horde call from the front
+    # walked the whole import path and cost more CPU than the request itself.
+    "sniffio",
 ]
 license = {file = "LICENSE"}
 classifiers = [
@@ -93,6 +107,10 @@ dev = [
     "pre-commit",
     "locust>=2.43.4",
     "types-python-dateutil>=2.9.0.20260716",
+    # Mocks the Horde API under the horde/oai front tests.
+    "respx",
+    # Official OpenAI client; the chat front's conformance tests drive it against the front.
+    "openai>=1.109,<2",
     # Issues a throwaway CA and server certificate for the loopback HTTPS outbound tests.
     "trustme",
 ]

@@ -33,6 +33,27 @@ services:
       redis:
         condition: service_started
 
+  # The OpenAI-compatible chat front (horde/oai). It runs from the same image as the horde and reaches it over the
+  # compose network. See docs/how-to/run_openai_chat_front.md.
+  aihorde_oai:
+    image: aihorde:latest
+    container_name: aihorde_oai
+    command: ["python", "-m", "horde.oai"]
+    ports:
+      - "7002:7002"
+    environment:
+      - HORDE_OAI_HORDE_URLS=http://aihorde:7001/api
+      - HORDE_OAI_REDIS_URL=redis://redis:6379/7
+    volumes:
+      - ./horde:/app/horde
+    networks:
+      - aihorde_network
+    depends_on:
+      aihorde:
+        condition: service_started
+      redis:
+        condition: service_started
+
   postgres:
     image: ghcr.io/haidra-org/ai-horde-postgres:latest
     container_name: postgres
