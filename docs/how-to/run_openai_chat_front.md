@@ -49,8 +49,8 @@ directory is read too. A variable that is set but invalid stops the start with a
 | `HORDE_OAI_REDIS_LIVENESS_SECONDS` | `30` | How long the signal subscription may receive nothing before the front sends a PING, and how long the PONG may take. A missing PONG sets `signal_subscribed: false` on `/healthz` and the front subscribes again, so a connection a network fault black-holes does not pass for an idle one. The front also turns on TCP keepalive for this connection. |
 | `HORDE_OAI_PROXY_PASSKEY` | unset | The front operator's service account proxy passkey. When set, the front sends it as `Proxy-Authorization` with the client's address as `Proxied-For`, so IP timeouts and suspicion apply to the client and not to the front. |
 | `HORDE_OAI_MAX_INFLIGHT` | `100` | Open requests per process before 503 `FrontAtCapacity`. |
-| `HORDE_OAI_MAX_INFLIGHT_PER_SOURCE` | `5` | Open requests per client address per process before 503 `FrontAtCapacity`; checked before the global cap. Users behind one egress address share it. |
-| `HORDE_OAI_MAX_BODY_BYTES` | `2097152` | Largest request body, counted while it is received and before JSON is parsed; larger is 413. |
+| `HORDE_OAI_MAX_INFLIGHT_PER_SOURCE` | `5` | Open requests per client address per process before 503 `FrontAtCapacity`; checked before the global cap, and before any of the body is read. Users behind one egress address share it. |
+| `HORDE_OAI_MAX_BODY_BYTES` | `37748736` | Largest request body, counted while it is received and before JSON is parsed; larger is 413. The default is the native route's 36 MiB, room for five 5 MiB images as data URLs plus the text limit. |
 | `HORDE_OAI_MAX_MESSAGE_COUNT` | `1024` | Most messages per request; more is 400. |
 | `HORDE_OAI_MAX_TEXT_BYTES` | `1048576` | Most UTF-8 bytes of message text per request; more is 400. |
 | `HORDE_OAI_BODY_READ_TIMEOUT_SECONDS` | `30` | Time allowed to receive the body; slower is 408 `RequestBodyTimeout`. |
@@ -172,8 +172,10 @@ Reversal: none needed; a request the client abandons is cancelled on the horde.
 ## 5. Check the front against the OpenAI SDK
 
 The conformance module drives the pinned official `openai` Python SDK against the real front and the real native app,
-each served on a loopback port, with a fake chat worker answering every job; no inference backend is needed. It runs
-under the integration test stack, which provides Postgres and the Redis the front subscribes to:
+each served on a loopback port, with a fake chat worker answering every job, so it does not need an inference
+backend. It runs
+under the integration test stack, which provides Postgres, the Redis the front subscribes to and the object store
+chat images are kept in:
 
 ```bash
 AI_HORDE_REQUIRE_TEST_DEPS=1 bash tests/run_with_test_stack.sh --   .venv/Scripts/python.exe -m pytest tests/integration/test_chat_front_sdk.py -p no:cacheprovider
@@ -187,8 +189,9 @@ does not run the command, so a test run does not silently provision separate dat
 Verification: every test passes: the model list includes the worker's chat model and leaves out a model no online
 worker serves; a completion and a streamed completion
 return the worker's reply, `finish_reason` `stop` and the worker's token counts; `logit_bias` is a `BadRequestError`
-whose `param` is `logit_bias`; and a model without an online worker is a 503 `no_eligible_worker` the SDK does not
-retry.
+whose `param` is `logit_bias`; a model without an online worker is a 503 `no_eligible_worker` the SDK does not
+retry; and an image sent as a data URL reaches the worker, which declares `vision` and the `url` image transport, as
+a signed `http(s)` URL.
 
 Reversal: the run creates and drops its database schema; the test stack stays up for later runs unless
 `run_with_test_stack.sh` is given `--down`.
@@ -200,17 +203,32 @@ The core OpenAI keys are forwarded: `model`, `messages`, `stream`, `stream_optio
 `max_tokens` and `max_completion_tokens` must agree when both are sent and lie between 16 and 4096; with neither, the
 horde generates up to 512 tokens. `n` must be 1. `stop` is a string or up to four strings. `stream_options` needs
 `"stream": true`. Message roles are `system`, `developer`, `user` and `assistant`; `developer` is stored as `system`,
-which loses its precedence over `system`. Content is a string or an array of `text` parts.
+which loses its precedence over `system`. Content is a string or an array of `text` parts; a `user` message may also
+carry `image_url` parts (see [Image inputs](#image-inputs)).
 
 Stock clients send some keys at their defaults; these are accepted and dropped: empty or null `tools`, null or
 `"none"` `tool_choice`, `response_format: {"type": "text"}`, `logprobs: false`, `top_logprobs: 0`,
 `parallel_tool_calls` without tools, `store: false` and `service_tier` `"auto"` or `"default"`. `user` and `metadata`
-are accepted and unused. Any other key or value, image, audio and file content parts among them, is 400
-`UnsupportedChatParameter` with `param` naming it; a refused content part is named as
-`messages[1].content[0].type=image_url`, the form the native route uses.
+are accepted and unused. Any other key or value, audio and file content parts and image parts outside a `user`
+message among them, is 400 `UnsupportedChatParameter` with `param` holding its path; a refused content part is
+reported as `messages[1].content[0].type=input_audio`, the form the native route uses.
 
 The `horde` object takes `only` or `ignore` (worker ids, not both), `trusted_workers`, `validated_backends`,
 `slow_workers`, `max_context_length` and `context_fit` (`grow` or `reject`). `dry_run` and `operation_key` are refused.
+
+## Image inputs
+
+A `user` message may carry `{"type": "image_url", "image_url": {"url": ..., "detail": ...}}` parts, with `url` a
+`data:image/...;base64,` URL or an `http(s)` URL and `detail` optionally `auto`, `low` or `high`. The front forwards
+them unchanged. It refuses before the submit a request with more than five image parts (400
+`TooManyExtraSourceImages`) or a data URL that decodes to more than 5 MiB (400 `SourceImageSizeExceeded`, with
+`param` the path of the part's `url`); data URLs do not count toward `HORDE_OAI_MAX_TEXT_BYTES`. The horde fetches,
+checks and stores each image, charges the extra source image tax per image, refuses more than one image from an
+untrusted user (400 `MoreThanMinExtraSourceImage`), and sends the image only to a worker that declares the `vision`
+feature and an image transport. Its refusals pass through with the horde's `rc` as `code`, such as
+`SourceImageUrlRefused` for a URL at a private address or `SourceImageResolutionExceeded`, and 503
+`ChatImageStorageUnavailable` when the image store refuses the image. A model whose list entry shows `image` in
+`architecture.input_modalities` has such a worker online.
 
 ## Errors the front returns
 
@@ -231,6 +249,8 @@ retry into a second charged job. Errors before the submit do not carry the heade
 | 400 | `UnsupportedChatParameter` | | A key, role, content part, value or size the service does not serve. `param` holds its path. |
 | 400 | `ChatRequestConflict` | | `max_tokens` and `max_completion_tokens` differ, or `only` and `ignore` are both set. |
 | 400 | `BadRequest` | | The body is not a JSON object or a value has the wrong type. |
+| 400 | `TooManyExtraSourceImages` | | More than five image parts. |
+| 400 | `SourceImageSizeExceeded` | | An image data URL decodes to more than 5 MiB. `param` is the path of the part's `url`. |
 | 401 | `InvalidAuthorizationHeader` | | `Authorization` is present but not `Bearer <key>`. Omit it to use the anonymous key. |
 | 404 | `model_not_found` | | The model id contains `:`; no model variant is served. A horde 404 keeps the horde's `rc` as `code`. |
 | 408 | `ChatRequestTimeout` | `false` | The request was still waiting after `HORDE_OAI_NONSTREAM_TIMEOUT_SECONDS` and one final status read; it is cancelled. An outcome reached by the deadline is returned instead. |

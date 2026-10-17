@@ -18,28 +18,35 @@ from pydantic import ValidationError
 from horde import exceptions as e
 from horde.chat_contract import (
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
+    MAX_CHAT_IMAGE_BYTES,
+    MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
     MAX_CHAT_TEXT_BYTES,
     ChatHordeOptions,
 )
 from horde.classes.kobold.chat_request import (
+    CHAT_IMAGE_PLACEHOLDER,
     CHAT_IMAGE_REFERENCE_PREFIX,
     CHAT_REQUEST_CONFLICT_RC,
     DEFAULT_CHAT_MAX_TOKENS,
     UNSUPPORTED_CHAT_PARAMETER_RC,
     ChatFeature,
+    ChatImageTransport,
     build_chat_image_key,
     build_chat_job_payload,
     build_model_names,
     build_text_params,
     build_worker_targeting,
     flatten_messages,
+    has_image_parts,
+    list_chat_image_keys,
     list_image_urls,
     parse_chat_request,
     replace_image_urls,
     required_chat_features,
     resolve_image_references,
     rewrite_message_texts,
+    select_image_transport,
     serialize_messages,
 )
 from horde.exceptions import KNOWN_RC
@@ -98,8 +105,8 @@ class TestUnsupportedParameters:
         assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
         assert "messages[0].content[1].type=input_audio" in rejection.specific
 
-    @pytest.mark.parametrize("role", ["system", "user", "assistant"])
-    def test_an_image_part_is_refused_with_its_location_in_any_message(self, role: str) -> None:
+    @pytest.mark.parametrize("role", ["system", "developer", "assistant"])
+    def test_an_image_part_outside_a_user_message_is_refused_with_its_location(self, role: str) -> None:
         image_part = {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}
         messages = [{"role": role, "content": [{"type": "text", "text": "Look."}, image_part]}]
 
@@ -107,6 +114,14 @@ class TestUnsupportedParameters:
 
         assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
         assert "messages[0].content[1].type=image_url" in rejection.specific
+
+    def test_image_parts_on_a_user_message_are_accepted_and_stored_in_the_shape_sent(self) -> None:
+        image_part = {"type": "image_url", "image_url": {"url": "https://example.com/a.png", "detail": "low"}}
+        messages = [{"role": "user", "content": [{"type": "text", "text": "Look."}, image_part]}]
+
+        chat_request = parse_chat_request(_body(messages=messages))
+
+        assert serialize_messages(chat_request) == messages
 
     @pytest.mark.parametrize("unsupported_role", ["tool", "function"])
     def test_a_role_outside_the_served_roles_is_refused(self, unsupported_role: str) -> None:
@@ -449,13 +464,13 @@ class TestMessages:
         ]
         assert messages[1]["content"][0]["text"] == "drop"
 
-    def test_flattening_and_rewriting_leave_image_parts_out_of_the_text(self) -> None:
+    def test_flattening_renders_an_image_as_the_placeholder_and_rewriting_leaves_it_alone(self) -> None:
         image_part = _image_part(SMALL_DATA_URL)
         messages = [{"role": "user", "content": [{"type": "text", "text": "what is this"}, image_part]}]
 
         rewritten = rewrite_message_texts(messages, str.upper)
 
-        assert flatten_messages(messages) == "user: what is this"
+        assert flatten_messages(messages) == f"user: what is this\n{CHAT_IMAGE_PLACEHOLDER}"
         assert rewritten == [{"role": "user", "content": [{"type": "text", "text": "WHAT IS THIS"}, image_part]}]
 
 
@@ -500,6 +515,17 @@ class TestImageReferences:
         ]
         assert flatten_messages(resolved_messages) == flatten_messages(stored_messages)
 
+    def test_stored_keys_are_listed_from_the_references_in_message_order(self) -> None:
+        stored_messages = replace_image_urls(_image_messages(SMALL_DATA_URL, SMALL_DATA_URL), "request-id")
+
+        assert list_chat_image_keys(stored_messages) == [build_chat_image_key("request-id", 0), build_chat_image_key("request-id", 1)]
+        assert list_chat_image_keys(_image_messages(SMALL_DATA_URL)) == []
+
+    def test_image_parts_are_detected_only_in_part_arrays(self) -> None:
+        assert has_image_parts(_image_messages(SMALL_DATA_URL)) is True
+        assert has_image_parts([{"role": "user", "content": "an image_url in text"}]) is False
+        assert has_image_parts([{"role": "user", "content": [{"type": "text", "text": "image_url"}]}]) is False
+
     def test_resolving_refuses_an_image_url_that_is_not_a_stored_reference(self) -> None:
         with pytest.raises(ValueError):
             resolve_image_references(_image_messages(SMALL_DATA_URL), lambda image_key: image_key)
@@ -509,6 +535,58 @@ def _png_data_url(size: tuple[int, int], mode: str = "RGB") -> str:
     image_buffer = BytesIO()
     Image.new(mode, size).save(image_buffer, format="PNG")
     return f"data:image/png;base64,{base64.b64encode(image_buffer.getvalue()).decode('ascii')}"
+
+
+class TestImageValidation:
+    def test_more_images_than_the_cap_are_refused(self) -> None:
+        rejection = _rejection(_body(messages=_image_messages(*[SMALL_DATA_URL] * (MAX_CHAT_IMAGE_COUNT + 1))))
+
+        assert rejection.rc == "TooManyExtraSourceImages"
+
+    def test_the_image_cap_itself_is_accepted(self) -> None:
+        chat_request = parse_chat_request(_body(messages=_image_messages(*[SMALL_DATA_URL] * MAX_CHAT_IMAGE_COUNT)))
+
+        assert len(list_image_urls(serialize_messages(chat_request))) == MAX_CHAT_IMAGE_COUNT
+
+    def test_a_data_url_decoding_to_more_than_the_byte_cap_is_refused(self) -> None:
+        oversized_payload = "A" * ((MAX_CHAT_IMAGE_BYTES + 3) * 4 // 3)
+
+        with pytest.raises(e.ImageValidationFailed) as raised:
+            parse_chat_request(_body(messages=_image_messages(f"data:image/png;base64,{oversized_payload}")))
+
+        assert raised.value.rc == "SourceImageSizeExceeded"
+
+    @pytest.mark.parametrize(
+        ("image_url", "return_code"),
+        [
+            ("ftp://example.com/a.png", "SourceImageUrlInvalid"),
+            ("data:text/plain;base64,aGk=", "SourceImageUnreadable"),
+        ],
+    )
+    def test_an_image_url_of_another_form_is_refused(self, image_url: str, return_code: str) -> None:
+        with pytest.raises(e.ImageValidationFailed) as raised:
+            parse_chat_request(_body(messages=_image_messages(image_url)))
+
+        assert raised.value.rc == return_code
+
+
+class TestImageTransport:
+    @pytest.mark.parametrize(
+        ("declared", "expected"),
+        [
+            (["url", "base64"], ChatImageTransport.URL),
+            (["base64", "url"], ChatImageTransport.URL),
+            (["url"], ChatImageTransport.URL),
+            (["base64"], ChatImageTransport.BASE64),
+            ([], None),
+            (None, None),
+        ],
+    )
+    def test_url_is_chosen_whenever_declared_and_base64_only_alone(self, declared: list[str] | None, expected: Any) -> None:
+        assert select_image_transport(declared) == expected
+
+    def test_vision_is_a_declared_feature_name(self) -> None:
+        assert ChatFeature("vision") is ChatFeature.VISION
 
 
 class TestImageLoading:

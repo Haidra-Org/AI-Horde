@@ -93,6 +93,9 @@ class TextProcessingGeneration(ProcessingGeneration):
     """The chat context length the worker declared when the generation was assigned."""
     assigned_max_length = db.Column(db.Integer, nullable=True)
     """The chat output length the worker declared when the generation was assigned."""
+    image_transport = db.Column(db.String(16), nullable=True)
+    """How the generation's worker receives the request's images, a ``ChatImageTransport`` value chosen from its
+    declaration at assignment. NULL when the request carries no images and on text generations."""
 
     def _censorship_state(self) -> str:
         """Determine the state string for this procgen based on its censorship flags."""

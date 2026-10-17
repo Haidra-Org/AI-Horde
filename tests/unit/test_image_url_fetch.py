@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Fetching a client's image URL for a source image: address checks bound to the connection, redirects and byte
-caps."""
+"""Fetching a client's image URL, for chat images and source images: address checks bound to the connection,
+redirects, byte caps, and JPEG encoding."""
 
 from __future__ import annotations
 
@@ -21,8 +21,10 @@ from horde import exceptions as e
 from horde import image as horde_image
 from horde.image import (
     MAX_IMAGE_FETCH_REDIRECTS,
+    encode_chat_image,
     ensure_source_image_uploaded,
     fetch_public_image,
+    load_chat_image,
 )
 from horde.outbound import is_public_address
 from tests.local_http_server import (
@@ -218,8 +220,42 @@ class TestBoundFetch:
         assert paths == ["/a.png?size=1"]
 
 
+class TestChatImageLoading:
+    def test_an_image_url_resolving_to_a_private_address_is_refused(self) -> None:
+        with pytest.raises(e.ImageValidationFailed) as raised:
+            load_chat_image("https://images.example/a.png", resolve=resolver({"images.example": ["192.168.0.10"]}))
+
+        assert raised.value.rc == "SourceImageUrlRefused"
+
+    def test_a_normalised_image_is_encoded_as_jpeg(self) -> None:
+        encoded = encode_chat_image(Image.open(BytesIO(_png_bytes((40, 30)))).convert("RGB"))
+
+        assert encoded.startswith(b"\xff\xd8")
+        with Image.open(BytesIO(encoded)) as stored_image:
+            assert stored_image.format == "JPEG"
+            assert stored_image.mode == "RGB"
+            assert stored_image.size == (40, 30)
+
+    @pytest.mark.parametrize("mode", ["RGBA", "LA", "P"])
+    def test_a_transparent_image_is_flattened_onto_white(self, mode: str) -> None:
+        transparent_image = Image.new("RGBA", (40, 30), (0, 0, 0, 0))
+        transparent_image.paste((0, 0, 0, 255), (0, 0, 20, 30))
+        if mode != "RGBA":
+            transparent_image = transparent_image.convert(mode)
+        assert transparent_image.has_transparency_data
+
+        encoded = encode_chat_image(transparent_image)
+
+        assert encoded.startswith(b"\xff\xd8")
+        with Image.open(BytesIO(encoded)) as stored_image:
+            assert stored_image.format == "JPEG"
+            assert stored_image.mode == "RGB"
+            assert all(channel > 240 for channel in stored_image.getpixel((35, 15)))
+            assert all(channel < 15 for channel in stored_image.getpixel((5, 15)))
+
+
 class TestSourceImageUrl:
-    """A source image URL on an image request is fetched through the address guard."""
+    """A source image URL on an image request is fetched through the same address guard as a chat image URL."""
 
     @pytest.fixture
     def guarded_fetch(self, monkeypatch: pytest.MonkeyPatch) -> Callable[[dict[str, list[str]]], None]:

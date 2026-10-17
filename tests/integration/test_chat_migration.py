@@ -79,6 +79,7 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 ("processing_gens", "charge_basis", "character varying", 16, "YES"),
                 ("processing_gens", "completion_tokens", "integer", None, "YES"),
                 ("processing_gens", "finish_reason", "character varying", 32, "YES"),
+                ("processing_gens", "image_transport", "character varying", 16, "YES"),
                 ("processing_gens", "message", "jsonb", None, "YES"),
                 ("processing_gens", "native_finish_reason", "character varying", 32, "YES"),
                 ("processing_gens", "prompt_tokens", "integer", None, "YES"),
@@ -92,6 +93,7 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 ("workers", "chat_max_context_length", "integer", None, "YES"),
                 ("workers", "chat_max_length", "integer", None, "YES"),
                 ("workers", "chat_model_id", "character varying", None, "YES"),
+                ("workers", "image_transports", "ARRAY", None, "YES"),
             ]
 
             existing_worker_opt_in = connection.execute(

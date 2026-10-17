@@ -8,17 +8,21 @@ The module serves the native Flask app over HTTP with ``werkzeug.serving.make_se
 each in a daemon thread on an ephemeral loopback port, so every SDK call crosses both real listeners. The Horde
 publishes chat signals to the test Redis (database 7) that the front subscribes to. A
 [`FakeChatWorker`][tests.integration._fake_chat_worker.FakeChatWorker] on its own thread pops through a Flask test
-client and submits [`FIXED_REPLY`][tests.integration.test_chat_front_sdk.FIXED_REPLY] for every chat job.
+client and submits [`FIXED_REPLY`][tests.integration.test_chat_front_sdk.FIXED_REPLY] for every chat job. It declares
+``vision`` with the ``url`` image transport, so an image request reaches it with a signed URL; the image case needs
+the test object store as well.
 """
 
 from __future__ import annotations
 
+import base64
 import os
 import socket
 import threading
 import time
 import uuid
 from collections.abc import Iterator
+from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 import openai
@@ -26,11 +30,12 @@ import pytest
 import redis
 import uvicorn
 from openai.types.chat import ChatCompletionMessageParam
+from PIL import Image
 
 from horde.oai.app import create_app as create_front_app
 from horde.oai.settings import FrontSettings
 from tests.dependency_runtime import REQUIRE_TEST_DEPS_ENV, redis_reachable
-from tests.integration._fake_chat_worker import FakeChatWorker, build_chat_submit_body
+from tests.integration._fake_chat_worker import DEFAULT_CHAT_FEATURES, FakeChatWorker, build_chat_submit_body
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -60,6 +65,15 @@ CHAT_MESSAGES: list[ChatCompletionMessageParam] = [
     {"role": "user", "content": "Name one colour."},
 ]
 """The messages of every completion request."""
+
+WORKER_CHAT_FEATURES: list[str] = [*DEFAULT_CHAT_FEATURES, "vision"]
+"""The chat features the fake worker declares: koboldcpp's, plus ``vision`` so image requests are eligible for it."""
+
+WORKER_IMAGE_TRANSPORTS: list[str] = ["url"]
+"""The image transports the fake worker declares; only ``url``, so an image reaches it as a signed URL."""
+
+SIGNED_URL_PREFIXES: tuple[str, ...] = ("http://", "https://")
+"""The schemes a signed image URL in a pop payload carries."""
 
 CHAT_SIGNAL_REDIS_DB: int = 7
 """The Redis database the Horde publishes chat signals on, as ``horde.redis_ctrl.chat_signal_db``."""
@@ -196,6 +210,8 @@ class FixedReplyWorker:
         self._thread = threading.Thread(target=self._run, name="sdk-conformance-worker", daemon=True)
         self.failures: list[str] = []
         """Each unexpected pop or submit answer, or an exception that ended the thread."""
+        self.served_payloads: list[dict[str, Any]] = []
+        """The ``payload`` of every chat job the worker popped, in pop order."""
 
     def start(self) -> None:
         """Start popping and wait until the first pop registered the worker with the Horde."""
@@ -208,7 +224,13 @@ class FixedReplyWorker:
         self._thread.join(timeout=SERVER_STOP_TIMEOUT_SECONDS)
 
     def _run(self) -> None:
-        worker = FakeChatWorker(client=self._app.test_client(), headers=self._headers, name=WORKER_NAME, models=[CHAT_MODEL])
+        worker = FakeChatWorker(
+            client=self._app.test_client(),
+            headers=self._headers,
+            name=WORKER_NAME,
+            models=[CHAT_MODEL],
+            pop_options={"chat_features": WORKER_CHAT_FEATURES, "image_transports": WORKER_IMAGE_TRANSPORTS},
+        )
         try:
             while not self._stop_event.is_set():
                 if not self._serve_one(worker):
@@ -224,9 +246,11 @@ class FixedReplyWorker:
         if pop_response.status_code != 200:
             self.failures.append(f"pop {pop_response.status_code}: {pop_response.get_data(as_text=True)}")
             return False
-        generation_id = pop_response.get_json()["id"]
+        pop_result = pop_response.get_json()
+        generation_id = pop_result["id"]
         if generation_id is None:
             return False
+        self.served_payloads.append(pop_result["payload"])
         submit_response = worker.submit(
             build_chat_submit_body(
                 generation_id=generation_id,
@@ -402,3 +426,39 @@ def test_a_model_without_an_online_worker_fails_fast_without_an_sdk_retry(sdk_cl
     assert raised.value.code == "no_eligible_worker"
     assert raised.value.response.headers["x-should-retry"] == "false"
     assert elapsed_seconds < FAIL_FAST_ANSWER_LIMIT_SECONDS
+
+
+def _png_data_url() -> str:
+    """Return a small PNG as a base64 data URL."""
+    image_buffer = BytesIO()
+    Image.new("RGB", (16, 12), (30, 120, 200)).save(image_buffer, format="PNG")
+    return f"data:image/png;base64,{base64.b64encode(image_buffer.getvalue()).decode('ascii')}"
+
+
+@pytest.mark.object_storage
+@pytest.mark.usefixtures("object_store_ready")
+def test_an_image_reaches_a_url_worker_as_a_signed_url(sdk_client: openai.OpenAI, fixed_reply_worker: FixedReplyWorker) -> None:
+    data_url = _png_data_url()
+    [served_model] = [model for model in sdk_client.models.list() if model.id == CHAT_MODEL]
+
+    completion = sdk_client.chat.completions.create(
+        model=CHAT_MODEL,
+        messages=[
+            {"role": "system", "content": "Describe images briefly."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What colour is this?"},
+                    {"type": "image_url", "image_url": {"url": data_url, "detail": "low"}},
+                ],
+            },
+        ],
+    )
+
+    assert "image" in (served_model.model_extra or {})["architecture"]["input_modalities"]
+    assert completion.choices[0].message.content == FIXED_REPLY
+    image_payloads = [payload for payload in fixed_reply_worker.served_payloads if not isinstance(payload["messages"][-1]["content"], str)]
+    [image_part] = [part for part in image_payloads[-1]["messages"][-1]["content"] if part["type"] == "image_url"]
+    assert image_part["image_url"]["url"].startswith(SIGNED_URL_PREFIXES)
+    assert image_part["image_url"]["url"] != data_url
+    assert image_part["image_url"]["detail"] == "low"

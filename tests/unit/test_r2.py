@@ -196,3 +196,31 @@ class TestEvidenceClientConfiguration:
         (warning,) = warnings
         assert unset in warning
         assert r2.EVIDENCE_ACCOUNT_ENV not in warning
+
+
+class TestChatImages:
+    def test_a_download_url_is_signed_for_the_requested_lifetime(self, fake_clients) -> None:
+        transient, _ = fake_clients
+
+        r2.generate_chat_image_download_url("req_chat_0.jpg", expires_in=900)
+
+        (call,) = transient.calls
+        assert call == {
+            "method": "get_object",
+            "params": {"Bucket": r2.r2_source_image_bucket, "Key": "req_chat_0.jpg"},
+            "expires": 900,
+        }
+
+    def test_bulk_delete_batches_keys_and_reports_only_real_failures(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = Mock()
+        client.delete_objects.side_effect = [
+            {"Errors": [{"Key": "k0000", "Code": "NoSuchKey"}, {"Key": "k0001", "Code": "AccessDenied"}]},
+            {},
+        ]
+        monkeypatch.setattr(r2, "s3_client", client)
+        keys = [f"k{index:04d}" for index in range(r2.CHAT_IMAGE_DELETE_BATCH_SIZE + 1)]
+
+        assert r2.delete_chat_images(keys) == {"k0001"}
+        first_batch, second_batch = (call.kwargs["Delete"]["Objects"] for call in client.delete_objects.call_args_list)
+        assert len(first_batch) == r2.CHAT_IMAGE_DELETE_BATCH_SIZE
+        assert second_batch == [{"Key": keys[-1]}]

@@ -653,9 +653,9 @@ def test_turning_admission_off_refuses_new_chat_requests_and_keeps_serving_queue
         {"tools": []},
         {"n": 2},
         {"horde": {"models": ["other/model"]}},
-        {"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}]}]},
+        {"messages": [{"role": "assistant", "content": [{"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}]}]},
     ],
-    ids=["tools", "n", "horde-models", "image-part"],
+    ids=["tools", "n", "horde-models", "assistant-image-part"],
 )
 def test_an_unsupported_chat_parameter_is_refused_with_its_return_code(
     client,

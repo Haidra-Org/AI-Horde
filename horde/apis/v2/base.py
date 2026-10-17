@@ -769,9 +769,20 @@ class GenerateTemplate(Resource):
         self.wp.activate(
             self.downgrade_wp_priority,
             extra_source_images=self.args.extra_source_images,
-            kudos_adjustment=STYLE_OWNER_REWARD if self.style_kudos is True else 0,
+            kudos_adjustment=self.get_activation_kudos_adjustment(),
             style_reward=self.style_reward(),
         )
+
+    def get_activation_kudos_adjustment(self) -> float:
+        """Return the charge activation adds to the request's horde tax, beyond the base tax and extra source images.
+
+        Subclass Integration:
+            Extend where a gentype charges at activation for something the extra source images do not carry.
+
+        Returns:
+            The style surcharge when one applies, otherwise 0.
+        """
+        return STYLE_OWNER_REWARD if self.style_kudos is True else 0
 
     def apply_style(self):
         # If it reaches this method, we've already made sure  self.args.style isn't empty.

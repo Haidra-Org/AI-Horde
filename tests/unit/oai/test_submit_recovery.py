@@ -278,7 +278,7 @@ async def test_ambiguous_server_answer_recovers_the_identical_operation(start_fr
     assert recovered_claim_matches(front) == 1
 
 
-@pytest.mark.parametrize("rc", ["ChatAdmissionDisabled"])
+@pytest.mark.parametrize("rc", ["ChatAdmissionDisabled", "ChatImageStorageUnavailable"])
 async def test_known_native_pre_activation_refusal_does_not_recover(start_front: StartFront, rc: str) -> None:
     async with start_front() as front:
         front.horde.submit_route.respond(503, json={"message": "Refused before activation", "rc": rc})

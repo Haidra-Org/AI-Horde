@@ -36,6 +36,7 @@ from horde.oai.schema import (
     OpenAIError,
     OpenAIErrorEnvelope,
     OpenAIErrorType,
+    TextContentPart,
 )
 
 __all__ = [
@@ -115,6 +116,9 @@ TEXT_MODALITY: str = "text"
 
 IMAGE_MODALITY: str = "image"
 """The input modality of a model an online worker declares ``vision`` for."""
+
+IMAGE_PLACEHOLDER: str = "[image]"
+"""The text an image part counts as in the prompt token estimate; the native route renders an image the same way."""
 
 ERROR_TYPE_BY_STATUS: dict[int, OpenAIErrorType] = {
     HTTPStatus.BAD_REQUEST: OpenAIErrorType.INVALID_REQUEST_ERROR,
@@ -198,7 +202,9 @@ def flatten_messages(messages: Sequence[ChatMessage]) -> str:
         if isinstance(message.content, str):
             flattened_lines.append(message.content)
         else:
-            flattened_lines.extend(content_part.text for content_part in message.content)
+            flattened_lines.extend(
+                content_part.text if isinstance(content_part, TextContentPart) else IMAGE_PLACEHOLDER for content_part in message.content
+            )
     return "\n".join(flattened_lines)
 
 

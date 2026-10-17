@@ -23,8 +23,11 @@ A worker declares which optional request features it implements as
 request needs. [`build_chat_job_payload`][horde.classes.kobold.chat_request.build_chat_job_payload] fills
 the sampling defaults a chat job's payload always carries.
 
-Image parts are refused. The image reference helpers below are kept for the image transport that stores each
-image in object storage and sends the worker a signed URL.
+A user message may carry image parts, as a data URL or an http(s) URL. The native route stores each image in object
+storage and keeps only a reference to it in the stored messages
+([`replace_image_urls`][horde.classes.kobold.chat_request.replace_image_urls]); at pop the reference becomes a signed
+URL or a data URL, by the transport the worker declared
+([`select_image_transport`][horde.classes.kobold.chat_request.select_image_transport]).
 """
 
 from __future__ import annotations
@@ -50,6 +53,8 @@ from pydantic import (
 from horde import exceptions as e
 from horde.chat_contract import (
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
+    MAX_CHAT_IMAGE_BYTES,
+    MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
     MAX_CHAT_TEXT_BYTES,
     ChatHordeOptions,
@@ -62,20 +67,19 @@ from horde.image import parse_image_data_url
 
 __all__ = [
     "CHAT_IMAGE_DATA_URL_PREFIX",
+    "CHAT_IMAGE_PLACEHOLDER",
     "CHAT_IMAGE_REFERENCE_PREFIX",
     "CHAT_REQUEST_CONFLICT_RC",
     "CHAT_SAMPLING_DEFAULTS",
     "DEFAULT_CHAT_MAX_TOKENS",
-    "MAX_CHAT_IMAGES",
-    "MAX_CHAT_IMAGE_BYTES",
     "MAX_NATIVE_FINISH_REASON_LENGTH",
     "MAX_REPORTED_TOKEN_COUNT",
-    "MAX_UNTRUSTED_CHAT_IMAGES",
     "UNSUPPORTED_CHAT_PARAMETER_RC",
     "ChargeBasis",
     "ChatCompletionRequest",
     "ChatFeature",
     "ChatImageDetail",
+    "ChatImageTransport",
     "ChatMessage",
     "ChatRole",
     "ChatSubmittedMessage",
@@ -87,6 +91,8 @@ __all__ = [
     "build_text_params",
     "build_worker_targeting",
     "flatten_messages",
+    "has_image_parts",
+    "list_chat_image_keys",
     "list_image_urls",
     "message_text",
     "parse_chat_request",
@@ -94,6 +100,7 @@ __all__ = [
     "required_chat_features",
     "resolve_image_references",
     "rewrite_message_texts",
+    "select_image_transport",
     "serialize_messages",
 ]
 
@@ -154,21 +161,17 @@ SUPPORTED_HORDE_OPTION_KEYS = frozenset(ChatHordeOptions.model_fields)
 offered on chat requests."""
 
 TEXT_CONTENT_PART_TYPE = "text"
-"""The content part type carrying text, the only one a chat request may use."""
+"""The content part type carrying text, which any message may use."""
 
 IMAGE_URL_CONTENT_PART_TYPE = "image_url"
-"""The content part type carrying an image. It is refused on chat requests; stored messages never hold one."""
+"""The content part type carrying an image, which only a user message may use."""
 
-MAX_CHAT_IMAGES = 5
-"""The most image parts one chat request may carry. Matches the extra source image cap on image requests, which
-bounds the same storage and transfer cost."""
-
-MAX_UNTRUSTED_CHAT_IMAGES = 1
-"""The most image parts a user who is neither trusted nor a patron may send. Matches the extra source image rule
-on image requests."""
-
-MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
-"""The largest decoded size of one image. Matches the cap on a source image fetched from a URL."""
+IMAGE_PART_ROLES = frozenset(
+    {
+        "user",
+    },
+)
+"""The roles whose messages may carry image parts. OpenAI accepts images only from the user."""
 
 HTTP_URL_PREFIXES = (
     "http://",
@@ -182,6 +185,10 @@ the source image bucket, so the database never holds image bytes or a fetchable 
 
 CHAT_IMAGE_DATA_URL_PREFIX = "data:image/jpeg;base64,"
 """Prefix of a data URL holding a stored chat image, which is always JPEG."""
+
+CHAT_IMAGE_PLACEHOLDER = "[image]"
+"""The text an image part is rendered as in the flattened prompt, so the token estimate and moderation see that the
+message carries an image."""
 
 FLATTENED_MESSAGE_SEPARATOR = "\n"
 """Separator between messages, and between the text parts of one message, in the flattened estimate."""
@@ -253,6 +260,19 @@ class ChatFeature(enum.StrEnum):
     FREQUENCY_PENALTY = "frequency_penalty"
     """The backend applies OpenAI's frequency penalty."""
 
+    VISION = "vision"
+    """The loaded model reads image parts. A worker also has to declare an image transport to receive them."""
+
+
+class ChatImageTransport(enum.StrEnum):
+    """How a worker accepts a chat job's images, declared in ``image_transports`` on pop."""
+
+    URL = "url"
+    """The worker fetches a signed object storage URL. Preferred whenever a worker declares it."""
+
+    BASE64 = "base64"
+    """The worker reads a ``data:image/jpeg;base64,`` URL inlined in the pop response."""
+
 
 class ChatRole(enum.StrEnum):
     """The message roles a chat request may use."""
@@ -323,8 +343,8 @@ class ChatMessage(BaseModel):
     role: ChatRole
     """Who wrote the message."""
 
-    content: StrictStr | list[ChatTextPart]
-    """The message text as one string, or an array of text parts."""
+    content: StrictStr | list[Annotated[ChatTextPart | ChatImagePart, Field(discriminator="type")]]
+    """The message text as one string, or an array of parts. Only a user message may hold image parts."""
 
     name: StrictStr | None = None
     """An optional participant name, passed to the worker unchanged."""
@@ -449,8 +469,11 @@ def _reject_unsupported_message(message: object, message_index: int) -> None:
         if not isinstance(content_part, Mapping):
             continue
         part_type = content_part.get("type")
-        if part_type != TEXT_CONTENT_PART_TYPE:
-            _raise_unsupported(f"messages[{message_index}].content[{part_index}].type={part_type}")
+        if part_type == TEXT_CONTENT_PART_TYPE:
+            continue
+        if part_type == IMAGE_URL_CONTENT_PART_TYPE and role in IMAGE_PART_ROLES:
+            continue
+        _raise_unsupported(f"messages[{message_index}].content[{part_index}].type={part_type}")
 
 
 def _reject_unsupported_keys(request_body: Mapping[str, Any]) -> None:
@@ -486,7 +509,8 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
 
     Raises:
         horde.exceptions.BadRequest: With ``UnsupportedChatParameter`` for an ``n`` other than 1 or messages over
-            the shared size limits, or ``ChatRequestConflict`` for differing token limits.
+            the shared size limits, ``ChatRequestConflict`` for differing token limits, or an image validation
+            failure for too many, malformed or oversized image URLs.
     """
     if chat_request.n is not None and chat_request.n != SUPPORTED_CHOICE_COUNT:
         _raise_unsupported(f"n={chat_request.n}")
@@ -508,6 +532,24 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
             f"The message text of a chat request may be at most {MAX_CHAT_TEXT_BYTES} bytes.",
             rc=UNSUPPORTED_CHAT_PARAMETER_RC,
         )
+    _validate_image_urls(_submitted_image_urls(chat_request))
+
+
+def _submitted_image_urls(chat_request: ChatCompletionRequest) -> list[str]:
+    """Return the URL of every image part the client sent, in message order.
+
+    Args:
+        chat_request: The validated request.
+
+    Returns:
+        Each image part's ``url``.
+    """
+    image_urls: list[str] = []
+    for message in chat_request.messages:
+        if isinstance(message.content, str):
+            continue
+        image_urls.extend(content_part.image_url.url for content_part in message.content if isinstance(content_part, ChatImagePart))
+    return image_urls
 
 
 def _message_text_bytes(chat_request: ChatCompletionRequest) -> int:
@@ -524,7 +566,7 @@ def _message_text_bytes(chat_request: ChatCompletionRequest) -> int:
         if isinstance(message.content, str):
             text_bytes += len(message.content.encode())
         else:
-            text_bytes += sum(len(content_part.text.encode()) for content_part in message.content)
+            text_bytes += sum(len(content_part.text.encode()) for content_part in message.content if isinstance(content_part, ChatTextPart))
     return text_bytes
 
 
@@ -555,7 +597,7 @@ def _validate_image_url(image_url: str) -> None:
         horde.exceptions.ImageValidationFailed: With ``SourceImageUnreadable`` when a ``data:`` URL is not a base64
             image, ``SourceImageUrlInvalid`` when the URL is neither a data URL nor an ``http(s)`` URL, or
             ``SourceImageSizeExceeded`` when a data URL decodes to more than
-            [`MAX_CHAT_IMAGE_BYTES`][horde.classes.kobold.chat_request.MAX_CHAT_IMAGE_BYTES].
+            [`MAX_CHAT_IMAGE_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_BYTES].
     """
     base64_payload = parse_image_data_url(image_url)
     if base64_payload is None:
@@ -579,11 +621,11 @@ def _validate_image_urls(image_urls: Sequence[str]) -> None:
 
     Raises:
         horde.exceptions.BadRequest: With ``TooManyExtraSourceImages`` when there are more than
-            [`MAX_CHAT_IMAGES`][horde.classes.kobold.chat_request.MAX_CHAT_IMAGES] images, or an image validation
+            [`MAX_CHAT_IMAGE_COUNT`][horde.chat_contract.MAX_CHAT_IMAGE_COUNT] images, or an image validation
             failure for a malformed or oversized image URL.
     """
-    if len(image_urls) > MAX_CHAT_IMAGES:
-        raise e.BadRequest(f"A chat request can carry at most {MAX_CHAT_IMAGES} images.", rc="TooManyExtraSourceImages")
+    if len(image_urls) > MAX_CHAT_IMAGE_COUNT:
+        raise e.BadRequest(f"A chat request can carry at most {MAX_CHAT_IMAGE_COUNT} images.", rc="TooManyExtraSourceImages")
 
     for image_url in image_urls:
         _validate_image_url(image_url)
@@ -667,9 +709,9 @@ def _is_image_part(content_part: Mapping[str, Any]) -> bool:
 
 
 def message_text(message: Mapping[str, Any]) -> str:
-    """Return the text of one stored message, joining its text parts when the content is an array.
+    """Return the text of one stored message, joining its parts when the content is an array.
 
-    Image parts carry no text and are left out.
+    Each image part is rendered as [`CHAT_IMAGE_PLACEHOLDER`][horde.classes.kobold.chat_request.CHAT_IMAGE_PLACEHOLDER].
 
     Args:
         message: One entry of the stored ``messages`` array.
@@ -681,7 +723,21 @@ def message_text(message: Mapping[str, Any]) -> str:
     if isinstance(content, str):
         return content
 
-    return FLATTENED_MESSAGE_SEPARATOR.join(content_part["text"] for content_part in content if not _is_image_part(content_part))
+    return FLATTENED_MESSAGE_SEPARATOR.join(
+        CHAT_IMAGE_PLACEHOLDER if _is_image_part(content_part) else content_part["text"] for content_part in content
+    )
+
+
+def has_image_parts(messages: Sequence[Mapping[str, Any]]) -> bool:
+    """Return whether any message carries an image part.
+
+    Args:
+        messages: A ``messages`` array.
+
+    Returns:
+        True when at least one image part is present.
+    """
+    return any(not isinstance(message["content"], str) and any(_is_image_part(part) for part in message["content"]) for message in messages)
 
 
 def list_image_urls(messages: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -732,6 +788,40 @@ def _replace_image_urls_in_order(
         replaced_messages.append(replaced_message)
 
     return replaced_messages
+
+
+def list_chat_image_keys(messages: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return the object key of every stored image a stored ``messages`` array references.
+
+    Args:
+        messages: Stored messages, whose image parts hold references.
+
+    Returns:
+        The keys, in message order. An image URL that is not a stored reference contributes nothing.
+    """
+    return [
+        image_url.removeprefix(CHAT_IMAGE_REFERENCE_PREFIX)
+        for image_url in list_image_urls(messages)
+        if image_url.startswith(CHAT_IMAGE_REFERENCE_PREFIX)
+    ]
+
+
+def select_image_transport(declared_transports: Sequence[str] | None) -> ChatImageTransport | None:
+    """Return the transport a worker's images are sent with.
+
+    ``url`` is chosen whenever the worker declared it; ``base64`` only when it is the only one declared.
+
+    Args:
+        declared_transports: The ``image_transports`` the worker declared on its last pop.
+
+    Returns:
+        The transport, or None when the worker declared none.
+    """
+    declared = set(declared_transports or ())
+    for transport in (ChatImageTransport.URL, ChatImageTransport.BASE64):
+        if transport.value in declared:
+            return transport
+    return None
 
 
 def build_chat_image_key(request_id: str, ordinal: int) -> str:

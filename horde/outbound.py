@@ -4,8 +4,8 @@
 
 """HTTP requests to URLs a client supplied, without letting the URL reach a private address.
 
-[`send_public_request`][horde.outbound.send_public_request] resolves each source image or webhook hostname once per
-hop and refuses the request if any resolved address is not allowed. Connections use the checked IP directly to
+[`send_public_request`][horde.outbound.send_public_request] resolves each source image, chat image or webhook
+hostname once per hop and refuses the request if any resolved address is not allowed. Connections use the checked IP directly to
 prevent DNS rebinding. libcurl handles connections and transfer deadlines. urllib3 provides URL parsing and
 case-insensitive headers.
 """

@@ -235,3 +235,84 @@ def test_availability_counts_a_chat_worker_by_its_chat_limits(
     availability = functions.get_worker_availability_for_request(_make_chat_request(user))
 
     assert availability.worker_count == 1
+
+
+IMAGE_CHAT_MESSAGES = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "What is this?"},
+            {"type": "image_url", "image_url": {"url": "horde-r2://request_chat_0.jpg"}},
+        ],
+    },
+]
+"""A conversation whose user message carries a stored image reference."""
+
+
+@pytest.mark.parametrize(
+    ("image_declaration", "expected"),
+    [
+        ({}, [False, "chat_features"]),
+        ({"image_transports": ["url"]}, [False, "chat_features"]),
+        ({"chat_features": [ChatFeature.VISION.value]}, [False, "chat_features"]),
+        ({"chat_features": [ChatFeature.VISION.value], "image_transports": []}, [False, "chat_features"]),
+        ({"chat_features": [ChatFeature.VISION.value], "image_transports": ["base64"]}, [True, None]),
+        ({"chat_features": [ChatFeature.VISION.value], "image_transports": ["url"]}, [True, None]),
+    ],
+)
+def test_a_chat_request_with_images_needs_vision_and_an_image_transport(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    image_declaration: dict[str, Any],
+    expected: list[Any],
+) -> None:
+    user = make_user()
+    worker = _make_chat_worker(user, **image_declaration)
+    image_request = _make_chat_request(user)
+    image_request.messages = IMAGE_CHAT_MESSAGES
+    db.session.commit()
+
+    assert _chat_eligibility(worker, image_request) == expected
+
+
+def test_a_chat_request_without_images_needs_no_image_declaration(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    user = make_user()
+    worker = _make_chat_worker(user, image_transports=None)
+
+    assert _chat_eligibility(worker, _make_chat_request(user)) == [True, None]
+
+
+def test_the_pop_query_withholds_image_requests_from_a_worker_that_cannot_take_images(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    from horde.database.text_functions import get_sorted_text_wp_filtered_to_worker
+
+    user = make_user()
+    text_only_worker = _make_chat_worker(user)
+    vision_worker = _make_chat_worker(user, chat_features=[ChatFeature.VISION.value], image_transports=["url"])
+    plain_request = _make_chat_request(user)
+    plain_request.slow_workers = True
+    image_request = _make_chat_request(user)
+    image_request.slow_workers = True
+    image_request.messages = IMAGE_CHAT_MESSAGES
+    for request in (plain_request, image_request):
+        request.active = True
+    db.session.commit()
+
+    text_only_candidates = get_sorted_text_wp_filtered_to_worker(text_only_worker, [CHAT_MODEL])
+    db.session.commit()
+    vision_candidates = get_sorted_text_wp_filtered_to_worker(vision_worker, [CHAT_MODEL])
+
+    assert [candidate.id for candidate in text_only_candidates] == [plain_request.id]
+    assert {candidate.id for candidate in vision_candidates} == {plain_request.id, image_request.id}
+    assert {candidate.id: candidate.carries_chat_images for candidate in vision_candidates} == {
+        plain_request.id: False,
+        image_request.id: True,
+    }

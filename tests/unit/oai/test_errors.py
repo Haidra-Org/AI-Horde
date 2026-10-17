@@ -370,6 +370,39 @@ async def test_completed_non_streamed_response_carries_no_retry_header(start_fro
     assert SHOULD_RETRY not in response.headers
 
 
+@pytest.mark.parametrize(
+    ("horde_status", "horde_message", "horde_rc", "expected_param"),
+    [
+        (
+            400,
+            "'messages[1].content[1].type=image_url' is not supported on chat requests.",
+            "UnsupportedChatParameter",
+            "messages[1].content[1].type=image_url",
+        ),
+        (400, "The image URL resolves to a private address.", "SourceImageUrlRefused", None),
+        (400, "A chat request from an untrusted user can carry at most 1 image.", "MoreThanMinExtraSourceImage", None),
+        (503, "The image store refused the image.", "ChatImageStorageUnavailable", None),
+    ],
+)
+async def test_horde_image_refusal_passes_through_with_its_rc_and_path(
+    start_front: StartFront,
+    horde_status: int,
+    horde_message: str,
+    horde_rc: str,
+    expected_param: str | None,
+) -> None:
+    async with start_front() as front:
+        front.horde.submit_route.respond(horde_status, json={"message": horde_message, "rc": horde_rc})
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == horde_status
+    error = response.json()["error"]
+    assert error["code"] == horde_rc
+    assert error["param"] == expected_param
+    assert error["message"] == horde_message
+    assert front.inflight == 0
+
+
 @pytest.mark.parametrize("failure", [httpx.Response(503, json={"message": "Unavailable"}), httpx.ReadTimeout("slow")])
 async def test_failed_fail_fast_recheck_does_not_cancel_from_stale_status(start_front: StartFront, failure: object) -> None:
     settings = FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 0.02, "signal_recheck_seconds": 0.02})
@@ -408,6 +441,49 @@ async def test_nonfinite_sampling_value_is_refused_before_forwarding(start_front
     assert response.status_code == 400
     assert front.horde.submit_route.call_count == 0
     assert front.inflight == 0
+
+
+async def test_invalid_authorization_is_refused_without_receiving_a_body(start_front: StartFront) -> None:
+    from tests.unit.oai.conftest import raw_chat_scope
+
+    async def receive() -> dict[str, object]:
+        raise AssertionError("An invalid bearer token must be refused before receiving body bytes")
+
+    messages = []
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    async with start_front() as front:
+        await front.app(raw_chat_scope(headers=[(b"authorization", b"Basic bad")]), receive, send)
+    assert response_status(messages) == 401
+    assert front.inflight == 0
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_mid_body_disconnect_is_quiet_and_releases_admission(start_front: StartFront) -> None:
+    from tests.unit.oai.conftest import raw_chat_scope
+
+    events = iter(
+        [
+            {"type": "http.request", "body": b'{"model":', "more_body": True},
+            {"type": "http.disconnect"},
+        ]
+    )
+    messages = []
+
+    async def receive() -> dict[str, object]:
+        return next(events)
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    async with start_front() as front:
+        await front.app(raw_chat_scope(), receive, send)
+    assert response_status(messages) == 499
+    assert front.inflight == 0
+    assert front.horde.submit_route.call_count == 0
+    assert front.metric_total(REFUSED_NAME, horde_code="client_closed") == 1
 
 
 @pytest.mark.parametrize("publish_fault", [False, True])

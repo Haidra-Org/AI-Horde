@@ -17,7 +17,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [operations](../topics.md#operations), [requests](../topics.md#requests)
 <!-- END GENERATED: topics -->
 
-The horde fetches client-supplied source image URLs and sends webhooks through `send_public_request` in
+The horde fetches client-supplied source and chat image URLs and sends webhooks through `send_public_request` in
 `horde/outbound.py`. The client refuses connections to non-public addresses to prevent server-side request forgery
 (SSRF).
 
@@ -29,7 +29,7 @@ The horde fetches client-supplied source image URLs and sends webhooks through `
 | Address check | `horde/outbound.py` | `is_public_address`, `resolve_host_addresses` |
 | Connection to a checked address | `horde/outbound.py` | `_open_bound_response` |
 | Errors | `horde/outbound.py` | `OutboundRequestRefused`, `OutboundRequestFailed`, `OutboundResponseTooLarge` |
-| Source image fetch | `horde/image.py` | `fetch_public_image`, `ensure_source_image_uploaded` |
+| Source image and chat image fetch | `horde/image.py` | `fetch_public_image`, `ensure_source_image_uploaded`, `load_chat_image` |
 | Webhook sender | `horde/classes/base/processing_generation.py` | `enqueue_webhook`, `_deliver_webhook`, `WEBHOOK_*` |
 | Generation webhook | `horde/classes/base/processing_generation.py` | `ProcessingGeneration.send_webhook` |
 | Interrogation webhook | `horde/classes/stable/interrogation.py` | `InterrogationForms.send_webhook` |
@@ -60,6 +60,7 @@ scheme, host or port changes. Credentials in a redirect URL can supply authoriza
 | Caller | Schemes | Redirects | Connect / low-speed window | Total deadline | Body cap |
 | --- | --- | --- | --- | --- | --- |
 | Source image URL (`source_image`, `source_mask`, `extra_source_images`, interrogation `source_image`) | http, https | 3 | 2 s | 10 s | 5 MiB |
+| Chat image URL | http, https | 3 | 2 s | 10 s | 5 MiB |
 | Generation and interrogation webhook | https | 0 | 3 s | 6 s per attempt | 64 KiB |
 
 PycURL delegates connections and transfer deadlines to libcurl. `CONNECT_TO` pins each connection to
@@ -68,7 +69,7 @@ Automatic redirects and environment proxies are disabled. `TIMEOUT_MS` bounds ea
 shared deadline, including TLS, status lines, headers, body, chunk framing and trailers.
 System DNS resolution is synchronous and cannot be interrupted by this client:
 resolver time counts against the deadline, and an overrun is rejected before connection, but the DNS call itself
-may exceed it. The ten-second image budget applies per URL.
+may exceed it. The ten-second image budget applies per URL, including source images and chat images.
 
 The per-hop values configure the connect timeout and libcurl's low-speed window. A transfer below one byte per
 second for that window is aborted. The window is rounded up to whole seconds. The total deadline bounds responses
@@ -78,7 +79,7 @@ another address.
 The byte cap applies to the declared `Content-Length` and the decoded response body, including gzip/deflate
 responses. Non-2xx responses are stopped at the end of the headers without consuming the body.
 
-A refused source image URL returns `400 SourceImageUrlRefused`. A source image URL that returns a
+A refused source or chat image URL returns `400 SourceImageUrlRefused`. A source or chat image URL that returns a
 status other than 200 returns `400 SourceImageUrlInvalid`, and a body over the cap returns
 `400 SourceImageSizeExceeded`.
 

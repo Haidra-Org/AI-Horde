@@ -219,6 +219,7 @@ KNOWN_RC = [
     "ChatSubmitInvalid",
     "ChatModelMismatch",
     "UnknownChatModel",
+    "ChatImageStorageUnavailable",
     "OperationKeyConflict",
     "RequestTooLarge",
 ]

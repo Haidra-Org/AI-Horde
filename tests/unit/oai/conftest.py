@@ -377,7 +377,19 @@ async def call_raw(
         if message["type"] == "http.response.start" and response_start_delay_seconds > 0:
             await asyncio.sleep(response_start_delay_seconds)
 
-    scope = {
+    scope = raw_chat_scope(headers=headers)
+    app_task = asyncio.create_task(app(scope, receive, send))
+    if disconnect_after_seconds is not None:
+        await asyncio.sleep(disconnect_after_seconds)
+        disconnected.set()
+    if wait_for_app:
+        await asyncio.wait_for(app_task, timeout=CALL_WAIT_SECONDS)
+    return app_task, sent_messages
+
+
+def raw_chat_scope(*, headers: Sequence[tuple[bytes, bytes]] = ()) -> dict[str, Any]:
+    """Return the raw ASGI scope of ``POST /v1/chat/completions`` from ``RAW_CLIENT_ADDRESS`` with extra ``headers``."""
+    return {
         "type": "http",
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
@@ -392,13 +404,6 @@ async def call_raw(
         "server": ("front.test", 80),
         "state": {},
     }
-    app_task = asyncio.create_task(app(scope, receive, send))
-    if disconnect_after_seconds is not None:
-        await asyncio.sleep(disconnect_after_seconds)
-        disconnected.set()
-    if wait_for_app:
-        await asyncio.wait_for(app_task, timeout=CALL_WAIT_SECONDS)
-    return app_task, sent_messages
 
 
 def response_status(sent_messages: Sequence[dict[str, Any]]) -> int | None:

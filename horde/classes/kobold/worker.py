@@ -19,7 +19,7 @@ from horde.bridge_reference import (
     is_backed_validated,
 )
 from horde.classes.base.worker import Worker
-from horde.classes.kobold.chat_request import ChatFeature, required_chat_features
+from horde.classes.kobold.chat_request import ChatFeature, ChatImageTransport, required_chat_features
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -85,6 +85,9 @@ class TextWorker(Worker):
     chat_model_id = db.Column(db.String, nullable=True)
     """The model the worker serves chat jobs with, from its last pop. A chat request is only given to a worker whose
     ``chat_model_id`` is the request's model."""
+    image_transports = db.Column(text_array_column_type, nullable=True)
+    """The ``ChatImageTransport`` names the worker's last pop declared for receiving a chat job's images. NULL or
+    empty means the worker takes no images; unknown names are not stored."""
 
     softprompts: Mapped[list[TextWorkerSoftprompts]] = relationship(
         "TextWorkerSoftprompts",
@@ -104,6 +107,7 @@ class TextWorker(Worker):
         chat_max_context_length: int | None = None,
         chat_max_length: int | None = None,
         chat_model_id: str | None = None,
+        image_transports: Sequence[str] | None = None,
         **kwargs,
     ):
         # The chat declaration is replaced at every pop, outside the check-in debounce: this request's chat
@@ -115,6 +119,9 @@ class TextWorker(Worker):
         self.chat_max_context_length = chat_max_context_length if accepts_chat_jobs else None
         self.chat_max_length = chat_max_length if accepts_chat_jobs else None
         self.chat_model_id = chat_model_id if accepts_chat_jobs else None
+        self.image_transports = (
+            sorted(set(image_transports or ()) & {transport.value for transport in ChatImageTransport}) if accepts_chat_jobs else None
+        )
         if not super().check_in(**kwargs):
             return
         self.max_length = max_length
@@ -267,8 +274,9 @@ class TextWorker(Worker):
 
         Returns:
             ``chat_jobs`` when the worker did not opt in or does not serve the request's model with chat,
-            ``chat_features`` when it lacks a feature the request needs, ``max_context_length`` or ``max_length``
-            when the request exceeds a chat limit, or None when it can serve the request.
+            ``chat_features`` when it lacks a feature the request needs (``vision`` with an image transport for a
+            request carrying images), ``max_context_length`` or ``max_length`` when the request exceeds a chat
+            limit, or None when it can serve the request.
         """
         if not self.accepts_chat_jobs or self.chat_model_id is None:
             return "chat_jobs"
@@ -277,11 +285,22 @@ class TextWorker(Worker):
         declared_features = set(self.chat_features or ())
         if not {feature.value for feature in required_chat_features(waiting_prompt.params)} <= declared_features:
             return "chat_features"
+        # The request side is only read when the worker cannot take images, so a vision worker never loads it.
+        if not self.serves_chat_images() and waiting_prompt.needs_chat_images():
+            return "chat_features"
         if self.chat_max_context_length is None or self.chat_max_context_length < waiting_prompt.max_context_length:
             return "max_context_length"
         if self.chat_max_length is None or self.chat_max_length < waiting_prompt.max_length:
             return "max_length"
         return None
+
+    def serves_chat_images(self) -> bool:
+        """Return whether the worker's chat declaration lets it receive a chat request's images.
+
+        Returns:
+            True when it declared the ``vision`` feature and at least one image transport.
+        """
+        return ChatFeature.VISION.value in (self.chat_features or ()) and bool(self.image_transports)
 
     def get_details(self, is_privileged=False):
         ret_dict = super().get_details(is_privileged)

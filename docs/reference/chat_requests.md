@@ -54,6 +54,12 @@ those workers keep receiving text jobs.
 | Completion signal                | `horde/chat_signal.py`                          | `publish_chat_event`                                  |
 | Expiry and fault signals         | `horde/database/threads.py`                     | `collect_chat_faults`, `publish_chat_faults`          |
 | Signal database                  | `horde/redis_ctrl.py`                           | `chat_signal_db`                                      |
+| Image fetch, normalise, encode   | `horde/image.py`                                | `fetch_public_image`, `load_chat_image`, `encode_chat_image` |
+| Image storage at submit          | `horde/apis/v2/kobold.py`                       | `ChatAsyncGenerate.load_chat_images`, `ChatAsyncGenerate.upload_source_images` |
+| Image references and transport   | `horde/classes/kobold/chat_request.py`          | `replace_image_urls`, `select_image_transport`        |
+| Image parts at pop               | `horde/classes/kobold/waiting_prompt.py`        | `TextWaitingPrompt.build_worker_messages`             |
+| Image cleanup                    | `horde/database/threads.py`                     | `collect_expired_chat_image_keys`                     |
+| Image delete retry               | `horde/classes/kobold/waiting_prompt.py`        | `delete_stored_chat_images`, `retry_chat_image_deletes` |
 | Schema migration                 | `sql_statements/5.1.15.txt`                     |                                                       |
 
 ## Routes
@@ -74,9 +80,9 @@ route.
 
 The route handles a submission in this order:
 
-1. A body whose `Content-Length` is above `MAX_CHAT_BODY_BYTES` (2 MiB, `horde/chat_contract.py`) returns
-   `413 RequestTooLarge` before it is parsed. A chunked body, which has no length, is read only up to one byte past
-   the limit and refused the same way.
+1. A body whose `Content-Length` is above `MAX_CHAT_BODY_BYTES` (36 MiB, `horde/chat_contract.py`) returns
+   `413 RequestTooLarge` before it is parsed. A chunked body, which does not declare a length, is read only up to
+   one byte past the limit and refused the same way.
 2. The body is parsed and validated (below).
 3. A body with `horde.operation_key` and without `horde.dry_run` looks up the key (see [Operation key](#operation-key)).
 4. The admission flag is checked. A repeated operation key is answered before this check: with admission off it
@@ -153,7 +159,8 @@ learns the id of a request that is queued and charged.
 | `stream`, `stream_options`, `user`, `metadata` | Accepted, not applied                                                      |
 | `horde`                                  | Extension object, below                                                          |
 
-A message's `content` is a string or an array of parts whose `type` is `text`. A `developer` message is stored and
+A message's `content` is a string or an array of parts whose `type` is `text`, or `image_url` on a `user` message (see
+[Images](#images)). A `developer` message is stored and
 sent to workers as `system`, which loses its precedence over a system message; no developer-role feature is
 advertised while that holds. The default `max_length` is `512` because OpenAI clients usually omit a token limit and
 the text default of 80 is too short for a reply. The mapped params are validated against the text params model, so
@@ -178,6 +185,72 @@ and values:
 Styles, template fields, webhooks, soft prompts, extra source images, proxied accounts, downgrading and batching
 control are not available on chat requests.
 
+### Images
+
+A `user` message may carry image parts, `{"type": "image_url", "image_url": {"url": ..., "detail": ...}}`, where `url`
+is a `data:image/...;base64,` URL or an `http(s)` URL and the optional `detail` (`auto`, `low`, `high`) is passed to the
+worker unchanged. An image part in any other role returns `400 UnsupportedChatParameter`.
+
+The caps are those of extra source images on image requests, shared with the front from `horde/chat_contract.py`:
+
+| Cap                                                  | Refusal                                    |
+| ---------------------------------------------------- | ------------------------------------------ |
+| At most 5 images per request (`MAX_CHAT_IMAGE_COUNT`) | `400 TooManyExtraSourceImages`            |
+| More than 1 only for trusted users and patrons (`MAX_CHAT_IMAGE_COUNT_UNTRUSTED`) | `400 MoreThanMinExtraSourceImage` |
+| At most 5 MiB decoded or fetched per image (`MAX_CHAT_IMAGE_BYTES`) | `400 SourceImageSizeExceeded` |
+| At most 3072*3072 pixels, read from the image header before decoding | `400 SourceImageResolutionExceeded` |
+| Readable as an image                                 | `400 SourceImageUnreadable`                |
+
+`MAX_CHAT_BODY_BYTES` is sized for a request at every cap: 5 data URLs of 5 MiB, which base64 grows by 4/3 to about
+33.3 MiB, plus the 1 MiB text allowance, with room for JSON structure, rounded to 36 MiB.
+
+An `http(s)` URL is fetched by `fetch_public_image` in `horde/image.py`, through `send_public_request` (see
+[Outbound requests reference](outbound_requests.md)). Each hop resolves its host once, refuses the
+hop when any resolved address is private, loopback, link-local, multicast, reserved or unspecified (an IPv4-mapped IPv6
+address is checked as IPv4), and connects to the checked address itself, sending the URL's host as the `Host` header
+and, over https, as the TLS server name the certificate is verified against. The fetch does not resolve the host again
+between the check and the connection, so a name that answers differently the second time cannot redirect the fetch. Each
+redirect is checked the same way, at most 3 are followed, and connecting and each read time out after 2 seconds. A
+refused URL returns `400 SourceImageUrlRefused`; a non-200 answer returns `400 SourceImageUrlInvalid`.
+
+After every other check passes, each image is normalised (RGB, or RGBA with transparency; longest side at most 2048)
+and encoded as JPEG at quality 90, with transparency flattened onto white. JPEG is decoded by every chat worker's
+image loader: koboldcpp reads images with llama.cpp's multimodal loader, which decodes PNG and JPEG and does not
+decode WebP. A dry run counts its images and refuses too many, but does not fetch or store them.
+The request row is written with each image part's `url` replaced by `horde-r2://<request id>_chat_<n>.jpg`, `n`
+counting the request's images from 0; the images are then stored under those keys in the source image bucket, before
+activation. The row never holds image bytes or the submitted URL. Each image adds the extra source image tax
+(`EXTRA_SOURCE_IMAGE_HORDE_TAX`, 5 kudos) to the activation tax, and the dry run quote includes it. A store failure
+deletes the row and returns `503 ChatImageStorageUnavailable`; the request is not charged.
+
+Only a worker that declares the `vision` feature and at least one image transport receives a request with images. At
+pop each reference is replaced by what the worker declared:
+
+| Declared `image_transports` | The part's `url`                                                                       |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| contains `url`              | A presigned download URL, signed locally, valid for the job's TTL and at least 600 seconds (`MIN_CHAT_IMAGE_URL_SECONDS`) |
+| `base64` alone              | `data:image/jpeg;base64,` with the stored bytes, read from the store                   |
+
+Both are built after the commits that assign the generation, which release the queue query's row lock, so the store
+is not read under the lock. The generation records the transport in `processing_gens.image_transport`. A worker that
+cannot fetch a signed URL faults the job.
+
+Images are deleted after the request row: `TextWaitingPrompt.delete` deletes the keys its messages reference, and the
+cleanup thread bulk deletes the keys of the expired chat rows it removes. A failed activation deletes the images the
+submission stored. A key the store does not delete is added to the Redis set `horde:chat:image_delete_retry` on the
+primary (`CHAT_IMAGE_DELETE_RETRY_KEY`), and each cleanup tick retries up to 1000 of them, removing each key that
+deletes. The set does not have a TTL, since a key that expired out of it would leave its image stored and
+unreferenced; it is bounded at 100,000 keys (`MAX_CHAT_IMAGE_DELETE_RETRY_KEYS`), past which keys are logged instead.
+
+The row is written before any image is stored, so every stored image is referenced by a row until that row is
+deleted, and the row's deletion either deletes the image or queues its key. Every stored image is accounted for by a
+row or the retry set, so the Horde does not list the bucket.
+
+Input images on a chat request are not screened by the server or by a chat worker. Image workers screen the images
+they generate with a scanner and report a job as `worker_csam`; chat workers do not run a scanner, so the
+chat vision path is not screened for CSAM on any side
+([recorded events](moderation_operations.md#recorded-events)).
+
 ### Refused keys and values
 
 Any key outside the lists above returns `400 UnsupportedChatParameter`, and the message names the key. This covers
@@ -186,7 +259,8 @@ Any key outside the lists above returns `400 UnsupportedChatParameter`, and the 
 
 - a message key other than `role`, `content` and `name` (for example `messages[0].tool_calls`);
 - a role other than `system`, `developer`, `user` and `assistant` (for example `messages[0].role=tool`);
-- a content part whose type is not `text`, image parts included (for example `messages[0].content[1].type=image_url`);
+- a content part whose type is not `text` or, on a `user` message, `image_url` (for example
+  `messages[0].content[1].type=input_audio`, or `messages[0].content[0].type=image_url` on an `assistant` message);
 - an unknown key in `horde` (for example `horde.models`);
 - an `n` other than 1 (`n=2`);
 - more than `MAX_CHAT_MESSAGE_COUNT` (1024) messages, or message text over `MAX_CHAT_TEXT_BYTES` (1 MiB of UTF-8
@@ -209,7 +283,8 @@ it, so the adjustment cannot be recomputed at status time.
 ## Flattened prompt
 
 The request's `prompt` column holds the messages flattened into one string: each message as `role: text`, with the
-text parts of a message and the messages themselves joined by newlines. It is an estimate only. The character-based
+parts of a message and the messages themselves joined by newlines and each image part rendered as `[image]`
+(`CHAT_IMAGE_PLACEHOLDER`). It is an estimate only. The character-based
 token estimate, `context_fit` sizing, kudos and moderation read it; no worker receives it. `submitted_prompt` holds
 the flattened messages as submitted.
 
@@ -219,7 +294,7 @@ and the prompt is flattened again from the result. `messages` therefore always h
 
 ## Chat declaration on pop
 
-`POST /v2/generate/text/pop` takes four further fields. The worker row stores them at every pop, including a pop
+`POST /v2/generate/text/pop` takes five further fields. The worker row stores them at every pop, including a pop
 inside the 30 second window in which the other check-in fields are not rewritten, and the pop is matched against
 them. A pop without `chat_jobs` therefore withdraws the whole declaration and does not receive a chat job.
 
@@ -229,6 +304,7 @@ them. A pop without `chat_jobs` therefore withdraws the whole declaration and do
 | `chat_features` | array of strings                       | no              | The optional features below that the worker implements; unknown names are ignored, absent means none |
 | `chat_limits`   | `{max_context_length, max_length}`     | with `chat_jobs` | The limits chat jobs run under; the text pop's limits bound only text jobs |
 | `model_id`      | string                                 | with `chat_jobs` | The model the worker serves chat jobs with; exactly one of `models` |
+| `image_transports` | array of `url`, `base64`            | no              | How the worker receives images; absent or empty means none; unknown names are ignored |
 
 A pop that sets `chat_jobs` without `chat_limits` or `model_id`, or with a `model_id` that is not one of `models`,
 returns `400 ChatDeclarationInvalid`. The native route treats `model_id` as an opaque name and does not reserve any
@@ -241,6 +317,7 @@ The feature vocabulary (`ChatFeature`) grows by adding names; a name never chang
 | `seed`              | it sends `seed`, whatever its value            |
 | `presence_penalty`  | it sends a non-zero `presence_penalty`         |
 | `frequency_penalty` | it sends a non-zero `frequency_penalty`        |
+| `vision`            | a message carries an image part; the worker also has to declare an image transport |
 
 A field at its documented default needs nothing.
 
@@ -250,7 +327,10 @@ A chat request goes to a worker only when every rule holds. The queue query appl
 applies the rest and repeats them for worker availability:
 
 1. The worker declared `chat_jobs` on its latest pop and its `model_id` is the request's model.
-2. Every feature the request needs is in the worker's `chat_features`.
+2. Every feature the request needs is in the worker's `chat_features`, and a request with images finds an image
+   transport in its `image_transports`. The queue query withholds requests with images from a worker without both,
+   testing `messages` for an image part by JSONB containment on chat rows only, and computes the same test for the
+   returned page so `can_generate` does not load candidates' messages.
 3. The request's `max_context_length` and `max_length` fit the worker's `chat_limits`, never its text limits.
 4. The usual restrictions hold: `only` and `ignore`, trusted, validated, slow workers.
 
@@ -268,7 +348,7 @@ A text job's pop response does not carry a `chat` key. A chat job's response has
 
 | Field                                                                  | Value                                                         |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `messages`                                                             | The stored array; roles `system`, `user`, `assistant`         |
+| `messages`                                                             | The stored array; roles `system`, `user`, `assistant`; image parts as in [Images](#images) |
 | `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `rep_pen`, `top_k`, `min_p` | Always present; the client's value or `1.0`, `1.0`, `0`, `0`, `1.0`, `0`, `0` |
 | `stop_sequence`, `seed`                                                | Only when the client sent them                                |
 | `max_length`, `max_context_length`                                     | The validated budgets                                         |
@@ -361,10 +441,11 @@ the request id, so it checks the status once after subscribing to cover an event
 
 `sql_statements/5.1.15.txt` adds `waiting_prompts.is_chat` (boolean, not null, default false) and
 `waiting_prompts.messages` (JSONB, deferred in the ORM); `workers.accepts_chat_jobs` (boolean, not null, default
-false), `chat_features` (text array), `chat_max_context_length`, `chat_max_length` and `chat_model_id`; and
-`processing_gens.message` (JSONB), `finish_reason` and `native_finish_reason` (varchar 32), `prompt_tokens`,
-`completion_tokens`, `charge_basis` (varchar 16), `assigned_model`, `assigned_max_context_length` and
-`assigned_max_length`; and `waiting_prompts.operation_key` (UUID), `operation_fingerprint` (char 64) and
+false), `chat_features` (text array), `chat_max_context_length`, `chat_max_length`, `chat_model_id` and
+`image_transports` (text array); and `processing_gens.message` (JSONB), `finish_reason` and `native_finish_reason`
+(varchar 32), `prompt_tokens`, `completion_tokens`, `charge_basis` (varchar 16), `assigned_model`,
+`assigned_max_context_length`, `assigned_max_length` and `image_transport` (varchar 16); and
+`waiting_prompts.operation_key` (UUID), `operation_fingerprint` (char 64) and
 `context_adjustments` (JSONB). Every column is nullable or has a constant default, so no table is rewritten. The
 unique partial index `ix_waiting_prompts_user_operation_key` on `(user_id, operation_key) WHERE operation_key IS NOT
 NULL` is built with `CREATE UNIQUE INDEX CONCURRENTLY`, which cannot run inside a transaction block; a failed

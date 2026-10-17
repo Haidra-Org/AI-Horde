@@ -25,6 +25,9 @@ __all__ = [
     "CHAT_REQUEST_CONFLICT_ERROR_TYPE",
     "INTERNAL_HORDE_OPTION_KEYS",
     "MAX_CHAT_BODY_BYTES",
+    "MAX_CHAT_IMAGE_BYTES",
+    "MAX_CHAT_IMAGE_COUNT",
+    "MAX_CHAT_IMAGE_COUNT_UNTRUSTED",
     "MAX_CHAT_MESSAGE_COUNT",
     "MAX_CHAT_TEXT_BYTES",
     "ChatContextFit",
@@ -40,9 +43,24 @@ MAX_CHAT_TEXT_BYTES: int = 1024 * 1024
 the largest context a worker serves, so no servable conversation reaches it, while the flattened estimate,
 moderation and the stored messages stay bounded."""
 
-MAX_CHAT_BODY_BYTES: int = 2 * 1024 * 1024
-"""The most bytes a chat request body may have. Twice the text limit leaves room for JSON structure and escaping of
-a body at the text limit, and bounds what is read before the body is parsed."""
+MAX_CHAT_IMAGE_BYTES: int = 5 * 1024 * 1024
+"""The largest decoded size of one image in a chat request. Matches the cap on a source image fetched from a URL."""
+
+MAX_CHAT_IMAGE_COUNT: int = 5
+"""The most image parts one chat request may carry. Matches the extra source image cap on image requests, which
+bounds the same storage and transfer cost."""
+
+MAX_CHAT_IMAGE_COUNT_UNTRUSTED: int = 1
+"""The most image parts a user who is neither trusted nor a patron may send. Matches the extra source image rule on
+image requests."""
+
+MAX_CHAT_BODY_BYTES: int = 36 * 1024 * 1024
+"""The most bytes a chat request body may have, and the bound on what is read before the body is parsed.
+
+A request at every cap carries [`MAX_CHAT_IMAGE_COUNT`][horde.chat_contract.MAX_CHAT_IMAGE_COUNT] data URLs of
+[`MAX_CHAT_IMAGE_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_BYTES] each, which base64 grows by 4/3 to about 33.3 MiB,
+plus [`MAX_CHAT_TEXT_BYTES`][horde.chat_contract.MAX_CHAT_TEXT_BYTES] of text: about 34.3 MiB. 36 MiB leaves room
+for JSON structure and escaping on top of that."""
 
 CHAT_REQUEST_CONFLICT_ERROR_TYPE: str = "chat_request_conflict"
 """The pydantic error type raised for two keys whose values contradict each other.

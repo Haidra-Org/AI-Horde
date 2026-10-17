@@ -160,8 +160,8 @@ def ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fals
 
 def _ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=False):
     if source_image_string.startswith("http"):
-        # A source image URL is fetched on the client's behalf, so a URL that resolves or redirects to a private
-        # address is refused.
+        # A source image URL is fetched on the client's behalf, so it goes through the same address guard as a
+        # chat image URL: a URL that resolves or redirects to a private address is refused.
         try:
             img_data = fetch_public_image(source_image_string)
             try:
@@ -293,14 +293,16 @@ def encode_chat_image(image: Image.Image) -> bytes:
     return image_buffer.getvalue()
 
 
-def load_chat_image(image_url: str) -> Image.Image:
+def load_chat_image(image_url: str, *, resolve: HostResolver = resolve_host_addresses) -> Image.Image:
     """Create the normalised image a chat image part points at, decoding a data URL or fetching an http(s) URL.
 
-    A URL is fetched the way a source image URL is, with the same 5 MiB cap. Both forms are held to the source
-    image resolution cap.
+    A URL is fetched with [`fetch_public_image`][horde.image.fetch_public_image], with the 5 MiB cap a source image
+    URL has. Both forms are held to the source image resolution cap, checked on the decoded header before any
+    pixel data is decoded.
 
     Args:
         image_url: An image part's ``url``, already checked for form and encoded size.
+        resolve: Resolves a URL's host, passed to the fetch.
 
     Returns:
         The image as [`normalize_chat_image`][horde.image.normalize_chat_image] returns it.
@@ -312,8 +314,7 @@ def load_chat_image(image_url: str) -> Image.Image:
         base64_payload = parse_image_data_url(image_url)
         try:
             if base64_payload is None:
-                # With force_r2 off, the source image fetch returns the opened image and uploads nothing.
-                _, image, _ = ensure_source_image_uploaded(image_url, "", force_r2=False)
+                image = Image.open(BytesIO(fetch_public_image(image_url, resolve=resolve)))
             else:
                 image, _, _, _ = convert_source_image_to_pil(base64_payload)
             width, height = image.size

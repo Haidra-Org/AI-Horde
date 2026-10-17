@@ -6,8 +6,8 @@
 
 [`create_app`][horde.oai.app.create_app] builds the app with these routes:
 
-- ``POST /v1/chat/completions``: reads the body under a byte ceiling and a read timeout, screens and validates it,
-  takes an inflight slot (per-source cap first, then the global cap), submits to the Horde's
+- ``POST /v1/chat/completions``: takes an inflight slot (per-source cap first, then the global cap), reads the body
+  under a byte ceiling and a read timeout, screens and validates it, submits to the Horde's
   ``/v2/generate/chat/async``, waits through [`ChatRequestWatcher`][horde.oai.waiter.ChatRequestWatcher] and answers
   with a ``chat.completion`` body, or with server-sent events when ``stream`` is true.
 - ``GET /v1/models`` and ``GET /v1/models/{id}``: the text models an online chat worker serves, in the OpenAI list
@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import json
 import math
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Mapping
@@ -46,8 +47,9 @@ from opentelemetry.metrics import Meter
 from pydantic import ValidationError
 from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.background import BackgroundTask
+from starlette.requests import ClientDisconnect
 
-from horde.chat_contract import CHAT_REQUEST_CONFLICT_ERROR_TYPE
+from horde.chat_contract import CHAT_REQUEST_CONFLICT_ERROR_TYPE, MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT
 from horde.consts import ANONYMOUS_API_KEY, HORDE_VERSION
 from horde.oai.attribution import build_client_agent
 from horde.oai.horde_client import (
@@ -70,10 +72,12 @@ from horde.oai.schema import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ErrorMetadata,
+    ImageContentPart,
     ModelCard,
     ModelList,
     OpenAIErrorEnvelope,
     SubmitOutcome,
+    TextContentPart,
     drop_default_no_ops,
     find_refused_parameter,
 )
@@ -176,6 +180,22 @@ NO_ELIGIBLE_WORKER_CODE: str = "no_eligible_worker"
 
 OPERATION_KEY_CONFLICT_CODE: str = "OperationKeyConflict"
 """The Horde rc for an operation key already claimed with a different request."""
+
+IMAGE_SIZE_EXCEEDED_CODE: str = "SourceImageSizeExceeded"
+"""The error code of an image data URL decoding to more than the native per-image cap; the native rc for the same."""
+
+TOO_MANY_IMAGES_CODE: str = "TooManyExtraSourceImages"
+"""The error code of a request with more image parts than the native cap; the native rc for the same."""
+
+DATA_URL_PREFIX: str = "data:"
+"""The scheme prefix of an inline image URL."""
+
+DATA_URL_PAYLOAD_SEPARATOR: str = ","
+"""The character that ends a data URL's media type and starts its payload."""
+
+NATIVE_REQUEST_PATH_PATTERN: re.Pattern[str] = re.compile(r"'(?P<request_path>messages\[\d+\][^']*)'")
+"""A quoted message path in a native error message, such as ``'messages[0].content[1].type=image_url'``; the
+native route writes the offending path this way when it refuses a part."""
 
 MAX_FAILED_CANCELS: int = 10_000
 """The most finished requests with a failed cancel held for the shutdown drain; the oldest is dropped past it.
@@ -572,10 +592,12 @@ def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist:
         ),
         None,
     )
+    request_path_match = NATIVE_REQUEST_PATH_PATTERN.search(error.message)
     return ChatFrontError(
         status_code=error.status_code,
         message=error.message,
         code=error.return_code,
+        param=request_path_match.group("request_path") if request_path_match is not None else None,
         metadata=ErrorMetadata(
             request_id=request_id,
             rc=error.return_code,
@@ -716,8 +738,46 @@ def _message_text_bytes(chat_request: ChatCompletionRequest) -> int:
         if isinstance(message.content, str):
             text_bytes += len(message.content.encode())
         else:
-            text_bytes += sum(len(content_part.text.encode()) for content_part in message.content)
+            text_bytes += sum(
+                len(content_part.text.encode()) for content_part in message.content if isinstance(content_part, TextContentPart)
+            )
     return text_bytes
+
+
+def _find_image_limit_error(chat_request: ChatCompletionRequest) -> ChatFrontError | None:
+    """Return the 400 for more image parts or a larger image data URL than the native route accepts, or None.
+
+    Refusing here keeps a body the native route would refuse from being forwarded. A data URL's decoded size is
+    estimated from its payload length, as the native route does; any other malformation is left to the native route.
+    """
+    image_count = 0
+    for message_index, message in enumerate(chat_request.messages):
+        if isinstance(message.content, str):
+            continue
+        for part_index, content_part in enumerate(message.content):
+            if not isinstance(content_part, ImageContentPart):
+                continue
+            image_count += 1
+            image_url = content_part.image_url.url
+            if not image_url.startswith(DATA_URL_PREFIX):
+                continue
+            _media_type, _separator, payload = image_url.partition(DATA_URL_PAYLOAD_SEPARATOR)
+            # Four base64 characters encode three bytes, so the estimate is at most two bytes over the decoded size.
+            if len(payload) * 3 // 4 > MAX_CHAT_IMAGE_BYTES:
+                return ChatFrontError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    message=f"An image cannot be larger than {MAX_CHAT_IMAGE_BYTES} bytes.",
+                    code=IMAGE_SIZE_EXCEEDED_CODE,
+                    param=f"messages[{message_index}].content[{part_index}].image_url.url",
+                )
+    if image_count > MAX_CHAT_IMAGE_COUNT:
+        return ChatFrontError(
+            status_code=HTTPStatus.BAD_REQUEST,
+            message=f"A chat request can carry at most {MAX_CHAT_IMAGE_COUNT} images.",
+            code=TOO_MANY_IMAGES_CODE,
+            param="messages",
+        )
+    return None
 
 
 async def _read_chat_request(request: Request, front_state: FrontState) -> ChatCompletionRequest:
@@ -725,7 +785,7 @@ async def _read_chat_request(request: Request, front_state: FrontState) -> ChatC
 
     Raises:
         ChatFrontError: 413 for an oversized body, 408 for a slow body, 400 for invalid JSON, a refused part, a value outside the
-            service contract or a size limit, and 404 for a model id with a variant.
+            service contract, a size limit or an image limit, and 404 for a model id with a variant.
     """
     settings = front_state.settings
     request_body = await _read_body(request, settings)
@@ -765,6 +825,9 @@ async def _read_chat_request(request: Request, front_state: FrontState) -> ChatC
             code=UNSUPPORTED_PARAMETER_CODE,
             param="messages",
         )
+    image_limit_error = _find_image_limit_error(chat_request)
+    if image_limit_error is not None:
+        raise image_limit_error
     if MODEL_VARIANT_SEPARATOR in chat_request.model:
         raise _model_not_found(chat_request.model)
     return chat_request
@@ -810,6 +873,7 @@ async def _submit(
         # or an unreadable success body, cannot establish whether the operation key was committed.
         native_refusal = error.status_code == HTTPStatus.SERVICE_UNAVAILABLE and error.return_code in {
             "ChatAdmissionDisabled",
+            "ChatImageStorageUnavailable",
         }
         if error.status_code < HTTPStatus.INTERNAL_SERVER_ERROR or native_refusal:
             front_error = _horde_error(error, request_id=None, job_may_exist=False)
@@ -1248,12 +1312,8 @@ async def _chat_completions(request: Request) -> Response:
     settings = front_state.settings
     if _carries_client_retry_hint(request):
         front_metrics.record_client_retry_hint()
-    try:
-        chat_request = await _read_chat_request(request, front_state)
-        credentials = _build_credentials(request)
-    except ChatFrontError as error:
-        front_metrics.record_refusal(status_code=error.status_code, code=error.code)
-        return error.to_response()
+    # The slot is taken before the body is read: a body may be tens of MiB, so a client past its cap is refused before
+    # the front buffers any of it.
     inflight_slot = front_state.inflight_limiter.try_acquire(_request_source(request))
     if inflight_slot is None:
         front_metrics.record_refusal(status_code=HTTPStatus.SERVICE_UNAVAILABLE, code=FRONT_FULL_CODE)
@@ -1264,6 +1324,20 @@ async def _chat_completions(request: Request) -> Response:
             metadata=ErrorMetadata(retry_after=INFLIGHT_RETRY_AFTER_SECONDS),
             headers={RETRY_AFTER_HEADER: str(INFLIGHT_RETRY_AFTER_SECONDS)},
         ).to_response()
+    try:
+        credentials = _build_credentials(request)
+        chat_request = await _read_chat_request(request, front_state)
+    except ClientDisconnect:
+        inflight_slot.release()
+        front_metrics.record_refusal(status_code=CLIENT_CLOSED_REQUEST_STATUS, code=CLIENT_CLOSED_CODE)
+        return Response(status_code=CLIENT_CLOSED_REQUEST_STATUS)
+    except ChatFrontError as error:
+        inflight_slot.release()
+        front_metrics.record_refusal(status_code=error.status_code, code=error.code)
+        return error.to_response()
+    except BaseException:
+        inflight_slot.release()
+        raise
     streamed = bool(chat_request.stream)
     front_metrics.record_admitted(streamed=streamed)
     request_trace = RequestTrace(front_metrics=front_metrics, streamed=streamed, received_at=received_at)

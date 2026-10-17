@@ -52,7 +52,7 @@ The errors returned by the AI horde are always in this json format
 | SourceImageResolutionExceeded | Source image resolution larger than the max allowed by the AI Horde |
 | SourceImageSizeExceeded | Source image file size larger than the max allowed by the AI Horde |
 | SourceImageUrlInvalid | Source image url does not contain an image |
-| SourceImageUrlRefused | A source image URL is not http(s), does not resolve, resolves or redirects to a private, loopback, link-local, multicast or otherwise non-public address, or redirects more than 3 times |
+| SourceImageUrlRefused | A source image or chat image URL is not http(s), does not resolve, resolves or redirects to a private, loopback, link-local, multicast or otherwise non-public address, or redirects more than 3 times |
 | SourceImageUnreadable | Source image could not be parsed |
 | InpaintingMissingMask | Missing mask or alpha channel for inpainting |
 | SourceMaskUnnecessary | Source mask sent without a source image |
@@ -228,6 +228,7 @@ The errors returned by the AI horde are always in this json format
 | ChatSubmitInvalid | A chat job's submit lacked a valid `message` or `finish_reason`, carried `generation`, or a text job's submit carried `message` |
 | ChatModelMismatch | A chat job's submit named another `model_id` than the model the job was assigned |
 | UnknownChatModel | A chat request's model is not in the text model reference and no online worker serves chat jobs with it (HTTP 404) |
+| ChatImageStorageUnavailable | A chat request's images could not be stored; nothing was queued or charged (HTTP 503) |
 | OperationKeyConflict | A chat request reused an operation key the same user already claimed with a different request |
 | RequestTooLarge | The request body is larger than the route accepts (HTTP 413) |
 | UserNotDeleted | The user is not deleted and cannot be undeleted |

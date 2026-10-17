@@ -14,6 +14,7 @@ from horde.classes.kobold.chat_request import (
     MAX_REPORTED_TOKEN_COUNT,
     ChargeBasis,
     ChatFeature,
+    ChatImageTransport,
     ChatRole,
     FinishReason,
 )
@@ -102,6 +103,13 @@ class TextParsers(v2.Parsers):
             type=str,
             required=False,
             help="The model the worker serves chat jobs with. Required with chat_jobs.",
+            location="json",
+        )
+        self.job_pop_parser.add_argument(
+            "image_transports",
+            type=list,
+            required=False,
+            help="How the worker accepts a chat job's images: url, base64 or both. Absent means it takes none.",
             location="json",
         )
         # To remove the below once I updated the KAI server to use "models"
@@ -351,8 +359,11 @@ class TextModels(v2.Models):
                     fields.Raw,
                     description=(
                         "The OpenAI chat messages array, in place of a prompt. Each entry has a role (system, user or "
-                        "assistant) and a content that is a string or an array of text parts. A developer message is "
-                        "sent as system. The worker applies its own chat template."
+                        "assistant) and a content that is a string or an array of parts. A user message's parts may be "
+                        "image parts, {type: image_url, image_url: {url, detail?}}, whose url is a signed JPEG download "
+                        "URL for a worker that declared the url transport, or a data:image/jpeg;base64 URL for one that "
+                        "declared only base64. A developer message is sent as system. The worker applies its own chat "
+                        "template."
                     ),
                 ),
                 "temperature": fields.Float(description="Sampling temperature; 1.0 when the client did not set it."),
@@ -487,6 +498,16 @@ class TextModels(v2.Models):
                 ),
                 "model_id": fields.String(
                     description="The model the worker serves chat jobs with; exactly one of its models.",
+                ),
+                "image_transports": fields.List(
+                    fields.String,
+                    description=(
+                        f"How the worker accepts a chat job's images: {', '.join(transport.value for transport in ChatImageTransport)}. "
+                        "'url' fetches a signed object storage URL, 'base64' "
+                        "reads a data URL in the pop response. A chat request with images only goes to workers that "
+                        "declare the vision feature and at least one transport; url is used whenever it is declared. "
+                        "Absent or empty means the worker takes no images. Unknown names are ignored."
+                    ),
                 ),
             },
         )
@@ -963,7 +984,12 @@ class TextModels(v2.Models):
                 ),
                 "content": fields.Raw(
                     required=True,
-                    description="The message text, as a string or as an array of ChatTextPart. Image parts are refused.",
+                    description=(
+                        "The message text, as a string or as an array of parts: ChatTextPart, or on a user message "
+                        "{type: image_url, image_url: {url, detail?}} with a base64 image data URL or an http(s) URL. "
+                        "At most 5 images per request, 1 for users who are neither trusted nor patrons, each at most "
+                        "5 MiB and 3072*3072 pixels."
+                    ),
                 ),
                 "name": fields.String(description="An optional participant name, passed to the worker unchanged."),
             },

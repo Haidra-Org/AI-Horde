@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import MutableMapping
 from typing import Any
 
 import anyio
@@ -24,12 +25,15 @@ from horde.oai.waiter import CompletionSignalListener
 from tests.unit.oai.conftest import (
     CALL_WAIT_SECONDS,
     FAST_TEST_SETTINGS,
+    RAW_CLIENT_ADDRESS,
     REQUEST_ID,
     RunningFront,
     StartFront,
     build_chat_body,
     call_raw,
     done_status,
+    raw_chat_scope,
+    response_body,
     response_status,
     wait_for_call,
     waiting_status,
@@ -336,6 +340,52 @@ async def test_shutdown_cancels_open_requests_before_the_subscription_closes_wit
     assert front.horde.cancels_received == 1
     assert shutdown_seconds < shutdown_settings.shutdown_cancel_seconds + 1.0
     assert not front.app.state.front.listener.subscribed
+
+
+async def test_a_source_over_its_cap_is_refused_before_any_body_bytes_are_read(start_front: StartFront) -> None:
+    body_reads: list[bytes] = []
+    sent_messages: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        body_chunk = json.dumps(build_chat_body()).encode()
+        body_reads.append(body_chunk)
+        return {"type": "http.request", "body": body_chunk, "more_body": False}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        sent_messages.append(dict(message))
+
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"max_inflight_per_source": 1})) as front:
+        held_slot = front.app.state.front.inflight_limiter.try_acquire(RAW_CLIENT_ADDRESS[0])
+        assert held_slot is not None
+        await asyncio.wait_for(front.app(raw_chat_scope(), receive, send), timeout=CALL_WAIT_SECONDS)
+        held_slot.release()
+
+    assert response_status(sent_messages) == 503
+    assert json.loads(response_body(sent_messages))["error"]["code"] == "FrontAtCapacity"
+    assert body_reads == []
+    assert front.horde.submit_route.call_count == 0
+    assert_slot_released(front)
+
+
+SMALL_BODY_LIMIT_BYTES: int = 4096
+"""A body ceiling above a minimal chat body, so an oversized body stays small in the test."""
+
+
+@pytest.mark.parametrize(
+    "body_chunks",
+    [
+        [b"{not json"],
+        [json.dumps(build_chat_body(logit_bias={"1": 1})).encode()],
+        [b"x" * (SMALL_BODY_LIMIT_BYTES + 1)],
+    ],
+)
+async def test_a_refused_body_releases_the_slot_it_was_read_under(start_front: StartFront, body_chunks: list[bytes]) -> None:
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"max_body_bytes": SMALL_BODY_LIMIT_BYTES})) as front:
+        _app_task, sent_messages = await call_raw(front.app, body_chunks=body_chunks)
+
+    assert response_status(sent_messages) in {400, 413}
+    assert front.horde.submit_route.call_count == 0
+    assert_slot_released(front)
 
 
 async def test_shutdown_drain_retries_a_cancel_that_failed_after_the_budget_ended_once(start_front: StartFront) -> None:

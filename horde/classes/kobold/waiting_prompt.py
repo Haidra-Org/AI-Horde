@@ -2,22 +2,58 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import base64
 import math
 import os
+from collections.abc import Collection
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy.sql import expression
+from sqlalchemy import Text, cast
+from sqlalchemy.orm import Mapped, query_expression
+from sqlalchemy.sql import ColumnElement, expression
 
 from horde import vars as hv
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.kudos import StyleReward
 from horde.classes.base.waiting_prompt import WaitingPrompt, json_column_type, uuid_column_type
-from horde.classes.kobold.chat_request import build_chat_job_payload
+from horde.classes.kobold.chat_request import (
+    CHAT_IMAGE_DATA_URL_PREFIX,
+    ChatImageTransport,
+    build_chat_job_payload,
+    has_image_parts,
+    list_chat_image_keys,
+    resolve_image_references,
+    select_image_transport,
+)
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.flask import SQLITE_MODE, db
+from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.model_reference import model_reference
+from horde.r2 import delete_chat_images, download_chat_image, generate_chat_image_download_url
+
+MIN_CHAT_IMAGE_URL_SECONDS = 600
+"""The shortest lifetime of a signed chat image URL. A URL lives at least as long as the job's TTL, and never less
+than this, so a worker that queues the job behind another still finds the URL valid when it fetches."""
+
+CHAT_IMAGE_PART_CONTAINMENT = [{"content": [{"type": "image_url"}]}]
+"""The JSONB containment pattern that matches a ``messages`` array with at least one image part."""
+
+CHAT_IMAGE_DELETE_RETRY_KEY = "horde:chat:image_delete_retry"
+"""The Redis set, on the primary, of chat image keys whose delete failed after their request row was deleted. It has
+no TTL: a key that expired out of the set would leave its image stored with nothing referencing it."""
+
+MAX_CHAT_IMAGE_DELETE_RETRY_KEYS = 100_000
+"""The most keys the retry set holds, so a long store outage cannot grow it without bound. At about 50 bytes a key
+it stays near 5 MB; keys past the bound are logged rather than queued."""
+
+CHAT_IMAGE_DELETE_RETRY_BATCH = 1000
+"""How many queued keys one cleanup tick retries: one bulk delete request, the S3 ``DeleteObjects`` limit."""
+
+SQLITE_CHAT_IMAGE_PART_PATTERN = '%"type": "image_url"%'
+"""The pattern matching an image part in ``messages`` serialised as SQLite JSON text. A quote inside a message text is
+escaped in that serialisation, so only a part's ``type`` key can match it."""
 
 
 class TextWaitingPrompt(WaitingPrompt):
@@ -62,6 +98,10 @@ class TextWaitingPrompt(WaitingPrompt):
     """The ``(operation_key, operation_fingerprint)`` pair activation claims, or None. A plain attribute rather than
     a column, so it survives the rollback a deadlock retry of activation makes and is written again in the retried
     transaction."""
+    carries_chat_images: Mapped[bool | None] = query_expression()
+    """Whether ``messages`` holds an image part, as the pop queue query computes it in SQL with
+    [`chat_images_clause`][horde.classes.kobold.waiting_prompt.chat_images_clause]; None when the loading query did
+    not compute it. Lets eligibility know without loading the deferred messages of every candidate."""
     processing_gens = db.relationship(
         "TextProcessingGeneration",
         back_populates="wp",
@@ -114,11 +154,70 @@ class TextWaitingPrompt(WaitingPrompt):
         """
         if not self.is_chat:
             return {}
-        return {
+        assignment = {
             "assigned_model": worker.chat_model_id,
             "assigned_max_context_length": worker.chat_max_context_length,
             "assigned_max_length": worker.chat_max_length,
         }
+        if self.needs_chat_images():
+            image_transport = select_image_transport(worker.image_transports)
+            assignment["image_transport"] = None if image_transport is None else image_transport.value
+        return assignment
+
+    def needs_chat_images(self) -> bool:
+        """Return whether this is a chat request whose messages carry an image part.
+
+        Reads [`carries_chat_images`][horde.classes.kobold.waiting_prompt.TextWaitingPrompt.carries_chat_images]
+        when the loading query computed it, and the messages otherwise.
+
+        Returns:
+            True when a worker needs the ``vision`` feature and an image transport to serve the request.
+        """
+        if not self.is_chat:
+            return False
+        if self.carries_chat_images is not None:
+            return bool(self.carries_chat_images)
+        return has_image_parts(self.messages or [])
+
+    def build_worker_messages(self, generation: TextProcessingGeneration) -> list[dict[str, Any]]:
+        """Return the stored messages with each image reference replaced by what the generation's worker receives.
+
+        A worker assigned the ``url`` transport receives a signed download URL valid for the job's TTL and at least
+        [`MIN_CHAT_IMAGE_URL_SECONDS`][horde.classes.kobold.waiting_prompt.MIN_CHAT_IMAGE_URL_SECONDS]; signing is
+        local and makes no request. A worker assigned ``base64`` receives the stored bytes as a JPEG data URL, read
+        from object storage here. Both run while building the pop response, after the queue row lock was released
+        by the commits that assigned the generation.
+
+        Args:
+            generation: The first generation assigned in this pop, which records the transport and TTL.
+
+        Returns:
+            The messages to put in the job payload.
+
+        Raises:
+            ValueError: If the request carries images and the generation was assigned no transport.
+        """
+        messages: list[dict[str, Any]] = self.messages
+        if not has_image_parts(messages):
+            return messages
+        if generation.image_transport == ChatImageTransport.URL:
+            url_lifetime = max(generation.job_ttl, MIN_CHAT_IMAGE_URL_SECONDS)
+            return resolve_image_references(
+                messages,
+                lambda image_key: generate_chat_image_download_url(image_key, expires_in=url_lifetime),
+            )
+        if generation.image_transport == ChatImageTransport.BASE64:
+            return resolve_image_references(
+                messages,
+                lambda image_key: CHAT_IMAGE_DATA_URL_PREFIX + base64.b64encode(download_chat_image(image_key)).decode("ascii"),
+            )
+        raise ValueError(f"Chat request {self.id} carries images and generation {generation.id} has no image transport.")
+
+    def delete(self) -> None:
+        """Delete the request's row, then the images its messages reference."""
+        image_keys = list_chat_image_keys(self.messages or []) if self.is_chat else []
+        super().delete()
+        delete_stored_chat_images(image_keys)
 
     def count_stored_generations(self) -> int:
         """Return how many generations of this request hold a submitted result, as the status route reports them.
@@ -151,7 +250,7 @@ class TextWaitingPrompt(WaitingPrompt):
             return super().get_pop_payload(procgen_list, payload)
 
         chat_payload = dict(payload)
-        chat_payload["messages"] = self.messages
+        chat_payload["messages"] = self.build_worker_messages(procgen_list[0])
         pop_payload = super().get_pop_payload(procgen_list, chat_payload)
         pop_payload["chat"] = True
         return pop_payload
@@ -308,6 +407,92 @@ class TextWaitingPrompt(WaitingPrompt):
             2,
         )
         return self.kudos
+
+
+def delete_stored_chat_images(image_keys: Collection[str]) -> None:
+    """Delete stored chat images, queueing every key the store did not delete for a later retry.
+
+    Never raises for a store failure: the request row is already gone, so the failure is recorded in
+    [`CHAT_IMAGE_DELETE_RETRY_KEY`][horde.classes.kobold.waiting_prompt.CHAT_IMAGE_DELETE_RETRY_KEY] and
+    [`retry_chat_image_deletes`][horde.classes.kobold.waiting_prompt.retry_chat_image_deletes] finishes the delete.
+
+    Args:
+        image_keys: The object keys to delete.
+    """
+    if not image_keys:
+        return
+    try:
+        failed_keys = delete_chat_images(image_keys)
+    except Exception as err:
+        logger.warning(f"Could not delete {len(image_keys)} chat images, queued for retry: {err}")
+        failed_keys = set(image_keys)
+    if failed_keys:
+        queue_chat_image_delete_retry(failed_keys)
+
+
+def queue_chat_image_delete_retry(image_keys: Collection[str]) -> None:
+    """Add image keys whose delete failed to the retry set on the primary Redis.
+
+    Keys beyond [`MAX_CHAT_IMAGE_DELETE_RETRY_KEYS`][horde.classes.kobold.waiting_prompt.MAX_CHAT_IMAGE_DELETE_RETRY_KEYS]
+    are logged instead of queued, as are all keys when Redis is unavailable.
+
+    Args:
+        image_keys: The object keys to retry.
+    """
+    if hr.horde_r is None:
+        logger.error(f"Could not queue {len(image_keys)} chat image deletes for retry: no Redis connection.")
+        return
+    try:
+        room = MAX_CHAT_IMAGE_DELETE_RETRY_KEYS - hr.horde_r.scard(CHAT_IMAGE_DELETE_RETRY_KEY)
+        queued_keys = sorted(image_keys)[: max(room, 0)]
+        if queued_keys:
+            hr.horde_r.sadd(CHAT_IMAGE_DELETE_RETRY_KEY, *queued_keys)
+    except Exception as err:
+        logger.error(f"Could not queue {len(image_keys)} chat image deletes for retry: {err}")
+        return
+    if len(queued_keys) < len(image_keys):
+        logger.error(f"The chat image delete retry set is full; {len(image_keys) - len(queued_keys)} keys were not queued.")
+
+
+def retry_chat_image_deletes() -> list[str]:
+    """Retry a bounded batch of queued chat image deletes, removing each key the store deletes from the retry set.
+
+    At most [`CHAT_IMAGE_DELETE_RETRY_BATCH`][horde.classes.kobold.waiting_prompt.CHAT_IMAGE_DELETE_RETRY_BATCH] keys
+    are retried per call; a key that fails again stays queued for the next call.
+
+    Returns:
+        The keys deleted.
+    """
+    if hr.horde_r is None:
+        return []
+    queued_keys = [
+        key.decode() if isinstance(key, bytes) else key
+        for key in hr.horde_r.srandmember(CHAT_IMAGE_DELETE_RETRY_KEY, CHAT_IMAGE_DELETE_RETRY_BATCH)
+    ]
+    if not queued_keys:
+        return []
+    try:
+        failed_keys = delete_chat_images(queued_keys)
+    except Exception as err:
+        logger.warning(f"Retrying {len(queued_keys)} chat image deletes failed: {err}")
+        return []
+    deleted_keys = [key for key in queued_keys if key not in failed_keys]
+    if deleted_keys:
+        hr.horde_r.srem(CHAT_IMAGE_DELETE_RETRY_KEY, *deleted_keys)
+    return deleted_keys
+
+
+def chat_images_clause() -> ColumnElement[bool]:
+    """Return the SQL condition that a request's ``messages`` holds at least one image part.
+
+    On Postgres it is a JSONB containment test; under SQLite, where ``messages`` is JSON text, a pattern match.
+
+    Returns:
+        The condition, false or NULL for a request without messages.
+    """
+    if SQLITE_MODE:
+        return cast(TextWaitingPrompt.messages, Text).like(SQLITE_CHAT_IMAGE_PART_PATTERN)
+    return TextWaitingPrompt.messages.contains(CHAT_IMAGE_PART_CONTAINMENT)
 
 
 # Declared after the class because the columns belong to the text subtype of the shared waiting_prompts table. The

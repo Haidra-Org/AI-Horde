@@ -154,6 +154,10 @@ def upload_source_image(image, filename):
     return upload_image(s3_client, r2_source_image_bucket, image, filename, quality=50)
 
 
+CHAT_IMAGE_DELETE_BATCH_SIZE = 1000
+"""The most keys one bulk delete of chat images names, which is the S3 ``DeleteObjects`` limit."""
+
+
 def upload_chat_image(jpeg_bytes: bytes, key: str) -> None:
     """Store one chat request's image in the source image bucket.
 
@@ -188,16 +192,54 @@ def download_chat_image(filename: str) -> bytes:
             return body.read()
 
 
-def generate_chat_image_download_url(filename: str) -> str:
+def generate_chat_image_download_url(filename: str, *, expires_in: int) -> str:
     """Return a presigned download URL for a chat request's image.
+
+    Signing is local, so this makes no request to the store.
 
     Args:
         filename: The object key.
+        expires_in: How many seconds the URL is valid for.
 
     Returns:
-        A URL valid for 30 minutes.
+        The URL.
     """
-    return generate_img_download_url(filename, r2_source_image_bucket)
+    return generate_presigned_url(
+        s3_client,
+        "get_object",
+        {"Bucket": r2_source_image_bucket, "Key": filename},
+        expires_in=expires_in,
+    )
+
+
+def delete_chat_images(keys: Collection[str]) -> set[str]:
+    """Delete chat images from the source image bucket, in bulk.
+
+    A key that does not exist counts as deleted.
+
+    Args:
+        keys: The object keys.
+
+    Returns:
+        The keys the store reported it could not delete.
+
+    Raises:
+        botocore.exceptions.ClientError: If the store refuses a whole request.
+        botocore.exceptions.BotoCoreError: If the store cannot be reached.
+    """
+    sorted_keys = sorted(set(keys))
+    failed_keys: set[str] = set()
+    for start in range(0, len(sorted_keys), CHAT_IMAGE_DELETE_BATCH_SIZE):
+        batch_keys = sorted_keys[start : start + CHAT_IMAGE_DELETE_BATCH_SIZE]
+        with logfire.span("horde.r2.delete_chat_images", count=len(batch_keys)):
+            response = s3_client.delete_objects(
+                Bucket=r2_source_image_bucket,
+                Delete={"Objects": [{"Key": key} for key in batch_keys], "Quiet": True},
+            )
+        for error in response.get("Errors", []):
+            if error.get("Code") != "NoSuchKey" and error.get("Key") is not None:
+                failed_keys.add(error["Key"])
+    return failed_keys
 
 
 def upload_generated_image(image, filename):

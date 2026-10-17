@@ -6,13 +6,34 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 import pytest
 
+from horde.chat_contract import MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT
 from tests.unit.oai.conftest import FAST_TEST_SETTINGS, StartFront, build_chat_body, done_status
 
 pytestmark = pytest.mark.asyncio
+
+TINY_PNG_DATA_URL: str = (
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+"""A one-pixel PNG as a data URL."""
+
+
+def image_part(url: str, **image_url_extras: Any) -> dict[str, Any]:
+    """Return an ``image_url`` content part for ``url``."""
+    return {"type": "image_url", "image_url": {"url": url, **image_url_extras}}
+
+
+def user_image_messages(*image_parts: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return a system message and a user message holding a text part and ``image_parts``."""
+    return [
+        {"role": "system", "content": "Describe."},
+        {"role": "user", "content": [{"type": "text", "text": "What is this?"}, *image_parts]},
+    ]
+
 
 NO_OP_ROWS: list[tuple[str, object]] = [
     ("tools", []),
@@ -73,7 +94,7 @@ async def test_default_no_op_is_accepted_and_not_forwarded(start_front: StartFro
             {
                 "messages": [
                     {"role": "system", "content": "Describe."},
-                    {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "https://example.test/a.png"}}]},
+                    {"role": "assistant", "content": [{"type": "image_url", "image_url": {"url": "https://example.test/a.png"}}]},
                 ],
             },
             "messages[1].content[0].type=image_url",
@@ -198,4 +219,86 @@ async def test_message_count_and_text_size_limits_refuse_before_submitting(
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "UnsupportedChatParameter"
     assert response.json()["error"]["param"] == "messages"
+    assert front.horde.submit_route.call_count == 0
+
+
+@pytest.mark.parametrize("role", ["system", "developer", "assistant"])
+async def test_an_image_part_outside_a_user_message_is_refused_with_its_path(start_front: StartFront, role: str) -> None:
+    messages = [{"role": role, "content": [image_part(TINY_PNG_DATA_URL)]}, {"role": "user", "content": "Hi."}]
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "UnsupportedChatParameter"
+    assert response.json()["error"]["param"] == "messages[0].content[0].type=image_url"
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_user_image_parts_are_forwarded_verbatim(start_front: StartFront) -> None:
+    messages = user_image_messages(
+        image_part(TINY_PNG_DATA_URL, detail="low"),
+        image_part("https://example.test/cat.png"),
+    )
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["messages"] == messages
+
+
+async def test_image_data_urls_do_not_count_toward_the_text_size_limit(start_front: StartFront) -> None:
+    messages = user_image_messages(image_part(TINY_PNG_DATA_URL))
+    text_bytes = len(b"Describe.") + len(b"What is this?")
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"max_text_bytes": text_bytes})) as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 200
+
+
+async def test_an_image_data_url_over_the_native_cap_is_refused_with_its_path(start_front: StartFront) -> None:
+    oversized_payload = base64.b64encode(bytes(MAX_CHAT_IMAGE_BYTES + 3)).decode("ascii")
+    messages = user_image_messages(image_part(TINY_PNG_DATA_URL), image_part(f"data:image/png;base64,{oversized_payload}"))
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "SourceImageSizeExceeded"
+    assert error["param"] == "messages[1].content[2].image_url.url"
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_an_image_data_url_at_the_native_cap_is_forwarded(start_front: StartFront) -> None:
+    # A length divisible by three encodes without padding, so the size estimate equals the decoded size.
+    payload_at_cap = base64.b64encode(bytes(MAX_CHAT_IMAGE_BYTES - MAX_CHAT_IMAGE_BYTES % 3)).decode("ascii")
+    messages = user_image_messages(image_part(f"data:image/png;base64,{payload_at_cap}"))
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 200
+
+
+async def test_more_image_parts_than_the_native_cap_are_refused(start_front: StartFront) -> None:
+    messages = user_image_messages(*(image_part(TINY_PNG_DATA_URL) for _ in range(MAX_CHAT_IMAGE_COUNT + 1)))
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "TooManyExtraSourceImages"
+    assert error["param"] == "messages"
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_an_image_part_with_an_unknown_detail_is_a_bad_request(start_front: StartFront) -> None:
+    messages = user_image_messages(image_part(TINY_PNG_DATA_URL, detail="ultra"))
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "BadRequest"
+    assert response.json()["error"]["param"].startswith("messages[1].content")
     assert front.horde.submit_route.call_count == 0

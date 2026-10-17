@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import joinedload, noload, selectinload
+from sqlalchemy.orm import joinedload, noload, selectinload, with_expression
 
 import horde.classes.base.stats as stats
 from horde.bridge_reference import (
@@ -19,7 +19,7 @@ from horde.classes.base.worker import WorkerPerformance
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 
 # FIXME: Renamed for backwards compat. To fix later
-from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, chat_images_clause
 from horde.classes.kobold.worker import TextWorker, get_minimum_text_worker_speed
 from horde.database.functions import query_prioritized_wps
 from horde.flask import SQLITE_MODE, db
@@ -110,15 +110,17 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
         wp_names_chat_model = (
             db.session.query(WPModels.id).filter(WPModels.wp_id == TextWaitingPrompt.id, WPModels.model == worker.chat_model_id).exists()
         )
-        wp_fits_worker = or_(
-            wp_fits_worker,
-            and_(
-                TextWaitingPrompt.is_chat.is_(True),
-                TextWaitingPrompt.max_length <= worker.chat_max_length,
-                TextWaitingPrompt.max_context_length <= worker.chat_max_context_length,
-                wp_names_chat_model,
-            ),
+        wp_fits_chat_worker = and_(
+            TextWaitingPrompt.is_chat.is_(True),
+            TextWaitingPrompt.max_length <= worker.chat_max_length,
+            TextWaitingPrompt.max_context_length <= worker.chat_max_context_length,
+            wp_names_chat_model,
         )
+        if not worker.serves_chat_images():
+            # Only chat rows reach this test, and only for workers that cannot take images, so a vision worker's
+            # scan never reads the messages column.
+            wp_fits_chat_worker = and_(wp_fits_chat_worker, ~chat_images_clause())
+        wp_fits_worker = or_(wp_fits_worker, wp_fits_chat_worker)
     final_wp_list = (
         db.session.query(TextWaitingPrompt)
         .options(
@@ -127,6 +129,8 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
             selectinload(TextWaitingPrompt.models),
             selectinload(TextWaitingPrompt.tricked_workers),
             selectinload(TextWaitingPrompt.workers),
+            # Computed for the returned page only, so eligibility never loads a candidate's deferred messages.
+            with_expression(TextWaitingPrompt.carries_chat_images, chat_images_clause()),
         )
         .filter(
             TextWaitingPrompt.n > 0,

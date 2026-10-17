@@ -69,7 +69,9 @@ the outcome, and the known prompt stages.
 | `model_rejection`  | `rejected` | The NSFW-model replacement emptied the prompt, for an NSFW model or for a flagged account on any model |
 | `worker_csam`      | `censored` | An image worker reported the job                            |
 
-A `worker_csam` event records that a worker reported the job. It carries no finding about the account.
+A `worker_csam` event records that a worker reported the job. It carries no finding about the account. The input
+images a chat request carries are not scanned by any worker, so a `worker_csam` event does not originate from the chat
+vision path and those images are not screened.
 
 The address is the IP subject (`CounterMeasures.ip_subject`) of the request origin the rejection or the waiting
 request saw. The same function normalizes worker report records, the `ipaddr` filter and worker IP blocks:

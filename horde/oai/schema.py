@@ -69,6 +69,9 @@ __all__ = [
     "FinishReason",
     "HordeModelDetails",
     "HordeResponseDetails",
+    "ImageContentPart",
+    "ImageDetail",
+    "ImageUrl",
     "ModelArchitecture",
     "ModelCard",
     "ModelList",
@@ -121,7 +124,17 @@ MAX_METADATA_VALUE_CHARACTERS: int = 512
 """The longest ``metadata`` value accepted, as OpenAI documents."""
 
 TEXT_CONTENT_PART_TYPE: str = "text"
-"""The only content part type served."""
+"""The content part type carrying text, which any message may use."""
+
+IMAGE_URL_CONTENT_PART_TYPE: str = "image_url"
+"""The content part type carrying an image, which only a user message may use, as on the native route."""
+
+IMAGE_PART_ROLES: frozenset[str] = frozenset(
+    {
+        "user",
+    },
+)
+"""The roles whose messages may carry image parts; OpenAI accepts images only from the user."""
 
 
 class ChatRole(StrEnum):
@@ -138,6 +151,14 @@ class ChatRole(StrEnum):
 
     ASSISTANT = "assistant"
     """A previous reply of the model."""
+
+
+class ImageDetail(StrEnum):
+    """The OpenAI ``detail`` hint of an image part; forwarded to the worker unchanged."""
+
+    AUTO = "auto"
+    LOW = "low"
+    HIGH = "high"
 
 
 class FinishReason(StrEnum):
@@ -178,7 +199,7 @@ class RefusedParameter(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     parameter: str
-    """The request path of the part, such as ``tools`` or ``messages[1].content[0].type=image_url``; a refused content
+    """The request path of the part, such as ``tools`` or ``messages[1].content[0].type=input_audio``; a refused content
     part's path names its type the way the native route does."""
 
     message: str
@@ -324,9 +345,12 @@ def _find_refused_in_message(message: Mapping[str, object], *, message_index: in
         part_type = content_part.get("type")
         if part_type == TEXT_CONTENT_PART_TYPE:
             continue
+        if part_type == IMAGE_URL_CONTENT_PART_TYPE and role in IMAGE_PART_ROLES:
+            continue
         return RefusedParameter(
             parameter=f"messages[{message_index}].content[{part_index}].type={part_type}",
-            message=f"The content part type '{part_type}' is not supported; only 'text' parts are served.",
+            message=f"The content part type '{part_type}' is not supported here; 'text' parts are served on every message "
+            "and 'image_url' parts on user messages.",
         )
     return None
 
@@ -371,6 +395,34 @@ class TextContentPart(BaseModel):
     """The text of this part."""
 
 
+class ImageUrl(BaseModel):
+    """Represents the ``image_url`` object of an image part."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    url: StrictStr
+    """A ``data:image/...;base64,`` URL or an ``http(s)`` URL; the native route validates, fetches and stores it."""
+
+    detail: ImageDetail | None = None
+    """The client's detail hint."""
+
+
+class ImageContentPart(BaseModel):
+    """Represents one image part of a user message's content array."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: Literal["image_url"]
+    """Always ``image_url``."""
+
+    image_url: ImageUrl
+    """Where the image is and how the client wants it read."""
+
+
+ContentPart = Annotated[TextContentPart | ImageContentPart, Field(discriminator="type")]
+"""One part of a message's content array."""
+
+
 class ChatMessage(BaseModel):
     """Represents one message of a chat request."""
 
@@ -379,8 +431,9 @@ class ChatMessage(BaseModel):
     role: ChatRole
     """Who wrote the message."""
 
-    content: StrictStr | Annotated[list[TextContentPart], Field(min_length=1)]
-    """The message text, either a string or an array of text parts."""
+    content: StrictStr | Annotated[list[ContentPart], Field(min_length=1)]
+    """The message text as one string, or an array of parts; only a user message may hold image parts, which
+    [`find_refused_parameter`][horde.oai.schema.find_refused_parameter] enforces before validation."""
 
     name: StrictStr | None = None
     """An optional participant name, passed through to the worker."""

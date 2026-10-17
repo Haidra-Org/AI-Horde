@@ -11,10 +11,12 @@
 -- and the hash of the request it claimed it for; context_adjustments records how the context length
 -- was changed to fit the messages, for the chat status.
 -- The workers columns hold the chat declaration a worker sends on each pop: whether it accepts chat
--- jobs, the optional features it implements, its chat limits and the model it serves chat jobs with.
+-- jobs, the optional features it implements, its chat limits, the model it serves chat jobs with and
+-- the transports it accepts images by.
 -- The processing_gens columns hold a chat worker's structured reply (the message, finish reasons and
--- reported token counts), the basis the generation was charged on, and the worker's declaration as it
--- stood when the generation was assigned. A nullable column without a default and a column with a
+-- reported token counts), the basis the generation was charged on, the worker's declaration as it
+-- stood when the generation was assigned, and the transport the request's images were sent to it
+-- with. A nullable column without a default and a column with a
 -- constant default are both metadata-only adds; the lock timeout fails rather than queueing an
 -- ACCESS EXCLUSIVE lock behind a long transaction. Rerun on failure.
 SET lock_timeout = '5s';
@@ -28,6 +30,7 @@ ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_features TEXT[];
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_max_context_length INTEGER;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_max_length INTEGER;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_model_id VARCHAR;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS image_transports TEXT[];
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS message JSONB;
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS finish_reason VARCHAR(32);
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS native_finish_reason VARCHAR(32);
@@ -37,6 +40,7 @@ ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS charge_basis VARCHAR(16);
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_model VARCHAR;
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_max_context_length INTEGER;
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_max_length INTEGER;
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS image_transport VARCHAR(16);
 RESET lock_timeout;
 
 -- One operation key per user. Every existing row has no key, so the partial index starts empty, but the

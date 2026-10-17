@@ -27,9 +27,15 @@ from horde.argparser import args
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.user import User
 from horde.classes.base.worker import SPEED_BASELINE_THINGS_PER_SEC, WorkerPerformance, WorkerTemplate
+from horde.classes.kobold.chat_request import list_chat_image_keys
 from horde.classes.kobold.genstats import CompiledTextGensStatsTotals, CompiledTextGenStatsModels
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
-from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.kobold.waiting_prompt import (
+    TextWaitingPrompt,
+    chat_images_clause,
+    delete_stored_chat_images,
+    retry_chat_image_deletes,
+)
 from horde.classes.stable.genstats import CompiledImageGenStatsModels, CompiledImageGenStatsTotals
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -253,6 +259,26 @@ def publish_chat_faults(chat_faults: list[tuple[str, int]]) -> None:
         publish_chat_event(chat_request_id, ChatEvent.FAULTED, generation_count)
 
 
+def collect_expired_chat_image_keys(cutoff_time: datetime) -> list[str]:
+    """Return the keys of every stored image an expired chat request references, before the rows are deleted.
+
+    Only expired chat rows whose messages hold an image part are read, so the deferred messages of other rows stay
+    unloaded.
+
+    Args:
+        cutoff_time: The expiry cutoff of this cleanup pass.
+
+    Returns:
+        The object keys.
+    """
+    expired_messages = db.session.query(TextWaitingPrompt.messages).filter(
+        TextWaitingPrompt.expiry < cutoff_time,
+        TextWaitingPrompt.is_chat.is_(True),
+        chat_images_clause(),
+    )
+    return [image_key for (messages,) in expired_messages for image_key in list_chat_image_keys(messages or [])]
+
+
 @logger.catch(reraise=True)
 def check_waiting_prompts():
     with get_app().app_context():
@@ -399,8 +425,12 @@ def check_waiting_prompts():
             # Otherwise a request that expires unserved leaves its hold active and
             # permanently depresses the payer's available kudos.
             release_reservations_for_business_ids(f"upfront:{wp_id}" for wp_id in expired_wp_ids)
+            expired_chat_image_keys = collect_expired_chat_image_keys(cutoff_time) if wp_class is TextWaitingPrompt else []
             expired_wps.delete()
             db.session.commit()
+            # Deleted after the rows, so a request is never left referencing a missing image; a key the store does
+            # not delete is queued for retry.
+            delete_stored_chat_images(expired_chat_image_keys)
             # An expired request's row is gone once the deletion commits, as a text request's is, so the status
             # route reports it as not found. Publishing after that commit means a client woken by the event
             # reads that settled state rather than racing the deletion.
@@ -472,6 +502,10 @@ def check_waiting_prompts():
                 wp.log_faulted_prompt()
             if wp_class is TextWaitingPrompt:
                 publish_chat_faults(collect_chat_faults(newly_faulted_wp_ids))
+        try:
+            retry_chat_image_deletes()
+        except Exception as err:
+            logger.warning(f"Retrying chat image deletes failed: {err}")
 
 
 @logger.catch(reraise=True)

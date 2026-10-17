@@ -37,6 +37,7 @@ def build_pop_body(
     chat_max_length: int = 1024,
     max_context_length: int = 4096,
     max_length: int = 512,
+    image_transports: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return a text pop body, with the chat declaration when ``chat_jobs`` is true.
 
@@ -51,6 +52,7 @@ def build_pop_body(
         chat_max_length: The chat output limit.
         max_context_length: The text context limit.
         max_length: The text output limit.
+        image_transports: The declared image transports; left out when None.
 
     Returns:
         The JSON body for ``POST /v2/generate/text/pop``.
@@ -69,6 +71,8 @@ def build_pop_body(
         pop_body["chat_features"] = list(DEFAULT_CHAT_FEATURES) if chat_features is None else chat_features
         pop_body["chat_limits"] = {"max_context_length": chat_max_context_length, "max_length": chat_max_length}
         pop_body["model_id"] = models[0] if model_id is None else model_id
+    if image_transports is not None:
+        pop_body["image_transports"] = image_transports
     return pop_body
 
 

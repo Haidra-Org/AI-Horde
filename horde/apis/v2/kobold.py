@@ -5,6 +5,7 @@
 import json
 from datetime import datetime
 
+from botocore.exceptions import BotoCoreError, ClientError
 from flask import request
 from flask_restx import Resource, marshal_with, reqparse
 from flask_restx.reqparse import ParseResult
@@ -23,7 +24,7 @@ from horde.apis.v2.base import (
     assert_submitting_key,
     commit_request_cancellation,
 )
-from horde.chat_contract import MAX_CHAT_BODY_BYTES, ChatContextFit
+from horde.chat_contract import MAX_CHAT_BODY_BYTES, MAX_CHAT_IMAGE_COUNT_UNTRUSTED, ChatContextFit
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base import settings
 from horde.classes.base.style_application import count_literal_text_template_fields, format_text_style_prompt
@@ -32,15 +33,19 @@ from horde.classes.base.style_contract import (
     StyleContractVocabulary,
     build_vocabulary,
 )
+from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX
 from horde.classes.kobold.chat_request import (
     MAX_NATIVE_FINISH_REASON_LENGTH,
     ChatSubmittedMessage,
+    build_chat_image_key,
     build_model_names,
     build_operation_fingerprint,
     build_text_params,
     build_worker_targeting,
     flatten_messages,
+    list_image_urls,
     parse_chat_request,
+    replace_image_urls,
     rewrite_message_texts,
     serialize_messages,
 )
@@ -62,7 +67,7 @@ from horde.classes.kobold.request_fit import (
     parse_context_fit,
     prompt_fits_context,
 )
-from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, delete_stored_chat_images
 from horde.classes.kobold.worker import TextWorker
 from horde.config import Config
 from horde.database import functions as database
@@ -72,11 +77,14 @@ from horde.database.text_functions import ChatOperationClaim
 from horde.detection import prompt_checker
 from horde.enums import KudosEntryType, RequestTerminalOutcome
 from horde.flask import cache, db
+from horde.image import encode_chat_image, load_chat_image
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.model_reference import model_reference
+from horde.patreon import patrons
+from horde.r2 import upload_chat_image
 from horde.request_scheduling import record_request_cancellation_forecast
-from horde.utils import hash_dictionary
+from horde.utils import get_db_uuid, hash_dictionary
 from horde.validation import ParamValidator
 from horde.vars import horde_title
 
@@ -683,6 +691,11 @@ class ChatAsyncGenerate(TextAsyncGenerate):
     requires_chat_workers = True
     context_adjustments = None
     """The changes context fitting made to the request's context length, as stored for the chat status, or None."""
+    chat_images: tuple[bytes, ...] = ()
+    """The request's images, validated and encoded as the JPEG to store, in message order. Empty for a dry run,
+    which neither fetches nor stores them."""
+    chat_image_keys: tuple[str, ...] = ()
+    """The object keys this submission stored images under, deleted again when activation fails."""
 
     @api.expect(parsers.chat_generate_parser, models.input_model_chat_generation)
     @api.marshal_with(
@@ -700,10 +713,13 @@ class ChatAsyncGenerate(TextAsyncGenerate):
     @api.response(429, "Too Many Prompts", models.response_model_error)
     def post(self):
         """Initiate an asynchronous chat request.
-        The body is an OpenAI chat-completions request with text messages, without tools, response formats,
-        logprobs, images, audio or file content, plus an optional 'horde' object for the request options OpenAI
-        has no key for. A key, value or content part outside the supported set is refused with the
-        UnsupportedChatParameter return code, and a body above the size limit with RequestTooLarge (413).
+        The body is an OpenAI chat-completions request with text messages, and image parts on user messages,
+        without tools, response formats, logprobs, audio or file content, plus an optional 'horde' object for the
+        request options OpenAI has no key for. A key, value or content part outside the supported set is refused
+        with the UnsupportedChatParameter return code, and a body above the size limit with RequestTooLarge (413).
+        Each image, a base64 data URL or an http(s) URL, is validated, stored, and charged the extra source image
+        tax; a URL resolving or redirecting to a private address is refused with SourceImageUrlRefused. Only
+        workers declaring the vision feature and an image transport serve a request with images.
         A model that the text model reference does not list and no online chat worker serves is refused with
         UnknownChatModel (404).
         A request that carries horde.operation_key is claimed under that key for its user. Submitting the same
@@ -845,6 +861,75 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         param_validator = ParamValidator(self.prompt, self.args.models, self.params, self.user)
         self.warnings = param_validator.validate_text_params()
         self.mirror_prompt_rewrites_onto_messages()
+        self.load_chat_images()
+
+    def get_extra_source_images_count(self):
+        """Return how many images the request carries, each of which is charged the extra source image tax.
+
+        Returns:
+            int: The number of image parts in the messages.
+        """
+        return len(list_image_urls(self.messages))
+
+    def get_activation_kudos_adjustment(self):
+        """Return the activation charge, with the extra source image tax for each image the request carries.
+
+        The images are charged here rather than passed to activation as extra source images, which would store them
+        on the request row and send them to workers as extra source images.
+
+        Returns:
+            float: The base adjustment plus the tax for every image.
+        """
+        return super().get_activation_kudos_adjustment() + EXTRA_SOURCE_IMAGE_HORDE_TAX * self.get_extra_source_images_count()
+
+    def load_chat_images(self):
+        """Fetch or decode every image, enforcing the count, size and resolution caps, and encode each as JPEG.
+
+        Runs after every other check, so a refused request never fetches. A dry run counts its images for the quote
+        and refuses too many, but fetches and decodes nothing.
+
+        Raises:
+            horde.exceptions.BadRequest: With ``MoreThanMinExtraSourceImage`` when a user who is neither trusted nor
+                a patron sends more than one image, or an image validation failure for an image that cannot be
+                fetched or read or breaks a cap.
+        """
+        image_urls = list_image_urls(self.messages)
+        if len(image_urls) > MAX_CHAT_IMAGE_COUNT_UNTRUSTED and not self.user.trusted and not patrons.is_patron(self.user.id):
+            raise e.BadRequest(
+                f"Only trusted users and patrons can send more than {MAX_CHAT_IMAGE_COUNT_UNTRUSTED} image on a chat request.",
+                rc="MoreThanMinExtraSourceImage",
+            )
+        self.chat_images = ()
+        if self.args.dry_run:
+            return
+        self.chat_images = tuple(encode_chat_image(load_chat_image(image_url)) for image_url in image_urls)
+
+    def upload_source_images(self):
+        """Store the request's images under keys derived from its id, after its inactive row exists.
+
+        The row's messages already reference these keys, so a request whose handling stops after this point leaves
+        no image that its row's deletion does not remove.
+
+        Raises:
+            horde.exceptions.ServiceUnavailable: With ``ChatImageStorageUnavailable`` when the store refuses an image;
+                the row and the images already stored are deleted first.
+        """
+        if not self.chat_images:
+            return
+        stored_keys: list[str] = []
+        try:
+            for ordinal, jpeg_bytes in enumerate(self.chat_images):
+                image_key = build_chat_image_key(str(self.wp.id), ordinal)
+                upload_chat_image(jpeg_bytes, image_key)
+                stored_keys.append(image_key)
+        except (BotoCoreError, ClientError) as err:
+            logger.warning(f"Could not store the images of chat request {self.wp.id}: {err}")
+            self.wp.delete()
+            raise e.ServiceUnavailable(
+                "The chat request's images could not be stored. Try again later.",
+                rc="ChatImageStorageUnavailable",
+            ) from err
+        self.chat_image_keys = tuple(stored_keys)
 
     def ensure_model_known(self):
         """Refuse a model this horde does not know before any request row exists or any kudos is charged.
@@ -878,6 +963,23 @@ class ChatAsyncGenerate(TextAsyncGenerate):
             ]
 
     def activate_waiting_prompt(self):
+        """Activate the request, deleting the images this submission stored when activation fails.
+
+        An inactive row a failed activation leaves behind then references no stored image.
+
+        Raises:
+            ClaimedOperation: Another submission claimed the key first.
+        """
+        try:
+            self.activate_claiming_operation_key()
+        except ClaimedOperation:
+            # The losing row was deleted, and its images with it.
+            raise
+        except Exception:
+            delete_stored_chat_images(self.chat_image_keys)
+            raise
+
+    def activate_claiming_operation_key(self):
         """Activate the request, claiming its operation key in the activation's transaction when it carries one.
 
         Two submissions with one key can both pass the lookup in ``post``. The unique index lets only one
@@ -931,6 +1033,12 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         waiting_prompt_arguments["is_chat"] = True
         waiting_prompt_arguments["messages"] = self.messages
         waiting_prompt_arguments["context_adjustments"] = self.context_adjustments
+        if list_image_urls(self.messages):
+            # The id is chosen here so the row is written with each image already replaced by the reference to the
+            # key it is stored under; the submitted image bytes and URLs never reach the database.
+            request_id = get_db_uuid()
+            waiting_prompt_arguments["id"] = request_id
+            waiting_prompt_arguments["messages"] = replace_image_urls(self.messages, str(request_id))
         return waiting_prompt_arguments
 
     def get_size_too_big_message(self):
@@ -1042,6 +1150,7 @@ class TextJobPop(JobPopTemplate):
             chat_max_context_length=chat_limits.get("max_context_length"),
             chat_max_length=chat_limits.get("max_length"),
             chat_model_id=self.args.model_id,
+            image_transports=self.args.image_transports,
         )
 
     def get_sorted_wp(self, priority_user_ids=None):
