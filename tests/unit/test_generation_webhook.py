@@ -2,40 +2,59 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Behaviour of generation webhook delivery.
+"""Behaviour of generation and interrogation webhook delivery.
 
-A waiting prompt may carry a subscriber webhook URL; each completed generation
-is then POSTed to it. Delivery is decoupled from the submit request: the
-request thread materializes the payload and enqueues it on a bounded queue,
-and a background sender performs the HTTP delivery with bounded retries.
+A waiting prompt or an interrogation may carry a subscriber webhook URL. Each
+completed generation or interrogation form is then POSTed to it. Delivery is
+decoupled from the submit request: the request thread materializes the payload
+and enqueues it on a bounded queue, and a background sender performs the HTTP
+delivery with bounded retries.
 
 The contracts exercised here are:
 
 - A generation whose prompt has no webhook enqueues nothing.
 - A generation whose prompt has a webhook enqueues one delivery carrying the
   subscriber URL and a payload identifying the request, generation and reward.
-- The sender POSTs the payload to the subscriber URL.
+- An interrogation form enqueues on the same queue instead of posting inline.
+- The sender POSTs the payload to the subscriber URL once.
 - A subscriber that keeps failing is retried a bounded number of times and
   then abandoned without raising.
+- A URL resolving to a private address, a plain http URL and a redirect are
+  refused once, with no connection to the refused target and no retry.
 - A full queue drops the delivery without raising on the request path.
 """
 
 from __future__ import annotations
 
+import functools
+import json
 import queue
 import uuid
+from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import requests
 from sqlalchemy.orm import Session
 
 import horde.classes.base.processing_generation as procgen_module
+from horde import outbound
 from horde.classes.base.user import User
+from horde.classes.stable.interrogation import InterrogationForms
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
+from horde.outbound import HTTP_SCHEMES
 from tests.fixture_types import MakeUser
+from tests.local_http_server import (
+    TEST_SERVER_ADDRESS,
+    RecordedServer,
+    allow_test_server_or_public,
+    redirect_to,
+    resolver,
+    send_body,
+    serve_recorded,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -78,13 +97,6 @@ def _build_completed_generation(db_session: Session, requester: User, *, webhook
     return procgen
 
 
-class _FakeResponse:
-    def __init__(self, ok: bool, status_code: int) -> None:
-        self.ok = ok
-        self.status_code = status_code
-        self.text = ""
-
-
 class TestEnqueue:
     """The request path only enqueues; queue contents describe the delivery."""
 
@@ -125,31 +137,127 @@ class TestEnqueue:
         assert isolated_queue.qsize() == isolated_queue.maxsize
 
 
+class TestInterrogationEnqueue:
+    """An interrogation form's webhook goes on the generation webhook queue, off the submit request."""
+
+    def test_form_with_webhook_enqueues_payload(self, isolated_queue: queue.Queue[WebhookDelivery]) -> None:
+        interrogation = SimpleNamespace(id="interrogation-id", webhook=WEBHOOK_URL)
+        form = SimpleNamespace(
+            id="form-id",
+            interrogation=interrogation,
+            get_details=lambda: {"form": "caption", "state": "done", "result": {"caption": "a"}, "worker_id": "w"},
+        )
+
+        InterrogationForms.send_webhook(form, 3)  # type: ignore[arg-type]  # the method reads only these attributes
+
+        url, data, request_id, form_id = isolated_queue.get_nowait()
+        assert url == WEBHOOK_URL
+        assert data == {
+            "form": "caption",
+            "state": "done",
+            "result": {"caption": "a"},
+            "worker_id": "w",
+            "request": "interrogation-id",
+            "id": "form-id",
+            "kudos": 3,
+        }
+        assert (request_id, form_id) == ("interrogation-id", "form-id")
+
+
+SUBSCRIBER_HOST = "subscriber.example"
+"""The made-up subscriber host the delivery tests resolve to the local server."""
+
+
+@pytest.fixture
+def subscriber(monkeypatch: pytest.MonkeyPatch) -> Iterator[RecordedServer]:
+    """Run a local subscriber and let the sender reach it over plain http by name.
+
+    The sender accepts only https URLs resolving to public addresses. The local server is plain http on loopback,
+    so the fixture widens the scheme set and resolves the subscriber's name to the server.
+    """
+    with serve_recorded() as recorded_server:
+        monkeypatch.setattr(procgen_module, "WEBHOOK_SCHEMES", HTTP_SCHEMES)
+        monkeypatch.setattr(
+            procgen_module,
+            "send_public_request",
+            functools.partial(
+                outbound.send_public_request,
+                resolve=resolver({SUBSCRIBER_HOST: [TEST_SERVER_ADDRESS], "internal.example": ["10.0.0.5"]}),
+                address_allowed=allow_test_server_or_public,
+            ),
+        )
+        yield recorded_server
+
+
+@pytest.fixture
+def connections(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the address of every connection the sender opens, while still opening it."""
+    opened: list[str] = []
+    open_bound_response = outbound._open_bound_response
+
+    def recording_open(scheme: str, host: str, port: int, request_target: str, address: str, **kwargs: Any) -> Any:
+        opened.append(address)
+        return open_bound_response(scheme, host, port, request_target, address, **kwargs)
+
+    monkeypatch.setattr(outbound, "_open_bound_response", recording_open)
+    return opened
+
+
 class TestDelivery:
-    """The sender POSTs the payload and bounds its retries."""
+    """The sender POSTs the payload through the address guard and bounds its retries."""
 
-    def test_payload_is_posted_to_subscriber(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        posted: list[tuple[str, dict[str, Any]]] = []
+    def test_payload_is_posted_to_subscriber_once(self, subscriber: RecordedServer) -> None:
+        subscriber.respond = send_body(b"")
 
-        def fake_post(url: str, json: dict[str, Any], timeout: float) -> _FakeResponse:
-            posted.append((url, json))
-            return _FakeResponse(ok=True, status_code=200)
+        procgen_module._deliver_webhook(f"http://{SUBSCRIBER_HOST}:{subscriber.port}/hook", {"id": "gen"}, "wp", "gen")
 
-        monkeypatch.setattr(requests, "post", fake_post)
+        assert [recorded.method for recorded in subscriber.requests] == ["POST"]
+        assert json.loads(subscriber.requests[0].body) == {"id": "gen"}
 
-        procgen_module._deliver_webhook(WEBHOOK_URL, {"id": "gen"}, "wp", "gen")
+    def test_persistent_failure_is_bounded_and_does_not_raise(self, subscriber: RecordedServer) -> None:
+        subscriber.respond = send_body(b"", status=500)
 
-        assert posted == [(WEBHOOK_URL, {"id": "gen"})]
+        procgen_module._deliver_webhook(f"http://{SUBSCRIBER_HOST}:{subscriber.port}/hook", {"id": "gen"}, "wp", "gen")
 
-    def test_persistent_failure_is_bounded_and_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        attempts: list[str] = []
+        assert len(subscriber.requests) == procgen_module.WEBHOOK_ATTEMPTS
 
-        def failing_post(url: str, json: dict[str, Any], timeout: float) -> _FakeResponse:
-            attempts.append(url)
-            raise ConnectionError("subscriber unreachable")
+    def test_a_name_resolving_to_a_private_address_is_refused_without_an_attempt(
+        self,
+        subscriber: RecordedServer,
+        connections: list[str],
+    ) -> None:
+        procgen_module._deliver_webhook(f"http://internal.example:{subscriber.port}/hook", {"id": "gen"}, "wp", "gen")
 
-        monkeypatch.setattr(requests, "post", failing_post)
+        assert connections == []
+        assert subscriber.requests == []
 
-        procgen_module._deliver_webhook(WEBHOOK_URL, {"id": "gen"}, "wp", "gen")
+    def test_a_private_address_literal_is_refused_once_without_an_attempt(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        connections: list[str],
+    ) -> None:
+        sends: list[str] = []
+        guarded_send = outbound.send_public_request
 
-        assert len(attempts) == 3
+        def counting_send(url: str, **kwargs: Any) -> Any:
+            sends.append(url)
+            return guarded_send(url, **kwargs)
+
+        monkeypatch.setattr(procgen_module, "send_public_request", counting_send)
+
+        procgen_module._deliver_webhook("https://10.0.0.5/hook", {"id": "gen"}, "wp", "gen")
+
+        assert sends == ["https://10.0.0.5/hook"]
+        assert connections == []
+
+    def test_a_plain_http_url_is_refused_without_an_attempt(self, connections: list[str]) -> None:
+        procgen_module._deliver_webhook("http://93.184.216.34/hook", {"id": "gen"}, "wp", "gen")
+
+        assert connections == []
+
+    def test_a_redirect_is_not_followed_or_retried(self, subscriber: RecordedServer) -> None:
+        subscriber.respond = redirect_to(f"http://{SUBSCRIBER_HOST}:{subscriber.port}/elsewhere", status=307)
+
+        procgen_module._deliver_webhook(f"http://{SUBSCRIBER_HOST}:{subscriber.port}/hook", {"id": "gen"}, "wp", "gen")
+
+        assert [recorded.method for recorded in subscriber.requests] == ["POST"]

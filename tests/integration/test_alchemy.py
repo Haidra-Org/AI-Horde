@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import base64
+import functools
 from io import BytesIO
 
 import pytest
@@ -15,6 +16,13 @@ from tests.integration._object_storage import (
     assert_presigned_image_download,
     make_test_webp,
     upload_to_presigned_url,
+)
+from tests.local_http_server import (
+    TEST_SERVER_ADDRESS,
+    allow_test_server_or_public,
+    resolver,
+    send_body,
+    serve_recorded,
 )
 
 # The annotation form is image-output: its pop mints an R2 upload URL, so the object store must be
@@ -582,3 +590,56 @@ def test_alchemist_palette_and_describe(client, request_headers: dict[str, str])
         assert form_name in form["result"]
         assert form["result"][form_name] == expected_result
         assert form["state"] == "done"
+
+
+def test_a_url_source_reaches_workers_as_the_stored_copy(client, request_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
+    """A URL source is fetched once through the address guard and stored, and workers receive the stored copy."""
+    from horde import image as horde_image
+
+    source_png = BytesIO()
+    Image.new("RGB", (24, 16), (40, 80, 120)).save(source_png, format="PNG")
+    with serve_recorded() as source_server:
+        source_server.respond = send_body(source_png.getvalue())
+        monkeypatch.setattr(
+            horde_image,
+            "fetch_public_image",
+            functools.partial(
+                horde_image.fetch_public_image,
+                resolve=resolver({"images.example": [TEST_SERVER_ADDRESS]}),
+                address_allowed=allow_test_server_or_public,
+            ),
+        )
+        source_url = f"http://images.example:{source_server.port}/source.png"
+        async_req = client.post(
+            "/api/v2/interrogate/async",
+            json={"forms": [{"name": "caption"}], "source_image": source_url},
+            headers=request_headers,
+        )
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    req_id = async_req.get_json()["id"]
+
+    try:
+        pop_req = client.post(
+            "/api/v2/interrogate/pop",
+            json={
+                "name": "CICD Fake Alchemist",
+                "forms": ["caption"],
+                "bridge_agent": request_headers["Client-Agent"],
+                "max_tiles": 96,
+                "amount": 20,
+            },
+            headers=request_headers,
+        )
+        assert pop_req.status_code < 400, pop_req.get_data(as_text=True)
+        popped_sources = [form["source_image"] for form in pop_req.get_json()["forms"]]
+        stored_sources = [popped_source for popped_source in popped_sources if f"/{req_id}.webp" in popped_source]
+        assert len(stored_sources) == 1, popped_sources
+        assert source_url not in popped_sources
+        stored_response = requests.get(stored_sources[0], timeout=10)
+        assert stored_response.status_code == 200, stored_response.text
+        with Image.open(BytesIO(stored_response.content)) as stored_image:
+            assert stored_image.format == "WEBP"
+            assert stored_image.size == (24, 16)
+        assert len(source_server.requests) == 1
+    finally:
+        client.delete(f"/api/v2/interrogate/status/{req_id}", headers=request_headers)

@@ -9,6 +9,7 @@ flask_limiter~=3.0
 Flask-Caching
 waitress~=2.1.2
 requests >= 2.27
+pycurl>=7.45.7,<8
 Markdown~=3.4.1
 flask-dance[sqla]
 blinker

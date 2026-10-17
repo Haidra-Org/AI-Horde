@@ -1158,9 +1158,12 @@ class Interrogate(Resource):
         # keyed by the same id the upload used.
         db.session.commit()
         interrogation_id = get_db_uuid()
+        # A URL source is stored in R2 like a base64 one, so workers fetch the copy that was checked here rather than
+        # the client's URL, and the interrogation's R2 cleanup removes it.
         self.source_image, img, self.r2stored = ensure_source_image_uploaded(
             self.args.source_image,
             str(interrogation_id),
+            force_r2=True,
         )
         self.image_tiles = calculate_image_tiles(img)
         if self.image_tiles > 255:

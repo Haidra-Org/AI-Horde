@@ -116,3 +116,35 @@ def test_simple_image_gen(client, request_headers: dict[str, str]) -> None:
     assert gen["state"] == "ok"
     assert retrieve_results["kudos"] > 1
     assert retrieve_results["done"] is True
+
+
+@pytest.mark.parametrize(
+    "source_image",
+    [
+        "http://10.0.0.5/a.png",
+        "http://127.0.0.1:9/a.png",
+        "http://169.254.169.254/latest/meta-data",
+    ],
+)
+def test_a_source_image_url_at_a_private_address_is_refused(client, request_headers: dict[str, str], source_image: str) -> None:
+    async_dict = {
+        "prompt": "A remix",
+        "nsfw": True,
+        "censor_nsfw": False,
+        "r2": True,
+        "params": {
+            "width": 1024,
+            "height": 1024,
+            "steps": 20,
+            "cfg_scale": 4,
+            "sampler_name": "k_euler_a",
+        },
+        "models": TEST_MODELS,
+        "source_image": source_image,
+        "source_processing": "img2img",
+    }
+
+    response = client.post("/api/v2/generate/async", json=async_dict, headers=request_headers)
+
+    assert response.status_code == 400, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "SourceImageUrlRefused"
