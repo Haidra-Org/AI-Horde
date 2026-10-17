@@ -28,6 +28,12 @@ The front is a separate ASGI process. It does not hold a database connection or 
 application: it submits each chat request to the horde's native `/v2/generate/chat/async`, waits for the horde's
 Redis signal on `horde:chat:<request id>` (polling the status route as a fallback), and answers in the OpenAI shape.
 A client's `Authorization: Bearer <key>` becomes the horde `apikey`; a request without one uses the anonymous key.
+The `Client-Agent` the front sends is `<application>:<version>:<user agent> via horde-oai-front`, so horde statistics
+attribute traffic to the client application and still tell it from that application's direct native calls: the
+application is the client's `X-Title`, else `X-OpenRouter-Title`, else the host of `HTTP-Referer`, else the host of
+`Referer`, with version `0`; without any of them it is `horde-oai-front` with the horde version. The user agent is the
+client's `User-Agent`, or `unknown`. Control characters and colons are removed from each part and the whole value is at
+most 256 characters; the user agent is truncated first.
 
 ## 1. Configure the front
 
@@ -58,6 +64,7 @@ directory is read too. A variable that is set but invalid stops the start with a
 | `HORDE_OAI_FALLBACK_POLL_SECONDS` | `15` | Base status poll interval when no signal arrives; it stretches to half the horde's `wait_time`, at most 60 seconds, and is shortened at random by up to a fifth. |
 | `HORDE_OAI_SIGNAL_RECHECK_SECONDS` | `0.5` | Delay of the one extra status read after a terminal signal whose outcome the first read did not show. |
 | `HORDE_OAI_FAIL_FAST_GRACE_SECONDS` | `20` | How long the horde may report no eligible worker, with nothing processing, before the request is cancelled and answered 503. |
+| `HORDE_OAI_SUBMIT_RECOVERY_ATTEMPTS` | `2` | How many times a submit whose answer was lost is sent again with the same operation key, within the request's budget. `0` answers a lost submit with 502 at once. See [Lost submits](#lost-submits). |
 | `HORDE_OAI_NATIVE_MAX_CONNECTIONS` | `200` | Simultaneous submits, status reads and model lists to the horde, and the size of their pool. Cancels use a separate pool of 16. |
 | `HORDE_OAI_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Addresses uvicorn trusts for `X-Forwarded-For`. Set it to the listener's addresses: the resulting client address is the per-source admission key and the `Proxied-For` value. |
 
@@ -97,8 +104,10 @@ requests still complete, but only at the fallback poll interval.
 
 Reversal: stop the process, or `docker compose stop aihorde_oai`. On a clean stop the front waits up to
 `HORDE_OAI_SHUTDOWN_DRAIN_SECONDS` for open requests, then cancels every request still open on the horde within
-`HORDE_OAI_SHUTDOWN_CANCEL_SECONDS` before closing its Redis subscription. After a crash, open requests are dropped;
-their horde jobs run to completion, are charged and are never collected.
+`HORDE_OAI_SHUTDOWN_CANCEL_SECONDS` before closing its Redis subscription. A request whose earlier cancel failed or
+timed out, even one already answered, gets its cancel sent once more; a cancel still in progress is not sent twice.
+At most 10,000 answered requests are held for this; past that the oldest is dropped with a warning.
+After a crash, open requests are dropped; their horde jobs run to completion, are charged and are never collected.
 
 ## 3. Check the model list
 
@@ -106,9 +115,24 @@ their horde jobs run to completion, are charged and are never collected.
 curl -s http://127.0.0.1:7002/v1/models | jq '.data[].id'
 ```
 
-Verification: the names match the horde's `GET /v2/status/models?type=text`. An empty list means no text worker is
-online. `GET /v1/models/<model name>` returns one entry; the name may contain slashes. The list is cached for five
-seconds per process.
+Verification: the names match the horde's `GET /v2/status/models?type=text&chat=true`, which lists only models that
+an online chat worker serves. An empty list means no chat worker is online. `GET /v1/models/<model name>` returns one
+entry; the name may contain slashes. The list is cached for five seconds per process.
+
+Each entry is built from the model's `chat` object in that list:
+
+| Field | Value |
+| --- | --- |
+| `id`, `object`, `owned_by` | The model name, `model`, `aihorde`. |
+| `created` | The horde's `chat.created`, or `0` when it records none. |
+| `context_length`, `top_provider.context_length` | `chat.max_context_length`, the largest an online chat worker declares. |
+| `top_provider.max_completion_tokens` | `chat.max_length`, the largest an online chat worker declares. |
+| `architecture` | Text in and out; `input_modalities` adds `image`, and `modality` becomes `text+image->text`, when a worker declares the `vision` feature. |
+| `supported_parameters` | `max_tokens`, `temperature`, `top_p` and `stop`, then `seed`, `frequency_penalty` and `presence_penalty` for each a worker declares as a feature. |
+| `x_horde.workers` | `chat.workers`, the online chat workers serving the model. |
+| `x_horde.queued` | The model's queue, which chat requests share with text requests; absent when the horde reports none. |
+
+The limits and parameters are availability hints: a request can still lack an eligible worker a moment later.
 
 ## 4. Send a chat request
 
@@ -145,6 +169,30 @@ API key as the SDK's API key.
 
 Reversal: none needed; a request the client abandons is cancelled on the horde.
 
+## 5. Check the front against the OpenAI SDK
+
+The conformance module drives the pinned official `openai` Python SDK against the real front and the real native app,
+each served on a loopback port, with a fake chat worker answering every job; no inference backend is needed. It runs
+under the integration test stack, which provides Postgres and the Redis the front subscribes to:
+
+```bash
+AI_HORDE_REQUIRE_TEST_DEPS=1 bash tests/run_with_test_stack.sh --   .venv/Scripts/python.exe -m pytest tests/integration/test_chat_front_sdk.py -p no:cacheprovider
+```
+
+On Linux or macOS the interpreter is `.venv/bin/python`.
+
+The runner works from Git Bash as from Linux or macOS. When the Garage bootstrap fails it exits with an error and
+does not run the command, so a test run does not silently provision separate databases in place of the stack.
+
+Verification: every test passes: the model list includes the worker's chat model and leaves out a model no online
+worker serves; a completion and a streamed completion
+return the worker's reply, `finish_reason` `stop` and the worker's token counts; `logit_bias` is a `BadRequestError`
+whose `param` is `logit_bias`; and a model without an online worker is a 503 `no_eligible_worker` the SDK does not
+retry.
+
+Reversal: the run creates and drops its database schema; the test stack stays up for later runs unless
+`run_with_test_stack.sh` is given `--down`.
+
 ## Request keys the front accepts
 
 The core OpenAI keys are forwarded: `model`, `messages`, `stream`, `stream_options`, `max_tokens`,
@@ -168,9 +216,12 @@ The `horde` object takes `only` or `ignore` (worker ids, not both), `trusted_wor
 
 Every error is an OpenAI envelope, `{"error": {"message", "type", "param", "code", "metadata"}}`, with `param` and
 `code` written as null when they do not apply. `metadata` holds what is known: `request_id`, the horde's `rc`,
-`retry_after`, and `submit_outcome: "unknown"` when a submit was lost. A horde error keeps the horde's status, and its
+`retry_after`, and `submit_outcome: "unknown"` with the request's `operation_key` when a submit was lost and recovery
+did not settle it. A horde error keeps the horde's status, and its
 `rc` becomes `code`; a horde 429 keeps `Retry-After` and the `X-RateLimit-*` headers, and a horde 503 without
-`Retry-After` (such as `ChatAdmissionDisabled`) gets `Retry-After: 30`.
+`Retry-After` (such as `ChatAdmissionDisabled`) gets `Retry-After: 30`. A status read that ends the wait with a
+horde error other than 404, 429 or a 5xx, such as 401 or 403, cancels the request before the error is returned; a 404
+means the horde no longer holds it.
 
 Once the horde holds a request, or may hold one, every error carries `x-should-retry: false`, so OpenAI SDKs do not
 retry into a second charged job. Errors before the submit do not carry the header and are safe to retry.
@@ -187,7 +238,8 @@ retry into a second charged job. Errors before the submit do not carry the heade
 | 413 | `RequestTooLarge` | | The body exceeds `HORDE_OAI_MAX_BODY_BYTES`. |
 | 502 | `ChatRequestFaulted` | `false` | The horde reports the request as faulted, or it expired on the horde. |
 | 502 | `HordeUnavailable` | | No horde root in `HORDE_OAI_HORDE_URLS` accepted the connection. |
-| 502 | `HordeUnavailable` | `false` | The submit was sent and no answer came; the request may exist. `metadata.submit_outcome` is `unknown`. |
+| 502 | `HordeUnavailable` | `false` | The submit was sent, no answer came, and no recovery attempt was answered; the request may exist. `metadata` holds `submit_outcome: "unknown"` and `operation_key`. |
+| 502 | `OperationKeyConflict` | `false` | A recovery attempt was refused because the operation key holds a different request. The front re-sends the identical body, so this is a front defect; `metadata` holds the `rc` and `operation_key`. |
 | 503 | `FrontAtCapacity` | | The process or the client's address holds its maximum of open requests. `Retry-After: 5`. |
 | 503 | `no_eligible_worker` | `false` | No online worker could serve the request for `HORDE_OAI_FAIL_FAST_GRACE_SECONDS`; it is cancelled. `Retry-After: 30`. |
 
@@ -196,3 +248,59 @@ In a stream, an error after the headers arrives as one `data:` event with the sa
 
 A client retry after a lost response is a new request and can create a second charged job; the front does not
 deduplicate requests.
+
+## Lost submits
+
+The front sends each client request with a fresh UUID as `horde.operation_key`. The horde claims the key for the
+submitting user when it activates the request, and answers a repeated key with the same body by returning the first
+request's `{id, kudos}` with status 200, without queuing or charging anything.
+
+When a submit was sent and no answer came (a read timeout, a reset or a dropped connection), the front sends the
+identical body with the same key again to the next root, up to `HORDE_OAI_SUBMIT_RECOVERY_ATTEMPTS` times and only
+while the request's budget lasts. When every root is out of the rotation after the failure, the attempt goes to them
+anyway. Then:
+
+- An answer with an id, 200 for an existing claim or 202 when the lost submit never reached the horde, continues the
+  request as any submit does. The log shows `Recovered the lost submit of operation <key> on attempt <n>`.
+- A connection failure, a 429 or a 5xx moves on to the next attempt.
+- `OperationKeyConflict` is answered 502, as in the table above.
+- Any other horde refusal is passed through with `x-should-retry: false`, `submit_outcome: "unknown"` and the key,
+  since the lost submit may still have queued the request.
+- With the attempts or the budget spent, the answer is 502 `HordeUnavailable` with `submit_outcome: "unknown"` and the
+  key. The key finds the request, if one exists, in `waiting_prompts.operation_key`.
+
+A refused connection on the first submit is not a lost submit: the request did not reach a horde, and the 502 does
+not carry an `x-should-retry` header.
+
+Two metrics count these cases (see [Chat front reference](../reference/chat_front.md#metrics)):
+
+| Metric | Counts |
+| --- | --- |
+| `horde.oai.submit.recoveries` | Recovered submits; `horde.existing_claim` is true when the horde answered with an existing claim (200) and false when it answered 202. First-try submits are not counted. |
+| `horde.oai.client_retry_hints` | Chat requests arriving with `x-stainless-retry-count` above zero, the header OpenAI SDKs send on their own retries. |
+
+Neither measures duplicate client work prevented. A claim match shows a lost answer whose request the horde had
+queued; a retry hint shows that a client SDK retried, for whatever cause.
+
+## Export telemetry
+
+The front exports OpenTelemetry metrics, and its Loguru log records as OpenTelemetry logs, through the same
+environment variables as the horde's Flask application. With none of them set it exports nothing.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP endpoint for every signal; setting it, or one of the per-signal endpoints below, turns export on. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | unset | Per-signal OTLP endpoints. |
+| `AI_HORDE_TELEMETRY_ENABLED` | unset | `true`, `1` or `yes` turns export on without an endpoint variable. |
+| `OTEL_SDK_DISABLED` | unset | `true` keeps export off whatever else is set. |
+| `OTEL_SERVICE_NAME` | `horde-oai` | Service name of the front's telemetry. Leave it unset where the horde's environment sets it, so the front is not reported as `ai-horde`. |
+| `DEPLOYMENT_ENVIRONMENT` | `development` | The `deployment.environment` resource attribute. |
+| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Head sampling ratio, as for the horde. |
+
+The front does not start Pyroscope, and `PYROSCOPE_ENABLED` alone does not turn its export on.
+
+Verification: with an endpoint set, a collector receives `horde.oai.*` metrics within the SDK's export interval
+after the first request, and one `Chat request <id> finished: ...` log record per finished request. The metric and
+log field lists are in the [Chat front reference](../reference/chat_front.md).
+
+Reversal: unset the variables and restart the front.

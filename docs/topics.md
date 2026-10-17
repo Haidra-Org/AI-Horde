@@ -63,6 +63,7 @@ procedure for one subject sit together.
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
 - How-to: [Run the OpenAI-compatible chat front](how-to/run_openai_chat_front.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
+- Reference: [Chat front reference](reference/chat_front.md)
 - Reference: [Outbound requests reference](reference/outbound_requests.md)
 
 ### requests
@@ -76,6 +77,7 @@ procedure for one subject sit together.
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 - Reference: [Style contract reference](reference/style_contract.md)
 - Reference: [Chat requests reference](reference/chat_requests.md)
+- Reference: [Chat front reference](reference/chat_front.md)
 - Reference: [Outbound requests reference](reference/outbound_requests.md)
 
 ### workers

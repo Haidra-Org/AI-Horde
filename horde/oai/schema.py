@@ -72,6 +72,7 @@ __all__ = [
     "ModelArchitecture",
     "ModelCard",
     "ModelList",
+    "ModelTopProvider",
     "OpenAIError",
     "OpenAIErrorEnvelope",
     "OpenAIErrorType",
@@ -663,6 +664,10 @@ class ErrorMetadata(BaseModel):
     submit_outcome: SubmitOutcome | None = None
     """Set when the front cannot tell whether the submit created a request."""
 
+    operation_key: str | None = None
+    """The operation key the submit carried, when its outcome is unknown or the Horde refused the key; an operator
+    finds the request it claimed by it."""
+
     @model_serializer(mode="wrap")
     def serialize_without_absent_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
         """Convert the metadata to a dict without the details that are not known."""
@@ -708,10 +713,22 @@ class ModelArchitecture(BaseModel):
     """The input and output modalities in OpenRouter's notation."""
 
     input_modalities: list[str] = Field(default_factory=lambda: ["text"])
-    """The content the model accepts."""
+    """The content the model accepts; ``image`` is added when an online chat worker declares ``vision``."""
 
     output_modalities: list[str] = Field(default_factory=lambda: ["text"])
     """The content the model produces."""
+
+
+class ModelTopProvider(BaseModel):
+    """Represents the ``top_provider`` limits of a model list entry: the largest an online chat worker declares."""
+
+    model_config = ConfigDict(frozen=True)
+
+    context_length: int | None
+    """The largest context, in tokens."""
+
+    max_completion_tokens: int | None
+    """The largest output, in tokens."""
 
 
 class HordeModelDetails(BaseModel):
@@ -720,7 +737,7 @@ class HordeModelDetails(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     workers: int
-    """How many worker threads serve the model, as the Horde's model list counts them."""
+    """How many online workers serve chat jobs with the model."""
 
     queued: float | None = None
     """The queued work for the model, as the Horde's model list reports it."""
@@ -732,7 +749,11 @@ class HordeModelDetails(BaseModel):
 
 
 class ModelCard(BaseModel):
-    """Represents one entry of the OpenAI model list."""
+    """Represents one entry of the OpenAI model list, with OpenRouter's limit and parameter fields.
+
+    The limits and parameters are availability hints over the online chat workers; a request can still find no
+    eligible worker a moment later.
+    """
 
     model_config = ConfigDict(frozen=True, serialize_by_alias=True)
 
@@ -743,13 +764,22 @@ class ModelCard(BaseModel):
     """Always ``model``."""
 
     created: int = 0
-    """Always 0 until the Horde supplies a stable creation time for a model."""
+    """Unix seconds the Horde supplies for the model; 0 when it records none."""
 
     owned_by: str = "aihorde"
     """Always ``aihorde``."""
 
+    context_length: int | None
+    """The largest context an online chat worker declares, in tokens."""
+
     architecture: ModelArchitecture = Field(default_factory=ModelArchitecture)
-    """The modalities served; text only."""
+    """The modalities served."""
+
+    top_provider: ModelTopProvider
+    """The largest context and output an online chat worker declares."""
+
+    supported_parameters: list[str]
+    """The OpenAI request fields some online chat worker honours."""
 
     x_horde: HordeModelDetails
     """The Horde-specific details."""
@@ -764,7 +794,7 @@ class ModelList(BaseModel):
     """Always ``list``."""
 
     data: list[ModelCard]
-    """The text models with at least one worker serving them."""
+    """The text models with at least one online chat worker serving them."""
 
 
 class ChatCompletionChunkDelta(BaseModel):

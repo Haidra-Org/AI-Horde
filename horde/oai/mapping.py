@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Map a chat request to the native body, a finished Horde chat status to the OpenAI completion, and an error to the
-OpenAI error envelope.
+"""Map a chat request to the native body, a finished Horde chat status to the OpenAI completion, a chat model list
+entry to the OpenAI model entry, and an error to the OpenAI error envelope.
 
 Usage counts come from the worker's report when there is one. A worker that does not report counts gets an estimate
 of one token per [`CHARACTERS_PER_ESTIMATED_TOKEN`][horde.oai.mapping.CHARACTERS_PER_ESTIMATED_TOKEN] characters, and
@@ -14,10 +14,11 @@ of one token per [`CHARACTERS_PER_ESTIMATED_TOKEN`][horde.oai.mapping.CHARACTERS
 from __future__ import annotations
 
 import math
+import uuid
 from collections.abc import Sequence
 from http import HTTPStatus
 
-from horde.oai.horde_client import HordeChatGeneration, HordeChatStatus
+from horde.oai.horde_client import HordeActiveModel, HordeChatGeneration, HordeChatStatus
 from horde.oai.schema import (
     ChatCompletionChoice,
     ChatCompletionRequest,
@@ -27,7 +28,11 @@ from horde.oai.schema import (
     ChatMessage,
     ErrorMetadata,
     FinishReason,
+    HordeModelDetails,
     HordeResponseDetails,
+    ModelArchitecture,
+    ModelCard,
+    ModelTopProvider,
     OpenAIError,
     OpenAIErrorEnvelope,
     OpenAIErrorType,
@@ -41,6 +46,7 @@ __all__ = [
     "build_completion_id",
     "build_error",
     "build_error_envelope",
+    "build_model_card",
     "build_native_chat_body",
     "estimate_tokens",
     "flatten_messages",
@@ -80,6 +86,36 @@ NATIVE_BODY_EXCLUDED_KEYS: frozenset[str] = frozenset(
 )
 """Request keys the front applies or drops itself and never forwards: streaming is the front's, annotations are unused."""
 
+HORDE_OPTIONS_KEY: str = "horde"
+"""The native body key of the Horde extension object."""
+
+OPERATION_KEY_OPTION: str = "operation_key"
+"""The Horde option carrying the front's operation key."""
+
+BASE_SUPPORTED_PARAMETERS: tuple[str, ...] = (
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "stop",
+)
+"""The OpenAI request fields every chat worker honours, listed for every model."""
+
+FEATURE_SUPPORTED_PARAMETERS: tuple[str, ...] = (
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
+)
+"""The OpenAI request fields a model lists only when an online chat worker declares the chat feature of that name."""
+
+VISION_FEATURE: str = "vision"
+"""The chat feature that adds the image input modality to a model list entry."""
+
+TEXT_MODALITY: str = "text"
+"""The input modality every model accepts."""
+
+IMAGE_MODALITY: str = "image"
+"""The input modality of a model an online worker declares ``vision`` for."""
+
 ERROR_TYPE_BY_STATUS: dict[int, OpenAIErrorType] = {
     HTTPStatus.BAD_REQUEST: OpenAIErrorType.INVALID_REQUEST_ERROR,
     HTTPStatus.UNAUTHORIZED: OpenAIErrorType.AUTHENTICATION_ERROR,
@@ -96,16 +132,62 @@ def build_completion_id(request_id: str) -> str:
     return f"{COMPLETION_ID_PREFIX}{request_id}"
 
 
-def build_native_chat_body(chat_request: ChatCompletionRequest) -> dict[str, object]:
+def build_native_chat_body(chat_request: ChatCompletionRequest, *, operation_key: uuid.UUID) -> dict[str, object]:
     """Create the native ``POST /v2/generate/chat/async`` body for a validated request.
 
     Omitted and null keys stay omitted, so the native route fills its defaults; ``developer`` messages and message
-    names are forwarded unchanged.
+    names are forwarded unchanged. The public request model refuses ``horde.operation_key``, so the key set here is
+    always the front's.
 
     Args:
         chat_request: The validated request, after the default no-op keys were dropped.
+        operation_key: The key claiming this submission for its user, sent as ``horde.operation_key``; a re-sent
+            submit carries the same key and body so the native route returns the request it already created.
     """
-    return chat_request.model_dump(mode="json", exclude_unset=True, exclude_none=True, exclude=set(NATIVE_BODY_EXCLUDED_KEYS))
+    native_body = chat_request.model_dump(mode="json", exclude_unset=True, exclude_none=True, exclude=set(NATIVE_BODY_EXCLUDED_KEYS))
+    horde_options = native_body.get(HORDE_OPTIONS_KEY)
+    native_body[HORDE_OPTIONS_KEY] = {
+        **(horde_options if isinstance(horde_options, dict) else {}),
+        OPERATION_KEY_OPTION: str(operation_key),
+    }
+    return native_body
+
+
+def build_model_card(active_model: HordeActiveModel) -> ModelCard | None:
+    """Create the OpenAI model list entry for a model from the Horde's chat model list.
+
+    Args:
+        active_model: One entry of ``GET /v2/status/models?type=text&chat=true``.
+
+    Returns:
+        The entry, or None when no online chat worker serves the model.
+    """
+    chat_offer = active_model.chat
+    if chat_offer is None or chat_offer.workers <= 0:
+        return None
+    declared_features = set(chat_offer.features)
+    input_modalities = [TEXT_MODALITY]
+    if VISION_FEATURE in declared_features:
+        input_modalities.append(IMAGE_MODALITY)
+    supported_parameters = [
+        *BASE_SUPPORTED_PARAMETERS,
+        *(parameter for parameter in FEATURE_SUPPORTED_PARAMETERS if parameter in declared_features),
+    ]
+    return ModelCard(
+        model_id=active_model.name,
+        created=chat_offer.created or 0,
+        context_length=chat_offer.max_context_length,
+        architecture=ModelArchitecture(
+            modality=f"{'+'.join(input_modalities)}->{TEXT_MODALITY}",
+            input_modalities=input_modalities,
+        ),
+        top_provider=ModelTopProvider(
+            context_length=chat_offer.max_context_length,
+            max_completion_tokens=chat_offer.max_length,
+        ),
+        supported_parameters=supported_parameters,
+        x_horde=HordeModelDetails(workers=chat_offer.workers, queued=active_model.queued),
+    )
 
 
 def flatten_messages(messages: Sequence[ChatMessage]) -> str:

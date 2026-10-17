@@ -281,7 +281,7 @@ def telemetry_enabled() -> bool:
     """
     if os.environ.get("PYROSCOPE_ENABLED", "").lower() == "true":
         return True
-    if not _otel_sdk_enabled():
+    if not otel_sdk_enabled():
         return False
     if os.environ.get("AI_HORDE_TELEMETRY_ENABLED", "").lower() in ("1", "true", "yes"):
         return True
@@ -295,7 +295,7 @@ def telemetry_enabled() -> bool:
     )
 
 
-def _otel_sdk_enabled() -> bool:
+def otel_sdk_enabled() -> bool:
     """Return whether the OpenTelemetry SDK is allowed to initialize."""
     return os.environ.get("OTEL_SDK_DISABLED", "").lower() != "true"
 
@@ -313,14 +313,14 @@ def init_telemetry_early(app: Flask) -> None:
         return
     _initialized_early = True
 
-    otel_sdk_enabled = _otel_sdk_enabled()
-    span_processors = _init_pyroscope(span_profiles_enabled=otel_sdk_enabled)
+    sdk_enabled = otel_sdk_enabled()
+    span_processors = _init_pyroscope(span_profiles_enabled=sdk_enabled)
 
-    if not otel_sdk_enabled:
+    if not sdk_enabled:
         logger.init_warn("Telemetry", status="OpenTelemetry disabled")
         return
 
-    sampling = _build_sampling_options()
+    sampling = build_sampling_options()
 
     from horde.metrics import histogram_views
 
@@ -376,7 +376,7 @@ def init_telemetry_late(app: Flask) -> None:
         return
     _initialized_late = True
 
-    if not _otel_sdk_enabled():
+    if not otel_sdk_enabled():
         return
 
     from horde.flask import db
@@ -402,7 +402,7 @@ def init_telemetry(app: Flask) -> None:
     init_telemetry_late(app)
 
 
-def _build_sampling_options() -> logfire.SamplingOptions:
+def build_sampling_options() -> logfire.SamplingOptions:
     """Return ``logfire.SamplingOptions`` honouring ``OTEL_TRACES_SAMPLER_ARG``.
 
     Defaults to ``1.0`` (record everything) so local-deploy / dev get full

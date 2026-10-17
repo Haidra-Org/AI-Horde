@@ -14,8 +14,10 @@ Modules:
     ``schema``: The OpenAI request, response and error models, the default no-op table and the refusal screen.
     ``mapping``: The native request body, the completion built from a Horde status, and the error envelope.
     ``sse``: The streamed chunks, keepalive comments and the error event.
+    ``attribution``: The ``Client-Agent`` built from the client's ``User-Agent`` and attribution headers.
     ``horde_client``: The asynchronous HTTP client for the Horde API, with a separate cancel pool.
     ``waiter``: The Redis completion signal listener, the per-request wait loop and the deadline rule.
+    ``metrics``: The OpenTelemetry instruments, [`FrontMetrics`][horde.oai.metrics.FrontMetrics].
 
 The ``horde`` extension object is validated against ``horde.chat_contract``, the model the native chat route shares.
     ``app``: The FastAPI application factory, [`create_app`][horde.oai.app.create_app].

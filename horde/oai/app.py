@@ -10,15 +10,18 @@
   takes an inflight slot (per-source cap first, then the global cap), submits to the Horde's
   ``/v2/generate/chat/async``, waits through [`ChatRequestWatcher`][horde.oai.waiter.ChatRequestWatcher] and answers
   with a ``chat.completion`` body, or with server-sent events when ``stream`` is true.
-- ``GET /v1/models`` and ``GET /v1/models/{id}``: the Horde's active text models in the OpenAI list shape; an id may
-  contain slashes.
+- ``GET /v1/models`` and ``GET /v1/models/{id}``: the text models an online chat worker serves, in the OpenAI list
+  shape with OpenRouter's limit and parameter fields; an id may contain slashes.
 - ``GET /healthz``: liveness, admission readiness and whether the completion signal subscription is up.
 
 Every error before headers is an OpenAI error envelope with a ``metadata`` object; after stream headers it is one SSE
-error event. Once the Horde holds a request, or may hold one after a submit whose answer was lost, every error carries
-``x-should-retry: false`` so a client SDK does not create a second charged job; a successful stream carries it too.
-Cancels on disconnect, deadline, fail-fast and shutdown are bounded, shielded from the client's disconnect, sent at
-most once per request and use the client's separate cancel pool.
+error event. Each client request gets a fresh operation key, sent as ``horde.operation_key``; a submit whose answer was
+lost is sent again with the same key and body, which the Horde answers with the request the key already claimed. Once
+the Horde holds a request, or may hold one, every error carries ``x-should-retry: false`` so a client SDK does not
+create a second charged job; a successful stream carries it too.
+Cancels on disconnect, deadline, fail-fast, a status read the wait cannot fix and shutdown are bounded, shielded from
+the client's disconnect and use the client's separate cancel pool. A request's handling sends at most one cancel; the
+shutdown drain sends a failed one once more, never alongside one in progress.
 """
 
 from __future__ import annotations
@@ -28,7 +31,9 @@ import contextlib
 import json
 import math
 import time
+import uuid
 from collections.abc import AsyncIterator, Mapping
+from enum import StrEnum
 from http import HTTPStatus
 
 import anyio
@@ -37,12 +42,14 @@ import redis.asyncio
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from loguru import logger
+from opentelemetry.metrics import Meter
 from pydantic import ValidationError
 from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.background import BackgroundTask
 
 from horde.chat_contract import CHAT_REQUEST_CONFLICT_ERROR_TYPE
 from horde.consts import ANONYMOUS_API_KEY, HORDE_VERSION
+from horde.oai.attribution import build_client_agent
 from horde.oai.horde_client import (
     HordeActiveModel,
     HordeAPIError,
@@ -53,15 +60,16 @@ from horde.oai.horde_client import (
     HordeUnavailableError,
     create_http_client,
 )
-from horde.oai.mapping import build_completion, build_error_envelope, build_native_chat_body
+from horde.oai.mapping import build_completion, build_error_envelope, build_model_card, build_native_chat_body
+from horde.oai.metrics import CancelOutcome, FrontMetrics, get_front_meter
 from horde.oai.schema import (
     BAD_REQUEST_CODE,
     CHAT_REQUEST_CONFLICT_CODE,
     UNSUPPORTED_PARAMETER_CODE,
     UNSUPPORTED_PARAMETER_ERROR_TYPE,
     ChatCompletionRequest,
+    ChatCompletionResponse,
     ErrorMetadata,
-    HordeModelDetails,
     ModelCard,
     ModelList,
     OpenAIErrorEnvelope,
@@ -72,28 +80,26 @@ from horde.oai.schema import (
 from horde.oai.settings import FrontSettings
 from horde.oai.sse import build_completion_events, build_error_events, build_keepalive_event
 from horde.oai.waiter import (
+    TRANSIENT_STATUS_CODES,
     ChatRequestWatcher,
     ChatWaitTimeoutError,
     CompletionSignalListener,
     CompletionSubscription,
     NoEligibleWorkerError,
     WaitBudget,
+    WakeSource,
 )
 
 __all__ = [
+    "CancelState",
     "ChatFrontError",
     "FrontState",
     "InflightLimiter",
     "InflightSlot",
     "OpenRequest",
+    "RequestTrace",
     "create_app",
 ]
-
-CLIENT_AGENT_NAME: str = "horde-oai-front"
-"""The name the front gives itself in the ``Client-Agent`` it sends the Horde."""
-
-MAX_FORWARDED_USER_AGENT_CHARACTERS: int = 200
-"""The most characters of the client's ``User-Agent`` appended to the ``Client-Agent``; it is stored per request."""
 
 BEARER_SCHEME: str = "bearer"
 """The lower-cased ``Authorization`` scheme carrying an API key."""
@@ -135,6 +141,12 @@ MODEL_LIST_CACHE_SECONDS: float = 5.0
 CLIENT_CLOSED_REQUEST_STATUS: int = 499
 """The status recorded for a non-streamed request whose client disconnected; no client receives it."""
 
+CLIENT_CLOSED_CODE: str = "client_closed"
+"""The code recorded for a request whose client disconnected before delivery; no client receives it."""
+
+COMPLETED_CODE: str = "ok"
+"""The code recorded for a request whose completion was delivered."""
+
 TIMEOUT_CODE: str = "ChatRequestTimeout"
 """The error code of a request still waiting after its deadline and the final status read."""
 
@@ -161,6 +173,19 @@ MODEL_NOT_FOUND_CODE: str = "model_not_found"
 
 NO_ELIGIBLE_WORKER_CODE: str = "no_eligible_worker"
 """The error code of a request no online worker could serve within the fail-fast grace."""
+
+OPERATION_KEY_CONFLICT_CODE: str = "OperationKeyConflict"
+"""The Horde rc for an operation key already claimed with a different request."""
+
+MAX_FAILED_CANCELS: int = 10_000
+"""The most finished requests with a failed cancel held for the shutdown drain; the oldest is dropped past it.
+
+Cancels fail together during a long Horde outage, and each held record keeps a request id and the client's
+credentials in memory until the process stops.
+"""
+
+CLIENT_RETRY_COUNT_HEADER: str = "x-stainless-retry-count"
+"""The request header OpenAI SDKs send with how many times they retried the call; a hint, never an identity."""
 
 
 class ChatFrontError(Exception):
@@ -264,6 +289,21 @@ class InflightLimiter:
         """Return how many requests are held open for ``source``."""
         return self._inflight_by_source.get(source, 0)
 
+    @property
+    def source_count(self) -> int:
+        """Return how many distinct sources hold at least one request open."""
+        return len(self._inflight_by_source)
+
+    @property
+    def largest_source_inflight(self) -> int:
+        """Return the most requests one source holds open.
+
+        Concurrency:
+            The metric export thread reads it while the event loop updates the counts; ``tuple`` copies the values in
+            one call under the GIL, so the iteration does not see the dictionary change size.
+        """
+        return max(tuple(self._inflight_by_source.values()), default=0)
+
     def try_acquire(self, source: str) -> InflightSlot | None:
         """Return a slot for one more request from ``source``, or None when the source's cap or the global cap is reached.
 
@@ -309,8 +349,24 @@ class InflightSlot:
         self._limiter._release(self._source)
 
 
+class CancelState(StrEnum):
+    """How far the cancel of one submitted Horde request got."""
+
+    NOT_ATTEMPTED = "not_attempted"
+    """No cancel was sent."""
+    IN_PROGRESS = "in_progress"
+    """A cancel is being sent; no second one starts until it ends."""
+    ACKNOWLEDGED = "acknowledged"
+    """The Horde answered the cancel with success."""
+    FAILED = "failed"
+    """The cancel was refused, unreachable or not answered within its budget; the shutdown drain sends it once more."""
+
+
 class OpenRequest:
-    """A submitted Horde request the process may still have to cancel; it is cancelled at most once."""
+    """A submitted Horde request the process may still have to cancel.
+
+    The request's own handling sends at most one cancel; the shutdown drain sends one more only when that one failed.
+    """
 
     def __init__(self, *, request_id: str, credentials: HordeCredentials) -> None:
         """Create the record.
@@ -323,17 +379,18 @@ class OpenRequest:
         """The Horde request id."""
         self.credentials: HordeCredentials = credentials
         """Who the cancel is made for."""
-        self.cancel_started: bool = False
-        """Whether a cancel was sent or is being sent."""
+        self.cancel_state: CancelState = CancelState.NOT_ATTEMPTED
+        """How far the request's cancel got."""
 
 
 class ModelListCache:
-    """Hold the Horde's model list for [`MODEL_LIST_CACHE_SECONDS`][horde.oai.app.MODEL_LIST_CACHE_SECONDS]."""
+    """Hold the Horde's chat model list for [`MODEL_LIST_CACHE_SECONDS`][horde.oai.app.MODEL_LIST_CACHE_SECONDS]."""
 
     def __init__(self) -> None:
         """Create an empty cache."""
         self._models: list[HordeActiveModel] | None = None
         self._fetched_at: float = -math.inf
+        self._refresh_lock = asyncio.Lock()
 
     async def get(self, horde_client: HordeClient, credentials: HordeCredentials) -> list[HordeActiveModel]:
         """Return the cached model list, fetching it when it is older than the cache period.
@@ -342,11 +399,11 @@ class ModelListCache:
             HordeAPIError: The Horde answered with an error.
             HordeUnavailableError: No Horde root accepted the connection.
         """
-        now = time.monotonic()
-        if self._models is None or now - self._fetched_at >= MODEL_LIST_CACHE_SECONDS:
-            self._models = await horde_client.list_text_models(credentials=credentials)
-            self._fetched_at = now
-        return self._models
+        async with self._refresh_lock:
+            if self._models is None or time.monotonic() - self._fetched_at >= MODEL_LIST_CACHE_SECONDS:
+                self._models = await horde_client.list_chat_models(credentials=credentials)
+                self._fetched_at = time.monotonic()
+            return self._models
 
 
 class FrontState:
@@ -358,13 +415,15 @@ class FrontState:
         settings: FrontSettings,
         horde_client: HordeClient,
         listener: CompletionSignalListener,
+        front_metrics: FrontMetrics,
     ) -> None:
-        """Create the state.
+        """Create the state and register the in-flight gauges on ``front_metrics``.
 
         Args:
             settings: The front's settings.
             horde_client: The Horde client.
             listener: The completion signal listener.
+            front_metrics: The front's instruments.
         """
         self.settings: FrontSettings = settings
         """The front's settings."""
@@ -379,8 +438,14 @@ class FrontState:
         """The open request counts."""
         self.open_requests: dict[str, OpenRequest] = {}
         """The submitted requests not yet finished, by Horde request id; a clean stop cancels them."""
+        self.failed_cancels: dict[str, OpenRequest] = {}
+        """The finished requests whose cancel failed, oldest first, by Horde request id; a clean stop sends each cancel
+        once more. At most [`MAX_FAILED_CANCELS`][horde.oai.app.MAX_FAILED_CANCELS] are held."""
         self.model_list_cache: ModelListCache = ModelListCache()
-        """The cached Horde model list."""
+        """The cached Horde chat model list."""
+        self.front_metrics: FrontMetrics = front_metrics
+        """The front's instruments."""
+        front_metrics.observe_inflight(self.inflight_limiter)
         self.accepting: bool = True
         """False once the process is stopping; ``/healthz`` then reports it not ready."""
 
@@ -391,9 +456,23 @@ class FrontState:
         return open_request
 
     def close_request(self, open_request: OpenRequest) -> None:
-        """Mutate the registry by removing a finished request; removing it twice is harmless."""
-        if self.open_requests.get(open_request.request_id) is open_request:
-            del self.open_requests[open_request.request_id]
+        """Mutate the registry by removing a finished request; removing it twice is harmless.
+
+        A request whose cancel failed moves to ``failed_cancels``, so the shutdown drain can send its cancel once more.
+        """
+        if self.open_requests.get(open_request.request_id) is not open_request:
+            return
+        del self.open_requests[open_request.request_id]
+        if open_request.cancel_state != CancelState.FAILED:
+            return
+        while len(self.failed_cancels) >= MAX_FAILED_CANCELS:
+            evicted_request_id = next(iter(self.failed_cancels))
+            del self.failed_cancels[evicted_request_id]
+            logger.warning(
+                f"Dropped the failed cancel of chat request {evicted_request_id}: {MAX_FAILED_CANCELS} failed cancels are "
+                "already held, so the shutdown drain does not retry it",
+            )
+        self.failed_cancels[open_request.request_id] = open_request
 
 
 def create_app(
@@ -402,6 +481,7 @@ def create_app(
     http_client: httpx.AsyncClient | None = None,
     cancel_http_client: httpx.AsyncClient | None = None,
     redis_client: redis.asyncio.Redis | None = None,
+    meter: Meter | None = None,
 ) -> FastAPI:
     """Create the chat front application.
 
@@ -412,6 +492,8 @@ def create_app(
         cancel_http_client: The HTTP client for cancels; None creates a separate small pool the app closes on shutdown.
         redis_client: The client for the Horde's chat signal database; None creates one from ``settings.redis_url``
             when it is set, and otherwise requests wait on the fallback poll alone.
+        meter: The meter the front's instruments are created on; None takes it from the global meter provider, which
+            ``logfire.configure`` installs.
 
     Returns:
         The application; its lifespan starts the signal listener and, on stop, cancels every open request within
@@ -431,6 +513,7 @@ def create_app(
         redis_client = redis.asyncio.Redis.from_url(settings.redis_url, socket_keepalive=True)
     if redis_client is None:
         logger.warning("HORDE_OAI_REDIS_URL is not set; chat requests wait on the fallback poll alone.")
+    front_metrics = FrontMetrics(meter if meter is not None else get_front_meter())
     front_state = FrontState(
         settings=settings,
         horde_client=HordeClient(
@@ -438,9 +521,11 @@ def create_app(
             http_client=http_client,
             cancel_http_client=cancel_http_client,
             proxy_passkey=settings.proxy_passkey,
+            front_metrics=front_metrics,
             max_concurrent_calls=settings.native_max_connections,
         ),
         listener=CompletionSignalListener(redis_client, liveness_seconds=settings.redis_liveness_seconds),
+        front_metrics=front_metrics,
     )
 
     @contextlib.asynccontextmanager
@@ -502,7 +587,8 @@ def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist:
 
 
 def _build_credentials(request: Request) -> HordeCredentials:
-    """Return the Horde identity for ``request``: its bearer API key (or the anonymous key) and its address.
+    """Return the Horde identity for ``request``: its bearer API key (or the anonymous key), its attributed
+    ``Client-Agent`` and its address.
 
     Raises:
         ChatFrontError: 401 when an ``Authorization`` header is present but is not ``Bearer <key>``.
@@ -519,12 +605,23 @@ def _build_credentials(request: Request) -> HordeCredentials:
                 code=INVALID_AUTHORIZATION_CODE,
             )
         apikey = token
-    user_agent = request.headers.get("user-agent", "unknown")[:MAX_FORWARDED_USER_AGENT_CHARACTERS]
     return HordeCredentials(
         apikey=apikey,
-        client_agent=f"{CLIENT_AGENT_NAME}:{HORDE_VERSION}:{user_agent}",
+        client_agent=build_client_agent(
+            user_agent=request.headers.get("user-agent"),
+            referer=request.headers.get("http-referer"),
+            title=request.headers.get("x-title"),
+            openrouter_title=request.headers.get("x-openrouter-title"),
+            standard_referer=request.headers.get("referer"),
+        ),
         client_address=request.client.host if request.client is not None else None,
     )
+
+
+def _carries_client_retry_hint(request: Request) -> bool:
+    """Return whether ``request`` carries ``x-stainless-retry-count`` above zero; a malformed value counts as none."""
+    retry_count = request.headers.get(CLIENT_RETRY_COUNT_HEADER, "").strip()
+    return retry_count.isdigit() and int(retry_count) > 0
 
 
 def _request_too_large(message: str) -> ChatFrontError:
@@ -623,14 +720,16 @@ def _message_text_bytes(chat_request: ChatCompletionRequest) -> int:
     return text_bytes
 
 
-async def _read_chat_request(request: Request, settings: FrontSettings) -> ChatCompletionRequest:
-    """Return the validated chat request of ``request``.
+async def _read_chat_request(request: Request, front_state: FrontState) -> ChatCompletionRequest:
+    """Return the validated chat request of ``request`` and record the size of its body.
 
     Raises:
         ChatFrontError: 413 for an oversized body, 408 for a slow body, 400 for invalid JSON, a refused part, a value outside the
             service contract or a size limit, and 404 for a model id with a variant.
     """
+    settings = front_state.settings
     request_body = await _read_body(request, settings)
+    front_state.front_metrics.record_body_bytes(len(request_body))
     try:
         decoded_body = json.loads(request_body)
     except ValueError as error:
@@ -685,65 +784,208 @@ async def _submit(
     front_state: FrontState,
     *,
     native_body: Mapping[str, object],
+    operation_key: uuid.UUID,
     credentials: HordeCredentials,
     deadline: float,
 ) -> HordeAsyncSubmission:
     """Submit a chat request within the time left in its budget and return the Horde's acknowledgement.
 
+    A refusal of the first submit, or no root accepting its connection, means the request was not queued. A submit
+    that was sent without an answer leaves the outcome unknown and is recovered by ``_recover_submit``.
+
+    Args:
+        front_state: The process state.
+        native_body: The native body, carrying ``operation_key`` as ``horde.operation_key``.
+        operation_key: The key of this client request.
+        credentials: Who the call is made for.
+        deadline: The monotonic time the request's total budget ends.
+
     Raises:
-        ChatFrontError: The Horde refused the request, no root accepted the connection, or the outcome is unknown.
+        ChatFrontError: The Horde refused the request, no root accepted the connection, or the outcome stayed unknown.
     """
     try:
-        async with asyncio.timeout(deadline - time.monotonic()):
-            return await front_state.horde_client.submit_chat(request_body=native_body, credentials=credentials)
+        return await _send_submit(front_state, native_body=native_body, credentials=credentials, deadline=deadline, recovering=False)
     except HordeAPIError as error:
-        front_error = _horde_error(error, request_id=None, job_may_exist=False)
-        if error.status_code == HTTPStatus.SERVICE_UNAVAILABLE and front_error.metadata.retry_after is None:
-            front_error.headers[RETRY_AFTER_HEADER] = str(HORDE_UNAVAILABLE_RETRY_AFTER_SECONDS)
-            front_error.metadata = front_error.metadata.model_copy(update={"retry_after": HORDE_UNAVAILABLE_RETRY_AFTER_SECONDS})
-        raise front_error from error
+        # These native refusals happen before activation. Other server errors, including a gateway's failure
+        # or an unreadable success body, cannot establish whether the operation key was committed.
+        native_refusal = error.status_code == HTTPStatus.SERVICE_UNAVAILABLE and error.return_code in {
+            "ChatAdmissionDisabled",
+        }
+        if error.status_code < HTTPStatus.INTERNAL_SERVER_ERROR or native_refusal:
+            front_error = _horde_error(error, request_id=None, job_may_exist=False)
+            if error.status_code == HTTPStatus.SERVICE_UNAVAILABLE and front_error.metadata.retry_after is None:
+                front_error.headers[RETRY_AFTER_HEADER] = str(HORDE_UNAVAILABLE_RETRY_AFTER_SECONDS)
+                front_error.metadata = front_error.metadata.model_copy(update={"retry_after": HORDE_UNAVAILABLE_RETRY_AFTER_SECONDS})
+            raise front_error from error
+        lost_detail = f"The submit was answered {error.status_code}: {error.message}"
     except HordeUnavailableError as error:
-        if error.request_sent:
-            raise _submit_outcome_unknown(str(error)) from error
-        raise ChatFrontError(status_code=HTTPStatus.BAD_GATEWAY, message=str(error), code=HORDE_UNAVAILABLE_CODE) from error
-    except TimeoutError as error:
-        raise _submit_outcome_unknown("The submit did not finish within the request's budget.") from error
+        if not error.request_sent:
+            raise ChatFrontError(status_code=HTTPStatus.BAD_GATEWAY, message=str(error), code=HORDE_UNAVAILABLE_CODE) from error
+        lost_detail = str(error)
+    except TimeoutError:
+        lost_detail = "The submit did not finish within the request's budget."
+    return await _recover_submit(
+        front_state,
+        native_body=native_body,
+        operation_key=operation_key,
+        credentials=credentials,
+        deadline=deadline,
+        lost_detail=lost_detail,
+    )
 
 
-def _submit_outcome_unknown(detail: str) -> ChatFrontError:
-    """Create the 502 for a submit that was sent and never answered, so a Horde request may exist.
+async def _send_submit(
+    front_state: FrontState,
+    *,
+    native_body: Mapping[str, object],
+    credentials: HordeCredentials,
+    deadline: float,
+    recovering: bool,
+) -> HordeAsyncSubmission:
+    """Send one submit, cut off at the end of the request's budget.
 
-    Recovery by operation key belongs here: re-sending the identical body with the same key returns the existing
-    request id, after which the wait continues as for any submit. Without it, the client is told not to retry.
+    Raises:
+        HordeAPIError: The Horde answered with an error.
+        HordeUnavailableError: No root accepted the connection, or the connection failed after the call was sent.
+        TimeoutError: The budget ended before the Horde answered.
+    """
+    async with asyncio.timeout(deadline - time.monotonic()):
+        return await front_state.horde_client.submit_chat(
+            request_body=native_body,
+            credentials=credentials,
+            fall_back_to_unhealthy_roots=recovering,
+        )
+
+
+async def _recover_submit(
+    front_state: FrontState,
+    *,
+    native_body: Mapping[str, object],
+    operation_key: uuid.UUID,
+    credentials: HordeCredentials,
+    deadline: float,
+    lost_detail: str,
+) -> HordeAsyncSubmission:
+    """Send a submit whose answer was lost again, with the same body and key, and return the Horde's acknowledgement.
+
+    The native route answers a repeated key with the request it already claimed (200), or queues the request when the
+    lost submit never created it (202), so a re-send cannot queue a second job. Re-sends stop at the first answer, at
+    ``submit_recovery_attempts`` or at the end of the budget. A failed connection or a transient Horde error moves on
+    to the next attempt; any other refusal ends recovery, since the lost submit may still have queued the request.
+
+    Args:
+        front_state: The process state.
+        native_body: The body of the lost submit.
+        operation_key: The key that body carries.
+        credentials: Who the call is made for.
+        deadline: The monotonic time the request's total budget ends.
+        lost_detail: Why the lost submit got no answer, reported when recovery fails too.
+
+    Raises:
+        ChatFrontError: 502 when the Horde reports the key claimed with a different request, the Horde's refusal for
+            any other definitive refusal, and 502 with the outcome unknown when no attempt was answered; each with
+            ``x-should-retry: false`` and the operation key in ``metadata``.
+    """
+    for attempt_number in range(1, front_state.settings.submit_recovery_attempts + 1):
+        if time.monotonic() >= deadline:
+            break
+        try:
+            submission = await _send_submit(
+                front_state,
+                native_body=native_body,
+                credentials=credentials,
+                deadline=deadline,
+                recovering=True,
+            )
+        except HordeAPIError as error:
+            if error.return_code == OPERATION_KEY_CONFLICT_CODE:
+                raise _operation_key_conflict(error, operation_key=operation_key) from error
+            if error.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR or error.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+                lost_detail = f"Recovery attempt {attempt_number} was answered {error.status_code}: {error.message}"
+                continue
+            front_error = _horde_error(error, request_id=None, job_may_exist=True)
+            front_error.metadata = front_error.metadata.model_copy(
+                update={"submit_outcome": SubmitOutcome.UNKNOWN, "operation_key": str(operation_key)},
+            )
+            raise front_error from error
+        except HordeUnavailableError as error:
+            lost_detail = str(error)
+            continue
+        except TimeoutError:
+            lost_detail = "The submit was not answered within the request's budget."
+            break
+        front_state.front_metrics.record_submit_recovery(existing_claim=submission.existing_claim)
+        logger.info(
+            f"Recovered the lost submit of operation {operation_key} on attempt {attempt_number}: request "
+            f"{submission.request_id}, existing_claim={submission.existing_claim}",
+        )
+        return submission
+    raise _submit_outcome_unknown(lost_detail, operation_key=operation_key)
+
+
+def _operation_key_conflict(error: HordeAPIError, *, operation_key: uuid.UUID) -> ChatFrontError:
+    """Create the 502 for a re-sent submit the Horde refused because its key holds a different request.
+
+    The front re-sends the identical body, so the conflict is a front defect rather than a client error.
     """
     return ChatFrontError(
         status_code=HTTPStatus.BAD_GATEWAY,
-        message=f"The AI Horde did not answer the submit, so the request may have been queued and charged. {detail}",
-        code=HORDE_UNAVAILABLE_CODE,
-        metadata=ErrorMetadata(submit_outcome=SubmitOutcome.UNKNOWN),
+        message=(
+            "The AI Horde refused the front's recovery of a lost submit because its operation key holds a different "
+            f"request; the request may have been queued and charged. {error.message}"
+        ),
+        code=error.return_code,
+        metadata=ErrorMetadata(rc=error.return_code, submit_outcome=SubmitOutcome.UNKNOWN, operation_key=str(operation_key)),
         job_may_exist=True,
     )
 
 
-async def _cancel_within_budget(front_state: FrontState, open_request: OpenRequest) -> None:
-    """Cancel a Horde chat request once, within the cancel budget, logging rather than raising when it fails.
+def _submit_outcome_unknown(detail: str, *, operation_key: uuid.UUID) -> ChatFrontError:
+    """Create the 502 for a submit that was sent and never answered, recovery included, so a Horde request may exist."""
+    return ChatFrontError(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        message=f"The AI Horde did not answer the submit, so the request may have been queued and charged. {detail}",
+        code=HORDE_UNAVAILABLE_CODE,
+        metadata=ErrorMetadata(submit_outcome=SubmitOutcome.UNKNOWN, operation_key=str(operation_key)),
+        job_may_exist=True,
+    )
 
-    Every cancel logs exactly one outcome: cancelled, failed, or not completed within the budget. A request already
-    cancelled or being cancelled is left alone, so each request receives at most one cancel.
+
+async def _cancel_within_budget(front_state: FrontState, open_request: OpenRequest, *, retry_failed: bool = False) -> None:
+    """Cancel a Horde chat request within the cancel budget, logging rather than raising when it fails.
+
+    Every cancel logs exactly one outcome: cancelled, failed, or not completed within the budget. A request whose
+    cancel is in progress or acknowledged is left alone, so two cancels never overlap; a failed one is sent again only
+    when ``retry_failed`` is set.
+
+    Args:
+        front_state: The process state.
+        open_request: The request to cancel.
+        retry_failed: Whether a request whose earlier cancel failed is cancelled again; the shutdown drain sets it.
     """
-    if open_request.cancel_started:
+    retry_allowed = retry_failed and open_request.cancel_state == CancelState.FAILED
+    if open_request.cancel_state != CancelState.NOT_ATTEMPTED and not retry_allowed:
         return
-    open_request.cancel_started = True
+    open_request.cancel_state = CancelState.IN_PROGRESS
+    acknowledged = False
     cancel_timeout_seconds = front_state.settings.cancel_timeout_seconds
-    with anyio.move_on_after(cancel_timeout_seconds) as cancel_deadline:
-        try:
-            await front_state.horde_client.cancel_chat(request_id=open_request.request_id, credentials=open_request.credentials)
-        except (HordeAPIError, HordeUnavailableError, httpx.HTTPError) as error:
-            logger.warning(f"Cancelling chat request {open_request.request_id} failed: {error}")
-            return
-        logger.info(f"Cancelled chat request {open_request.request_id}")
-    if cancel_deadline.cancelled_caught:
-        logger.warning(f"Cancelling chat request {open_request.request_id} did not complete within {cancel_timeout_seconds:g}s")
+    try:
+        with anyio.move_on_after(cancel_timeout_seconds) as cancel_deadline:
+            try:
+                await front_state.horde_client.cancel_chat(request_id=open_request.request_id, credentials=open_request.credentials)
+            except (HordeAPIError, HordeUnavailableError, httpx.HTTPError) as error:
+                front_state.front_metrics.record_cancel(CancelOutcome.FAILED)
+                logger.warning(f"Cancelling chat request {open_request.request_id} failed: {error}")
+                return
+            acknowledged = True
+            front_state.front_metrics.record_cancel(CancelOutcome.ACKNOWLEDGED)
+            logger.info(f"Cancelled chat request {open_request.request_id}")
+        if cancel_deadline.cancelled_caught:
+            front_state.front_metrics.record_cancel(CancelOutcome.TIMED_OUT)
+            logger.warning(f"Cancelling chat request {open_request.request_id} did not complete within {cancel_timeout_seconds:g}s")
+    finally:
+        # Also reached when an enclosing scope, such as the shutdown bound, cuts the cancel off.
+        open_request.cancel_state = CancelState.ACKNOWLEDGED if acknowledged else CancelState.FAILED
 
 
 async def _cancel_shielded(front_state: FrontState, open_request: OpenRequest) -> None:
@@ -757,25 +999,171 @@ async def _cancel_shielded(front_state: FrontState, open_request: OpenRequest) -
 
 
 async def _cancel_open_requests(front_state: FrontState) -> None:
-    """Cancel every open request within the process-wide shutdown bound."""
-    pending_requests = [open_request for open_request in front_state.open_requests.values() if not open_request.cancel_started]
+    """Cancel every open request within the process-wide shutdown bound, sending a failed cancel once more.
+
+    A request whose cancel is in progress is left to that cancel, so two cancels never overlap.
+    """
+    pending_requests = [
+        open_request
+        for open_request in (*front_state.open_requests.values(), *front_state.failed_cancels.values())
+        if open_request.cancel_state in {CancelState.NOT_ATTEMPTED, CancelState.FAILED}
+    ]
     if not pending_requests:
         return
     shutdown_cancel_seconds = front_state.settings.shutdown_cancel_seconds
     logger.info(f"Cancelling {len(pending_requests)} open chat requests before stopping")
     with anyio.move_on_after(shutdown_cancel_seconds) as shutdown_deadline:
-        await asyncio.gather(*(_cancel_within_budget(front_state, open_request) for open_request in pending_requests))
+        await asyncio.gather(
+            *(_cancel_within_budget(front_state, open_request, retry_failed=True) for open_request in pending_requests),
+        )
     if shutdown_deadline.cancelled_caught:
         logger.warning(f"Cancelling open chat requests did not complete within {shutdown_cancel_seconds:g}s")
 
 
-def _log_finished(watcher: ChatRequestWatcher, *, submitted_at: float, streamed: bool) -> None:
-    """Log one line per finished request with its submit and wake times, for latency analysis."""
-    woke_at = watcher.woke_at if watcher.woke_at is not None else time.time()
-    logger.info(
-        f"Chat request {watcher.request_id} finished: streamed={streamed} submitted_at={submitted_at:.3f} "
-        f"woke_at={woke_at:.3f} woke_by={watcher.woke_by} waited={woke_at - submitted_at:.3f}s",
-    )
+class RequestTrace:
+    """Time one admitted chat request and record how it ended, once.
+
+    The line logged at the end carries the request id, the submit and wake times, what woke the request, the wait,
+    the status and code, the wake count and whether usage was estimated. It does not carry the API key, the messages
+    or the client's attribution.
+    """
+
+    def __init__(self, *, front_metrics: FrontMetrics, streamed: bool, received_at: float) -> None:
+        """Create the trace of an admitted request.
+
+        Args:
+            front_metrics: The front's instruments.
+            streamed: Whether the request is streamed.
+            received_at: The monotonic time the request arrived.
+        """
+        self.streamed: bool = streamed
+        """Whether the request is streamed."""
+        self.request_id: str | None = None
+        """The Horde request id, once the submit is acknowledged."""
+        self.submitted_at: float | None = None
+        """The wall-clock time the submit was acknowledged, in Unix seconds."""
+        self._front_metrics = front_metrics
+        self._received_at = received_at
+        self._submitted_monotonic: float | None = None
+        self._first_content_recorded = False
+        self._finished = False
+
+    def mark_submitted(self, request_id: str) -> float:
+        """Mutate the trace with the Horde's acknowledgement of the submit and return its wall-clock time."""
+        submitted_at = time.time()
+        self.request_id = request_id
+        self.submitted_at = submitted_at
+        self._submitted_monotonic = time.monotonic()
+        return submitted_at
+
+    def record_first_content(self) -> None:
+        """Record the time from the submit acknowledgement, when a stream's headers go out, to the first content."""
+        if self._first_content_recorded or self._submitted_monotonic is None:
+            return
+        self._first_content_recorded = True
+        self._front_metrics.record_first_content(
+            duration_seconds=time.monotonic() - self._submitted_monotonic,
+            streamed=self.streamed,
+        )
+
+    def record_completion(self, completion: ChatCompletionResponse, status: HordeChatStatus) -> None:
+        """Record the content, usage, empty-return and queue-wait facts of a completion about to be sent."""
+        self.record_first_content()
+        self._front_metrics.record_completion(
+            model=completion.model,
+            estimated_usage=completion.x_horde.estimated_usage,
+            has_empty_return=completion.x_horde.notice is not None,
+        )
+        for generation in status.generations:
+            if generation.queue_wait_seconds is not None:
+                self._front_metrics.record_queue_wait(
+                    queue_wait_seconds=generation.queue_wait_seconds,
+                    model=generation.model or completion.model,
+                )
+
+    def error_response(self, error: ChatFrontError, *, watcher: ChatRequestWatcher | None = None) -> JSONResponse:
+        """Return the error response sent before headers, recording the error and the request's end."""
+        self._front_metrics.record_error(status_code=int(error.status_code), code=error.code, streamed=self.streamed)
+        if error.metadata.submit_outcome == SubmitOutcome.UNKNOWN:
+            self._front_metrics.record_submit_outcome_unknown()
+        self.finish(status_code=int(error.status_code), code=error.code or "", watcher=watcher)
+        return error.to_response()
+
+    def error_events(self, error: ChatFrontError, *, watcher: ChatRequestWatcher | None) -> list[ServerSentEvent]:
+        """Return the error events sent after a stream's 200 headers, recording the failure and the request's end."""
+        self._front_metrics.record_stream_failure(code=error.code)
+        self.finish(status_code=HTTPStatus.OK, code=error.code or "", watcher=watcher)
+        return error.to_events()
+
+    def finish_disconnected(self, *, status_code: int, watcher: ChatRequestWatcher | None) -> None:
+        """Record the end of a request whose client disconnected before delivery, as a disconnect wake.
+
+        Does nothing once the request's end is recorded, so a stream's cleanup may call it after any outcome.
+        """
+        if self._finished:
+            return
+        self._front_metrics.record_wake(wake_source=WakeSource.DISCONNECT, found_finished=False)
+        self.finish(status_code=status_code, code=CLIENT_CLOSED_CODE, watcher=watcher, woke_by=WakeSource.DISCONNECT)
+
+    def finish(
+        self,
+        *,
+        status_code: int,
+        code: str,
+        watcher: ChatRequestWatcher | None,
+        estimated_usage: bool | None = None,
+        woke_by: WakeSource | None = None,
+    ) -> None:
+        """Record the request's duration and log its finished line; only the first call counts.
+
+        Args:
+            status_code: The HTTP status sent, 200 for a stream whose headers went out.
+            code: The error code, [`COMPLETED_CODE`][horde.oai.app.COMPLETED_CODE] or
+                [`CLIENT_CLOSED_CODE`][horde.oai.app.CLIENT_CLOSED_CODE].
+            watcher: The request's watcher, when the wait started.
+            estimated_usage: Whether the delivered completion's usage was estimated; None when none was delivered.
+            woke_by: What ended the wait when the watcher did not find the request finished.
+        """
+        if self._finished:
+            return
+        self._finished = True
+        self._front_metrics.record_request_duration(
+            duration_seconds=time.monotonic() - self._received_at,
+            streamed=self.streamed,
+            status_code=int(status_code),
+            code=code,
+        )
+        woke_at = watcher.woke_at if watcher is not None else None
+        if woke_by is None and watcher is not None:
+            woke_by = watcher.woke_by
+        waited_seconds = None
+        if self.submitted_at is not None:
+            waited_seconds = (woke_at if woke_at is not None else time.time()) - self.submitted_at
+        finished_fields: dict[str, object] = {
+            "request_id": self.request_id,
+            "streamed": self.streamed,
+            "submitted_at": self.submitted_at,
+            "woke_at": woke_at,
+            "woke_by": str(woke_by) if woke_by is not None else None,
+            "waited_seconds": waited_seconds,
+            "status_code": int(status_code),
+            "code": code,
+            "wake_count": watcher.wake_count if watcher is not None else 0,
+            "estimated_usage": estimated_usage,
+        }
+        request_label = f"Chat request {self.request_id}" if self.request_id is not None else "Unsubmitted chat request"
+        # tests/stress/chat_scale_demo.py parses the leading fields in this order and format.
+        logger.bind(**finished_fields).info(
+            f"{request_label} finished: streamed={self.streamed} submitted_at={_format_seconds(self.submitted_at)} "
+            f"woke_at={_format_seconds(woke_at)} woke_by={finished_fields['woke_by']} "
+            f"waited={_format_seconds(waited_seconds)}s status={int(status_code)} code={code} "
+            f"wakes={finished_fields['wake_count']} estimated_usage={estimated_usage}",
+        )
+
+
+def _format_seconds(seconds: float | None) -> str:
+    """Return ``seconds`` with millisecond precision, or ``none``."""
+    return f"{seconds:.3f}" if seconds is not None else "none"
 
 
 async def _wait_for_disconnect(request: Request) -> None:
@@ -806,6 +1194,7 @@ def _create_watcher(
             signal_recheck_seconds=settings.signal_recheck_seconds,
             fail_fast_grace_seconds=settings.fail_fast_grace_seconds,
         ),
+        front_metrics=front_state.front_metrics,
     )
 
 
@@ -831,6 +1220,15 @@ def _wait_error(error: ChatWaitTimeoutError | NoEligibleWorkerError | HordeAPIEr
     return _horde_error(error, request_id=request_id, job_may_exist=True)
 
 
+def _status_error_needs_cancel(error: HordeAPIError) -> bool:
+    """Return whether a status read that ended the wait leaves a request to cancel.
+
+    A 404 means the Horde no longer holds the request. Any other status the wait cannot fix, such as a revoked key,
+    leaves the request queued and charged on the Horde.
+    """
+    return error.status_code != HTTPStatus.NOT_FOUND and error.status_code not in TRANSIENT_STATUS_CODES
+
+
 def _faulted_error(request_id: str) -> ChatFrontError:
     """Create the front error for a request the Horde reports as faulted."""
     return ChatFrontError(
@@ -844,15 +1242,21 @@ def _faulted_error(request_id: str) -> ChatFrontError:
 
 async def _chat_completions(request: Request) -> Response:
     """Serve ``POST /v1/chat/completions``."""
+    received_at = time.monotonic()
     front_state = _front_state(request)
+    front_metrics = front_state.front_metrics
     settings = front_state.settings
+    if _carries_client_retry_hint(request):
+        front_metrics.record_client_retry_hint()
     try:
-        chat_request = await _read_chat_request(request, settings)
+        chat_request = await _read_chat_request(request, front_state)
         credentials = _build_credentials(request)
     except ChatFrontError as error:
+        front_metrics.record_refusal(status_code=error.status_code, code=error.code)
         return error.to_response()
     inflight_slot = front_state.inflight_limiter.try_acquire(_request_source(request))
     if inflight_slot is None:
+        front_metrics.record_refusal(status_code=HTTPStatus.SERVICE_UNAVAILABLE, code=FRONT_FULL_CODE)
         return ChatFrontError(
             status_code=HTTPStatus.SERVICE_UNAVAILABLE,
             message="This front holds its maximum of open requests for this client or in total; retry shortly.",
@@ -860,19 +1264,28 @@ async def _chat_completions(request: Request) -> Response:
             metadata=ErrorMetadata(retry_after=INFLIGHT_RETRY_AFTER_SECONDS),
             headers={RETRY_AFTER_HEADER: str(INFLIGHT_RETRY_AFTER_SECONDS)},
         ).to_response()
+    streamed = bool(chat_request.stream)
+    front_metrics.record_admitted(streamed=streamed)
+    request_trace = RequestTrace(front_metrics=front_metrics, streamed=streamed, received_at=received_at)
     budget_seconds = settings.stream_timeout_seconds if chat_request.stream else settings.nonstream_timeout_seconds
     deadline = time.monotonic() + budget_seconds
+    # A fresh key per client request: a client's own retry is a new request and is not deduplicated (ADR 0026).
+    operation_key = uuid.uuid4()
     try:
         submission = await _submit(
-            front_state, native_body=build_native_chat_body(chat_request), credentials=credentials, deadline=deadline
+            front_state,
+            native_body=build_native_chat_body(chat_request, operation_key=operation_key),
+            operation_key=operation_key,
+            credentials=credentials,
+            deadline=deadline,
         )
     except ChatFrontError as error:
         inflight_slot.release()
-        return error.to_response()
+        return request_trace.error_response(error)
     except BaseException:
         inflight_slot.release()
         raise
-    submitted_at = time.time()
+    submitted_at = request_trace.mark_submitted(submission.request_id)
     open_request = front_state.open_request(request_id=submission.request_id, credentials=credentials)
     if chat_request.stream:
         try:
@@ -880,6 +1293,7 @@ async def _chat_completions(request: Request) -> Response:
                 request,
                 chat_request=chat_request,
                 open_request=open_request,
+                request_trace=request_trace,
                 submitted_at=submitted_at,
                 deadline=deadline,
                 inflight_slot=inflight_slot,
@@ -894,6 +1308,7 @@ async def _chat_completions(request: Request) -> Response:
             request,
             chat_request=chat_request,
             open_request=open_request,
+            request_trace=request_trace,
             submitted_at=submitted_at,
             deadline=deadline,
             inflight_slot=inflight_slot,
@@ -921,6 +1336,7 @@ async def _wait_for_completion(
     *,
     chat_request: ChatCompletionRequest,
     open_request: OpenRequest,
+    request_trace: RequestTrace,
     submitted_at: float,
     deadline: float,
     inflight_slot: InflightSlot,
@@ -953,23 +1369,33 @@ async def _wait_for_completion(
             logger.info(f"Client of chat request {request_id} disconnected while waiting")
             inflight_slot.release()
             await _cancel_shielded(front_state, open_request)
+            request_trace.finish_disconnected(status_code=CLIENT_CLOSED_REQUEST_STATUS, watcher=watcher)
             return Response(status_code=CLIENT_CLOSED_REQUEST_STATUS)
         try:
             status = wait_task.result()
         except (ChatWaitTimeoutError, NoEligibleWorkerError) as error:
             inflight_slot.release()
             await _cancel_shielded(front_state, open_request)
-            return _wait_error(error, request_id=request_id).to_response()
+            return request_trace.error_response(_wait_error(error, request_id=request_id), watcher=watcher)
         except HordeAPIError as error:
-            return _wait_error(error, request_id=request_id).to_response()
-    _log_finished(watcher, submitted_at=submitted_at, streamed=False)
+            if _status_error_needs_cancel(error):
+                inflight_slot.release()
+                await _cancel_shielded(front_state, open_request)
+            return request_trace.error_response(_wait_error(error, request_id=request_id), watcher=watcher)
     if status.faulted:
-        return _faulted_error(request_id).to_response()
+        return request_trace.error_response(_faulted_error(request_id), watcher=watcher)
     completion = build_completion(
         request_id=request_id,
         created=int(submitted_at),
         chat_request=chat_request,
         status=status,
+    )
+    request_trace.record_completion(completion, status)
+    request_trace.finish(
+        status_code=HTTPStatus.OK,
+        code=COMPLETED_CODE,
+        watcher=watcher,
+        estimated_usage=completion.x_horde.estimated_usage,
     )
     return JSONResponse(content=completion.model_dump(mode="json"))
 
@@ -979,6 +1405,7 @@ def _stream_completion(
     *,
     chat_request: ChatCompletionRequest,
     open_request: OpenRequest,
+    request_trace: RequestTrace,
     submitted_at: float,
     deadline: float,
     inflight_slot: InflightSlot,
@@ -1016,18 +1443,20 @@ def _stream_completion(
                 except (ChatWaitTimeoutError, NoEligibleWorkerError) as error:
                     inflight_slot.release()
                     await _cancel_shielded(front_state, open_request)
-                    for error_event in _wait_error(error, request_id=request_id).to_events():
+                    for error_event in request_trace.error_events(_wait_error(error, request_id=request_id), watcher=latest_watcher):
                         yield error_event
                     return
                 except HordeAPIError as error:
+                    if _status_error_needs_cancel(error):
+                        inflight_slot.release()
+                        await _cancel_shielded(front_state, open_request)
                     outcome_settled = True
-                    for error_event in _wait_error(error, request_id=request_id).to_events():
+                    for error_event in request_trace.error_events(_wait_error(error, request_id=request_id), watcher=latest_watcher):
                         yield error_event
                     return
             outcome_settled = True
-            _log_finished(latest_watcher, submitted_at=submitted_at, streamed=True)
             if status.faulted:
-                for error_event in _faulted_error(request_id).to_events():
+                for error_event in request_trace.error_events(_faulted_error(request_id), watcher=latest_watcher):
                     yield error_event
                 return
             completion = build_completion(
@@ -1036,15 +1465,23 @@ def _stream_completion(
                 chat_request=chat_request,
                 status=status,
             )
+            request_trace.record_completion(completion, status)
             include_usage = bool(chat_request.stream_options and chat_request.stream_options.include_usage)
             for completion_event in build_completion_events(completion, include_usage=include_usage):
                 yield completion_event
+            request_trace.finish(
+                status_code=HTTPStatus.OK,
+                code=COMPLETED_CODE,
+                watcher=latest_watcher,
+                estimated_usage=completion.x_horde.estimated_usage,
+            )
         finally:
             inflight_slot.release()
             if not outcome_settled:
-                if not open_request.cancel_started:
+                if open_request.cancel_state == CancelState.NOT_ATTEMPTED:
                     logger.info(f"Client of streamed chat request {request_id} disconnected while waiting")
                 await _cancel_shielded(front_state, open_request)
+            request_trace.finish_disconnected(status_code=HTTPStatus.OK, watcher=latest_watcher)
             front_state.close_request(open_request)
 
     async def finish_unstarted_stream() -> None:
@@ -1052,6 +1489,7 @@ def _stream_completion(
         if not stream_started:
             logger.info(f"Client of streamed chat request {request_id} disconnected before the stream started")
             await _cancel_shielded(front_state, open_request)
+            request_trace.finish_disconnected(status_code=HTTPStatus.OK, watcher=None)
         front_state.close_request(open_request)
 
     return EventSourceResponse(
@@ -1063,16 +1501,8 @@ def _stream_completion(
     )
 
 
-def _build_model_card(active_model: HordeActiveModel) -> ModelCard:
-    """Create the OpenAI model list entry for one of the Horde's active text models."""
-    return ModelCard(
-        model_id=active_model.name,
-        x_horde=HordeModelDetails(workers=active_model.count, queued=active_model.queued),
-    )
-
-
-async def _fetch_models(request: Request) -> list[HordeActiveModel]:
-    """Return the Horde's active text models through the process cache.
+async def _fetch_model_cards(request: Request) -> list[ModelCard]:
+    """Return the model list entries of the models an online chat worker serves, read through the process cache.
 
     Raises:
         ChatFrontError: The Authorization header is malformed, or the Horde could not be asked.
@@ -1080,32 +1510,33 @@ async def _fetch_models(request: Request) -> list[HordeActiveModel]:
     front_state = _front_state(request)
     credentials = _build_credentials(request)
     try:
-        return await front_state.model_list_cache.get(front_state.horde_client, credentials)
+        active_models = await front_state.model_list_cache.get(front_state.horde_client, credentials)
     except HordeAPIError as error:
         raise _horde_error(error, request_id=None, job_may_exist=False) from error
     except HordeUnavailableError as error:
         raise ChatFrontError(status_code=HTTPStatus.BAD_GATEWAY, message=str(error), code=HORDE_UNAVAILABLE_CODE) from error
+    model_cards = (build_model_card(active_model) for active_model in active_models)
+    return [model_card for model_card in model_cards if model_card is not None]
 
 
 async def _list_models(request: Request) -> Response:
     """Serve ``GET /v1/models``."""
     try:
-        active_models = await _fetch_models(request)
+        model_cards = await _fetch_model_cards(request)
     except ChatFrontError as error:
         return error.to_response()
-    model_list = ModelList(data=[_build_model_card(active_model) for active_model in active_models])
-    return JSONResponse(content=model_list.model_dump(mode="json"))
+    return JSONResponse(content=ModelList(data=model_cards).model_dump(mode="json"))
 
 
 async def _get_model(request: Request, model_id: str) -> Response:
     """Serve ``GET /v1/models/{model_id}``; the id may contain slashes."""
     try:
-        active_models = await _fetch_models(request)
+        model_cards = await _fetch_model_cards(request)
     except ChatFrontError as error:
         return error.to_response()
-    for active_model in active_models:
-        if active_model.name == model_id:
-            return JSONResponse(content=_build_model_card(active_model).model_dump(mode="json"))
+    for model_card in model_cards:
+        if model_card.model_id == model_id:
+            return JSONResponse(content=model_card.model_dump(mode="json"))
     return _model_not_found(model_id).to_response()
 
 

@@ -46,6 +46,7 @@ def test_defaults_match_the_documented_values() -> None:
     assert settings.heartbeat_seconds == 5
     assert settings.fallback_poll_seconds == 15
     assert settings.fail_fast_grace_seconds == 20
+    assert settings.submit_recovery_attempts == 2
     assert settings.max_body_bytes == MAX_CHAT_BODY_BYTES
     assert settings.max_message_count == MAX_CHAT_MESSAGE_COUNT
     assert settings.max_text_bytes == MAX_CHAT_TEXT_BYTES

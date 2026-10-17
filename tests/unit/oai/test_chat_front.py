@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 
 import pytest
 
@@ -101,7 +102,10 @@ async def test_native_body_carries_the_request_without_front_only_keys(start_fro
         response = await front.client.post("/v1/chat/completions", json=chat_body)
 
     assert response.status_code == 200
-    assert front.horde.submitted_body() == {
+    submitted_body = front.horde.submitted_body()
+    operation_key = submitted_body["horde"].pop("operation_key")
+    assert uuid.UUID(operation_key).version == 4
+    assert submitted_body == {
         "model": MODEL_NAME,
         "messages": [
             {"role": "developer", "content": "Answer in French."},
@@ -293,9 +297,23 @@ async def test_bearer_token_becomes_the_horde_apikey_and_a_missing_one_is_anonym
     horde_headers = front.horde.submit_route.calls.last.request.headers
     assert horde_headers["apikey"] == expected_apikey
     assert horde_headers["client-agent"].startswith("horde-oai-front:")
-    assert horde_headers["client-agent"].endswith(":test-client/1.0")
+    assert horde_headers["client-agent"].endswith(":test-client/1.0 via horde-oai-front")
     assert "proxy-authorization" not in horde_headers
     assert "proxied-for" not in horde_headers
+
+
+async def test_the_client_agent_attributes_the_request_to_the_titled_application(start_front: StartFront) -> None:
+    headers = {
+        "User-Agent": "test-client/1.0",
+        "HTTP-Referer": "https://chat.example.org/",
+        "X-Title": "Example Chat",
+    }
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(), headers=headers)
+
+    assert response.status_code == 200
+    assert front.horde.submit_route.calls.last.request.headers["client-agent"] == "Example Chat:0:test-client/1.0 via horde-oai-front"
 
 
 async def test_proxy_passkey_forwards_the_client_address(start_front: StartFront) -> None:
@@ -310,42 +328,91 @@ async def test_proxy_passkey_forwards_the_client_address(start_front: StartFront
         assert horde_call.request.headers["proxied-for"] == "127.0.0.1"
 
 
+VISION_MODEL_NAME: str = "aphrodite/vision-model"
+"""A model whose online chat worker declares ``vision``."""
+
 MODEL_LIST: list[dict[str, object]] = [
-    {"name": MODEL_NAME, "count": 3, "performance": 10.0, "queued": 7, "jobs": 0, "eta": 0, "type": "text"},
-    {"name": "aphrodite/other-model", "count": 1, "type": "text"},
+    {
+        "name": MODEL_NAME,
+        "count": 4,
+        "performance": 10.0,
+        "queued": 7,
+        "jobs": 0,
+        "eta": 0,
+        "type": "text",
+        "chat": {
+            "workers": 3,
+            "max_context_length": 8192,
+            "max_length": 1024,
+            "features": ["frequency_penalty", "seed"],
+            "created": 1700000000,
+        },
+    },
+    {
+        "name": VISION_MODEL_NAME,
+        "count": 1,
+        "type": "text",
+        "chat": {"workers": 1, "max_context_length": 4096, "max_length": 512, "features": ["vision"], "created": None},
+    },
+    {"name": "aphrodite/text-only-model", "count": 2, "queued": 1, "type": "text"},
+    {
+        "name": "aphrodite/no-chat-workers",
+        "count": 1,
+        "type": "text",
+        "chat": {"workers": 0, "max_context_length": None, "max_length": None, "features": [], "created": None},
+    },
 ]
-"""The Horde's active text model list the model route tests serve."""
+"""The Horde's chat model list the model route tests serve, with two entries no online chat worker serves."""
 
 
-async def test_models_lists_the_horde_text_models_in_the_openai_shape(start_front: StartFront) -> None:
+async def test_models_lists_the_chat_models_in_the_openai_shape(start_front: StartFront) -> None:
     async with start_front() as front:
         front.horde.models_route.respond(200, json=MODEL_LIST)
         response = await front.client.get("/v1/models")
 
     assert response.status_code == 200
-    text_architecture = {"modality": "text->text", "input_modalities": ["text"], "output_modalities": ["text"]}
     assert response.json() == {
         "object": "list",
         "data": [
             {
                 "id": MODEL_NAME,
                 "object": "model",
-                "created": 0,
+                "created": 1700000000,
                 "owned_by": "aihorde",
-                "architecture": text_architecture,
+                "context_length": 8192,
+                "architecture": {"modality": "text->text", "input_modalities": ["text"], "output_modalities": ["text"]},
+                "top_provider": {"context_length": 8192, "max_completion_tokens": 1024},
+                "supported_parameters": ["max_tokens", "temperature", "top_p", "stop", "seed", "frequency_penalty"],
                 "x_horde": {"workers": 3, "queued": 7},
             },
             {
-                "id": "aphrodite/other-model",
+                "id": VISION_MODEL_NAME,
                 "object": "model",
                 "created": 0,
                 "owned_by": "aihorde",
-                "architecture": text_architecture,
+                "context_length": 4096,
+                "architecture": {
+                    "modality": "text+image->text",
+                    "input_modalities": ["text", "image"],
+                    "output_modalities": ["text"],
+                },
+                "top_provider": {"context_length": 4096, "max_completion_tokens": 512},
+                "supported_parameters": ["max_tokens", "temperature", "top_p", "stop"],
                 "x_horde": {"workers": 1},
             },
         ],
     }
-    assert front.horde.models_route.calls.last.request.url == f"{HORDE_URL}/v2/status/models?type=text"
+    assert front.horde.models_route.calls.last.request.url == f"{HORDE_URL}/v2/status/models?type=text&chat=true"
+
+
+async def test_model_route_does_not_find_a_model_without_online_chat_workers(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=MODEL_LIST)
+        text_only = await front.client.get("/v1/models/aphrodite/text-only-model")
+        no_chat_workers = await front.client.get("/v1/models/aphrodite/no-chat-workers")
+
+    assert text_only.status_code == 404
+    assert no_chat_workers.status_code == 404
 
 
 async def test_model_route_resolves_an_id_containing_slashes(start_front: StartFront) -> None:

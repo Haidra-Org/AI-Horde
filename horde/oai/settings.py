@@ -152,6 +152,14 @@ class FrontSettings(BaseSettings):
     """How long the Horde may report no eligible worker, with nothing processing, before the request is cancelled and
     answered 503 ``no_eligible_worker``; long enough for a worker restart or a model load."""
 
+    submit_recovery_attempts: int = Field(default=2, ge=0)
+    """How many times a submit whose answer was lost is sent again with the same operation key.
+
+    Each attempt goes to the next healthy root within the request's total budget. The native route answers a repeated
+    key with the existing request, so a recovery cannot create a second job; the bound keeps a Horde that drops every
+    answer from holding the request until its deadline. 0 answers a lost submit with 502 at once.
+    """
+
     native_max_connections: int = Field(default=200, ge=1)
     """The most simultaneous calls to the Horde and the size of the main connection pool; cancels use their own pool."""
 

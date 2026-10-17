@@ -43,6 +43,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from horde.oai.horde_client import HordeAPIError, HordeChatStatus, HordeClient, HordeCredentials, HordeUnavailableError
+from horde.oai.metrics import FrontMetrics
 
 __all__ = [
     "CHAT_SIGNAL_CHANNEL_PREFIX",
@@ -112,13 +113,20 @@ FINISHING_EVENT_KINDS: frozenset[CompletionEventKind] = frozenset(
 
 
 class WakeSource(StrEnum):
-    """What woke a waiting request when it found the request finished."""
+    """What woke a waiting request."""
 
     IMMEDIATE = "immediate"
+    """The status read right after the submit."""
     SIGNAL = "signal"
+    """A completion signal for the request."""
     RECHECK = "recheck"
+    """The short recheck a terminal signal earns when the read after it does not show the outcome yet."""
     POLL = "poll"
+    """The fallback poll or the fail-fast check."""
     DEADLINE = "deadline"
+    """The final status read at the deadline."""
+    DISCONNECT = "disconnect"
+    """The client disconnected; the application ends the wait without a status read."""
 
 
 class CompletionEvent(BaseModel):
@@ -376,6 +384,7 @@ class ChatRequestWatcher:
         credentials: HordeCredentials,
         subscription: CompletionSubscription,
         budget: WaitBudget,
+        front_metrics: FrontMetrics,
         clock: Callable[[], float] = time.monotonic,
         random_fraction: Callable[[], float] = random.random,
     ) -> None:
@@ -386,6 +395,7 @@ class ChatRequestWatcher:
             credentials: Who the status calls are made for.
             subscription: The request's registration with the completion listener.
             budget: The deadline and the intervals of the wait.
+            front_metrics: Where each wake is recorded.
             clock: The monotonic clock the deadline is measured on.
             random_fraction: Return a number in ``[0, 1)`` for the poll jitter.
         """
@@ -397,6 +407,9 @@ class ChatRequestWatcher:
         """What woke the request when it was found finished."""
         self.woke_at: float | None = None
         """The wall-clock time the request was found finished, in Unix seconds."""
+        self.wake_count: int = 0
+        """How many status reads the wait made, the read that found the request finished included."""
+        self._front_metrics = front_metrics
         self._horde_client = horde_client
         self._credentials = credentials
         self._subscription = subscription
@@ -532,6 +545,21 @@ class ChatRequestWatcher:
         raise ChatWaitTimeoutError(f"Chat request {self.request_id} was still waiting at its deadline.")
 
     async def _refresh(self, wake_source: WakeSource) -> HordeChatStatus | None:
+        """Return a freshly read status, or None when the read failed in a way the next poll may fix; record the wake.
+
+        Raises:
+            HordeAPIError: The Horde answered with a status waiting cannot fix.
+        """
+        self.wake_count += 1
+        found_finished = False
+        try:
+            status = await self._read_status(wake_source)
+            found_finished = status is not None and _is_finished(status)
+            return status
+        finally:
+            self._front_metrics.record_wake(wake_source=wake_source, found_finished=found_finished)
+
+    async def _read_status(self, wake_source: WakeSource) -> HordeChatStatus | None:
         """Return a freshly read status, or None when the read failed in a way the next poll may fix.
 
         Raises:

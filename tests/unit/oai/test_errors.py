@@ -8,18 +8,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
 import respx
 
 from horde.oai.app import create_app
+from horde.oai.horde_client import HordeAPIError, HordeClient, HordeCredentials
+from horde.oai.metrics import REFUSED_NAME
 from horde.oai.settings import FrontSettings
+from horde.oai.waiter import ChatRequestWatcher, CompletionEvent, CompletionEventKind, CompletionSubscription, WaitBudget
 from tests.unit.oai.conftest import (
     FAST_TEST_SETTINGS,
     FRONT_URL,
     HORDE_URL,
     REQUEST_ID,
+    UNRECORDED_METRICS,
     StartFront,
     build_chat_body,
     call_raw,
@@ -77,6 +82,8 @@ async def test_slow_body_is_408_after_the_read_timeout(start_front: StartFront) 
     assert all(header_name != SHOULD_RETRY.encode() for header_name, _ in sent_messages[0]["headers"])
     assert front.horde.submit_route.call_count == 0
     assert front.inflight == 0
+    assert front.metric_total(REFUSED_NAME, horde_status_code=408, horde_code="RequestBodyTimeout") == 1
+    assert front.metric_total(REFUSED_NAME, horde_code="RequestTooLarge") == 0
 
 
 @pytest.mark.parametrize("raw_body", [b"{not json", b"[1, 2]"])
@@ -193,7 +200,10 @@ async def test_horde_unreachable_before_send_is_a_retriable_502() -> None:
 
 
 @pytest.mark.parametrize("transport_error", [httpx.ReadTimeout("slow"), httpx.ReadError("reset")])
-async def test_submit_lost_after_send_is_502_without_retry(start_front: StartFront, transport_error: httpx.TransportError) -> None:
+async def test_submit_lost_after_send_and_recovery_is_502_without_retry(
+    start_front: StartFront,
+    transport_error: httpx.TransportError,
+) -> None:
     async with start_front() as front:
         front.horde.submit_route.mock(side_effect=transport_error)
         response = await front.client.post("/v1/chat/completions", json=build_chat_body())
@@ -202,8 +212,9 @@ async def test_submit_lost_after_send_is_502_without_retry(start_front: StartFro
     assert response.headers[SHOULD_RETRY] == "false"
     error = response.json()["error"]
     assert error["code"] == "HordeUnavailable"
-    assert error["metadata"] == {"submit_outcome": "unknown"}
-    assert front.horde.submit_route.call_count == 1
+    operation_key = front.horde.submitted_body()["horde"]["operation_key"]
+    assert error["metadata"] == {"submit_outcome": "unknown", "operation_key": operation_key}
+    assert front.horde.submit_route.call_count == 1 + FAST_TEST_SETTINGS.submit_recovery_attempts
     assert front.inflight == 0
 
 
@@ -424,3 +435,74 @@ async def test_missing_previously_visible_status_reconciles_expiry_within_a_boun
     assert response.status_code == (502 if publish_fault else 404)
     assert response.json()["error"]["code"] == ("ChatRequestFaulted" if publish_fault else "RequestNotFound")
     assert response.headers[SHOULD_RETRY] == "false"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(("horde_status", "expected_cancels"), [(400, 1), (401, 1), (403, 1), (422, 1), (404, 0)])
+async def test_status_read_the_wait_cannot_fix_cancels_unless_the_request_is_gone(
+    start_front: StartFront,
+    stream: bool,
+    horde_status: int,
+    expected_cancels: int,
+) -> None:
+    async with start_front() as front:
+        front.horde.status_code = horde_status
+        front.horde.status_payload = {"message": "Refused.", "rc": "StatusRefused"}
+        front.horde.cancel_route.mock(return_value=httpx.Response(200, json=waiting_status()))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream))
+
+    assert front.horde.cancel_route.call_count == expected_cancels
+    assert response.headers[SHOULD_RETRY] == "false"
+    if stream:
+        assert response.status_code == 200
+        payloads = data_payloads(parse_sse_events(response.text))
+        assert json.loads(payloads[0])["error"]["metadata"] == {"request_id": REQUEST_ID, "rc": "StatusRefused"}
+        assert payloads[-1] == "[DONE]"
+    else:
+        assert response.status_code == horde_status
+        assert response.json()["error"]["metadata"] == {"request_id": REQUEST_ID, "rc": "StatusRefused"}
+    assert front.inflight == 0
+    assert not front.app.state.front.open_requests
+
+
+async def test_events_other_than_faulted_during_reconciliation_stay_queued_for_the_watcher() -> None:
+    subscription = CompletionSubscription(REQUEST_ID)
+    done_event = CompletionEvent.model_validate({"id": REQUEST_ID, "event": CompletionEventKind.DONE})
+    reads = 0
+
+    async def answer(_request: httpx.Request) -> httpx.Response:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            return httpx.Response(200, json=waiting_status(wait_time=0))
+        # Queued while the row is missing, so the reconciliation's wait takes it from the subscription.
+        subscription.deliver(done_event)
+        return httpx.Response(404, json={"message": "Gone", "rc": "RequestNotFound"})
+
+    with respx.mock() as router:
+        router.get(f"{HORDE_URL}/v2/generate/chat/status/{REQUEST_ID}").mock(side_effect=answer)
+        async with httpx.AsyncClient() as http_client:
+            watcher = ChatRequestWatcher(
+                horde_client=HordeClient(
+                    horde_urls=(HORDE_URL,),
+                    http_client=http_client,
+                    proxy_passkey=None,
+                    front_metrics=UNRECORDED_METRICS,
+                ),
+                credentials=HordeCredentials(apikey="test-key", client_agent="test:1:test"),
+                subscription=subscription,
+                front_metrics=UNRECORDED_METRICS,
+                budget=WaitBudget(
+                    deadline=time.monotonic() + 5,
+                    final_status_timeout_seconds=0.5,
+                    fallback_poll_seconds=0.02,
+                    signal_recheck_seconds=0.05,
+                    fail_fast_grace_seconds=10,
+                ),
+            )
+            with pytest.raises(HordeAPIError) as raised:
+                await asyncio.wait_for(watcher.wait_until_finished(), timeout=2)
+
+    assert raised.value.status_code == 404
+    assert await subscription.wait(0) == done_event
+    assert await subscription.wait(0) is None

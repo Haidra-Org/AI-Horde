@@ -8,7 +8,8 @@
 test change the status a request reports and publish its completion signal. The front is driven through
 ``httpx.ASGITransport``, which runs the app to completion before returning, so a streamed response arrives whole.
 [`call_raw`][tests.unit.oai.conftest.call_raw] drives the app over raw ASGI where a test controls the body's arrival or
-the client's disconnect.
+the client's disconnect. Each front records its metrics on its own meter provider with an in-memory reader, read
+through [`metric_points`][tests.unit.oai.conftest.metric_points].
 """
 
 from __future__ import annotations
@@ -25,8 +26,12 @@ import httpx
 import pytest_asyncio
 import respx
 from fastapi import FastAPI
+from opentelemetry.metrics import NoOpMeter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import Gauge, Histogram, InMemoryMetricReader, Sum
 
 from horde.oai.app import create_app
+from horde.oai.metrics import METER_NAME, FrontMetrics, histogram_views
 from horde.oai.settings import FrontSettings
 from horde.oai.waiter import CHAT_SIGNAL_CHANNEL_PREFIX
 
@@ -72,6 +77,58 @@ FAST_TEST_SETTINGS: FrontSettings = FrontSettings(
     fail_fast_grace_seconds=5.0,
 )
 """Settings with a fallback poll long enough that a test finishing quickly proves another wake-up path."""
+
+UNRECORDED_METRICS: FrontMetrics = FrontMetrics(NoOpMeter(METER_NAME))
+"""Instruments that record nothing, for tests building a client or watcher without a front."""
+
+
+class MetricPoint:
+    """Represents one data point read from the in-memory reader: its attributes and its value or count and sum."""
+
+    def __init__(self, *, attributes: dict[str, Any], value: float, histogram_sum: float | None = None) -> None:
+        """Create the point; ``value`` is a counter's sum, a gauge's value or a histogram's count."""
+        self.attributes: dict[str, Any] = attributes
+        """The point's attributes."""
+        self.value: float = value
+        """The counter sum, gauge value or histogram count."""
+        self.histogram_sum: float | None = histogram_sum
+        """The histogram's sum of recorded values; None for counters and gauges."""
+
+
+def metric_points(metric_reader: InMemoryMetricReader, metric_name: str) -> list[MetricPoint]:
+    """Return the current data points of ``metric_name``, collected from ``metric_reader``."""
+    metrics_data = metric_reader.get_metrics_data()
+    if metrics_data is None:
+        return []
+    points: list[MetricPoint] = []
+    for resource_metrics in metrics_data.resource_metrics:
+        for scope_metrics in resource_metrics.scope_metrics:
+            for metric in scope_metrics.metrics:
+                if metric.name != metric_name:
+                    continue
+                if isinstance(metric.data, Histogram):
+                    points.extend(
+                        MetricPoint(attributes=dict(point.attributes or {}), value=point.count, histogram_sum=point.sum)
+                        for point in metric.data.data_points
+                    )
+                elif isinstance(metric.data, Sum | Gauge):
+                    points.extend(
+                        MetricPoint(attributes=dict(point.attributes or {}), value=point.value) for point in metric.data.data_points
+                    )
+    return points
+
+
+def metric_total(metric_reader: InMemoryMetricReader, metric_name: str, **attributes: Any) -> float:
+    """Return the summed value (or histogram count) of the points of ``metric_name`` whose attributes include ``attributes``.
+
+    Attribute keys are given with ``horde_`` for the ``horde.`` prefix, such as ``horde_call_type="status"``.
+    """
+    wanted = {attribute_key.replace("horde_", "horde.", 1): attribute_value for attribute_key, attribute_value in attributes.items()}
+    return sum(
+        point.value
+        for point in metric_points(metric_reader, metric_name)
+        if all(point.attributes.get(attribute_key) == attribute_value for attribute_key, attribute_value in wanted.items())
+    )
 
 
 def build_chat_body(**overrides: Any) -> dict[str, Any]:
@@ -214,7 +271,7 @@ class FakeHorde:
 class RunningFront:
     """A started front with its test client and mocked Horde."""
 
-    def __init__(self, *, app: FastAPI, client: httpx.AsyncClient, horde: FakeHorde) -> None:
+    def __init__(self, *, app: FastAPI, client: httpx.AsyncClient, horde: FakeHorde, metric_reader: InMemoryMetricReader) -> None:
         """Bundle the running pieces."""
         self.app: FastAPI = app
         """The front application."""
@@ -222,6 +279,12 @@ class RunningFront:
         """A client addressing the front through ASGI."""
         self.horde: FakeHorde = horde
         """The mocked Horde."""
+        self.metric_reader: InMemoryMetricReader = metric_reader
+        """The reader of the front's metrics."""
+
+    def metric_total(self, metric_name: str, **attributes: Any) -> float:
+        """Return the summed value of ``metric_name``'s points matching ``attributes``; see the module function."""
+        return metric_total(self.metric_reader, metric_name, **attributes)
 
     @property
     def inflight(self) -> int:
@@ -241,6 +304,8 @@ async def start_front() -> AsyncIterator[StartFront]:
     @asynccontextmanager
     async def run_front(settings: FrontSettings = FAST_TEST_SETTINGS, *, with_redis: bool = True) -> AsyncIterator[RunningFront]:
         redis_client = fakeredis.FakeAsyncRedis()
+        metric_reader = InMemoryMetricReader()
+        meter_provider = MeterProvider(metric_readers=[metric_reader], views=histogram_views())
         with respx.mock(assert_all_called=False) as router:
             horde = FakeHorde(router, redis_client)
             async with httpx.AsyncClient() as horde_http_client:
@@ -249,13 +314,14 @@ async def start_front() -> AsyncIterator[StartFront]:
                     http_client=horde_http_client,
                     cancel_http_client=horde_http_client,
                     redis_client=redis_client if with_redis else None,
+                    meter=meter_provider.get_meter(METER_NAME),
                 )
                 transport = httpx.ASGITransport(app=app)
                 async with httpx.AsyncClient(transport=transport, base_url=FRONT_URL) as front_client:
                     async with app.router.lifespan_context(app):
                         if with_redis:
                             assert await app.state.front.listener.wait_until_subscribed(SUBSCRIBE_TIMEOUT_SECONDS)
-                        yield RunningFront(app=app, client=front_client, horde=horde)
+                        yield RunningFront(app=app, client=front_client, horde=horde, metric_reader=metric_reader)
         await redis_client.close()
 
     yield run_front

@@ -18,7 +18,8 @@ import redis.asyncio
 from loguru import logger
 
 from horde.oai import waiter
-from horde.oai.app import create_app
+from horde.oai.app import CancelState, _cancel_open_requests, create_app
+from horde.oai.horde_client import HordeCredentials
 from horde.oai.waiter import CompletionSignalListener
 from tests.unit.oai.conftest import (
     CALL_WAIT_SECONDS,
@@ -337,6 +338,56 @@ async def test_shutdown_cancels_open_requests_before_the_subscription_closes_wit
     assert not front.app.state.front.listener.subscribed
 
 
+async def test_shutdown_drain_retries_a_cancel_that_failed_after_the_budget_ended_once(start_front: StartFront) -> None:
+    async with start_front(DEADLINE_SETTINGS, with_redis=False) as front:
+        front.horde.cancel_route.mock(
+            side_effect=[
+                httpx.Response(503, json={"message": "Unavailable"}),
+                httpx.Response(200, json=waiting_status()),
+            ],
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        assert_slot_released(front)
+        open_request = front.app.state.front.failed_cancels[REQUEST_ID]
+        assert open_request.cancel_state == CancelState.FAILED
+        assert front.horde.cancel_route.call_count == 1
+
+    assert response.status_code == 408
+    assert front.horde.cancel_route.call_count == 2
+    assert open_request.cancel_state == CancelState.ACKNOWLEDGED
+
+
+async def test_shutdown_drain_does_not_resend_an_acknowledged_cancel(start_front: StartFront) -> None:
+    async with start_front(DEADLINE_SETTINGS, with_redis=False) as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        assert front.horde.cancel_route.call_count == 1
+
+    assert response.status_code == 408
+    assert front.horde.cancel_route.call_count == 1
+    assert_slot_released(front)
+    assert not front.app.state.front.failed_cancels
+
+
+async def test_shutdown_drain_leaves_a_cancel_in_progress_to_finish_alone(start_front: StartFront) -> None:
+    settings = DEADLINE_SETTINGS.model_copy(update={"cancel_timeout_seconds": 5.0, "shutdown_cancel_seconds": 1.0})
+    async with start_front(settings, with_redis=False) as front:
+        front.horde.cancel_gate = asyncio.Event()
+        request_task = asyncio.create_task(front.client.post("/v1/chat/completions", json=build_chat_body()))
+        await wait_for_call(lambda: front.horde.cancels_received)
+        open_request = front.app.state.front.open_requests[REQUEST_ID]
+        assert open_request.cancel_state == CancelState.IN_PROGRESS
+
+        await _cancel_open_requests(front.app.state.front)
+        assert front.horde.cancels_received == 1
+
+        front.horde.cancel_gate.set()
+        response = await asyncio.wait_for(request_task, timeout=CALL_WAIT_SECONDS)
+
+    assert response.status_code == 408
+    assert front.horde.cancels_received == 1
+    assert open_request.cancel_state == CancelState.ACKNOWLEDGED
+
+
 async def test_owned_redis_client_enables_keepalive_without_the_client_health_check(monkeypatch: pytest.MonkeyPatch) -> None:
     created_clients: list[redis.asyncio.Redis] = []
     create_from_url = redis.asyncio.Redis.from_url
@@ -448,3 +499,23 @@ async def test_answered_liveness_pings_keep_the_subscription(monkeypatch: pytest
         assert len(fake_redis.pubsubs) == 1
     finally:
         await listener.stop()
+
+
+async def test_failed_cancels_past_the_cap_drop_the_oldest_with_a_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("horde.oai.app.MAX_FAILED_CANCELS", 2)
+    async with httpx.AsyncClient() as horde_http_client:
+        front_state = create_app(FAST_TEST_SETTINGS, http_client=horde_http_client, cancel_http_client=horde_http_client).state.front
+    credentials = HordeCredentials(apikey="test-key", client_agent="test:1:test")
+    warnings: list[str] = []
+    sink_id = logger.add(lambda message: warnings.append(message.record["message"]), level="WARNING")
+    try:
+        for request_number in range(3):
+            open_request = front_state.open_request(request_id=f"request-{request_number}", credentials=credentials)
+            open_request.cancel_state = CancelState.FAILED
+            front_state.close_request(open_request)
+    finally:
+        logger.remove(sink_id)
+
+    assert list(front_state.failed_cancels) == ["request-1", "request-2"]
+    assert len(warnings) == 1
+    assert "request-0" in warnings[0]

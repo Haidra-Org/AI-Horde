@@ -23,7 +23,7 @@ from horde.oai.horde_client import (
     create_http_client,
 )
 from horde.oai.waiter import ChatRequestWatcher, ChatWaitTimeoutError, CompletionSubscription, WaitBudget
-from tests.unit.oai.conftest import REQUEST_ID, done_status
+from tests.unit.oai.conftest import REQUEST_ID, UNRECORDED_METRICS, done_status
 
 pytestmark = pytest.mark.asyncio
 
@@ -52,13 +52,20 @@ async def test_watcher_deadline_includes_wait_for_client_capacity() -> None:
     with respx.mock() as router:
         route = router.get(f"{FIRST_URL}{STATUS_PATH}").mock(side_effect=hold_slot)
         async with httpx.AsyncClient() as http_client:
-            client = HordeClient(horde_urls=(FIRST_URL,), http_client=http_client, proxy_passkey=None, max_concurrent_calls=1)
+            client = HordeClient(
+                horde_urls=(FIRST_URL,),
+                http_client=http_client,
+                proxy_passkey=None,
+                front_metrics=UNRECORDED_METRICS,
+                max_concurrent_calls=1,
+            )
             occupied = asyncio.create_task(client.get_chat_status(request_id=REQUEST_ID, credentials=CREDENTIALS))
             await asyncio.wait_for(entered.wait(), timeout=2)
             watcher = ChatRequestWatcher(
                 horde_client=client,
                 credentials=CREDENTIALS,
                 subscription=CompletionSubscription(REQUEST_ID),
+                front_metrics=UNRECORDED_METRICS,
                 budget=WaitBudget(
                     deadline=time.monotonic() + 0.05,
                     final_status_timeout_seconds=0.05,
@@ -112,6 +119,7 @@ async def test_concurrent_calls_beyond_the_limit_wait_outside_the_pool() -> None
                 horde_urls=(FIRST_URL,),
                 http_client=http_client,
                 proxy_passkey=None,
+                front_metrics=UNRECORDED_METRICS,
                 max_concurrent_calls=2,
             )
             calls = [asyncio.create_task(horde_client.get_chat_status(request_id=REQUEST_ID, credentials=CREDENTIALS)) for _ in range(6)]
@@ -125,10 +133,11 @@ async def test_concurrent_calls_beyond_the_limit_wait_outside_the_pool() -> None
     assert all(status.done for status in statuses)
 
 
-async def test_refused_root_is_left_out_of_the_rotation_until_its_backoff_ends() -> None:
+@pytest.mark.parametrize("connection_error", [httpx.ConnectError, httpx.ConnectTimeout])
+async def test_refused_root_is_left_out_of_the_rotation_until_its_backoff_ends(connection_error: type[httpx.TransportError]) -> None:
     clock = ManualClock()
     with respx.mock() as router:
-        first_route = router.get(f"{FIRST_URL}{STATUS_PATH}").mock(side_effect=httpx.ConnectError("refused"))
+        first_route = router.get(f"{FIRST_URL}{STATUS_PATH}").mock(side_effect=connection_error("refused"))
         second_route = router.get(f"{SECOND_URL}{STATUS_PATH}").mock(
             return_value=httpx.Response(200, json=done_status()),
         )
@@ -137,6 +146,7 @@ async def test_refused_root_is_left_out_of_the_rotation_until_its_backoff_ends()
                 horde_urls=(FIRST_URL, SECOND_URL),
                 http_client=http_client,
                 proxy_passkey=None,
+                front_metrics=UNRECORDED_METRICS,
                 clock=clock,
             )
             for _ in range(4):
@@ -161,6 +171,7 @@ async def test_every_root_in_backoff_fails_without_connecting() -> None:
                 horde_urls=(FIRST_URL,),
                 http_client=http_client,
                 proxy_passkey=None,
+                front_metrics=UNRECORDED_METRICS,
                 clock=clock,
             )
             for _ in range(3):
@@ -179,7 +190,9 @@ async def test_connection_dropped_after_sending_is_not_retried_elsewhere() -> No
             return_value=httpx.Response(202, json={"id": REQUEST_ID}),
         )
         async with httpx.AsyncClient() as http_client:
-            horde_client = HordeClient(horde_urls=(FIRST_URL, SECOND_URL), http_client=http_client, proxy_passkey=None)
+            horde_client = HordeClient(
+                horde_urls=(FIRST_URL, SECOND_URL), http_client=http_client, proxy_passkey=None, front_metrics=UNRECORDED_METRICS
+            )
             with pytest.raises(HordeUnavailableError):
                 await horde_client.submit_chat(request_body={"model": "m"}, credentials=CREDENTIALS)
 
@@ -212,6 +225,7 @@ async def test_cancels_use_their_own_pool_while_status_reads_fill_the_main_one()
                 http_client=http_client,
                 cancel_http_client=cancel_http_client,
                 proxy_passkey=None,
+                front_metrics=UNRECORDED_METRICS,
                 max_concurrent_calls=1,
             )
             held_read = asyncio.create_task(horde_client.get_chat_status(request_id=REQUEST_ID, credentials=CREDENTIALS))

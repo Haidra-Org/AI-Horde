@@ -11,7 +11,8 @@ any root that refuses or drops a connection is left out of the rotation for
 [`UNHEALTHY_URL_BACKOFF_SECONDS`][horde.oai.horde_client.UNHEALTHY_URL_BACKOFF_SECONDS]. A Horde error response raises
 [`HordeAPIError`][horde.oai.horde_client.HordeAPIError] carrying the status, the Horde ``rc`` and the rate-limit
 headers; no root answering raises [`HordeUnavailableError`][horde.oai.horde_client.HordeUnavailableError], whose
-``request_sent`` says whether the call may have reached a Horde.
+``request_sent`` says whether the call may have reached a Horde. A submit sent again to recover a lost answer may fall
+back to roots left out of the rotation, since waiting out their backoff would spend the request's budget.
 
 Submits, status reads and model lists share one pool whose size the caller sets (``HORDE_OAI_NATIVE_MAX_CONNECTIONS``);
 the rest wait on a semaphore in arrival order before they reach the pool. Cancels use a second, smaller pool and
@@ -34,6 +35,8 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from horde.oai.metrics import FrontMetrics, NativeCallOutcome, NativeCallType
+
 __all__ = [
     "CANCEL_MAX_CONNECTIONS",
     "HTTP_MAX_CONNECTIONS",
@@ -42,6 +45,7 @@ __all__ = [
     "HordeAsyncSubmission",
     "HordeChatGeneration",
     "HordeChatMessage",
+    "HordeChatModelOffer",
     "HordeChatStatus",
     "HordeClient",
     "HordeCredentials",
@@ -57,6 +61,12 @@ CHAT_STATUS_PATH_TEMPLATE: str = "/v2/generate/chat/status/{request_id}"
 
 MODELS_PATH: str = "/v2/status/models"
 """The Horde route that lists active models."""
+
+CHAT_MODELS_QUERY: Mapping[str, str] = {
+    "type": "text",
+    "chat": "true",
+}
+"""The model list query that returns only models with online chat workers, each with its ``chat`` object."""
 
 APIKEY_HEADER: str = "apikey"
 """The header the Horde reads the API key from."""
@@ -145,7 +155,7 @@ class HordeCredentials(BaseModel):
     """The client's Horde API key, or the anonymous key; left out of the representation so it is never logged."""
 
     client_agent: str
-    """The ``Client-Agent`` value: the front's name and version plus the client's user agent."""
+    """The ``Client-Agent`` value, from [`build_client_agent`][horde.oai.attribution.build_client_agent]."""
 
     client_address: str | None = None
     """The client's address, sent as ``Proxied-For`` when the front has a proxy passkey."""
@@ -210,6 +220,10 @@ class HordeAsyncSubmission(BaseModel):
 
     message: str | None = None
     """An informational message, if any."""
+
+    existing_claim: bool = False
+    """True when the Horde answered 200 with the request the operation key already claimed; set from the status, since
+    a new request is answered 202 with the same body shape."""
 
 
 class HordeChatMessage(BaseModel):
@@ -308,6 +322,27 @@ class HordeChatStatus(BaseModel):
     """The context changes the Horde applied to fit the messages, when it reports any."""
 
 
+class HordeChatModelOffer(BaseModel):
+    """Represents the ``chat`` object of a chat model list entry: what the model's online chat workers declare."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    workers: int = 0
+    """How many online workers serve chat jobs with the model."""
+
+    max_context_length: int | None = None
+    """The largest chat context any of those workers declares."""
+
+    max_length: int | None = None
+    """The largest chat output any of those workers declares."""
+
+    features: list[str] = Field(default_factory=list)
+    """The sorted union of the optional chat features those workers declare."""
+
+    created: int | None = None
+    """Unix seconds at which the longest-registered of those workers was created; None when unknown."""
+
+
 class HordeActiveModel(BaseModel):
     """Represents one entry of the Horde's active model list."""
 
@@ -320,7 +355,10 @@ class HordeActiveModel(BaseModel):
     """How many worker threads serve it."""
 
     queued: float | None = None
-    """The queued work for the model."""
+    """The queued work for the model, which chat requests share with text requests."""
+
+    chat: HordeChatModelOffer | None = None
+    """What the model's online chat workers declare; present when the list was asked for with ``chat=true``."""
 
 
 class HordeClient:
@@ -338,6 +376,7 @@ class HordeClient:
         horde_urls: Sequence[str],
         http_client: httpx.AsyncClient,
         proxy_passkey: str | None,
+        front_metrics: FrontMetrics,
         cancel_http_client: httpx.AsyncClient | None = None,
         max_concurrent_calls: int = HTTP_MAX_CONNECTIONS,
         max_concurrent_cancels: int = CANCEL_MAX_CONNECTIONS,
@@ -349,6 +388,7 @@ class HordeClient:
             horde_urls: The Horde API roots, each ending in ``/api``.
             http_client: The HTTP client for submits, status reads and model lists; the caller owns and closes it.
             proxy_passkey: The front operator's proxy passkey, or None to send no ``Proxied-For``.
+            front_metrics: Where each call's latency and outcome is recorded.
             cancel_http_client: The HTTP client for cancels; None sends them through ``http_client`` under their own
                 semaphore. The caller owns and closes it.
             max_concurrent_calls: The most non-cancel calls in flight at once; keep it equal to the main pool's
@@ -362,26 +402,44 @@ class HordeClient:
         self._http_client = http_client
         self._cancel_http_client = cancel_http_client if cancel_http_client is not None else http_client
         self._proxy_passkey = proxy_passkey
+        self._front_metrics = front_metrics
         self._rotation = itertools.count()
         self._call_slots = asyncio.Semaphore(max_concurrent_calls)
         self._cancel_slots = asyncio.Semaphore(max_concurrent_cancels)
         self._clock = clock
         self._unhealthy_until: dict[str, float] = {}
 
-    async def submit_chat(self, *, request_body: Mapping[str, object], credentials: HordeCredentials) -> HordeAsyncSubmission:
+    async def submit_chat(
+        self,
+        *,
+        request_body: Mapping[str, object],
+        credentials: HordeCredentials,
+        fall_back_to_unhealthy_roots: bool = False,
+    ) -> HordeAsyncSubmission:
         """Queue a chat request and return the Horde's acknowledgement.
 
         Args:
             request_body: The native chat request body, as JSON-ready values.
             credentials: Who the call is made for.
+            fall_back_to_unhealthy_roots: Whether to try the roots left out of the rotation when none is healthy; a
+                recovery sets it, since the dropped connection it recovers from marks a single root unhealthy. The
+                call is recorded as a recovery when it is set.
 
         Raises:
             HordeAPIError: The Horde rejected the request.
             HordeUnavailableError: No Horde root accepted the connection, or the connection failed after the call was
                 sent (``request_sent`` true), so a request may exist.
         """
-        response = await self._send("POST", CHAT_SUBMIT_PATH, credentials=credentials, json_body=request_body)
-        return _parse_response(response, HordeAsyncSubmission)
+        response = await self._send(
+            "POST",
+            CHAT_SUBMIT_PATH,
+            call_type=NativeCallType.RECOVERY if fall_back_to_unhealthy_roots else NativeCallType.SUBMIT,
+            credentials=credentials,
+            json_body=request_body,
+            fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots,
+        )
+        submission = _parse_response(response, HordeAsyncSubmission)
+        return submission.model_copy(update={"existing_claim": response.status_code == HTTPStatus.OK})
 
     async def get_chat_status(self, *, request_id: str, credentials: HordeCredentials) -> HordeChatStatus:
         """Return the Horde's status of a chat request.
@@ -395,7 +453,7 @@ class HordeClient:
             HordeUnavailableError: No Horde root accepted the connection.
         """
         status_path = CHAT_STATUS_PATH_TEMPLATE.format(request_id=request_id)
-        response = await self._send("GET", status_path, credentials=credentials)
+        response = await self._send("GET", status_path, call_type=NativeCallType.STATUS, credentials=credentials)
         return _parse_response(response, HordeChatStatus)
 
     async def cancel_chat(self, *, request_id: str, credentials: HordeCredentials) -> HordeChatStatus:
@@ -413,14 +471,15 @@ class HordeClient:
         response = await self._send(
             "DELETE",
             status_path,
+            call_type=NativeCallType.CANCEL,
             credentials=credentials,
             http_client=self._cancel_http_client,
             call_slots=self._cancel_slots,
         )
         return _parse_response(response, HordeChatStatus)
 
-    async def list_text_models(self, *, credentials: HordeCredentials) -> list[HordeActiveModel]:
-        """Return the Horde's active text models.
+    async def list_chat_models(self, *, credentials: HordeCredentials) -> list[HordeActiveModel]:
+        """Return the Horde's text models that an online chat worker serves, each with its ``chat`` object.
 
         Args:
             credentials: Who the call is made for.
@@ -429,7 +488,13 @@ class HordeClient:
             HordeAPIError: The Horde answered with an error.
             HordeUnavailableError: No Horde root accepted the connection.
         """
-        response = await self._send("GET", MODELS_PATH, credentials=credentials, query={"type": "text"})
+        response = await self._send(
+            "GET",
+            MODELS_PATH,
+            call_type=NativeCallType.MODELS,
+            credentials=credentials,
+            query=CHAT_MODELS_QUERY,
+        )
         try:
             return [HordeActiveModel.model_validate(model_entry) for model_entry in response.json()]
         except (ValueError, TypeError, ValidationError) as error:
@@ -451,22 +516,26 @@ class HordeClient:
         method: str,
         path: str,
         *,
+        call_type: NativeCallType,
         credentials: HordeCredentials,
         json_body: Mapping[str, object] | None = None,
         query: Mapping[str, str] | None = None,
         http_client: httpx.AsyncClient | None = None,
         call_slots: asyncio.Semaphore | None = None,
+        fall_back_to_unhealthy_roots: bool = False,
     ) -> httpx.Response:
         """Send one call, trying each healthy root in rotation until one accepts the connection.
 
         Args:
             method: The HTTP method.
             path: The route below the API root.
+            call_type: The kind of call, recorded with its latency and outcome.
             credentials: Who the call is made for.
             json_body: The JSON body, if any.
             query: The query parameters, if any.
             http_client: The client to send through; None selects the main client.
             call_slots: The semaphore bounding calls through that client; None selects the main one.
+            fall_back_to_unhealthy_roots: Whether to try every root in rotation order when none is healthy.
 
         Returns:
             The Horde's successful response.
@@ -479,40 +548,92 @@ class HordeClient:
         headers = self._build_headers(credentials)
         sending_client = http_client if http_client is not None else self._http_client
         async with call_slots if call_slots is not None else self._call_slots:
-            for horde_url in self._healthy_urls_in_rotation():
-                try:
-                    response = await sending_client.request(
-                        method,
-                        f"{horde_url}{path}",
-                        headers=headers,
-                        json=json_body,
-                        params=query,
-                    )
-                except httpx.ConnectError as error:
-                    # Only a refused connection is retried elsewhere: the call never reached that Horde, so a submit
-                    # cannot be queued twice.
+            # Timed after taking a call slot, so time queued on the semaphore is not part of the latency.
+            started_at = time.perf_counter()
+            outcome = NativeCallOutcome.ABANDONED
+            try:
+                response = await self._send_in_rotation(
+                    method,
+                    path,
+                    sending_client=sending_client,
+                    headers=headers,
+                    json_body=json_body,
+                    query=query,
+                    fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots,
+                )
+                outcome = NativeCallOutcome.OK
+            except HordeAPIError:
+                outcome = NativeCallOutcome.REFUSED
+                raise
+            except HordeUnavailableError:
+                outcome = NativeCallOutcome.UNREACHABLE
+                raise
+            finally:
+                self._front_metrics.record_native_call(
+                    call_type=call_type,
+                    outcome=outcome,
+                    duration_seconds=time.perf_counter() - started_at,
+                )
+        return response
+
+    async def _send_in_rotation(
+        self,
+        method: str,
+        path: str,
+        *,
+        sending_client: httpx.AsyncClient,
+        headers: Mapping[str, str],
+        json_body: Mapping[str, object] | None,
+        query: Mapping[str, str] | None,
+        fall_back_to_unhealthy_roots: bool,
+    ) -> httpx.Response:
+        """Return the first answer of the healthy roots in rotation; the caller holds a call slot.
+
+        Raises:
+            HordeAPIError: The Horde answered with a status of 400 or above.
+            HordeUnavailableError: No healthy root accepted the connection, or the connection failed after the call
+                was sent.
+        """
+        for horde_url in self._healthy_urls_in_rotation(fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots):
+            try:
+                response = await sending_client.request(
+                    method,
+                    f"{horde_url}{path}",
+                    headers=headers,
+                    json=json_body,
+                    params=query,
+                )
+            except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+                # A refused or timed-out connection can be retried elsewhere: the call never reached that Horde, so a submit
+                # cannot be queued twice.
+                self._mark_unhealthy(horde_url, error)
+                continue
+            except httpx.TransportError as error:
+                # The call may have reached the Horde, so it is not retried elsewhere. A timeout says the Horde
+                # is slow rather than gone, so it does not take the root out of the rotation.
+                if not isinstance(error, httpx.TimeoutException):
                     self._mark_unhealthy(horde_url, error)
-                    continue
-                except httpx.TransportError as error:
-                    # The call may have reached the Horde, so it is not retried elsewhere. A timeout says the Horde
-                    # is slow rather than gone, so it does not take the root out of the rotation.
-                    if not isinstance(error, httpx.TimeoutException):
-                        self._mark_unhealthy(horde_url, error)
-                    raise HordeUnavailableError(
-                        f"The Horde at {horde_url} failed {method} {path}: {error!r}",
-                        request_sent=not isinstance(error, httpx.ConnectTimeout | httpx.PoolTimeout),
-                    ) from error
-                if response.status_code >= HTTPStatus.BAD_REQUEST:
-                    raise _api_error_from_response(response)
-                return response
+                raise HordeUnavailableError(
+                    f"The Horde at {horde_url} failed {method} {path}: {error!r}",
+                    request_sent=not isinstance(error, httpx.ConnectTimeout | httpx.PoolTimeout),
+                ) from error
+            if response.status_code >= HTTPStatus.BAD_REQUEST:
+                raise _api_error_from_response(response)
+            return response
         raise HordeUnavailableError(f"No healthy Horde accepted the connection for {method} {path}.", request_sent=False)
 
-    def _healthy_urls_in_rotation(self) -> list[str]:
-        """Return the roots not marked unhealthy, starting from the next one in the rotation."""
+    def _healthy_urls_in_rotation(self, *, fall_back_to_unhealthy_roots: bool = False) -> list[str]:
+        """Return the roots not marked unhealthy, starting from the next one in the rotation.
+
+        With ``fall_back_to_unhealthy_roots``, every root is returned in rotation order when none is healthy.
+        """
         start_index = next(self._rotation) % len(self._horde_urls)
         now = self._clock()
         rotated_urls = self._horde_urls[start_index:] + self._horde_urls[:start_index]
-        return [horde_url for horde_url in rotated_urls if self._unhealthy_until.get(horde_url, 0.0) <= now]
+        healthy_urls = [horde_url for horde_url in rotated_urls if self._unhealthy_until.get(horde_url, 0.0) <= now]
+        if not healthy_urls and fall_back_to_unhealthy_roots:
+            return list(rotated_urls)
+        return healthy_urls
 
     def _mark_unhealthy(self, horde_url: str, error: httpx.TransportError) -> None:
         """Leave ``horde_url`` out of the rotation for the backoff, logging only when it was healthy until now."""
