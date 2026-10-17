@@ -109,10 +109,29 @@ spawn-rate = 5
 #   --anon-chance-poller / HORDE_ANON_CHANCE_POLLER       (default: 0.75)
 #   --anon-chance-requester / HORDE_ANON_CHANCE_REQUESTER (default: 0.65)
 #
+# Chat contract mix (opt-in; every count 0 leaves the chat users out; see README "Chat contract mix"):
+#   --chat-mix-front-host / HORDE_CHAT_MIX_FRONT_HOST           (front base URL, with or without /v1)
+#   --chat-mix-front-clients / HORDE_CHAT_MIX_FRONT_CLIENTS     (default: 0)
+#   --chat-mix-native-clients / HORDE_CHAT_MIX_NATIVE_CLIENTS   (default: 0)
+#   --chat-mix-workers / HORDE_CHAT_MIX_WORKERS                 (default: 0)
+#   --chat-mix-worker-names / HORDE_CHAT_MIX_WORKER_NAMES       (default: generated names; one per chat worker of the whole run)
+#   --chat-mix-worker-api-key / HORDE_CHAT_MIX_WORKER_API_KEY   (the key owning every configured name; required with them)
+#   --chat-mix-worker-personas / HORDE_CHAT_MIX_WORKER_PERSONAS (default: conformant,limited,flaky; taken in turn by the worker slots)
+#   --chat-mix-model, --chat-mix-limited-model, --chat-mix-flaky-model
+#                                                               (default: stress/chat-conformant, -limited, -flaky)
+#   --chat-mix-flaky-rate / HORDE_CHAT_MIX_FLAKY_RATE           (default: 0.3)
+#   --chat-mix-group-weights / HORDE_CHAT_MIX_GROUP_WEIGHTS     (default: ordinary=6,tools=4,structured=3,
+#                                                                conformance=2,gap=2,misuse=3,lite=2,vision=1)
+#   --chat-mix-stream-chance, --chat-mix-include-usage-chance   (default: 0.5, 0.5)
+#   --chat-mix-anonymous-share / HORDE_CHAT_MIX_ANONYMOUS_SHARE (default: 0.1 of ordinary and lite scenarios)
+#   --chat-mix-gen-time-min, --chat-mix-gen-time-max            (default: 1.0, 3.0 seconds)
+#   --chat-mix-aborting-per-hour, --chat-mix-oversized-per-hour (default: 2 in the whole run, at most 6; 2)
+#   --chat-mix-vision, --chat-mix-skip-fault-verify             (flags)
+#
 # Staged load shape (only when using locustfile_shaped.py):
 #   --stress-shape-profile / HORDE_STRESS_SHAPE_PROFILE   (smoke|baseline|spike; default: baseline)
 #   --stress-shape-scale / HORDE_STRESS_SHAPE_SCALE       (default: 1.0)
 #
 # Task tags:
 #   image, text, interrogation, meta, misuse, hot, cold, status, worker,
-#   requestor, sampler-features
+#   requestor, sampler-features, chat, chat-front, chat-native, chat-worker

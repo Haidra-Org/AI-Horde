@@ -18,6 +18,9 @@ For staged load profiles, use ``locustfile_shaped.py`` instead.
 
 from locustsuite import (
     BaselineFeatureRequester,
+    ChatMixFrontClient,
+    ChatMixNativeClient,
+    ChatMixWorker,
     ExtendedWorkerSimulator,
     HotPathRequester,
     InterrogationRequester,
@@ -34,6 +37,9 @@ from locustsuite import (
 
 __all__ = [
     "BaselineFeatureRequester",
+    "ChatMixFrontClient",
+    "ChatMixNativeClient",
+    "ChatMixWorker",
     "ExtendedWorkerSimulator",
     "HotPathRequester",
     "InterrogationRequester",

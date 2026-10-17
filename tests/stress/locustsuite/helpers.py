@@ -5,11 +5,17 @@
 """Shared helpers used by the AI Horde Locust workloads."""
 
 import random
+import re
+import string
 import time
 
 from locust.exception import RescheduleTask
 
 from .config import _config
+
+# The Horde refuses a new worker whose name contains any of these, case-insensitively, with a 400 asking to avoid
+# unwanted attention (``colab_search`` in ``horde/apis/v2/base.py``); keep the two lists equal.
+_REFUSED_WORKER_NAME_PATTERN = re.compile(r"colab|tpu|google", re.IGNORECASE)
 
 
 def _is_expected_rc(body_json: dict | None, rc_set: set[str]) -> bool:
@@ -83,6 +89,15 @@ def _handle_async_generate(resp, environment) -> str | None:
 
     resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
     return None
+
+
+def _random_worker_name(prefix: str, suffix_length: int) -> str:
+    """Return ``prefix`` followed by random lowercase letters, drawn again until the whole name holds none of the
+    substrings the Horde refuses in a worker name."""
+    while True:
+        worker_name = prefix + "".join(random.choices(string.ascii_lowercase, k=suffix_length))
+        if not _REFUSED_WORKER_NAME_PATTERN.search(worker_name):
+            return worker_name
 
 
 def _parse_csv(value: str) -> list[str]:

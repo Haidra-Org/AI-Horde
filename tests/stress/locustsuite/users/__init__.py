@@ -4,6 +4,7 @@
 
 """User classes exported for Locust discovery."""
 
+from .chat_mix import ChatMixFrontClient, ChatMixNativeClient, ChatMixWorker
 from .image import (
     BaselineFeatureRequester,
     ExtendedWorkerSimulator,
@@ -20,6 +21,9 @@ from .text import TextRequester, TextWorkerSimulator
 
 __all__ = [
     "BaselineFeatureRequester",
+    "ChatMixFrontClient",
+    "ChatMixNativeClient",
+    "ChatMixWorker",
     "ExtendedWorkerSimulator",
     "HotPathRequester",
     "InterrogationRequester",

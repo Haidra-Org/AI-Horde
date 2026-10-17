@@ -476,14 +476,15 @@ curl -s -i "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API
 | Tools, tool choice and response format | 256 KiB of compact JSON together; 128 tools; schemas nested at most 10 levels | 400 `UnsupportedChatParameter` |
 | Tool calls replayed in one assistant message | 128 | 400 |
 | `max_tokens` | 16 to 4096 | 400 `UnsupportedChatParameter` |
-| `max_tokens` against workers | At most a worker's declared length; the card's `max_completion_tokens` is the largest | 503 `no_eligible_worker` after the grace period |
+| `max_tokens` against workers | At most a worker's declared length; the card's `max_completion_tokens` is the largest | 400 `no_worker_supports_limit` on `max_tokens`, at once |
 | Non-streamed and streamed wait | 300 and 600 seconds by default; the deployment sets them | 408 `ChatRequestTimeout`, or an in-stream error |
 
 `max_tokens` is the limit clients most often exceed: a client default above every online worker's declared length
 makes the request ineligible. Omitting `max_tokens` sends 512, which is also ineligible on a model whose workers all
 declare less, so send an explicit value at or below the card's `max_completion_tokens`.
 
-Verification: a request at the card's `max_completion_tokens` is served; one above it ends with `no_eligible_worker`.
+Verification: a request at the card's `max_completion_tokens` is served; one above it ends with 400
+`no_worker_supports_limit` and `param` `max_tokens`.
 
 ## Deliberate deviations
 

@@ -37,7 +37,6 @@ run's elapsed wall-clock time against durations configured at test start.
 from __future__ import annotations
 
 import random
-import string
 import threading
 import time
 import uuid
@@ -52,6 +51,7 @@ from ..helpers import (
     _headers,
     _is_expected_rc,
     _is_too_many_workers,
+    _random_worker_name,
     _record_expected,
     _safe_json,
 )
@@ -270,7 +270,7 @@ class ServingWorker(HttpUser):
     wait_time = constant_pacing(0.1)
 
     def on_start(self) -> None:
-        self.worker_name = f"QPWorker-{''.join(random.choices(string.ascii_lowercase, k=6))}"
+        self.worker_name = _random_worker_name("QPWorker-", 6)
         keys = _config.get("worker_api_keys", [])
         # Each worker owns a stable key for its lifetime so worker identity does
         # not churn mid-run and confound the pop attribution.

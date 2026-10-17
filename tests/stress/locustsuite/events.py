@@ -9,6 +9,7 @@ import logging
 import uuid
 
 from locust import events
+from locust.runners import MasterRunner, WorkerRunner
 import requests
 
 from .config import _config
@@ -412,6 +413,64 @@ def _remove_tag_filtered_user_classes(environment) -> None:
         logger.info("Excluding user classes with no tasks after tag filtering: %s", ", ".join(removed))
 
 
+def _leave_out_user_classes(environment, opt_in_counts) -> None:
+    """Keep unrequested opt-in classes and classes a tag filter emptied from spawning, in the way each runner allows.
+
+    A local run removes them from ``environment.user_classes`` before its dispatcher exists. A master built its
+    dispatcher before the test start, from every class, so removing a class there changes nothing; it sets the class's
+    weight to 0 instead, which the dispatcher reads when it dispatches. A worker process keeps every class: the master's
+    spawn messages name each class it dispatches, zero counts included, and a class the worker no longer has fails the
+    spawn with a ``KeyError``.
+
+    Args:
+        environment: The Locust environment.
+        opt_in_counts: The requested count of each opt-in class, such as the chat mix users.
+    """
+    if isinstance(environment.runner, WorkerRunner):
+        return
+    if isinstance(environment.runner, MasterRunner):
+        _zero_weight_of_classes_left_out(environment, opt_in_counts)
+        return
+    _remove_unrequested_opt_in_classes(environment, opt_in_counts)
+    _remove_tag_filtered_user_classes(environment)
+
+
+def _zero_weight_of_classes_left_out(environment, opt_in_counts) -> None:
+    """Mutate the weight of unrequested opt-in classes and of classes without tasks to 0, on a master.
+
+    Raises:
+        RuntimeError: A class with a fixed count lost all its tasks to the tag filter.
+    """
+    left_out = []
+    for user_class in environment.user_classes:
+        is_unrequested = user_class in opt_in_counts and opt_in_counts[user_class] <= 0
+        if user_class.tasks and not is_unrequested:
+            continue
+        if user_class.fixed_count > 0:
+            raise RuntimeError(
+                f"{user_class.__name__} requests {user_class.fixed_count} fixed users, but tag filtering removed all of its tasks.",
+            )
+        user_class.weight = 0
+        left_out.append(user_class.__name__)
+    if left_out:
+        logger.info("Dispatching no users of: %s", ", ".join(left_out))
+
+
+def _remove_unrequested_opt_in_classes(environment, opt_in_counts) -> None:
+    """Mutate ``environment.user_classes`` to leave out the opt-in classes whose requested count is zero.
+
+    Args:
+        environment: The Locust environment.
+        opt_in_counts: The requested count of each opt-in class, such as the chat mix users.
+    """
+    removed = [user_class.__name__ for user_class, count in opt_in_counts.items() if count <= 0 and user_class in environment.user_classes]
+    environment.user_classes[:] = [
+        user_class for user_class in environment.user_classes if not (user_class in opt_in_counts and opt_in_counts[user_class] <= 0)
+    ]
+    if removed:
+        logger.info("Leaving out opt-in user classes with no requested count: %s", ", ".join(removed))
+
+
 @events.test_start.add_listener
 def on_test_start(environment, **kw):
     opts = environment.parsed_options
@@ -463,6 +522,9 @@ def on_test_start(environment, **kw):
     # CLI arguments are guaranteed to be parsed.
     from .users import (
         BaselineFeatureRequester,
+        ChatMixFrontClient,
+        ChatMixNativeClient,
+        ChatMixWorker,
         ExtendedWorkerSimulator,
         HotPathRequester,
         InterrogationRequester,
@@ -491,7 +553,17 @@ def on_test_start(environment, **kw):
         (BaselineFeatureRequester, "baseline_feature_requestors"),
         (MetaBrowser, "meta_browsers"),
         (MisuseUser, "misuse_users"),
+        (ChatMixFrontClient, "chat_mix_front_clients"),
+        (ChatMixNativeClient, "chat_mix_native_clients"),
+        (ChatMixWorker, "chat_mix_workers"),
     )
+    # The chat mix needs a running front and worker names its key owns, so its classes join the run only when asked
+    # for by count, never through the weight distribution.
+    _opt_in_counts = {
+        ChatMixFrontClient: int(getattr(opts, "chat_mix_front_clients", 0) or 0),
+        ChatMixNativeClient: int(getattr(opts, "chat_mix_native_clients", 0) or 0),
+        ChatMixWorker: int(getattr(opts, "chat_mix_workers", 0) or 0),
+    }
     total_image_workers = int(getattr(opts, "image_workers", 0) or 0)
     if total_image_workers and not opts.legacy_image_workers and not opts.extended_image_workers:
         if total_image_workers < 2:
@@ -514,4 +586,4 @@ def on_test_start(environment, **kw):
             fixed_total,
         )
 
-    _remove_tag_filtered_user_classes(environment)
+    _leave_out_user_classes(environment, _opt_in_counts)

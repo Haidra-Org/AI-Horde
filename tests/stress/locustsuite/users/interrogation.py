@@ -5,7 +5,6 @@
 """Interrogation requestor and worker Locust users."""
 
 import random
-import string
 import time
 
 from locust import HttpUser, between, tag, task
@@ -18,6 +17,7 @@ from ..helpers import (
     _is_too_many_workers,
     _pick_requestor_key,
     _pick_worker_key,
+    _random_worker_name,
     _record_expected,
     _safe_json,
 )
@@ -112,7 +112,7 @@ class InterrogationWorkerSimulator(HttpUser):
     wait_time = between(2, 5)
 
     def create_worker_name(self):
-        return f"StressAlchemist-{''.join(random.choices(string.ascii_lowercase, k=4))}"
+        return _random_worker_name("StressAlchemist-", 4)
 
     def on_start(self):
         self.worker_name = self.create_worker_name()
@@ -151,7 +151,7 @@ class InterrogationWorkerSimulator(HttpUser):
                 if resp.status_code == 429:
                     resp.success()
                     raise RescheduleTask()
-                resp.failure(f"Interrogate pop failed: {resp.status_code}: {resp.text[:200]}")
+                resp.failure(f"Interrogate pop failed: Status {resp.status_code}: {resp.text[:200]}")
                 return
             data = body or {}
             forms = data.get("forms") or []

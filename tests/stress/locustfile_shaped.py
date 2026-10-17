@@ -10,6 +10,9 @@ This imports the same users/events as ``locustfile.py`` and additionally exposes
 """
 
 from locustsuite import (
+    ChatMixFrontClient,
+    ChatMixNativeClient,
+    ChatMixWorker,
     ExtendedWorkerSimulator,
     HotPathRequester,
     InterrogationRequester,
@@ -26,6 +29,9 @@ from locustsuite import (
 from locustsuite.shapes import HordeStagesShape
 
 __all__ = [
+    "ChatMixFrontClient",
+    "ChatMixNativeClient",
+    "ChatMixWorker",
     "ExtendedWorkerSimulator",
     "HordeStagesShape",
     "HotPathRequester",

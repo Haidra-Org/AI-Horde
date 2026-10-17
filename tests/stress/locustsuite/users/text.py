@@ -5,7 +5,6 @@
 """Text generation requestor and worker Locust users."""
 
 import random
-import string
 import time
 import uuid
 
@@ -20,6 +19,7 @@ from ..helpers import (
     _pick_requestor_key,
     _pick_worker_key,
     _random_prompt,
+    _random_worker_name,
     _record_expected,
     _safe_json,
 )
@@ -143,7 +143,7 @@ class TextWorkerSimulator(HttpUser):
     wait_time = between(1, 4)
 
     def create_worker_name(self):
-        return f"StressTextWorker-{''.join(random.choices(string.ascii_lowercase, k=4))}"
+        return _random_worker_name("StressTextWorker-", 4)
 
     def on_start(self):
         self.worker_name = self.create_worker_name()
@@ -188,7 +188,7 @@ class TextWorkerSimulator(HttpUser):
                         self.environment, "POST", "/api/v2/generate/text/pop", resp.elapsed.total_seconds() * 1000, len(resp.content or b"")
                     )
                     raise RescheduleTask()
-                resp.failure(f"Text pop failed: {resp.status_code}: {resp.text[:200]}")
+                resp.failure(f"Text pop failed: Status {resp.status_code}: {resp.text[:200]}")
                 return
             data = body or {}
             job_id = data.get("id")

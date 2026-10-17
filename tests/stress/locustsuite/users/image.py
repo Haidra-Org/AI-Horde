@@ -5,7 +5,6 @@
 """Image generation requestor and worker Locust users."""
 
 import random
-import string
 import time
 from collections import deque
 from collections.abc import Sequence
@@ -37,6 +36,7 @@ from ..helpers import (
     _pick_requestor_key,
     _pick_worker_key,
     _random_prompt,
+    _random_worker_name,
     _record_expected,
     _safe_json,
 )
@@ -390,7 +390,7 @@ class WorkerSimulator(HttpUser):
     wait_time = between(1, 4)
 
     def create_worker_name(self):
-        return f"StressWorker-{self.bridge_generation}-{''.join(random.choices(string.ascii_lowercase, k=4))}"
+        return _random_worker_name(f"StressWorker-{self.bridge_generation}-", 4)
 
     def on_start(self):
         self.worker_name = self.create_worker_name()
@@ -506,7 +506,7 @@ class WorkerSimulator(HttpUser):
                     )
                     time.sleep(random.uniform(2.0, 6.0))
                     raise RescheduleTask()
-                resp.failure(f"Pop failed: {resp.status_code}: {resp.text[:200]}")
+                resp.failure(f"Pop failed: Status {resp.status_code}: {resp.text[:200]}")
                 return
             pop_data = body or {}
             job_id = pop_data.get("id", None)

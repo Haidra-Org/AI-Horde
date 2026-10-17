@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import collections
 import random
-import string
 import threading
 import time
 import uuid
@@ -58,6 +57,7 @@ from ..helpers import (
     _headers,
     _is_expected_rc,
     _is_too_many_workers,
+    _random_worker_name,
     _record_expected,
     _safe_json,
 )
@@ -365,7 +365,7 @@ class ConvoyWorker(HttpUser):
     wait_time = constant_pacing(0.1)
 
     def on_start(self) -> None:
-        self.worker_name = f"HCWorker-{''.join(random.choices(string.ascii_lowercase, k=8))}"
+        self.worker_name = _random_worker_name("HCWorker-", 8)
         keys = convoy_state.worker_keys
         self.api_key = random.choice(keys) if keys else _ANON_API_KEY
 

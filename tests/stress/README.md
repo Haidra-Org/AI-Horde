@@ -32,6 +32,10 @@ helpers, and Locust event hooks stay in coherent modules:
   and queue-pressure populations).
 - `locustsuite/shapes.py`, `helpers.py`, and `ground_truth.py` hold the staged
   load profiles, shared request helpers, and the attribution oracle.
+- `locustsuite/chat_*.py` hold the chat contract mix: request permutations,
+  response checks, simulated worker behaviour, settings and one module per
+  population; `locustsuite/users/chat_mix.py` exports its users. See
+  [Chat contract mix](#chat-contract-mix).
 
 The `locustfile*.py` files at the top of `tests/stress/` are thin entrypoints
 that re-export the User classes Locust should discover:
@@ -50,6 +54,10 @@ that re-export the User classes Locust should discover:
   nonsense tokens, reviews the evidence listing as a moderator (following
   `text_url` links and checking digests), and probes the moderation surface the
   way an attacker would. See [Moderation evidence scenario](#moderation-evidence-scenario).
+- `locustfile_chat.py` drives the OpenAI-compatible chat front with streamed,
+  non-streamed and impatient clients while simulated chat workers serve the
+  Horde instances behind it. `run_chat_scale_demo.sh` wraps it with the
+  processes it needs. See [Chat front scale demo](#chat-front-scale-demo).
 
 ## Prerequisites
 
@@ -57,7 +65,8 @@ that re-export the User classes Locust should discover:
   uv, `pip install locust`).
 - Bring up a running AI Horde deployment for Locust to target. The suite never
   starts the server or its backends itself; it only sends HTTP requests to the
-  `--host` you give it.
+  `--host` you give it. `run_chat_scale_demo.sh` is the exception: it starts its
+  own Horde instances and front (see [Chat front scale demo](#chat-front-scale-demo)).
 - Stand up the server's backends. `tests/docker-compose.yml` provides an
   optional long-lived Postgres, Redis, and Garage (S3) stack for local work:
 
@@ -566,4 +575,395 @@ on any failure. `--evidence` takes one file per host. On a shared deployment,
 before the response that set a timeout arrived may still be rejected. A timeout
 that follows a filter rejection says nothing about the model threshold, so the
 onset check then tests only its upper bound.
+
+## Chat contract mix
+
+The chat contract mix adds chat users to the default `locustfile.py` (and
+`locustfile_shaped.py`) mix, beside the image, text and interrogation users. It
+is opt-in: `events.on_test_start` pins each population to its count like every
+other class and leaves out one whose count is zero, since the clients need a
+running OpenAI-compatible front and the workers need worker names their key
+owns. With every count at zero, the default, the mix is unchanged.
+
+| Population | Count flag | What it does |
+| --- | --- | --- |
+| `ChatMixFrontClient` | `--chat-mix-front-clients` | Posts the permutations in `chat_scenarios.py` to the front, streamed or not, and checks every response against the outcome the contract promises: body and stream shape, `finish_reason`, tool calls, JSON against the schema sent, the request's nonce echoed back, usage, `x_horde`, a non-null `system_fingerprint`, error envelope and `type`, `param`, `x-should-retry`, `Retry-After` and CORS. Also reads the model cards and sends Lite's CORS preflight. |
+| `ChatMixNativeClient` | `--chat-mix-native-clients` | Drives the native routes: polls a chat request to the end, reuses an operation key unchanged and changed, asks for a dry run, reads the declaration gap from the status, and sends text requests to a chat worker's model and to a chat-only worker's model. |
+| `ChatMixWorker` | `--chat-mix-workers` | Pops chat jobs as a persona, checks each payload against its own declaration (routing and dispatch narrowing), and answers as the client's reply marker asks, echoing the request's nonce. With `--chat-mix-worker-progress`, a conforming text reply to a job whose payload carries `stream_progress` is first posted to `/api/v2/generate/text/progress` as deltas, one per `--chat-mix-worker-progress-interval` seconds (default 1) of the generation time, under the same rules as `ChatWorkerSimulator`'s progress mode; faults, tool calls and replies that break a contract are not posted. |
+
+The modules are `locustsuite/chat_scenarios.py` (permutations and expected
+outcomes), `chat_checks.py` (response checks), `chat_worker_script.py`
+(personas, replies, payload checks), `chat_mix_settings.py` (arguments,
+settings, coverage gate), and one module per population
+(`chat_front_client.py`, `chat_native_client.py`, `chat_worker_user.py`);
+`users/chat_mix.py` exports the classes.
+
+### Workers and their names
+
+The run's chat workers take worker slots in order, and slot `n` takes persona
+`n` modulo `--chat-mix-worker-personas` (default `conformant,limited,flaky`)
+and, when names are configured, the `n`-th name, so a name always pops as the
+same persona. Each persona serves its own model (`--chat-mix-model`,
+`--chat-mix-limited-model`, `--chat-mix-flaky-model`), so a scenario reaches the
+declaration it needs and no other worker answers it:
+
+- `conformant` declares every feature and guarantee and takes chat jobs only.
+- `limited` declares `seed` and `tools` with only `prompt_overflow_refused` and
+  `tools_max_temperature` 0.5, and takes text jobs too; forced tool choices,
+  `json_object` and hot tool temperatures on its model end in 404
+  `no_worker_supports_features`.
+- `flaky` declares every feature but `vision` and `tools_with_response_format`
+  and breaks an unscripted reply's contract at `--chat-mix-flaky-rate`; a
+  `strict` reply that reaches the client still has to honour the request.
+
+On a deployment with anti-abuse limits, reuse worker names a key already owns:
+`--chat-mix-worker-names` holds one name per worker slot of the whole run, and
+`--chat-mix-worker-api-key` is the key that owns every one of them. The run
+refuses to start with names but no key, fewer names than
+`--chat-mix-workers`, or duplicate names among the active worker slots. Without names the workers generate names under the worker key pool.
+No worker takes a new identity to get past a refusal: a configured name whose
+pop is refused (wrong owner, too many workers, maintenance) backs off and stops
+after three refusals in a row, and a generated name stops at the first. A
+stopped worker fails the run through the coverage gate.
+
+A scenario that needs a worker behaviour writes `[reply:<script>]` into its last
+user message (`ReplyScript` in `chat_worker_script.py`), so the client knows the
+outcome it caused, such as a 502 `ChatRequestFaulted` after three refused
+replies. The aborting scenarios (an undeclared function, duplicate call ids, a
+worker fault) fault three jobs each, and every fault counts as the worker's
+aborted job; the Horde puts a worker into maintenance past 20 aborted jobs an
+hour, 10 while the deployment is in raid mode, as dev is. They are capped by
+`--chat-mix-aborting-per-hour`, across the whole run: 2 by default (6 aborted
+jobs), at most 6. In a distributed run only worker process 0 sends them, so the
+run's total stays the configured one; the other processes log that they skip
+them. As a breaker,
+a worker whose replies meant to conform are refused three times stops without
+faulting the last job, so a Horde regression cannot push a worker name into
+maintenance.
+
+### Groups, tags and classification
+
+`--chat-mix-group-weights` weights the front's scenario groups (`ordinary`,
+`tools`, `structured`, `conformance`, `gap`, `misuse`, `lite`, `vision`); a
+group left out weighs 0. Give a group weight 0 when the run has no worker of the
+persona it needs. The `vision` group runs only with `--chat-mix-vision`, which
+makes the conformant persona declare `vision` with the `base64` transport; the
+worker then checks the image reached it as a JPEG data URL (prefix and JPEG
+magic bytes) and answers `vision-ok`, which the scenario requires; the Horde has
+to store the image at submit. Every chat task carries the `chat` tag, plus
+`chat-front`, `chat-native` or `chat-worker`, so `--tags chat` runs the chat mix
+alone and `--exclude-tags chat` leaves it out.
+
+Outcomes are classified in the users, and `check_smoke_results.py` gates on
+them:
+
+- A response that breaks its scenario's expected outcome fails with a message
+  starting `Contract violation`, whatever its status, as does an unexpected
+  refusal of a worker's pop or submit, a native text or status call, or the
+  model list. The checker gates on it.
+- A deployment condition fails with a message starting `Environment
+  condition`: 503 `ChatAdmissionDisabled`, `MaintenanceMode`, 502
+  `HordeUnavailable`, 408 `ChatRequestTimeout`, 403 `TimeoutIP`, and any 5xx
+  without an error envelope (a proxy's error page). The checker reports these in
+  their own section and gates on them: the run did not exercise what it meant to.
+- An intended outcome, such as a 404 declaration gap or a 502 after refused
+  replies, is a success of the scenario's row. An intended 502 is also
+  cross-checked on the native status (`faulted`, `fault_rc`) unless
+  `--chat-mix-skip-fault-verify` is set.
+- Operating conditions are successes recorded under `<row> [benign <kind>]`:
+  429, 503 `FrontAtCapacity`, 403 `KudosUpfront`, 503 `queue_unavailable` to a
+  `fail_fast` request (see [Fail-fast share](#fail-fast-share)), and an
+  oversized upload the front cut off before the client read its 413 (`upload
+  reset before 413`: the front answers from the `Content-Length` without reading
+  the body and closes the connection).
+
+At test stop a coverage gate fails the run (`[coverage] chat mix`) when a
+configured persona never came online or its worker stopped itself, when no
+front scenario outside the misuse group completed, or, in a run longer than 5
+minutes, when a weighted group recorded no attempt.
+
+### Anonymous share
+
+`--chat-mix-anonymous-share` (0 to 1, default 0.1) sends that share of the
+`ordinary` and `lite` scenarios without `Authorization`, as anonymous users,
+under rows named `<scenario> anonymous`. The front treats a missing header as
+the anonymous key and nothing else differs on the wire
+(`docs/decisions/0035-keep-anonymous-access-on-the-chat-front.md`), so the
+expected outcome stays the scenario's. The Horde's side differs: the anonymous
+user holds no kudos and ranks last, so its queue wait is recorded apart
+(`[queue_wait_seconds] <persona> anonymous`); a request above 256 tokens, the
+floor of the Horde's upfront-kudos threshold (`require_upfront_kudos`), may get
+403 `KudosUpfront` (benign), while one at or below it never may, so that refusal
+is a contract violation there; and all anonymous traffic shares one concurrency
+limit, whose 429 is benign like any rate limit. `anonymous_plain` stays as an
+always-anonymous scenario.
+
+### Fail-fast share
+
+`--chat-mix-fail-fast-share` (0 to 1, default 0) sends that share of the
+`ordinary`, `tools`, `structured`, `conformance`, `gap` and `vision` scenarios
+with `horde: {"availability_mode": "fail_fast"}`, under rows named `<scenario>
+fail_fast`. The `misuse` group is refused before anything is queued, and the
+`lite` group keeps the body shape Lite sends, so neither gets the mode. It
+measures the front's admission decision at the first status read
+(`docs/reference/chat_requests.md`): the scenario's own outcome stays expected,
+and a 503 `queue_unavailable` is allowed beside it as an operating condition. The
+refusal has to carry `param: horde.availability_mode`, `Retry-After` and
+`x-should-retry: false`, as a plain HTTP error for streamed and non-streamed
+requests alike, or it is a contract violation; a `queue_unavailable` to a request
+that did not ask `fail_fast` is one too. The benign rows count the refusals by
+the reason the message states:
+
+- `<row> [benign queue_unavailable no_eligible_threads]`: the pool had zero
+  eligible worker threads and nothing processed the request.
+- `<row> [benign queue_unavailable wait_exceeds_budget]`: the Horde's wait
+  estimate exceeded the time left in the request's budget.
+
+A refusal whose message states neither reason is counted under `<row> [benign
+queue_unavailable]`.
+
+### Stream-abandon share
+
+`--chat-mix-stream-abandon-share` (0 to 1, default 0) makes that share of the
+streamed front requests that expect a reply close the connection after
+`--chat-mix-stream-abandon-chunks` (default 2) chunks carrying content or tool
+calls. The client closes the socket, so the front sees the disconnect and
+cancels the native request; a client that only stopped reading would not
+trigger the cancel. Such a request's row is `<row> [abandoned]`, and its response
+length is the body bytes received before the close. The client checks only what
+it read: the line framing, the role chunk first, the values every chunk shares,
+and no chunk carrying both content and tool calls. A stream that ends or carries
+an error before the count is judged whole, as without the share. Each abandoned
+stream is logged at INFO with its request id, content chunks, content
+characters and bytes received.
+
+The front's cancel settles a generation in progress on the content its worker
+posted, so the share measures the settlement only with workers that post
+progress: `--chat-mix-worker-progress` for the simulated workers, with a
+generation time long enough for more deltas than the chunk count, that is a
+`--chat-mix-gen-time-min` of at least the chunk count plus one, times
+`--chat-mix-worker-progress-interval`. A close that lands after the worker
+submitted its reply ends the request without a cancelled generation, so the
+Horde can record fewer settlements than the run has `[abandoned]` rows.
+
+The settlement is checked on the Horde, against the request ids the client
+logged:
+
+- The Horde log has a `New Cancelled Generation <generation id> worth <kudos>
+  kudos, delivered by worker: <worker> for wp <request id>` line for the
+  request: the worker was paid prorated kudos and the requesting user was
+  charged the same.
+- `processing_gens.settled_character_count` of that generation equals the
+  content characters the client logged, or exceeds them by the content the
+  worker posted after the last chunk the client read.
+- The worker's `aborted_jobs` stays unchanged: a cancelled streamed generation
+  carries no dropped-job penalty.
+
+### Distributed runs
+
+The chat mix runs under Locust's master and worker mode, with workers on several
+hosts:
+
+- Set every `--chat-mix-*` option, and the suite's other options such as the
+  keys, on the master. Locust sends the master's custom options with each spawn
+  message and they replace a worker's own command line and environment values,
+  so a worker's `HORDE_CHAT_MIX_*` variables have no effect. The keys therefore
+  travel to the workers over Locust's unencrypted connection; tunnel it.
+- Locust's dispatcher spreads a fixed count over the worker processes unevenly
+  (six chat workers over two processes can land four and two), so each chat
+  worker claims its slot, name and persona from the master when it starts.
+  `--chat-mix-worker-names` needs one name per chat worker of the whole run.
+  The master broadcasts current persona availability from the workers' stats
+  reports, so front and native clients can use personas served by another
+  process. Offline workers are removed, and availability expires after 15
+  seconds without fresh reports.
+- Each worker process adds its coverage to its stats report every few seconds;
+  the master merges the latest report of each worker and runs the coverage gate
+  at test stop, where it also writes the statistics files.
+- Model card checks run once per 30 seconds per process, whatever the number of
+  front clients; the budgets and the ledger are per process and bounded by the
+  run's worker names and limits, not by its users.
+- A master cannot remove a user class once its dispatcher exists, so it gives
+  unrequested opt-in classes and classes a tag filter emptied a weight of 0; a
+  worker keeps every class, since the master's spawn messages name them all.
+- The front allows 5 open requests per client address: with one address per
+  load generator, front clients beyond 5 per host mostly measure 503
+  `FrontAtCapacity`. Raise `HORDE_OAI_MAX_INFLIGHT_PER_SOURCE` on the front for a
+  load test, or put the volume on native clients.
+
+A master and a worker on one host, and a second worker on another host that
+reaches the master's port 5557 through an SSH tunnel (both checkouts at the same
+revision):
+
+```
+# master (runs no users; writes the CSV and HTML)
+locust -f tests/stress/locustfile.py --master --master-bind-host 127.0.0.1 --master-bind-port 5557 \
+    --expect-workers 2 --host https://dev.example --headless --only-summary -u 220 -r 10 --run-time 30m \
+    --bootstrap-requestors 0 --bootstrap-workers 0 --preflight-fail-hard \
+    --requestor-api-keys "$REQUESTOR_KEYS" --worker-api-keys "$WORKER_KEYS" \
+    --chat-mix-front-host https://oai.dev.example/v1 --chat-mix-front-clients 10 --chat-mix-native-clients 20 \
+    --chat-mix-workers 6 --chat-mix-worker-names N0,N1,N2,N3,N4,N5 --chat-mix-worker-api-key "$WORKER_OWNER_KEY" \
+    --chat-mix-anonymous-share 0.2 --csv run/chat --html run/chat.html
+
+# worker on the master's host
+locust -f tests/stress/locustfile.py --worker --master-host 127.0.0.1 --master-port 5557
+
+# worker on another host, after: ssh -N -L 5557:127.0.0.1:5557 <master-host>
+locust -f tests/stress/locustfile.py --worker --master-host 127.0.0.1 --master-port 5557
+
+python tests/stress/check_smoke_results.py --stats run/chat_stats.csv
+```
+
+### Measurements
+
+The run records `CHAT-METRIC` rows for correlation with the front's and the
+Horde's telemetry: `[queue_wait_seconds] <persona>` from `x_horde`,
+`[time-to-first-keepalive] stream`, `[time-to-first-content] stream`,
+`[queue_wait_seconds] native chat` and `[submit-to-done] native chat`. A
+streamed request's own row times the response headers; its content timing is
+the metric row. At test stop each worker's submits are logged beside the
+Horde's `nonconformant_replies` and `uncompleted_jobs` counters.
+
+The front allows 5 open requests per client address by default, so more than 5
+front clients from one load generator see 503 `FrontAtCapacity` (benign);
+native clients are not limited by it.
+
+The chat counts are pinned, so `-u` has to cover them plus the users the rest of
+the mix should spawn; the example leaves 6 for the default classes:
+
+```
+locust -f tests/stress/locustfile.py --host https://dev.example --headless -u 11 -r 5 --run-time 10m \
+    --chat-mix-front-host https://oai.dev.example/v1 \
+    --chat-mix-front-clients 1 --chat-mix-native-clients 1 --chat-mix-workers 3 \
+    --chat-mix-worker-names NameA,NameB,NameC --chat-mix-worker-api-key "$WORKER_OWNER_KEY" --csv run/chat
+python tests/stress/check_smoke_results.py --stats run/chat_stats.csv
+```
+
+## Chat front scale demo
+
+The chat front (`python -m horde.oai`) holds each open `/v1/chat/completions`
+request as an idle coroutine and wakes it on the Horde's Redis completion
+signal, so a waiting client should cost the Horde one submit, one or two status
+reads and a publish, and no waitress thread while it waits. The demo measures
+that: it holds thousands of clients open against the front and records the
+Horde instances' waitress occupancy, the front's in-flight count and memory,
+and the calls the front makes. It reports numbers and passes or fails nothing.
+
+Unlike the other scenarios, the demo starts its own processes.
+`run_chat_scale_demo.sh` brings up the backends through
+`tests/run_with_test_stack.sh`, then starts:
+
+- N Horde instances (`server.py --waitress_threads 45`, the production default,
+  on consecutive ports from 7101; the first holds `--quorum`), each logging to
+  `horde-<port>.log` in the run directory;
+- the front on port 7002, listing every instance in `HORDE_OAI_HORDE_URLS` (the
+  front round-robins, so no load balancer is needed), logging to `front.log`
+  with one `httpx` line per call it makes to a Horde;
+- `chat_scale_demo.py sample`, which reads every few seconds each instance's
+  `GET /api/v2/status/heartbeat` (the route serving the waitress `active_count`,
+  `queue` and `threads` gauges), the front's `GET /healthz` `inflight` count,
+  Redis `INFO`, the Postgres client backend count, and the RSS and CPU of each
+  process listening on a sampled port, into `samples.csv`;
+- Locust with `locustfile_chat.py`, headless.
+
+It stops every process it started on exit. The backends stay up unless `--down`
+is given. Pass the run directory as the last argument:
+
+```
+bash tests/stress/run_chat_scale_demo.sh path/to/run
+bash tests/stress/run_chat_scale_demo.sh --stages 50,200 --stage-seconds 60 path/to/smaller-run
+bash tests/stress/run_chat_scale_demo.sh --instances 1 --sample-only 20 path/to/idle-run
+```
+
+`--sample-only S` starts everything except Locust and samples the idle stack for
+S seconds, which checks the wiring without load.
+
+The Horde instances create the schema in the stack's database and write to its
+Redis. When another test run is using the default stack, give the demo its own
+Compose project and ports so the two never share data:
+
+```
+AI_HORDE_TEST_POSTGRES_PORT=25432 AI_HORDE_TEST_REDIS_PORT=26379 \
+AI_HORDE_TEST_GARAGE_S3_PORT=23900 AI_HORDE_TEST_GARAGE_RPC_PORT=23901 \
+AI_HORDE_TEST_GARAGE_ADMIN_PORT=23903 \
+bash tests/stress/run_chat_scale_demo.sh --compose-project chat-scale-demo --down path/to/run
+```
+
+### Populations
+
+| User | Flag | Behavior |
+| --- | --- | --- |
+| `ChatWorkerSimulator` | `--chat-workers` (fixed count) | Pops `/api/v2/generate/text/pop` from the instances round-robin with a chat declaration (`chat_jobs`, `chat_features` `seed` and `presence_penalty`, `chat_limits`, `model_id`), built by `tests/integration/_fake_chat_worker.py`. Fails the run if a chat job carries a `prompt` or no `messages`, waits `--sim-gen-time-min` to `--sim-gen-time-max` seconds (3 to 8 in this scenario), and submits a structured reply: `message`, `finish_reason`, `prompt_tokens`, `completion_tokens` and `model_id`, without `generation`. `--chat-unreported-usage-chance` of submits leave the counts out so the front's estimate runs. The reply carries the time the submit was sent. With `--chat-worker-progress`, a chat job whose payload carries `stream_progress` also posts the reply text to `/api/v2/generate/text/progress` while it generates: one delta per `--chat-worker-progress-interval` seconds (default 1) of the generation time, at least one, with `seq` counting from 1. The submitted reply starts with the posted text. Posts are recorded as `/api/v2/generate/text/progress [<status>]` rows; 404 and 413 stop the job's posting, 403 and 409 stop it and fail the post, and 429, 503 and transport errors resend the delta at the next interval. |
+| `ChatStreamClient` | `--chat-stream-clients` (share) | Posts `stream: true` with `stream_options.include_usage` and reads the events to `[DONE]`. Records time to the first keepalive, time to the content chunk and total time as `SSE` rows. An error chunk or a stream without `[DONE]` fails the request. |
+| `ChatClient` | `--chat-clients` (share) | Posts non-streamed requests and waits for the body, up to 30 seconds past `--chat-nonstream-timeout`, so the front's 408 arrives first. |
+| `ChatImpatientClient` | `--chat-impatient-clients` (share) | Posts a streamed (`--chat-impatient-stream-chance`) or non-streamed request and disconnects after `--chat-impatient-timeout` seconds, so the front cancels the job on the Horde. |
+
+The client flags are shares of each stage's client count (Locust weights);
+0 leaves a population out. Clients send `Authorization: Bearer <key>` with the
+requestor keys in round-robin order, so no key reaches the Horde's per-user
+concurrency cap before the others. The runner registers one key per 25 clients
+of the largest stage and one worker key per three workers. Like an OpenAI SDK
+client, each client reuses its connection between requests and waits 2 to 6
+seconds after a refused or failed connection before its next request.
+
+408, 429 and 503 from the front count as successes and appear under their own
+`[expected]` rows, as do deliberate disconnects; 5xx, transport errors and
+malformed streams fail.
+
+### Stages and knobs
+
+`ChatStagesShape` runs the workers alone for `--chat-warmup-seconds`, then holds
+`--chat-workers` plus each `--chat-stages` count for `--chat-stage-seconds`,
+moving between stages at `--chat-spawn-rate` users a second, and stops after the
+last stage. The stage clock starts after the test-start hooks have registered
+the keys, so a slow registration does not shorten a stage.
+
+| Runner option | Environment variable | Default |
+| --- | --- | --- |
+| `--instances` | `CHAT_DEMO_HORDE_INSTANCES` | `3` |
+| `--horde-base-port` | `CHAT_DEMO_HORDE_BASE_PORT` | `7101` |
+| `--front-port` | `CHAT_DEMO_FRONT_PORT` | `7002` |
+| `--waitress-threads` | `CHAT_DEMO_WAITRESS_THREADS` | `45` |
+| `--workers` | `CHAT_DEMO_WORKERS` | `50` |
+| `--stages` | `CHAT_DEMO_STAGES` | `500,2000,5000` |
+| `--stage-seconds` | `CHAT_DEMO_STAGE_SECONDS` | `120` |
+| `--warmup-seconds` | `CHAT_DEMO_WARMUP_SECONDS` | `20` |
+| `--spawn-rate` | `CHAT_DEMO_SPAWN_RATE` | `100` |
+| `--sample-interval` | `CHAT_DEMO_SAMPLE_INTERVAL` | `5` |
+| `--compose-project` | `CHAT_DEMO_COMPOSE_PROJECT` | unset (the default stack) |
+| | `CHAT_DEMO_FRONT_MAX_INFLIGHT` | 1.2 times the largest stage plus 100, above every stage so a 503 marks the front's own limit |
+| | `CHAT_DEMO_RATELIMIT_DISABLED` | `1`; every client reaches the Horde from the front's one address, so per-IP limits would cap the run |
+| | `CHAT_DEMO_SIM_GEN_TIME_MIN`, `CHAT_DEMO_SIM_GEN_TIME_MAX` | `3`, `8` |
+| | `CHAT_DEMO_PYTHON` | the repository's `.venv` interpreter |
+
+Arguments after `--` go to Locust unchanged. Locust runs as one process.
+
+### Reading the summary
+
+`chat_scale_demo.py summarize --run-dir <run>` (run by the script at the end)
+writes `summary.md` and `summary.json` with one column per stage:
+
+| Row | Source | Reading |
+| --- | --- | --- |
+| Front in-flight, peak / mean | `samples.csv`, `/healthz` | Open client requests on the front. Close to the stage's client count when clients spend little time between requests. |
+| Horde waitress active and queue | `samples.csv`, heartbeat | Threads busy per instance and tasks waiting for one. Flat across stages means waiting clients cost no threads; a non-zero queue means an instance ran out of threads. |
+| Front to Horde calls per second, by route | `front.log` `httpx` lines | Submits (`POST /v2/generate/chat/async`), status reads (`GET .../chat/status/<id>`) and cancels (`DELETE`) the front sent. |
+| Workers pop and submit per second | `locust_stats_history.csv` | The worker side of the Horde load. |
+| Status reads per finished request | derived | Status reads divided by the front's finished lines; near 1 to 2 when the Redis signal wakes requests, higher when they fall back to polling. |
+| Woken by | `front.log` finished lines | `signal`, `poll` or `immediate` (finished before the wait began). |
+| Worker submit to front wake | evidence plus `front.log` | The front's `woke_at` minus the time the worker sent the submit, joined by request id. Includes the submit's own handling up to the publish. |
+| Stream timings | `chat_evidence.jsonl` | Time to the first keepalive (only requests that waited past a heartbeat have one), to the content, and total. |
+| Usage reported / estimated | `chat_evidence.jsonl` | `x_horde.estimated_usage` on completed requests. |
+| Client statuses, refusal codes, outcomes | `chat_evidence.jsonl` | Counts of 408, 429, 503 and the rest, the error codes behind them, and completed, refused, disconnected and failed requests. |
+| Front RSS | `samples.csv` | Per stage and the run's peak. |
+| Postgres connections | `samples.csv` | Client backends against `max_connections`, the usual first limit for several instances. |
+
+The log pattern counts below the table show where a stage that fell short of
+its client count stopped. Locust's own `CPU usage above` warnings and socket
+errors (`10055` no buffer space and `10048` address in use on Windows, `Too many
+open files` elsewhere) mean the load generator was the limit. `QueuePool limit`
+or `too many clients already` in a Horde log mean Postgres connections were.
+`refused the connection` and status `unreachable` in the front log mean a Horde
+instance stopped answering. `run.env` records the settings and the open file
+limit the run had.
 
