@@ -24,6 +24,7 @@ from sqlalchemy.orm import selectinload
 
 from horde import vars as hv
 from horde.argparser import args
+from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.user import User
 from horde.classes.base.worker import SPEED_BASELINE_THINGS_PER_SEC, WorkerPerformance, WorkerTemplate
 from horde.classes.kobold.genstats import CompiledTextGensStatsTotals, CompiledTextGenStatsModels
@@ -208,6 +209,50 @@ def store_worker_list():
 #             logger.error(f"Failed serializing workers with error: {err}")
 
 
+def collect_chat_faults(request_ids: list[object]) -> list[tuple[str, int]]:
+    """Return the chat requests among ``request_ids`` with the number of generations each has stored.
+
+    Read before the rows are deleted, so a fault can be published once the deletion has committed.
+
+    Args:
+        request_ids: Text request ids that just faulted or expired. The rows must still exist.
+
+    Returns:
+        One ``(request id, stored generation count)`` pair per chat request; text requests are left out.
+    """
+    if not request_ids:
+        return []
+    chat_request_rows = (
+        db.session.query(
+            TextWaitingPrompt.id,
+            func.count(TextProcessingGeneration.id),
+        )
+        .outerjoin(
+            TextProcessingGeneration,
+            (TextProcessingGeneration.wp_id == TextWaitingPrompt.id)
+            & TextProcessingGeneration.fake.is_(False)
+            & TextProcessingGeneration.generation.is_not(None),
+        )
+        .filter(
+            TextWaitingPrompt.id.in_(request_ids),
+            TextWaitingPrompt.is_chat.is_(True),
+        )
+        .group_by(TextWaitingPrompt.id)
+        .all()
+    )
+    return [(str(chat_request_id), generation_count) for chat_request_id, generation_count in chat_request_rows]
+
+
+def publish_chat_faults(chat_faults: list[tuple[str, int]]) -> None:
+    """Signal the waiting client of each chat request that it faulted or expired.
+
+    Args:
+        chat_faults: The pairs [`collect_chat_faults`][horde.database.threads.collect_chat_faults] returned.
+    """
+    for chat_request_id, generation_count in chat_faults:
+        publish_chat_event(chat_request_id, ChatEvent.FAULTED, generation_count)
+
+
 @logger.catch(reraise=True)
 def check_waiting_prompts():
     with get_app().app_context():
@@ -344,6 +389,11 @@ def check_waiting_prompts():
                     )
                 except Exception as err:
                     logger.warning(f"Unable to record expiry telemetry for request {expired_wp.id}: {err}")
+            expired_chat_faults = []
+            if wp_class is TextWaitingPrompt:
+                # Only expiries this pass claimed: a request that completed or was cancelled already
+                # published its terminal event.
+                expired_chat_faults = collect_chat_faults([expired_wp.id for expired_wp, _ in claimed_expiries])
             # The bulk delete never runs WaitingPrompt.delete(), so release the
             # 'upfront:<wp-id>' admission holds here in the same transaction.
             # Otherwise a request that expires unserved leaves its hold active and
@@ -351,6 +401,10 @@ def check_waiting_prompts():
             release_reservations_for_business_ids(f"upfront:{wp_id}" for wp_id in expired_wp_ids)
             expired_wps.delete()
             db.session.commit()
+            # An expired request's row is gone once the deletion commits, as a text request's is, so the status
+            # route reports it as not found. Publishing after that commit means a client woken by the event
+            # reads that settled state rather than racing the deletion.
+            publish_chat_faults(expired_chat_faults)
             # Faults stale ProcGens
             # Each result is a pending, non-faulted processing-generation ORM
             # object joined to its request. Conceptual columns used below:
@@ -416,6 +470,8 @@ def check_waiting_prompts():
             db.session.commit()
             for wp in db.session.query(wp_class).filter(wp_class.id.in_(newly_faulted_wp_ids)).all():
                 wp.log_faulted_prompt()
+            if wp_class is TextWaitingPrompt:
+                publish_chat_faults(collect_chat_faults(newly_faulted_wp_ids))
 
 
 @logger.catch(reraise=True)

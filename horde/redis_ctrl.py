@@ -29,6 +29,10 @@ ipaddr_db = 2
 cache_db = 3
 ipaddr_supicion_db = 4
 ipaddr_timeout_db = 5
+# Logical database 6 is the per-host local cache that get_local_horde_db() opens.
+chat_signal_db = 7
+"""The logical database chat completion signals are published from. Redis delivers a pub/sub message to
+subscribers on every logical database of the server, so a subscriber only needs the host."""
 
 
 def is_redis_up(hostname=redis_hostname, port=redis_port) -> bool:
@@ -93,6 +97,11 @@ def get_ipaddr_suspicion_db():
 
 def get_ipaddr_timeout_db():
     return _redis_client(redis_hostname, ipaddr_timeout_db)
+
+
+def get_chat_signal_db() -> redis.Redis:
+    """Return a client for publishing chat completion signals, on the host the cache uses."""
+    return _redis_client(redis_hostname, chat_signal_db, decode_responses=True)
 
 
 def get_redis_db_server(server_ip):

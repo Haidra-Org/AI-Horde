@@ -76,6 +76,10 @@ procgen_classes = {
 
 WP_ACTIVATION_MAX_ATTEMPTS = 4
 
+EXTRA_SOURCE_IMAGE_HORDE_TAX = 5
+"""The horde tax, in kudos, on each image a request stores beyond its prompt: an extra source image, or a chat
+request's image. Each one adds storage and transfer the generation itself does not pay for."""
+
 json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -334,7 +338,7 @@ class WaitingPrompt(db.Model):
         if extra_source_images is not None and len(extra_source_images) > 0:
             self.extra_source_images = {"esi": extra_source_images}
             # Extra source images add more infrastructure costs, which are represented with a kudos tax
-            horde_tax += 5 * len(extra_source_images)
+            horde_tax += EXTRA_SOURCE_IMAGE_HORDE_TAX * len(extra_source_images)
         horde_tax += kudos_adjustment
         with logfire.span("horde.wp.activate.record_usage", horde_tax=horde_tax):
             _t_ru = time.monotonic()
@@ -441,6 +445,20 @@ class WaitingPrompt(db.Model):
 
     def get_job_payload(self, current_n):
         return self.gen_payload
+
+    def get_generation_assignment(self, worker) -> dict[str, Any]:
+        """Return extra columns a new generation for this request records about its worker.
+
+        Subclass Integration:
+            Override where a gentype snapshots part of the worker's declaration at assignment.
+
+        Args:
+            worker: The worker the generation is assigned to.
+
+        Returns:
+            Keyword arguments for the generation's constructor; none by default.
+        """
+        return {}
 
     def needs_gen(self):
         return self.n > 0
@@ -555,6 +573,7 @@ class WaitingPrompt(db.Model):
         # Select the batch's model once from the pop-declared list so every
         # procgen records the same model the worker committed to running.
         model = self._select_model(worker, declared_models)
+        generation_assignment = self.get_generation_assignment(worker)
         while safe_amount >= 1:
             safe_amount -= 1
             current_n -= 1
@@ -563,6 +582,7 @@ class WaitingPrompt(db.Model):
                 worker_id=worker.id,
                 model=model,
                 dispatch_batch_id=dispatch_batch_id,
+                **generation_assignment,
             )
             logger.info(
                 f"Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} "
@@ -624,7 +644,7 @@ class WaitingPrompt(db.Model):
     def fake_generation(self, worker):
         payload = self.get_job_payload(self.n)
         procgen_class = procgen_classes[self.wp_type]
-        new_gen = procgen_class(wp_id=self.id, worker_id=worker.id, fake=True)
+        new_gen = procgen_class(wp_id=self.id, worker_id=worker.id, fake=True, **self.get_generation_assignment(worker))
         new_trick = WPTrickedWorkers(wp_id=self.id, worker_id=worker.id)
         db.session.add(new_trick)
         db.session.commit()
@@ -913,7 +933,7 @@ class WaitingPrompt(db.Model):
         kudos = self.calculate_kudos()
         # The horde tax has to match the one _activate() charges, or the quote underpromises
         # what the same request costs when it's not a dry run.
-        horde_tax = 1 + (5 * extra_source_images_count) + kudos_adjustment
+        horde_tax = 1 + (EXTRA_SOURCE_IMAGE_HORDE_TAX * extra_source_images_count) + kudos_adjustment
         return (self.calculate_extra_kudos_burn(kudos) * self.n) + horde_tax
 
     def log_faulted_prompt(self):

@@ -162,7 +162,11 @@ def get_active_workers(worker_type=None):
     return active_workers
 
 
-def get_highest_text_worker_max_context_length(model_names: list[str] | None = None) -> int | None:
+def get_highest_text_worker_max_context_length(
+    model_names: list[str] | None = None,
+    *,
+    accepts_chat_jobs: bool = False,
+) -> int | None:
     """Return the largest ``max_context_length`` an online text worker advertises.
 
     Online means the window ``get_active_workers()`` uses: a worker that has checked in recently. A
@@ -171,11 +175,22 @@ def get_highest_text_worker_max_context_length(model_names: list[str] | None = N
     Args:
         model_names: The models the request accepts. When empty or omitted, every online text worker
             counts.
+        accepts_chat_jobs: When true, the largest chat context of the workers that serve one of the models
+            with chat jobs, since no other worker can serve a chat request and chat jobs run under the chat
+            limits.
 
     Returns:
         The largest advertised context, or None when no online text worker serves those models.
     """
     cutoff = datetime.utcnow() - timedelta(seconds=300)
+    if accepts_chat_jobs:
+        chat_query = db.session.query(func.max(TextWorker.chat_max_context_length)).filter(
+            TextWorker.last_check_in > cutoff,
+            TextWorker.accepts_chat_jobs.is_(True),
+        )
+        if model_names:
+            chat_query = chat_query.filter(TextWorker.chat_model_id.in_(model_names))
+        return chat_query.scalar()
     query = db.session.query(func.max(TextWorker.max_context_length)).filter(TextWorker.last_check_in > cutoff)
     if model_names:
         query = query.filter(TextWorker.models.any(WorkerModel.model.in_(model_names)))
@@ -1969,6 +1984,15 @@ def _iter_eligible_workers_for_request(
                 final_worker_list = final_worker_list.filter(ImageWorker.speed >= 500000)
             if "loras" in waiting_prompt.params:
                 final_worker_list = final_worker_list.filter(ImageWorker.allow_lora.is_(True))
+        elif isinstance(waiting_prompt, TextWaitingPrompt) and waiting_prompt.is_chat:
+            final_worker_list = final_worker_list.filter(
+                TextWorker.accepts_chat_jobs.is_(True),
+                TextWorker.chat_model_id.in_(models_list),
+                waiting_prompt.max_length <= TextWorker.chat_max_length,
+                waiting_prompt.max_context_length <= TextWorker.chat_max_context_length,
+            )
+            if not waiting_prompt.slow_workers:
+                final_worker_list = final_worker_list.filter(TextWorker.speed >= 2)
         elif isinstance(waiting_prompt, TextWaitingPrompt):
             final_worker_list = final_worker_list.filter(
                 waiting_prompt.max_length <= TextWorker.max_length,

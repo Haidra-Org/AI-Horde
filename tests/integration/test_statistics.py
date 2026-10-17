@@ -138,3 +138,52 @@ class TestModelsList:
         resp = client.get("/api/v2/status/models")
         assert resp.status_code == 200
         assert isinstance(resp.get_json(), list)
+
+    def test_text_models_carry_the_chat_declarations_only_when_asked_for(self, client, request_headers):
+        import time
+        import uuid
+
+        from horde.database.threads import store_available_models
+        from tests.integration._fake_chat_worker import FakeChatWorker
+
+        suffix = uuid.uuid4().hex[:8]
+        chat_model = f"custom/status-chat-{suffix}"
+        text_only_model = f"custom/status-text-{suffix}"
+        before_registration = int(time.time()) - 1
+        for worker_index, chat_features in enumerate((["seed"], ["presence_penalty", "seed"])):
+            FakeChatWorker(
+                client=client,
+                headers=request_headers,
+                name=f"CICD Status Chat Scribe {worker_index} {suffix}",
+                models=[chat_model],
+                pop_options={"chat_features": chat_features, "chat_max_context_length": 4096 * (worker_index + 1)},
+            ).pop()
+        FakeChatWorker(client=client, headers=request_headers, name=f"CICD Status Text Scribe {suffix}", models=[text_only_model]).pop(
+            chat_jobs=None,
+        )
+        store_available_models()
+        query = "/api/v2/status/models?type=text&model_state=all&min_count=0&max_count=1000"
+
+        plain_resp = client.get(query)
+        chat_resp = client.get(f"{query}&chat=true")
+
+        assert plain_resp.status_code == 200, plain_resp.get_data(as_text=True)
+        plain_entries = {entry["name"]: entry for entry in plain_resp.get_json()}
+        assert {chat_model, text_only_model} <= plain_entries.keys()
+        assert all("chat" not in entry for entry in plain_entries.values())
+
+        assert chat_resp.status_code == 200, chat_resp.get_data(as_text=True)
+        chat_entries = {entry["name"]: entry for entry in chat_resp.get_json()}
+        assert text_only_model not in chat_entries
+        chat_entry = chat_entries[chat_model]
+        assert chat_entry["count"] == plain_entries[chat_model]["count"]
+        assert chat_entry["jobs"] == plain_entries[chat_model]["jobs"]
+        assert chat_entry["chat"]["workers"] == 2
+        assert chat_entry["chat"]["max_context_length"] == 8192
+        assert chat_entry["chat"]["max_length"] == 1024
+        assert chat_entry["chat"]["features"] == ["presence_penalty", "seed"]
+        assert chat_entry["chat"]["created"] >= before_registration
+
+    def test_the_chat_parameter_is_refused_for_image_models(self, client):
+        resp = client.get("/api/v2/status/models?type=image&chat=true")
+        assert resp.status_code == 400

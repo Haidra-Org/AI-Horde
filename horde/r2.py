@@ -5,6 +5,7 @@
 import json
 import os
 from collections.abc import Collection, Mapping
+from contextlib import closing
 from io import BytesIO
 from uuid import uuid4
 
@@ -151,6 +152,52 @@ def download_source_mask(wp_id, shared=False):
 
 def upload_source_image(image, filename):
     return upload_image(s3_client, r2_source_image_bucket, image, filename, quality=50)
+
+
+def upload_chat_image(jpeg_bytes: bytes, key: str) -> None:
+    """Store one chat request's image in the source image bucket.
+
+    Args:
+        jpeg_bytes: The normalised image, encoded as JPEG.
+        key: The object key.
+
+    Raises:
+        botocore.exceptions.ClientError: If the store refuses the write.
+        botocore.exceptions.BotoCoreError: If the store cannot be reached.
+    """
+    with logfire.span("horde.r2.upload_chat_image", key=key, size=len(jpeg_bytes)):
+        s3_client.put_object(Bucket=r2_source_image_bucket, Key=key, Body=jpeg_bytes, ContentType="image/jpeg")
+
+
+def download_chat_image(filename: str) -> bytes:
+    """Return the stored bytes of a chat request's image, without decoding them.
+
+    Args:
+        filename: The object key.
+
+    Returns:
+        The JPEG bytes.
+
+    Raises:
+        botocore.exceptions.ClientError: If the object is missing or the store refuses the read.
+        botocore.exceptions.BotoCoreError: If the store cannot be reached.
+    """
+    with logfire.span("horde.r2.download_chat_image", key=filename):
+        response = s3_client.get_object(Bucket=r2_source_image_bucket, Key=filename)
+        with closing(response["Body"]) as body:
+            return body.read()
+
+
+def generate_chat_image_download_url(filename: str) -> str:
+    """Return a presigned download URL for a chat request's image.
+
+    Args:
+        filename: The object key.
+
+    Returns:
+        A URL valid for 30 minutes.
+    """
+    return generate_img_download_url(filename, r2_source_image_bucket)
 
 
 def upload_generated_image(image, filename):

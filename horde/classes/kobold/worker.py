@@ -9,14 +9,17 @@ from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, relationship
+from sqlalchemy.sql import expression
 
 from horde import exceptions as e
 from horde.bridge_reference import (
     is_backed_validated,
 )
 from horde.classes.base.worker import Worker
+from horde.classes.kobold.chat_request import ChatFeature, required_chat_features
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -24,6 +27,8 @@ from horde.model_reference import model_reference
 from horde.utils import sanitize_string
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
+text_array_column_type = ARRAY(db.Text) if not SQLITE_MODE else JSON
+"""A list of strings: a text array on Postgres, JSON where arrays are not available."""
 
 
 def get_minimum_text_worker_speed(model_names: Sequence[str]) -> int:
@@ -66,6 +71,20 @@ class TextWorker(Worker):
     # TODO: Switch to max_power
     max_length = db.Column(db.Integer, default=80, nullable=False)
     max_context_length = db.Column(db.Integer, default=2048, nullable=False)
+    accepts_chat_jobs = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.false())
+    """Whether the worker's last pop opted into chat jobs, which carry ``messages`` instead of a prompt. Off by
+    default because a worker that predates chat jobs would find no prompt in their payload."""
+    chat_features = db.Column(text_array_column_type, nullable=True)
+    """The ``ChatFeature`` names the worker's last pop declared. NULL or empty means none; unknown names are not
+    stored."""
+    chat_max_context_length = db.Column(db.Integer, nullable=True)
+    """The context length the worker serves chat jobs at, from its last pop. Independent of ``max_context_length``,
+    which bounds text jobs."""
+    chat_max_length = db.Column(db.Integer, nullable=True)
+    """The most tokens the worker generates for a chat job, from its last pop. Independent of ``max_length``."""
+    chat_model_id = db.Column(db.String, nullable=True)
+    """The model the worker serves chat jobs with, from its last pop. A chat request is only given to a worker whose
+    ``chat_model_id`` is the request's model."""
 
     softprompts: Mapped[list[TextWorkerSoftprompts]] = relationship(
         "TextWorkerSoftprompts",
@@ -74,7 +93,28 @@ class TextWorker(Worker):
     )
     wtype = "text"
 
-    def check_in(self, max_length, max_context_length, softprompts, **kwargs):
+    def check_in(
+        self,
+        max_length,
+        max_context_length,
+        softprompts,
+        *,
+        accepts_chat_jobs=False,
+        chat_features: Sequence[str] | None = None,
+        chat_max_context_length: int | None = None,
+        chat_max_length: int | None = None,
+        chat_model_id: str | None = None,
+        **kwargs,
+    ):
+        # The chat declaration is replaced at every pop, outside the check-in debounce: this request's chat
+        # eligibility and payload shape are decided from these fields, and a worker that stops declaring chat must
+        # not receive a chat payload. Unchanged values leave the row clean, so a steady worker adds no UPDATE; a
+        # changed one is written by the commit the pop makes after check-in.
+        self.accepts_chat_jobs = accepts_chat_jobs
+        self.chat_features = sorted(set(chat_features or ()) & {feature.value for feature in ChatFeature}) if accepts_chat_jobs else None
+        self.chat_max_context_length = chat_max_context_length if accepts_chat_jobs else None
+        self.chat_max_length = chat_max_length if accepts_chat_jobs else None
+        self.chat_model_id = chat_model_id if accepts_chat_jobs else None
         if not super().check_in(**kwargs):
             return
         self.max_length = max_length
@@ -191,10 +231,15 @@ class TextWorker(Worker):
         requested_models = waiting_prompt.get_model_names()
         if requested_models and set(requested_models).isdisjoint(model_names):
             return [False, "models"]
-        if self.max_context_length < waiting_prompt.max_context_length:
-            return [False, "max_context_length"]
-        if self.max_length < waiting_prompt.max_length:
-            return [False, "max_length"]
+        if waiting_prompt.is_chat:
+            chat_refusal = self.chat_refusal_reason(waiting_prompt, requested_models)
+            if chat_refusal is not None:
+                return [False, chat_refusal]
+        else:
+            if self.max_context_length < waiting_prompt.max_context_length:
+                return [False, "max_context_length"]
+            if self.max_length < waiting_prompt.max_length:
+                return [False, "max_length"]
         if not waiting_prompt.slow_workers and self.speed < get_minimum_text_worker_speed(model_names):
             return [False, "performance"]
         if waiting_prompt.validated_backends and not is_backed_validated(self.bridge_agent):
@@ -210,6 +255,33 @@ class TextWorker(Worker):
         if not matching_softprompt:
             return [False, "matching_softprompt"]
         return [True, None]
+
+    def chat_refusal_reason(self, waiting_prompt: Any, requested_models: Sequence[str]) -> str | None:
+        """Return why this worker cannot serve a chat request under its chat declaration, if it cannot.
+
+        Chat jobs are bounded by the chat limits, never by the text limits, which only bound text jobs.
+
+        Args:
+            waiting_prompt: The chat request.
+            requested_models: The models the request accepts.
+
+        Returns:
+            ``chat_jobs`` when the worker did not opt in or does not serve the request's model with chat,
+            ``chat_features`` when it lacks a feature the request needs, ``max_context_length`` or ``max_length``
+            when the request exceeds a chat limit, or None when it can serve the request.
+        """
+        if not self.accepts_chat_jobs or self.chat_model_id is None:
+            return "chat_jobs"
+        if requested_models and self.chat_model_id not in requested_models:
+            return "chat_jobs"
+        declared_features = set(self.chat_features or ())
+        if not {feature.value for feature in required_chat_features(waiting_prompt.params)} <= declared_features:
+            return "chat_features"
+        if self.chat_max_context_length is None or self.chat_max_context_length < waiting_prompt.max_context_length:
+            return "max_context_length"
+        if self.chat_max_length is None or self.chat_max_length < waiting_prompt.max_length:
+            return "max_length"
+        return None
 
     def get_details(self, is_privileged=False):
         ret_dict = super().get_details(is_privileged)

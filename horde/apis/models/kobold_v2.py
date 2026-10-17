@@ -2,11 +2,21 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-from flask_restx import fields
+from flask_restx import fields, reqparse
 
 from horde.apis.models import v2
+from horde.chat_contract import ChatContextFit
 from horde.classes.base.style_application import MAX_TEMPLATE_FIELD_WORDS
 from horde.classes.base.style_contract import MAX_TEMPLATE_FIELDS
+from horde.classes.kobold.chat_request import (
+    DEFAULT_CHAT_MAX_TOKENS,
+    MAX_NATIVE_FINISH_REASON_LENGTH,
+    MAX_REPORTED_TOKEN_COUNT,
+    ChargeBasis,
+    ChatFeature,
+    ChatRole,
+    FinishReason,
+)
 from horde.classes.kobold.request_fit import (
     DEFAULT_MAX_CONTEXT_LENGTH,
     DEFAULT_MAX_LENGTH,
@@ -65,6 +75,35 @@ class TextParsers(v2.Parsers):
             help="The available softprompt files on this worker for the currently running model.",
             location="json",
         )
+        self.job_pop_parser.add_argument(
+            "chat_jobs",
+            type=bool,
+            required=False,
+            default=False,
+            help="The worker accepts chat jobs, which carry messages instead of a prompt.",
+            location="json",
+        )
+        self.job_pop_parser.add_argument(
+            "chat_features",
+            type=list,
+            required=False,
+            help="The optional chat features the worker implements.",
+            location="json",
+        )
+        self.job_pop_parser.add_argument(
+            "chat_limits",
+            type=dict,
+            required=False,
+            help="The context and output limits for chat jobs. Required with chat_jobs.",
+            location="json",
+        )
+        self.job_pop_parser.add_argument(
+            "model_id",
+            type=str,
+            required=False,
+            help="The model the worker serves chat jobs with. Required with chat_jobs.",
+            location="json",
+        )
         # To remove the below once I updated the KAI server to use "models"
         self.job_submit_parser.add_argument(
             "seed",
@@ -73,6 +112,75 @@ class TextParsers(v2.Parsers):
             default=0,
             help="The seed of the text generation.",
             location="json",
+        )
+        self.job_submit_parser.add_argument(
+            "message",
+            type=dict,
+            required=False,
+            help="A chat job's assistant message, sent in place of generation.",
+            location="json",
+        )
+        self.job_submit_parser.add_argument(
+            "finish_reason",
+            type=str,
+            required=False,
+            choices=[finish_reason.value for finish_reason in FinishReason],
+            help="Why the worker stopped generating a chat job.",
+            location="json",
+        )
+        self.job_submit_parser.add_argument(
+            "native_finish_reason",
+            type=str,
+            required=False,
+            help="The backend's own name for why it stopped.",
+            location="json",
+        )
+        self.job_submit_parser.add_argument(
+            "prompt_tokens",
+            type=int,
+            required=False,
+            help="How many tokens the prompt took, as the worker's tokenizer counted them.",
+            location="json",
+        )
+        self.job_submit_parser.add_argument(
+            "completion_tokens",
+            type=int,
+            required=False,
+            help="How many tokens the worker generated.",
+            location="json",
+        )
+        self.job_submit_parser.add_argument(
+            "model_id",
+            type=str,
+            required=False,
+            help="The model a chat job ran on, which has to be the model it was assigned.",
+            location="json",
+        )
+        # A chat job's submit carries message rather than generation; a text job's submit keeps requiring it.
+        self.chat_job_submit_parser = self.job_submit_parser.copy()
+        self.chat_job_submit_parser.replace_argument(
+            "generation",
+            type=str,
+            required=False,
+            help="Not sent for chat jobs; the message content is stored as the generation.",
+            location="json",
+        )
+        # A chat request's body is validated against its own model in the endpoint; only the headers are parsed.
+        self.chat_generate_parser = reqparse.RequestParser()
+        self.chat_generate_parser.add_argument(
+            "apikey",
+            type=str,
+            required=False,
+            help="The API Key corresponding to a registered user.",
+            location="headers",
+        )
+        self.chat_generate_parser.add_argument(
+            "Client-Agent",
+            default="unknown:0:unknown",
+            type=str,
+            required=False,
+            help="The client name and version.",
+            location="headers",
         )
 
 
@@ -236,6 +344,34 @@ class TextModels(v2.Models):
                 "prompt": fields.String(description="The prompt which will be sent to KoboldAI to generate the text."),
             },
         )
+        self.response_model_chat_generation_payload = api.model(
+            "ModelPayloadChat",
+            {
+                "messages": fields.List(
+                    fields.Raw,
+                    description=(
+                        "The OpenAI chat messages array, in place of a prompt. Each entry has a role (system, user or "
+                        "assistant) and a content that is a string or an array of text parts. A developer message is "
+                        "sent as system. The worker applies its own chat template."
+                    ),
+                ),
+                "temperature": fields.Float(description="Sampling temperature; 1.0 when the client did not set it."),
+                "top_p": fields.Float(description="Nucleus sampling value; 1.0 when the client did not set it."),
+                "frequency_penalty": fields.Float(description="OpenAI's frequency penalty; 0 when the client did not set it."),
+                "presence_penalty": fields.Float(description="OpenAI's presence penalty; 0 when the client did not set it."),
+                "rep_pen": fields.Float(description="Repetition penalty; always 1.0 (none)."),
+                "top_k": fields.Integer(description="Top-k sampling value; always 0 (disabled)."),
+                "min_p": fields.Float(description="Min-p sampling value; always 0 (disabled)."),
+                "stop_sequence": fields.List(
+                    fields.String,
+                    description="Stop sequences, only when the client sent them.",
+                ),
+                "seed": fields.Integer(description="The sampling seed, only when the client sent one."),
+                "max_length": fields.Integer(description="Number of tokens to generate."),
+                "max_context_length": fields.Integer(description="The context length the rendered messages have to fit."),
+                "n": fields.Integer(description="Always 1."),
+            },
+        )
         # The generation input
         self.input_model_generation_payload = api.inherit(
             "ModelGenerationInputKobold",
@@ -288,6 +424,31 @@ class TextModels(v2.Models):
                 "model": fields.String(description="Which of the available models to use for this request."),
             },
         )
+        # A separate model so the chat key and payload never appear in a text job's pop response. It copies the text
+        # fields rather than inheriting them, since an inherited model's parent fields override its own.
+        self.response_model_chat_job_pop = api.model(
+            "GenerationPayloadChat",
+            {
+                **self.response_model_job_pop,
+                "payload": fields.Nested(self.response_model_chat_generation_payload, skip_none=True),
+                "chat": fields.Boolean(description="Always true: this is a chat job, whose payload carries messages."),
+            },
+        )
+        self.input_model_chat_limits = api.model(
+            "ChatLimits",
+            {
+                "max_context_length": fields.Integer(
+                    required=True,
+                    min=1,
+                    description="The largest context, rendered messages and reply together, a chat job may need.",
+                ),
+                "max_length": fields.Integer(
+                    required=True,
+                    min=1,
+                    description="The most tokens the worker generates for a chat job.",
+                ),
+            },
+        )
         self.input_model_job_pop = api.inherit(
             "PopInputKobold",
             self.input_model_job_pop,
@@ -304,6 +465,28 @@ class TextModels(v2.Models):
                     fields.String(
                         description="The available softprompt files on this worker for the currently running model.",
                     ),
+                ),
+                "chat_jobs": fields.Boolean(
+                    default=False,
+                    description=(
+                        "The worker accepts chat jobs, which carry messages instead of a prompt. A worker that sets "
+                        "it still receives text jobs. Requires chat_limits and model_id."
+                    ),
+                ),
+                "chat_features": fields.List(
+                    fields.String,
+                    description=(
+                        "The optional chat features the worker implements: "
+                        f"{', '.join(feature.value for feature in ChatFeature)}. A chat request that sets one of them "
+                        "to a non-default value only goes to workers that list it. Unknown names are ignored."
+                    ),
+                ),
+                "chat_limits": fields.Nested(
+                    self.input_model_chat_limits,
+                    description="The limits chat jobs run under, in place of max_context_length and max_length.",
+                ),
+                "model_id": fields.String(
+                    description="The model the worker serves chat jobs with; exactly one of its models.",
                 ),
             },
         )
@@ -522,13 +705,58 @@ class TextModels(v2.Models):
                 "total": fields.Raw(description="The total amount of requests fulfilled for each model."),
             },
         )
+        self.input_model_chat_submitted_message = api.model(
+            "ChatSubmittedMessage",
+            {
+                "role": fields.String(required=True, enum=["assistant"], description="Always 'assistant'."),
+                "content": fields.String(
+                    required=True,
+                    description="The reply text. An empty string is a completed reply with no visible text.",
+                ),
+            },
+        )
         self.input_model_job_submit = api.inherit(
             "SubmitInputKobold",
             self.input_model_job_submit,
             {
                 "gen_metadata": fields.List(fields.Nested(self.model_job_metadata)),
+                "message": fields.Nested(
+                    self.input_model_chat_submitted_message,
+                    description="Chat jobs only, in place of generation: the assistant message.",
+                ),
+                "finish_reason": fields.String(
+                    enum=[finish_reason.value for finish_reason in FinishReason],
+                    description=(
+                        "Chat jobs only, required: why the worker stopped generating. 'stop' for an end of reply or "
+                        "stop sequence, 'length' at max_length, 'content_filter' when the backend withheld output."
+                    ),
+                ),
+                "native_finish_reason": fields.String(
+                    max_length=MAX_NATIVE_FINISH_REASON_LENGTH,
+                    description="Chat jobs only, optional: the backend's own name for why it stopped.",
+                ),
+                "prompt_tokens": fields.Integer(
+                    min=0,
+                    max=MAX_REPORTED_TOKEN_COUNT,
+                    description=(
+                        "Chat jobs only, optional: how many tokens the rendered messages took. Stored and shown, never "
+                        "charged; omit it when the backend did not count them."
+                    ),
+                ),
+                "completion_tokens": fields.Integer(
+                    min=0,
+                    max=MAX_REPORTED_TOKEN_COUNT,
+                    description=(
+                        "Chat jobs only, optional: how many tokens the worker generated. Stored and shown, never "
+                        "charged; omit it when the backend did not count them."
+                    ),
+                ),
+                "model_id": fields.String(
+                    description="Chat jobs only, required: the model the job ran on, which has to be the model it was assigned.",
+                ),
             },
         )
+        self._define_chat_models(api)
 
         # Styles
         # The two params a policy can cap are declared on ModelPayloadRootKobold, which a style's params
@@ -708,6 +936,147 @@ class TextModels(v2.Models):
                         " to the style's owner, authenticated by the apikey header; null for every other caller and on"
                         " the style list."
                     ),
+                ),
+            },
+        )
+
+    def _define_chat_models(self, api):
+        """Define the models of the chat routes, which take an OpenAI chat-completions body.
+
+        The input models document the body; the endpoint validates it itself, since unknown keys are
+        refused by name, which a flask-restx model does not do.
+        """
+        self.model_chat_text_part = api.model(
+            "ChatTextPart",
+            {
+                "type": fields.String(required=True, enum=["text"], description="Always 'text'."),
+                "text": fields.String(required=True, description="The part's text."),
+            },
+        )
+        self.model_chat_message = api.model(
+            "ChatMessage",
+            {
+                "role": fields.String(
+                    required=True,
+                    enum=[chat_role.value for chat_role in ChatRole],
+                    description="Who wrote the message. A developer message is stored and sent to workers as system.",
+                ),
+                "content": fields.Raw(
+                    required=True,
+                    description="The message text, as a string or as an array of ChatTextPart. Image parts are refused.",
+                ),
+                "name": fields.String(description="An optional participant name, passed to the worker unchanged."),
+            },
+        )
+        self.model_chat_horde_options = api.model(
+            "ChatHordeOptions",
+            {
+                "only": fields.List(
+                    fields.String,
+                    description="Worker IDs the request is limited to. Cannot be combined with 'ignore'.",
+                ),
+                "ignore": fields.List(
+                    fields.String,
+                    description="Worker IDs that never serve the request. Cannot be combined with 'only'.",
+                ),
+                "trusted_workers": fields.Boolean(default=False, description="When true, only trusted workers serve the request."),
+                "validated_backends": fields.Boolean(default=False, description="When true, only validated backends serve the request."),
+                "slow_workers": fields.Boolean(default=True, description="When false, workers below the speed threshold are skipped."),
+                "max_context_length": fields.Integer(description="An explicit context length."),
+                "context_fit": fields.String(
+                    default=ChatContextFit.GROW.value,
+                    enum=[setting.value for setting in ChatContextFit],
+                    description=(
+                        "What to do when the messages do not fit the context: grow it up to what an online chat worker "
+                        "serves, or reject the request."
+                    ),
+                ),
+                "dry_run": fields.Boolean(default=False, description="When true, return the kudos cost without queueing."),
+                "operation_key": fields.String(
+                    description=(
+                        "A UUID identifying one submission of this request, claimed for the submitting user when the "
+                        "request is queued. The same key with the same request returns the first request with status "
+                        "200; with a changed request it is refused with OperationKeyConflict. A dry run claims nothing."
+                    ),
+                ),
+            },
+        )
+        self.input_model_chat_generation = api.model(
+            "ChatGenerationInput",
+            {
+                "model": fields.String(required=True, description="The horde text model to generate with."),
+                "messages": fields.List(fields.Nested(self.model_chat_message), required=True, min_items=1),
+                "max_tokens": fields.Integer(
+                    description=(
+                        f"How many tokens to generate, 16 to 4096. Defaults to {DEFAULT_CHAT_MAX_TOKENS}. Must equal "
+                        "max_completion_tokens when both are set."
+                    ),
+                ),
+                "max_completion_tokens": fields.Integer(description="How many tokens to generate; the newer name for max_tokens."),
+                "temperature": fields.Float(description="Sampling temperature."),
+                "top_p": fields.Float(description="Nucleus sampling value."),
+                "n": fields.Integer(description="How many choices to return. Only 1 is served."),
+                "seed": fields.Integer(description="A sampling seed. Only workers that declare the seed feature serve it."),
+                "stop": fields.Raw(description="One stop sequence or an array of them."),
+                "frequency_penalty": fields.Float(
+                    min=-2,
+                    max=2,
+                    description="Frequency penalty. A non-zero value only goes to workers that declare the feature.",
+                ),
+                "presence_penalty": fields.Float(
+                    min=-2,
+                    max=2,
+                    description="Presence penalty. A non-zero value only goes to workers that declare the feature.",
+                ),
+                "stream": fields.Boolean(description="Accepted and not applied on this route."),
+                "stream_options": fields.Raw(description="Accepted and not applied on this route."),
+                "user": fields.String(description="Accepted and not applied."),
+                "metadata": fields.Raw(description="Accepted and not applied."),
+                "horde": fields.Nested(self.model_chat_horde_options, description="Horde options OpenAI has no key for."),
+            },
+        )
+        self.response_model_chat_generation_result = api.inherit(
+            "GenerationChat",
+            self.response_model_generation_result,
+            {
+                "message": fields.Raw(description="The assistant message the worker submitted, with role and content."),
+                "finish_reason": fields.String(
+                    enum=[finish_reason.value for finish_reason in FinishReason],
+                    description="Why the worker stopped generating.",
+                ),
+                "native_finish_reason": fields.String(
+                    description="The backend's own name for why it stopped; null when the worker did not report it.",
+                ),
+                "prompt_tokens": fields.Integer(description="The prompt token count the worker reported; null when not reported."),
+                "completion_tokens": fields.Integer(description="The generated token count the worker reported; null when not reported."),
+                "charge_basis": fields.String(
+                    enum=[charge_basis.value for charge_basis in ChargeBasis],
+                    description="What the generation was charged and rewarded on.",
+                ),
+                "queue_wait_seconds": fields.Float(
+                    description="Seconds from the request's creation to this generation's assignment to a worker.",
+                ),
+            },
+        )
+        self.response_model_chat_context_adjustment = api.model(
+            "ChatContextAdjustment",
+            {
+                "from": fields.Integer(description="The context length the request asked for, or the default."),
+                "to": fields.Integer(description="The context length the request runs under."),
+                "reason": fields.String(
+                    enum=[ChatContextFit.GROW.value],
+                    description="Why it changed: 'grow' when the context was grown to fit the messages.",
+                ),
+            },
+        )
+        self.response_model_chat_status_full = api.inherit(
+            "RequestStatusChat",
+            self.response_model_wp_status_lite,
+            {
+                "generations": fields.List(fields.Nested(self.response_model_chat_generation_result)),
+                "context_adjustments": fields.List(
+                    fields.Nested(self.response_model_chat_context_adjustment),
+                    description="How the horde changed the request's context length; null when it did not.",
                 ),
             },
         )

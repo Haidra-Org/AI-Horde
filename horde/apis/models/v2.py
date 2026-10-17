@@ -1900,6 +1900,31 @@ class Models:
                 ),
             },
         )
+        self.response_model_chat_model_offer = api.model(
+            "ChatModelOffer",
+            {
+                "workers": fields.Integer(description="How many online workers serve chat jobs with this model."),
+                "max_context_length": fields.Integer(description="The largest chat context any of those workers declares."),
+                "max_length": fields.Integer(description="The largest chat output any of those workers declares."),
+                "features": fields.List(
+                    fields.String,
+                    description="Every optional chat feature at least one of those workers declares.",
+                ),
+                "created": fields.Integer(
+                    description="Unix seconds at which the longest-registered of those workers was created; null when unknown.",
+                ),
+            },
+        )
+        self.response_model_active_model_chat = api.inherit(
+            "ActiveModelChat",
+            self.response_model_active_model,
+            {
+                "chat": fields.Nested(
+                    self.response_model_chat_model_offer,
+                    description="What the online chat workers serving this model declare. Only present with chat=true.",
+                ),
+            },
+        )
         self.response_model_deleted_worker = api.model(
             "DeletedWorker",
             {

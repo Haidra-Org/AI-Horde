@@ -11,7 +11,9 @@ from horde.bridge_reference import (
     is_backed_validated,
     parse_bridge_agent,
 )
-from horde.classes.base.processing_generation import ProcessingGeneration
+from horde.chat_signal import ChatEvent, publish_chat_event
+from horde.classes.base.processing_generation import ProcessingGeneration, json_column_type
+from horde.classes.kobold.chat_request import ChargeBasis
 from horde.classes.kobold.genstats import record_text_statistic
 from horde.flask import db
 from horde.logger import logger
@@ -71,6 +73,26 @@ class TextProcessingGeneration(ProcessingGeneration):
     }
     wp = db.relationship("TextWaitingPrompt", back_populates="processing_gens")
     worker = db.relationship("TextWorker", back_populates="processing_gens")
+    message = db.Column(json_column_type(none_as_null=True), nullable=True)
+    """The assistant message a chat worker submitted, ``{role, content}``. NULL on text generations. ``generation``
+    holds the same content, so every predicate that reads ``generation`` treats chat and text alike."""
+    finish_reason = db.Column(db.String(32), nullable=True)
+    """Why a chat worker stopped generating, a ``FinishReason`` value. NULL on text generations."""
+    native_finish_reason = db.Column(db.String(32), nullable=True)
+    """The backend's own name for why it stopped, as a chat worker reported it. NULL when not reported."""
+    prompt_tokens = db.Column(db.Integer, nullable=True)
+    """The prompt token count a chat worker reported. NULL when not reported, which a reported 0 is not."""
+    completion_tokens = db.Column(db.Integer, nullable=True)
+    """The generated token count a chat worker reported. NULL when not reported, which a reported 0 is not."""
+    charge_basis = db.Column(db.String(16), nullable=True)
+    """The ``ChargeBasis`` the generation was charged and rewarded on, ``output_estimate`` for every chat generation.
+    NULL on text generations, which are charged on the same basis without recording it."""
+    assigned_model = db.Column(db.String, nullable=True)
+    """The model a chat worker declared when the generation was assigned; its submit has to name the same one."""
+    assigned_max_context_length = db.Column(db.Integer, nullable=True)
+    """The chat context length the worker declared when the generation was assigned."""
+    assigned_max_length = db.Column(db.Integer, nullable=True)
+    """The chat output length the worker declared when the generation was assigned."""
 
     def _censorship_state(self) -> str:
         """Determine the state string for this procgen based on its censorship flags."""
@@ -94,7 +116,49 @@ class TextProcessingGeneration(ProcessingGeneration):
             "state": self._censorship_state(),
             "gen_metadata": self.gen_metadata if self.gen_metadata is not None else [],
         }
+        # Only the chat status model declares these, and text webhooks send this dict as it is.
+        if self.wp.is_chat:
+            ret_dict["message"] = self.message
+            ret_dict["finish_reason"] = self.finish_reason
+            ret_dict["native_finish_reason"] = self.native_finish_reason
+            ret_dict["prompt_tokens"] = self.prompt_tokens
+            ret_dict["completion_tokens"] = self.completion_tokens
+            ret_dict["charge_basis"] = self.charge_basis
+            ret_dict["queue_wait_seconds"] = max((self.start_time - self.wp.created).total_seconds(), 0)
         return ret_dict
+
+    def get_charge_basis(self) -> ChargeBasis:
+        """Return what this generation is charged and rewarded on.
+
+        Every text generation, chat or not, is priced by the text kudos formula, whose token count is
+        ``get_things_count``: the returned characters divided by 4, rounded up, at least 20 and at most the
+        requested ``max_length``. Reported token counts are stored and shown and never change the charge.
+
+        Returns:
+            [`ChargeBasis.OUTPUT_ESTIMATE`][horde.classes.kobold.chat_request.ChargeBasis].
+        """
+        return ChargeBasis.OUTPUT_ESTIMATE
+
+    def get_submission_columns(self, **kwargs: object) -> dict[str, object]:
+        """Return the structured reply a chat worker submitted, written in the same update as ``generation``.
+
+        Args:
+            **kwargs: The submission's keyword arguments, which for a chat job carry ``message``,
+                ``finish_reason``, ``native_finish_reason``, ``prompt_tokens`` and ``completion_tokens``.
+
+        Returns:
+            Those values and the charge basis for a chat generation; nothing for a text generation.
+        """
+        if not self.wp.is_chat:
+            return {}
+        return {
+            "message": kwargs.get("message"),
+            "finish_reason": kwargs.get("finish_reason"),
+            "native_finish_reason": kwargs.get("native_finish_reason"),
+            "prompt_tokens": kwargs.get("prompt_tokens"),
+            "completion_tokens": kwargs.get("completion_tokens"),
+            "charge_basis": self.get_charge_basis().value,
+        }
 
     def get_gen_kudos(self):
         if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", "0") == "1" and len(self.wp.workers) > 0:
@@ -191,7 +255,24 @@ class TextProcessingGeneration(ProcessingGeneration):
         genstats_t0 = time.monotonic()
         record_text_statistic(self)
         submit_genstats_record_duration.record(time.monotonic() - genstats_t0, {"horde.gentype": "text"})
+        # The base returns -1 for a generation that was already faulted and 0 for one already submitted;
+        # neither stores this submission.
+        if kudos in (-1, 0):
+            return kudos
+        if self.wp.is_chat:
+            self._publish_chat_progress()
         return kudos
+
+    def _publish_chat_progress(self) -> None:
+        """Signal a waiting chat client that a generation landed, and that the request is done when it is.
+
+        Runs after the submission committed, so a client that reads the status on the signal finds the generation.
+        """
+        request_id = str(self.wp.id)
+        generation_count = self.wp.count_stored_generations()
+        publish_chat_event(request_id, ChatEvent.GENERATION, generation_count)
+        if self.wp.is_completed():
+            publish_chat_event(request_id, ChatEvent.DONE, generation_count)
 
     def get_things_count(self, generation=None):
         if generation is None:

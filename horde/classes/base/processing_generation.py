@@ -301,6 +301,7 @@ class ProcessingGeneration(db.Model):
         sanitized_generation = generation.replace("\x00", "\ufffd")
         seed = kwargs.get("seed", self.seed)
         gen_metadata = kwargs.get("gen_metadata", self.gen_metadata)
+        submission_columns = self.get_submission_columns(**kwargs)
 
         _t = time.monotonic()
         updated_rows = (
@@ -316,6 +317,7 @@ class ProcessingGeneration(db.Model):
                     type(self).seed: seed,
                     type(self).gen_metadata: gen_metadata,
                     type(self).cancelled: False,
+                    **{getattr(type(self), column_name): value for column_name, value in submission_columns.items()},
                 },
                 synchronize_session=False,
             )
@@ -335,6 +337,8 @@ class ProcessingGeneration(db.Model):
         # Support for two typical properties
         self.seed = kwargs.get("seed", None)
         self.gen_metadata = kwargs.get("gen_metadata", None)
+        for column_name, value in submission_columns.items():
+            setattr(self, column_name, value)
         # The reward is derived from what the worker returned (text kudos scale
         # with the delivered token count), so it is computed once the generation
         # fields above are populated.
@@ -392,6 +396,21 @@ class ProcessingGeneration(db.Model):
         self.send_webhook(kudos)
         submit_webhook_call_duration.record(time.monotonic() - _t)
         return kudos
+
+    def get_submission_columns(self, **kwargs: object) -> dict[str, object]:
+        """Return further columns a submission writes in the same compare-and-set as its generation.
+
+        Subclass Integration:
+            Override where a gentype stores more of the submission than the shared fields. Every column returned
+            here is written by the update that claims the generation, so a refused submission writes none of them.
+
+        Args:
+            **kwargs: The submission's keyword arguments to ``set_generation``.
+
+        Returns:
+            Column names mapped to the values to store; none by default.
+        """
+        return {}
 
     def cancel(self) -> float | None:
         """Cancelling requests in progress still rewards/burns the relevant amount of kudos"""

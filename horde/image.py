@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import base64
+import binascii
+import re
 from collections.abc import Callable
 from io import BytesIO
 
@@ -22,6 +24,28 @@ from horde.outbound import (
     send_public_request,
 )
 from horde.r2 import upload_source_image
+
+MAX_SOURCE_IMAGE_PIXELS = 3072 * 3072
+"""The most pixels a source image may have. It bounds the memory and time spent decoding and re-encoding an
+image a client sent."""
+
+IMAGE_DATA_URL_PATTERN = re.compile(r"data:image/[A-Za-z0-9.+-]+;base64,(?P<base64_payload>.*)", re.DOTALL)
+"""A base64 image data URL, the form an OpenAI image part carries an inline image in. The declared media type is
+not trusted; the decoded bytes are opened as whatever image they are."""
+
+MAX_CHAT_IMAGE_SIDE = 2048
+"""The longest side a stored chat image keeps. koboldcpp's vision projector reads at most 2048 pixels per side, so
+a larger image costs transfer without informing the reply."""
+
+CHAT_IMAGE_JPEG_QUALITY = 90
+"""The JPEG quality a chat image is stored at. JPEG is a format every chat worker's image loader decodes: koboldcpp
+reads images with llama.cpp's multimodal loader, which decodes PNG and JPEG and does not decode WebP. The quality 50
+source images are stored at blurs small text, which vision prompts often ask the model to read, such as the text in a
+screenshot."""
+
+CHAT_IMAGE_BACKGROUND = (255, 255, 255)
+"""The colour transparent areas of a chat image are flattened onto before encoding, since JPEG holds no alpha and
+vision models do not read it. White matches how most documents and screenshots with transparency are viewed."""
 
 MAX_FETCHED_IMAGE_BYTES = 5 * 1024 * 1024
 """The most bytes an image fetched from a client's URL may have, as declared and after decoding. The cap bounds the
@@ -65,7 +89,7 @@ def convert_source_image_to_pil(source_image_b64):
     image = Image.open(BytesIO(img_bytes))
     width, height = image.size
     resolution = width * height
-    resolution_threshold = 3072 * 3072
+    resolution_threshold = MAX_SOURCE_IMAGE_PIXELS
     if resolution > resolution_threshold:
         except_msg = "Image size cannot exceed 3072*3072 pixels"
         # Not sure e exists here?
@@ -160,6 +184,41 @@ def _ensure_source_image_uploaded(source_image_string, uuid_string, force_r2=Fal
     return (download_url, img, True)
 
 
+def parse_image_data_url(image_url: str) -> str | None:
+    """Parse the base64 payload out of an image data URL.
+
+    Args:
+        image_url: An image part's ``url``.
+
+    Returns:
+        The base64 payload, or None when the URL is not a base64 image data URL.
+    """
+    data_url_match = IMAGE_DATA_URL_PATTERN.fullmatch(image_url)
+    if data_url_match is None:
+        return None
+    return data_url_match.group("base64_payload")
+
+
+def normalize_chat_image(image: Image.Image) -> Image.Image:
+    """Create the copy of a chat image that is stored and sent to workers.
+
+    The copy is RGB, or RGBA when the image has transparency, and its longest side is at most
+    [`MAX_CHAT_IMAGE_SIDE`][horde.image.MAX_CHAT_IMAGE_SIDE]; a smaller image keeps its size.
+
+    Args:
+        image: The decoded image.
+
+    Returns:
+        The normalised copy.
+
+    Raises:
+        OSError: If the image data cannot be decoded.
+    """
+    normalized_image = image.convert("RGBA" if image.has_transparency_data else "RGB")
+    normalized_image.thumbnail((MAX_CHAT_IMAGE_SIDE, MAX_CHAT_IMAGE_SIDE), Image.Resampling.LANCZOS)
+    return normalized_image
+
+
 def fetch_public_image(
     image_url: str,
     *,
@@ -210,6 +269,61 @@ def fetch_public_image(
     if response.status != 200:
         raise ImageValidationFailed(f"The image URL returned status {response.status}.", rc="SourceImageUrlInvalid")
     return response.body
+
+
+def encode_chat_image(image: Image.Image) -> bytes:
+    """Return a normalised chat image encoded as the JPEG that is stored and sent to workers.
+
+    An image with transparency is flattened onto [`CHAT_IMAGE_BACKGROUND`][horde.image.CHAT_IMAGE_BACKGROUND] first.
+
+    Args:
+        image: The image [`load_chat_image`][horde.image.load_chat_image] returned.
+
+    Returns:
+        The JPEG bytes, at [`CHAT_IMAGE_JPEG_QUALITY`][horde.image.CHAT_IMAGE_JPEG_QUALITY].
+    """
+    if image.has_transparency_data:
+        transparent_image = image.convert("RGBA")
+        opaque_image = Image.new("RGB", transparent_image.size, CHAT_IMAGE_BACKGROUND)
+        opaque_image.paste(transparent_image, mask=transparent_image.getchannel("A"))
+    else:
+        opaque_image = image.convert("RGB")
+    image_buffer = BytesIO()
+    opaque_image.save(image_buffer, format="JPEG", quality=CHAT_IMAGE_JPEG_QUALITY)
+    return image_buffer.getvalue()
+
+
+def load_chat_image(image_url: str) -> Image.Image:
+    """Create the normalised image a chat image part points at, decoding a data URL or fetching an http(s) URL.
+
+    A URL is fetched the way a source image URL is, with the same 5 MiB cap. Both forms are held to the source
+    image resolution cap.
+
+    Args:
+        image_url: An image part's ``url``, already checked for form and encoded size.
+
+    Returns:
+        The image as [`normalize_chat_image`][horde.image.normalize_chat_image] returns it.
+
+    Raises:
+        horde.exceptions.ImageValidationFailed: If the image cannot be fetched or read, or breaks a size cap.
+    """
+    with logfire.span("horde.image.load_chat_image", is_url=image_url.startswith("http")):
+        base64_payload = parse_image_data_url(image_url)
+        try:
+            if base64_payload is None:
+                # With force_r2 off, the source image fetch returns the opened image and uploads nothing.
+                _, image, _ = ensure_source_image_uploaded(image_url, "", force_r2=False)
+            else:
+                image, _, _, _ = convert_source_image_to_pil(base64_payload)
+            width, height = image.size
+            if width * height > MAX_SOURCE_IMAGE_PIXELS:
+                raise ImageValidationFailed("Image size cannot exceed 3072*3072 pixels", rc="SourceImageResolutionExceeded")
+            return normalize_chat_image(image)
+        except Image.DecompressionBombError as err:
+            raise ImageValidationFailed("Image size cannot exceed 3072*3072 pixels", rc="SourceImageResolutionExceeded") from err
+        except (binascii.Error, OSError) as err:
+            raise ImageValidationFailed("The image could not be read.", rc="SourceImageUnreadable") from err
 
 
 def calculate_image_tiles(image):

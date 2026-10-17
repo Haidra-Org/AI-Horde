@@ -194,7 +194,7 @@ The errors returned by the AI horde are always in this json format
 | MissingExtraTexts | This workflow requires the extra texts to be provided |
 | MissingFullSamplerOrder | A custom sampler order must list every sampler |
 | ModerationEventNotFound | No moderation event exists with the given ID |
-| MoreThanMinExtraSourceImage | Only trusted users and patrons can send more than one extra source image |
+| MoreThanMinExtraSourceImage | Only trusted users and patrons can send more than one extra source image, or more than one image on a chat request |
 | NonServiceForbidden | Only service accounts can set a proxy passkey |
 | NotUserOrMod | Only the user themselves or a moderator can delete a user |
 | NulByteInPayload | The request payload may not contain NUL bytes |
@@ -216,9 +216,18 @@ The errors returned by the AI horde are always in this json format
 | TemplateFieldsRequireStyle | Template fields can only be sent alongside a style |
 | ThingNotFound | No item exists with the given ID |
 | TokenOverflow | More tokens were requested than the context length allows |
-| TooManyExtraSourceImages | At most 5 extra source images can be sent |
+| TooManyExtraSourceImages | At most 5 extra source images, or 5 images on a chat request, can be sent |
 | TooManyStopSequences | Too many stop sequences were specified |
 | TooManyStyleExamples | An image style can have at most 4 examples |
 | TooManyWorkers | Untrusted users can have at most 3 distinct workers |
 | TooManyWorkersTrusted | Trusted users cannot onboard more than 20 workers without contacting the team |
+| UnsupportedChatParameter | A chat request used a key, role, value or content part the horde does not serve; the message names it |
+| ChatRequestConflict | Two keys of a chat request contradict each other, such as differing `max_tokens` and `max_completion_tokens`, or both `horde.only` and `horde.ignore` |
+| ChatAdmissionDisabled | This horde is not accepting new chat requests (HTTP 503); queued chat requests are still served |
+| ChatDeclarationInvalid | A text pop set `chat_jobs` without `chat_limits` or `model_id`, or with a `model_id` that contains a colon or is not one of the worker's models |
+| ChatSubmitInvalid | A chat job's submit lacked a valid `message` or `finish_reason`, carried `generation`, or a text job's submit carried `message` |
+| ChatModelMismatch | A chat job's submit named another `model_id` than the model the job was assigned |
+| UnknownChatModel | A chat request's model is not in the text model reference and no online worker serves chat jobs with it (HTTP 404) |
+| OperationKeyConflict | A chat request reused an operation key the same user already claimed with a different request |
+| RequestTooLarge | The request body is larger than the route accepts (HTTP 413) |
 | UserNotDeleted | The user is not deleted and cannot be undeleted |

@@ -4,6 +4,7 @@
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, func, or_
@@ -24,6 +25,43 @@ from horde.database.functions import query_prioritized_wps
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
+
+CHAT_WORKER_ONLINE_WINDOW = timedelta(seconds=300)
+"""How recently a chat worker must have checked in to count as online; the window ``get_active_workers()`` uses."""
+
+
+@dataclass(frozen=True)
+class ChatOperationClaim:
+    """Represents the chat request that claimed an operation key."""
+
+    request_id: str
+    """The id of the request the key was claimed by."""
+
+    kudos: float
+    """The kudos the request was quoted at activation."""
+
+    fingerprint: str | None
+    """The fingerprint the key was claimed with."""
+
+
+@dataclass(frozen=True)
+class ChatModelOffer:
+    """Represents what the online chat workers serving one model declare, taken together."""
+
+    worker_count: int
+    """How many online workers serve chat jobs with the model."""
+
+    max_context_length: int
+    """The largest chat context any of them declares."""
+
+    max_length: int
+    """The largest chat output any of them declares."""
+
+    features: tuple[str, ...]
+    """Every chat feature at least one of them declares, sorted."""
+
+    created: datetime | None
+    """When the longest-registered of them was created; None when no row records a creation time."""
 
 
 # Should be overriden
@@ -56,6 +94,31 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
         .exists()
     )
     wp_has_worker_targets = db.session.query(WPAllowedWorkers.id).filter(WPAllowedWorkers.wp_id == TextWaitingPrompt.id).exists()
+    # Each job family is bounded by its own limits. Chat features are checked in can_generate().
+    wp_fits_worker = and_(
+        TextWaitingPrompt.is_chat.is_(False),
+        TextWaitingPrompt.max_length <= worker.max_length,
+        TextWaitingPrompt.max_context_length <= worker.max_context_length,
+    )
+    worker_declares_chat = (
+        worker.accepts_chat_jobs
+        and worker.chat_model_id is not None
+        and worker.chat_max_length is not None
+        and worker.chat_max_context_length is not None
+    )
+    if worker_declares_chat:
+        wp_names_chat_model = (
+            db.session.query(WPModels.id).filter(WPModels.wp_id == TextWaitingPrompt.id, WPModels.model == worker.chat_model_id).exists()
+        )
+        wp_fits_worker = or_(
+            wp_fits_worker,
+            and_(
+                TextWaitingPrompt.is_chat.is_(True),
+                TextWaitingPrompt.max_length <= worker.chat_max_length,
+                TextWaitingPrompt.max_context_length <= worker.chat_max_context_length,
+                wp_names_chat_model,
+            ),
+        )
     final_wp_list = (
         db.session.query(TextWaitingPrompt)
         .options(
@@ -67,8 +130,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
         )
         .filter(
             TextWaitingPrompt.n > 0,
-            TextWaitingPrompt.max_length <= worker.max_length,
-            TextWaitingPrompt.max_context_length <= worker.max_context_length,
+            wp_fits_worker,
             TextWaitingPrompt.active == True,  # noqa E712
             TextWaitingPrompt.faulted == False,  # noqa E712
             TextWaitingPrompt.expiry > datetime.utcnow(),
@@ -121,7 +183,18 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
     return final_wp_list.populate_existing().with_for_update(skip_locked=True, of=TextWaitingPrompt).all()
 
 
-def get_text_wp_by_id(wp_id, lite=False):
+def get_text_wp_by_id(wp_id, lite=False, *, chat=False):
+    """Return a text request by id, from the family its route serves.
+
+    Args:
+        wp_id (str): The request id.
+        lite (bool): When true, the request's generations are not loaded.
+        chat (bool): When true, only a chat request matches; otherwise only a plain text request does. The text
+            and chat routes each report the other family's requests as not found.
+
+    Returns:
+        TextWaitingPrompt | None: The request, or None when no request of that family has the id.
+    """
     try:
         wp_uuid = uuid.UUID(wp_id)
     except ValueError:
@@ -134,7 +207,94 @@ def get_text_wp_by_id(wp_id, lite=False):
         query = db.session.query(TextWaitingPrompt).options(noload(TextWaitingPrompt.processing_gens))
     else:
         query = db.session.query(TextWaitingPrompt)
-    return query.filter_by(id=wp_uuid).first()
+    return query.filter(TextWaitingPrompt.is_chat.is_(chat)).filter_by(id=wp_uuid).first()
+
+
+def find_chat_operation_claim(user_id: int, operation_key: uuid.UUID) -> ChatOperationClaim | None:
+    """Return the chat request a user's operation key was claimed by.
+
+    Args:
+        user_id: The user the claim belongs to.
+        operation_key: The key.
+
+    Returns:
+        The claiming request, or None when the user has no request under the key.
+    """
+    claimed_row = (
+        db.session.query(
+            TextWaitingPrompt.id,
+            TextWaitingPrompt.kudos,
+            TextWaitingPrompt.operation_fingerprint,
+        )
+        .filter(
+            TextWaitingPrompt.user_id == user_id,
+            TextWaitingPrompt.operation_key == (str(operation_key) if SQLITE_MODE else operation_key),
+        )
+        .first()
+    )
+    if claimed_row is None:
+        return None
+    return ChatOperationClaim(
+        request_id=str(claimed_row.id),
+        kudos=claimed_row.kudos,
+        fingerprint=claimed_row.operation_fingerprint,
+    )
+
+
+def is_chat_model_served(model_name: str) -> bool:
+    """Return whether an online worker that accepts chat jobs serves them with this model.
+
+    Args:
+        model_name: The model a chat request asked for.
+
+    Returns:
+        Whether at least one online chat worker declared the model as its ``model_id``.
+    """
+    served_query = db.session.query(TextWorker.id).filter(
+        TextWorker.last_check_in > datetime.utcnow() - CHAT_WORKER_ONLINE_WINDOW,
+        TextWorker.accepts_chat_jobs.is_(True),
+        TextWorker.chat_model_id == model_name,
+    )
+    return bool(db.session.query(served_query.exists()).scalar())
+
+
+def get_chat_model_offers() -> dict[str, ChatModelOffer]:
+    """Return, per model, what the online chat workers serving it declare, in one query.
+
+    Workers in maintenance are left out, as the model status leaves them out of its counts.
+
+    Returns:
+        One offer per model at least one online chat worker serves, keyed by the model name.
+    """
+    declaration_rows = (
+        db.session.query(
+            TextWorker.chat_model_id,
+            TextWorker.chat_max_context_length,
+            TextWorker.chat_max_length,
+            TextWorker.chat_features,
+            TextWorker.created,
+        )
+        .filter(
+            TextWorker.last_check_in > datetime.utcnow() - CHAT_WORKER_ONLINE_WINDOW,
+            TextWorker.accepts_chat_jobs.is_(True),
+            TextWorker.chat_model_id.is_not(None),
+            TextWorker.maintenance.is_(False),
+        )
+        .all()
+    )
+    rows_by_model: dict[str, list] = {}
+    for declaration_row in declaration_rows:
+        rows_by_model.setdefault(declaration_row.chat_model_id, []).append(declaration_row)
+    return {
+        model_name: ChatModelOffer(
+            worker_count=len(model_rows),
+            max_context_length=max(model_row.chat_max_context_length or 0 for model_row in model_rows),
+            max_length=max(model_row.chat_max_length or 0 for model_row in model_rows),
+            features=tuple(sorted({feature for model_row in model_rows for feature in model_row.chat_features or ()})),
+            created=min((model_row.created for model_row in model_rows if model_row.created is not None), default=None),
+        )
+        for model_name, model_rows in rows_by_model.items()
+    }
 
 
 def get_text_progen_by_id(procgen_id):

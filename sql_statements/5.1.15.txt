@@ -1,0 +1,46 @@
+-- Run with psql -v ON_ERROR_STOP=1 so a failure stops the migration. Do not pass --single-transaction:
+-- CREATE INDEX CONCURRENTLY cannot run inside a transaction block. A failed concurrent build leaves an
+-- INVALID index to drop before rerunning. Every statement is idempotent.
+--
+-- Apply before deploying the application; db.create_all() does not add a column to an
+-- existing table. Do not drop anything here while an instance might still run the new code.
+--
+-- Chat requests are text requests whose worker input is an OpenAI messages array. is_chat tells the
+-- two apart at every read site; messages holds the array and is loaded only for an assigned request.
+-- operation_key and operation_fingerprint hold the key a native caller claims one chat submission with
+-- and the hash of the request it claimed it for; context_adjustments records how the context length
+-- was changed to fit the messages, for the chat status.
+-- The workers columns hold the chat declaration a worker sends on each pop: whether it accepts chat
+-- jobs, the optional features it implements, its chat limits and the model it serves chat jobs with.
+-- The processing_gens columns hold a chat worker's structured reply (the message, finish reasons and
+-- reported token counts), the basis the generation was charged on, and the worker's declaration as it
+-- stood when the generation was assigned. A nullable column without a default and a column with a
+-- constant default are both metadata-only adds; the lock timeout fails rather than queueing an
+-- ACCESS EXCLUSIVE lock behind a long transaction. Rerun on failure.
+SET lock_timeout = '5s';
+ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS is_chat BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS messages JSONB;
+ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS operation_key UUID;
+ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS operation_fingerprint CHAR(64);
+ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS context_adjustments JSONB;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS accepts_chat_jobs BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_features TEXT[];
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_max_context_length INTEGER;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_max_length INTEGER;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_model_id VARCHAR;
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS message JSONB;
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS finish_reason VARCHAR(32);
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS native_finish_reason VARCHAR(32);
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER;
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS completion_tokens INTEGER;
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS charge_basis VARCHAR(16);
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_model VARCHAR;
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_max_context_length INTEGER;
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_max_length INTEGER;
+RESET lock_timeout;
+
+-- One operation key per user. Every existing row has no key, so the partial index starts empty, but the
+-- build still reads the whole table; building it concurrently keeps request writes flowing meanwhile.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ix_waiting_prompts_user_operation_key
+  ON waiting_prompts (user_id, operation_key)
+  WHERE operation_key IS NOT NULL;

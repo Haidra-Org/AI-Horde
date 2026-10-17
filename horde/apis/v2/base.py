@@ -8,14 +8,14 @@ import os
 import random
 import time
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 import logfire
 import regex as re
 from flask import render_template, request
-from flask_restx import Namespace, Resource, reqparse
+from flask_restx import Namespace, Resource, inputs, marshal_with, reqparse
 from flask_restx.reqparse import ParseResult
 from markdownify import markdownify
 from opentelemetry import trace
@@ -53,6 +53,7 @@ from horde.consts import HORDE_VERSION
 from horde.countermeasures import REJECTION_WINDOW, CounterMeasures
 from horde.database import functions as database
 from horde.database import prompt_moderation
+from horde.database import text_functions as text_database
 from horde.database.prompt_moderation import PromptEvidence, PromptModerationReason, record_prompt_evidence
 from horde.detection import prompt_checker
 from horde.discord import moderation_event_url, send_problem_user_notification
@@ -183,6 +184,8 @@ handle_worker_not_found = api.errorhandler(e.WorkerNotFound)(e.handle_bad_reques
 handle_team_not_found = api.errorhandler(e.TeamNotFound)(e.handle_bad_requests)
 handle_thing_not_found = api.errorhandler(e.ThingNotFound)(e.handle_bad_requests)
 handle_moderation_event_not_found = api.errorhandler(e.ModerationEventNotFound)(e.handle_bad_requests)
+handle_unknown_chat_model = api.errorhandler(e.UnknownChatModel)(e.handle_bad_requests)
+handle_request_too_large = api.errorhandler(e.RequestTooLarge)(e.handle_bad_requests)
 handle_user_not_found = api.errorhandler(e.UserNotFound)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
 handle_aborted_gen = api.errorhandler(e.AbortedGen)(e.handle_bad_requests)
@@ -191,6 +194,7 @@ handle_too_many_prompts = api.errorhandler(e.TooManyPrompts)(e.handle_bad_reques
 handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_requests)
 handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
+handle_service_unavailable = api.errorhandler(e.ServiceUnavailable)(e.handle_bad_requests)
 locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 
 
@@ -1401,7 +1405,16 @@ class JobSubmitTemplate(Resource):
         }
         if gen_metadata is not None:
             kwargs["gen_metadata"] = gen_metadata
+        kwargs.update(self.get_submission_details())
         self.kudos = self.procgen.set_generation(**kwargs)
+
+    def get_submission_details(self):
+        """Return what a gentype's submission carries beyond the shared fields, passed on to ``set_generation``.
+
+        Returns:
+            dict: Extra keyword arguments for the generation's ``set_generation``; none by default.
+        """
+        return {}
 
     def validate(self):
         t = time.monotonic()
@@ -2546,28 +2559,77 @@ class Models(Resource):
         ),
         location="args",
     )
+    get_parser.add_argument(
+        "chat",
+        required=False,
+        default=False,
+        type=inputs.boolean,
+        help=(
+            "With type=text, only list models at least one online worker serves chat jobs with, each with a 'chat' "
+            "object holding what those workers declare."
+        ),
+        location="args",
+    )
 
     @cache.cached(timeout=2, query_string=True)
     @api.expect(get_parser)
     @api.response(400, "Validation Error", models.response_model_error)
-    @api.marshal_with(
-        models.response_model_active_model,
-        code=200,
-        description="List All Active Models",
-        as_list=True,
-    )
+    @api.response(200, "List All Active Models", [models.response_model_active_model_chat])
     def get(self):
-        """Returns a list of models active currently in this horde"""
+        """Returns a list of models active currently in this horde.
+        With type=text and chat=true, only the text models that at least one online worker serves chat jobs with
+        are listed, each with a 'chat' object; without chat=true no entry carries that key.
+        """
         self.args = self.get_parser.parse_args()
         if self.args.model_state not in ["known", "custom", "all"]:
             raise e.BadRequest("'model_state' needs to be one of ['known', 'custom', 'all']")
+        if self.args.chat and self.args.type != "text":
+            raise e.BadRequest("'chat' can only be set together with type=text.")
         models_ret = database.retrieve_available_models(
             model_type=self.args.type,
             min_count=self.args.min_count,
             max_count=self.args.max_count,
             model_state=self.args.model_state,
         )
-        return (models_ret, 200)
+        response_model = models.response_model_active_model
+        if self.args.chat:
+            models_ret = self.add_chat_offers(models_ret)
+            response_model = models.response_model_active_model_chat
+        # marshal_with marshals each entry of a list it is given, so the list needs no flag of its own.
+        return marshal_with(response_model)(lambda: (models_ret, 200))()
+
+    @staticmethod
+    def add_chat_offers(models_ret):
+        """Return the text models that online chat workers serve, each with what those workers declare.
+
+        Args:
+            models_ret (list[dict]): The text model entries, after the request's filters.
+
+        Returns:
+            list[dict]: The entries of the models at least one online chat worker serves, each with a ``chat`` key.
+        """
+        chat_model_offers = text_database.get_chat_model_offers()
+        chat_models_ret = []
+        for model_entry in models_ret:
+            chat_model_offer = chat_model_offers.get(model_entry["name"])
+            if chat_model_offer is None:
+                continue
+            created = None
+            if chat_model_offer.created is not None:
+                created = int(chat_model_offer.created.replace(tzinfo=UTC).timestamp())
+            chat_models_ret.append(
+                {
+                    **model_entry,
+                    "chat": {
+                        "workers": chat_model_offer.worker_count,
+                        "max_context_length": chat_model_offer.max_context_length,
+                        "max_length": chat_model_offer.max_length,
+                        "features": list(chat_model_offer.features),
+                        "created": created,
+                    },
+                },
+            )
+        return chat_models_ret
 
 
 class ModelSingle(Resource):

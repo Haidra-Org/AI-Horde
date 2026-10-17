@@ -212,11 +212,20 @@ KNOWN_RC = [
     "TemplateFieldUnknown",
     "TemplateFieldMissing",
     "PromptExceedsContext",
+    "UnsupportedChatParameter",
+    "ChatRequestConflict",
+    "ChatAdmissionDisabled",
+    "ChatDeclarationInvalid",
+    "ChatSubmitInvalid",
+    "ChatModelMismatch",
+    "UnknownChatModel",
+    "OperationKeyConflict",
+    "RequestTooLarge",
 ]
 
 
 class BadRequest(wze.BadRequest):
-    def __init__(self, message, log=None, rc="BadRequest"):
+    def __init__(self, message: str, log: str | None = None, rc: str = "BadRequest") -> None:
         self.specific = message
         self.log = log
         self.rc = rc
@@ -226,6 +235,24 @@ class Forbidden(wze.Forbidden):
     def __init__(self, message, log=None, rc="Forbidden"):
         self.specific = message
         self.log = log
+        self.rc = rc
+
+
+class ServiceUnavailable(wze.ServiceUnavailable):
+    """A route that is switched off on this horde, refused with 503 so a client can retry elsewhere or later."""
+
+    def __init__(self, message: str, log: str | None = None, rc: str = "ServiceUnavailable") -> None:
+        self.specific = message
+        self.log = log
+        self.rc = rc
+
+
+class RequestTooLarge(wze.RequestEntityTooLarge):
+    """A request body above the size its route accepts, refused with 413 before the body is parsed."""
+
+    def __init__(self, message: str, rc: str = "RequestTooLarge") -> None:
+        self.specific = message
+        self.log = None
         self.rc = rc
 
 
@@ -325,9 +352,9 @@ class PolymorphicNameConflict(wze.BadRequest):
 class ImageValidationFailed(wze.BadRequest):
     def __init__(
         self,
-        message=("Please ensure the source image payload is either a URL containing an image or a valid base64 encoded image."),
-        rc="ImageValidationFailed",
-    ):
+        message: str = ("Please ensure the source image payload is either a URL containing an image or a valid base64 encoded image."),
+        rc: str = "ImageValidationFailed",
+    ) -> None:
         self.specific = f"Image validation failed. {message}"
         self.log = "Source image validation failed"
         self.rc = rc
@@ -558,6 +585,18 @@ class TeamNotFound(wze.NotFound):
     def __init__(self, team_id, rc="TeamNotFound"):
         self.specific = f"Team with ID '{team_id}' not found."
         self.log = f"Attempted to retrieve team with non-existent ID '{team_id}'"
+        self.rc = rc
+
+
+class UnknownChatModel(wze.NotFound):
+    """A chat request for a model that neither the text model reference lists nor an online chat worker serves."""
+
+    def __init__(self, model_name: str, rc: str = "UnknownChatModel") -> None:
+        self.specific = (
+            f"The model '{model_name}' is not known to this horde: the text model reference does not list it and "
+            "no online worker serves chat jobs with it."
+        )
+        self.log = None
         self.rc = rc
 
 

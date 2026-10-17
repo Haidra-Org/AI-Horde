@@ -13,9 +13,28 @@ substitute a recording fake client and assert the request shape.
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
 from horde import r2
+
+
+@pytest.mark.parametrize("read_fails", [False, True])
+def test_chat_download_closes_body_even_when_read_fails(monkeypatch: pytest.MonkeyPatch, read_fails: bool) -> None:
+    body = Mock()
+    body.read.return_value = b"jpeg-bytes"
+    client = Mock()
+    client.get_object.return_value = {"Body": body}
+    monkeypatch.setattr(r2, "s3_client", client)
+    if read_fails:
+        body.read.side_effect = OSError("read failed")
+        with pytest.raises(OSError, match="read failed"):
+            r2.download_chat_image("chat/test.jpg")
+    else:
+        assert r2.download_chat_image("chat/test.jpg") == b"jpeg-bytes"
+    body.close.assert_called_once_with()
+    client.get_object.assert_called_once_with(Bucket=r2.r2_source_image_bucket, Key="chat/test.jpg")
 
 
 class _FakeS3:
