@@ -62,6 +62,7 @@ procedure for one subject sit together.
 
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
+- Reference: [Outbound requests reference](reference/outbound_requests.md)
 
 ### requests
 
@@ -72,6 +73,7 @@ procedure for one subject sit together.
 - Reference: [Prompt provenance reference](reference/prompt_provenance.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 - Reference: [Style contract reference](reference/style_contract.md)
+- Reference: [Outbound requests reference](reference/outbound_requests.md)
 
 ### workers
 

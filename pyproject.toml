@@ -63,6 +63,7 @@ dependencies = [
     # against this exact version. Bump only with a telemetry smoke re-run.
     "logfire[flask,sqlalchemy,redis,requests]==4.32.1",
     "chardet<6",
+    "pycurl>=7.45.7,<8",
 ]
 license = {file = "LICENSE"}
 classifiers = [
@@ -92,6 +93,8 @@ dev = [
     "pre-commit",
     "locust>=2.43.4",
     "types-python-dateutil>=2.9.0.20260716",
+    # Issues a throwaway CA and server certificate for the loopback HTTPS outbound tests.
+    "trustme",
 ]
 # Optional runtime group used by the Dockerfile's AI_HORDE_DEPENDENCY_GROUPS
 # build arg. Keep profiler wheels out of the default image; publish/use the

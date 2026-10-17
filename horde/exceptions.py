@@ -43,6 +43,7 @@ KNOWN_RC = [
     "SourceImageResolutionExceeded",
     "SourceImageSizeExceeded",
     "SourceImageUrlInvalid",
+    "SourceImageUrlRefused",
     "SourceImageUnreadable",
     "InpaintingMissingMask",
     "SourceMaskUnnecessary",

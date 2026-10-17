@@ -10,7 +10,6 @@ from datetime import datetime
 from typing import Any
 
 import logfire
-import requests
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import expression
@@ -19,20 +18,38 @@ from horde.classes.base.kudos import kudos_event
 from horde.enums import RequestTerminalOutcome
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
+from horde.outbound import HTTPS_SCHEMES, OutboundRequestRefused, OutboundResponseTooLarge, send_public_request
 from horde.request_scheduling import CapacityReturn, record_capacity_return, record_request_completion_forecast
 from horde.utils import get_db_uuid
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 json_column_type = JSONB if not SQLITE_MODE else JSON
 
-# Generation webhooks deliver through this bounded queue instead of on the
-# submit request path: a slow subscriber endpoint (up to three 3-second
-# attempts) would otherwise hold the worker's submit response open for
+# Generation and interrogation webhooks deliver through this bounded queue
+# instead of on the submit request path: a slow subscriber endpoint (up to
+# three attempts) would otherwise hold the worker's submit response open for
 # seconds. Delivery is best-effort either way (a failed delivery only logs
 # after the final attempt), so a subscriber observes the same guarantees.
 # The bound keeps one unreachable endpoint from accumulating deliveries
 # without limit; overflow drops the delivery and counts it as an outcome.
 WEBHOOK_QUEUE_MAXSIZE = 256
+
+WEBHOOK_ATTEMPTS = 3
+"""How many times one webhook delivery is attempted before it is abandoned."""
+
+WEBHOOK_HOP_TIMEOUT_SECONDS = 3
+"""Connect timeout and libcurl low-speed window for a webhook URL."""
+
+WEBHOOK_ATTEMPT_DEADLINE_SECONDS = 6
+"""How long one delivery attempt may take in all, including a subscriber trickling its response."""
+
+WEBHOOK_MAX_RESPONSE_BYTES = 64 * 1024
+"""The most bytes of a subscriber's response that are read. The response body is not used, so a small cap only
+stops a large response from costing the sender memory and time."""
+
+WEBHOOK_SCHEMES = HTTPS_SCHEMES
+"""The schemes a webhook URL may use. The submit routes accept only https webhook URLs, and the sender holds every
+delivery to the same rule."""
 _webhook_queue: queue.Queue[tuple[str, dict[str, Any], str, str]] = queue.Queue(maxsize=WEBHOOK_QUEUE_MAXSIZE)
 _webhook_sender_lock = threading.Lock()
 _webhook_sender: threading.Thread | None = None
@@ -60,28 +77,50 @@ def _webhook_sender_loop() -> None:
 
 
 def _deliver_webhook(url: str, data: dict[str, Any], wp_id: str, procgen_id: str) -> None:
+    """POST one webhook payload to its subscriber, with bounded retries.
+
+    The request goes through [`send_public_request`][horde.outbound.send_public_request], so a webhook URL that
+    resolves to a private address is refused before any connection. Redirects are not followed: a 307 or 308 would
+    re-send the payload to a target the subscriber did not register, and a subscriber that owns its URL has no need
+    to redirect. A refused URL is logged once and not retried, since a retry would be refused the same way.
+
+    Args:
+        url: The subscriber URL.
+        data: The JSON payload.
+        wp_id: The waiting prompt or interrogation the delivery belongs to, for telemetry.
+        procgen_id: The generation or interrogation form the delivery reports, for telemetry.
+    """
     with logfire.span("horde.webhook.send", wp_id=wp_id, procgen_id=procgen_id) as span:
         from horde.metrics import webhook_duration, webhook_outcomes
 
         outcome = "giveup"
         attempts = 0
-        for riter in range(3):
+        for riter in range(WEBHOOK_ATTEMPTS):
             attempts += 1
             t0 = time.monotonic()
             status_code = None
             attempt_outcome = "exception"
             try:
-                req = requests.post(url, json=data, timeout=3)
-                status_code = req.status_code
-                if not req.ok:
+                response = send_public_request(
+                    url,
+                    method="POST",
+                    json_body=data,
+                    hop_timeout_seconds=WEBHOOK_HOP_TIMEOUT_SECONDS,
+                    deadline_seconds=WEBHOOK_ATTEMPT_DEADLINE_SECONDS,
+                    max_redirects=0,
+                    max_response_bytes=WEBHOOK_MAX_RESPONSE_BYTES,
+                    allowed_schemes=WEBHOOK_SCHEMES,
+                )
+                status_code = response.status
+                if status_code >= 400:
                     attempt_outcome = "http_error"
                     webhook_duration.record(
                         time.monotonic() - t0,
                         {"attempt": riter, "outcome": attempt_outcome, "status_code": status_code},
                     )
                     logger.debug(
-                        f"Something went wrong when sending generation webhook: {req.status_code} - {req.text}. "
-                        f"Will retry {3 - riter - 1} more times...",
+                        f"Something went wrong when sending webhook for {procgen_id}: {status_code}. "
+                        f"Will retry {WEBHOOK_ATTEMPTS - riter - 1} more times...",
                     )
                     continue
                 attempt_outcome = "ok"
@@ -91,15 +130,52 @@ def _deliver_webhook(url: str, data: dict[str, Any], wp_id: str, procgen_id: str
                     {"attempt": riter, "outcome": attempt_outcome, "status_code": status_code},
                 )
                 break
+            except OutboundRequestRefused as err:
+                attempt_outcome = "refused"
+                outcome = "refused"
+                webhook_duration.record(time.monotonic() - t0, {"attempt": riter, "outcome": attempt_outcome})
+                logger.warning(f"Refused webhook for {procgen_id}: {err}")
+                break
+            except OutboundResponseTooLarge:
+                # The subscriber returned a success status before the body passed the cap, so the payload
+                # was delivered.
+                attempt_outcome = "ok"
+                outcome = "ok"
+                webhook_duration.record(time.monotonic() - t0, {"attempt": riter, "outcome": attempt_outcome})
+                break
             except Exception as err:
                 webhook_duration.record(
                     time.monotonic() - t0,
                     {"attempt": riter, "outcome": attempt_outcome},
                 )
-                logger.debug(f"Exception when sending generation webhook: {err}. Will retry {3 - riter - 1} more times...")
+                logger.debug(
+                    f"Exception when sending webhook for {procgen_id}: {err}. Will retry {WEBHOOK_ATTEMPTS - riter - 1} more times...",
+                )
         webhook_outcomes.add(1, {"outcome": outcome})
         span.set_attribute("horde.webhook.outcome", outcome)
         span.set_attribute("horde.webhook.attempts", attempts)
+
+
+def enqueue_webhook(url: str, data: dict[str, Any], wp_id: str, procgen_id: str) -> None:
+    """Hand one webhook delivery to the background sender.
+
+    The payload must be plain data: it is built on the request thread, which holds the ORM session, and the sender
+    thread performs only HTTP I/O. A full queue drops the delivery and counts it.
+
+    Args:
+        url: The subscriber URL.
+        data: The JSON payload.
+        wp_id: The waiting prompt or interrogation the delivery belongs to.
+        procgen_id: The generation or interrogation form the delivery reports.
+    """
+    from horde.metrics import webhook_outcomes
+
+    _ensure_webhook_sender()
+    try:
+        _webhook_queue.put_nowait((url, data, wp_id, procgen_id))
+    except queue.Full:
+        webhook_outcomes.add(1, {"outcome": "dropped"})
+        logger.warning(f"Webhook queue full; dropping delivery for {procgen_id}")
 
 
 class ProcessingGeneration(db.Model):
@@ -465,19 +541,12 @@ class ProcessingGeneration(db.Model):
         """
         if not self.wp.webhook:
             return
-        from horde.metrics import webhook_outcomes
-
         data = self.get_details()
         data["request"] = str(self.wp.id)
         data["id"] = str(self.id)
         data["kudos"] = kudos
         data["worker_id"] = str(data["worker_id"])
-        _ensure_webhook_sender()
-        try:
-            _webhook_queue.put_nowait((self.wp.webhook, data, str(self.wp.id), str(self.id)))
-        except queue.Full:
-            webhook_outcomes.add(1, {"outcome": "dropped"})
-            logger.warning(f"Webhook queue full; dropping delivery for procgen {self.id}")
+        enqueue_webhook(self.wp.webhook, data, str(self.wp.id), str(self.id))
 
     def set_job_ttl(self):
         """Returns how many seconds each job request should stay waiting before considering it stale and cancelling it

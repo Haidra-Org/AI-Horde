@@ -12,12 +12,16 @@ testcontainers. Redis-touching unit tests still use in-process fakeredis.
 from __future__ import annotations
 
 import contextlib
+import ssl
 import uuid
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import pycurl
 import pytest
 import sqlalchemy
+import trustme
 from sqlalchemy import event
 
 from tests.dependency_runtime import create_schema, drop_schema, new_test_schema_name
@@ -31,6 +35,28 @@ if TYPE_CHECKING:
 
     from horde.classes.base.user import User, UserRole
     from horde.enums import UserRoleTypes
+
+
+@pytest.fixture
+def hook_tls_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ssl.SSLContext:
+    """Trust a temporary CA for hook.example, with no external revocation service."""
+    certificate_authority = trustme.CA()
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    certificate_authority.issue_cert("hook.example").configure_cert(server_context)
+    ca_path = tmp_path / "hook-ca.pem"
+    certificate_authority.cert_pem.write_to_path(str(ca_path))
+    monkeypatch.setattr("horde.outbound.certifi.where", lambda: str(ca_path))
+    # Schannel requires revocation data by default. The temporary CA does not have a CRL/OCSP endpoint.
+    # This fixture permits unavailable revocation data while retaining certificate and hostname checks.
+    real_curl = pycurl.Curl
+
+    def test_curl() -> pycurl.Curl:
+        curl = real_curl()
+        curl.setopt(pycurl.SSL_OPTIONS, pycurl.SSLOPT_REVOKE_BEST_EFFORT)
+        return curl
+
+    monkeypatch.setattr(pycurl, "Curl", test_curl)
+    return server_context
 
 
 @pytest.fixture(scope="session")

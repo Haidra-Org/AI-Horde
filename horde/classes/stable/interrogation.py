@@ -8,11 +8,11 @@ import json
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-import requests
 from sqlalchemy import JSON, Enum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from horde.classes.base.kudos import kudos_event
+from horde.classes.base.processing_generation import enqueue_webhook
 from horde.consts import IMAGE_RESULT_ALCHEMY_FORMS, annotation_detector_kudos_bucket
 from horde.database.kudos_reservations import release_reservation, reserve_kudos
 from horde.enums import State
@@ -223,6 +223,7 @@ class InterrogationForms(db.Model):
         return details
 
     def send_webhook(self, kudos):
+        """Hand this form's webhook to the background sender the generation webhooks use, off the submit request."""
         if not self.interrogation.webhook:
             return
         data = self.get_details()
@@ -230,18 +231,7 @@ class InterrogationForms(db.Model):
         data["id"] = str(self.id)
         data["kudos"] = kudos
         data["worker_id"] = str(data["worker_id"])
-        for riter in range(3):
-            try:
-                req = requests.post(self.interrogation.webhook, json=data, timeout=3)
-                if not req.ok:
-                    logger.debug(
-                        f"Something went wrong when sending alchemy webhook: {req.status_code} - {req.text}. "
-                        f"Will retry {3 - riter - 1} more times...",
-                    )
-                    continue
-                break
-            except Exception as err:
-                logger.debug(f"Exception when sending alchemy webhook: {err}. Will retry {3 - riter - 1} more times...")
+        enqueue_webhook(self.interrogation.webhook, data, str(self.interrogation.id), str(self.id))
 
 
 class Interrogation(db.Model):

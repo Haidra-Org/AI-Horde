@@ -52,6 +52,7 @@ The errors returned by the AI horde are always in this json format
 | SourceImageResolutionExceeded | Source image resolution larger than the max allowed by the AI Horde |
 | SourceImageSizeExceeded | Source image file size larger than the max allowed by the AI Horde |
 | SourceImageUrlInvalid | Source image url does not contain an image |
+| SourceImageUrlRefused | A source image URL is not http(s), does not resolve, resolves or redirects to a private, loopback, link-local, multicast or otherwise non-public address, or redirects more than 3 times |
 | SourceImageUnreadable | Source image could not be parsed |
 | InpaintingMissingMask | Missing mask or alpha channel for inpainting |
 | SourceMaskUnnecessary | Source mask sent without a source image |
