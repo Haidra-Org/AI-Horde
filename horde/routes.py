@@ -4,6 +4,7 @@
 
 import os
 import random
+from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 import oauthlib
@@ -39,8 +40,53 @@ from horde.vars import (
 routes_bp = Blueprint("routes", __name__)
 
 OAUTH_RETURN_TO_SESSION_KEY = "oauth_return_to"
+OAUTH_RETURN_TO_FALLBACK = "/"
+"""The post-login target used when the requested one is not a plain same-origin path."""
 TEST_BOOTSTRAP_TRUE_VALUES = {"1", "true", "yes", "on"}
 LOOPBACK_IPS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+
+
+def _is_control_character(character: str) -> bool:
+    codepoint = ord(character)
+    return codepoint < 0x20 or 0x7F <= codepoint <= 0x9F
+
+
+def _is_plain_relative_path(candidate: str) -> bool:
+    if candidate == "" or candidate.startswith("/"):
+        return False
+    if "\\" in candidate or "//" in candidate:
+        return False
+    if any(_is_control_character(character) for character in candidate):
+        return False
+    parts = urlsplit(candidate)
+    return parts.scheme == "" and parts.netloc == ""
+
+
+def sanitise_return_path(value: object) -> str:
+    """Return a same-origin absolute path for the post-login redirect.
+
+    Browsers treat a `Location` of `/` followed by a backslash and a host (or by a tab or newline and `/host`) as a
+    protocol-relative URL on another host, so the target is limited to a plain relative path behind a
+    single `/`. The value is checked both as given and after one round of URL decoding, which refuses
+    percent-encoded forms such as `%5C` that a later decode would turn into a backslash.
+
+    A single leading `/` is accepted and dropped, so the function also applies to a value already
+    stored with the prefix, and applying it twice returns the same result.
+
+    Args:
+        value: The `return_to` path segment, or a previously stored target.
+
+    Returns:
+        `/` followed by the value when both forms are non-empty, contain no backslash, `//`,
+        leading `/`, URL scheme, authority or control character; otherwise
+        [OAUTH_RETURN_TO_FALLBACK][horde.routes.OAUTH_RETURN_TO_FALLBACK].
+    """
+    if not isinstance(value, str):
+        return OAUTH_RETURN_TO_FALLBACK
+    candidate = value.removeprefix("/")
+    if not (_is_plain_relative_path(candidate) and _is_plain_relative_path(unquote(candidate))):
+        return OAUTH_RETURN_TO_FALLBACK
+    return "/" + candidate
 
 
 def _is_test_apikey_bootstrap_enabled() -> bool:
@@ -456,19 +502,19 @@ def transfer():
 
 @routes_bp.route("/google/<return_to>")
 def google_login(return_to):
-    session[OAUTH_RETURN_TO_SESSION_KEY] = "/" + return_to
+    session[OAUTH_RETURN_TO_SESSION_KEY] = sanitise_return_path(return_to)
     return redirect(url_for("google.login"))
 
 
 @routes_bp.route("/discord/<return_to>")
 def discord_login(return_to):
-    session[OAUTH_RETURN_TO_SESSION_KEY] = "/" + return_to
+    session[OAUTH_RETURN_TO_SESSION_KEY] = sanitise_return_path(return_to)
     return redirect(url_for("discord.login"))
 
 
 @routes_bp.route("/github/<return_to>")
 def github_login(return_to):
-    session[OAUTH_RETURN_TO_SESSION_KEY] = "/" + return_to
+    session[OAUTH_RETURN_TO_SESSION_KEY] = sanitise_return_path(return_to)
     return redirect(url_for("github.login"))
 
 
@@ -481,7 +527,7 @@ def github_login(return_to):
 
 @routes_bp.route("/finish_dance")
 def finish_dance():
-    return redirect(session.pop(OAUTH_RETURN_TO_SESSION_KEY, "/"))
+    return redirect(sanitise_return_path(session.pop(OAUTH_RETURN_TO_SESSION_KEY, OAUTH_RETURN_TO_FALLBACK)))
 
 
 @routes_bp.route("/privacy")
