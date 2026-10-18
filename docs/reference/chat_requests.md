@@ -31,6 +31,9 @@ those workers keep receiving text jobs.
 | `horde` object and size limits   | `horde/chat_contract.py`                        | `ChatHordeOptions`, `MAX_CHAT_MESSAGE_COUNT`          |
 | Flattened estimate               | `horde/classes/kobold/chat_request.py`          | `flatten_messages`                                    |
 | Feature vocabulary               | `horde/classes/kobold/chat_request.py`          | `ChatFeature`, `required_chat_features`               |
+| Tool and format shapes           | `horde/chat_contract.py`                        | `ChatTool`, `ChatToolCall`, `ChatResponseFormat`      |
+| Stored tools and format          | `horde/classes/kobold/chat_request.py`          | `build_chat_extras`                                   |
+| Charged reply characters         | `horde/classes/kobold/chat_request.py`          | `chat_reply_characters`, `build_stored_reply`         |
 | Sampling defaults                | `horde/classes/kobold/chat_request.py`          | `CHAT_SAMPLING_DEFAULTS`, `build_chat_job_payload`    |
 | Submit route                     | `horde/apis/v2/kobold.py`                       | `ChatAsyncGenerate`                                   |
 | Body size bound                  | `horde/apis/v2/kobold.py`                       | `read_chat_request_body`                              |
@@ -43,6 +46,7 @@ those workers keep receiving text jobs.
 | Admission flag                   | `horde/config.py`                               | `Config.chat_admission_enabled`                       |
 | Status and cancel route          | `horde/apis/v2/kobold.py`                       | `ChatAsyncStatus`                                     |
 | Discriminator and messages       | `horde/classes/kobold/waiting_prompt.py`        | `TextWaitingPrompt.is_chat`, `TextWaitingPrompt.messages` |
+| Stored features and extras       | `horde/classes/kobold/waiting_prompt.py`        | `TextWaitingPrompt.chat_required_features`, `TextWaitingPrompt.chat_extras` |
 | Pop payload                      | `horde/classes/kobold/waiting_prompt.py`        | `TextWaitingPrompt.prepare_job_payload`               |
 | Assignment snapshot              | `horde/classes/kobold/waiting_prompt.py`        | `TextWaitingPrompt.get_generation_assignment`         |
 | Chat declaration on pop          | `horde/apis/v2/kobold.py`                       | `TextJobPop.validate_chat_declaration`                |
@@ -124,8 +128,9 @@ submission (ADR 0026). It is claimed for the submitting user, the owner of the s
 - The claim is held only by the request row and lasts as long as the row.
 
 The fingerprint is the SHA-256 hex digest of canonical JSON (sorted keys, no insignificant whitespace, UTF-8) over the
-messages as stored (`developer` rewritten to `system`), the mapped text params, the model list, and every `horde`
-option with defaults filled in except `operation_key` and `dry_run`. `max_tokens` and `max_completion_tokens` with the
+messages as stored (`developer` rewritten to `system`), the mapped text params, the model list, every `horde`
+option with defaults filled in except `operation_key` and `dry_run`, and the stored `chat_extras` only when the request
+has any. `max_tokens` and `max_completion_tokens` with the
 same value, or an option sent at its default and one left out, give the same fingerprint. `stream`,
 `stream_options`, `user` and `metadata` are not in it.
 
@@ -149,7 +154,7 @@ learns the id of a request that is queued and charged.
 | Key                                      | Mapping                                                                          |
 | ---------------------------------------- | -------------------------------------------------------------------------------- |
 | `model`                                  | Required. The only model the request accepts                                     |
-| `messages`                               | Required, at least one. Roles `system`, `developer`, `user`, `assistant`; optional `name` |
+| `messages`                               | Required, at least one. Roles `system`, `developer`, `user`, `assistant`, `tool`; see [Tools](#tools) for the tool keys |
 | `max_tokens`, `max_completion_tokens`    | `max_length`, 16 to 4096, default `512`. Both may be sent only with equal values |
 | `temperature`, `top_p`                   | The text params of the same name                                                 |
 | `frequency_penalty`, `presence_penalty`  | -2 to 2; forwarded to the worker, which has to declare the feature for a non-zero value |
@@ -157,12 +162,14 @@ learns the id of a request that is queued and charged.
 | `stop`                                   | `stop_sequence`; a single string becomes a one-element list                      |
 | `n`                                      | Only `1`                                                                         |
 | `stream`, `stream_options`, `user`, `metadata` | Accepted, not applied                                                      |
+| `tools`, `tool_choice`, `parallel_tool_calls` | Stored and forwarded to the worker; see [Tools](#tools)                     |
+| `response_format`                        | Stored and forwarded to the worker; see [Tools](#tools)                          |
 | `horde`                                  | Extension object, below                                                          |
 
 A message's `content` is a string or an array of parts whose `type` is `text`, or `image_url` on a `user` message (see
-[Images](#images)). A `developer` message is stored and
-sent to workers as `system`, which loses its precedence over a system message; no developer-role feature is
-advertised while that holds. The default `max_length` is `512` because OpenAI clients usually omit a token limit and
+[Images](#images)). `system`, `developer` and `user` messages may carry `name`. A `developer` message is stored and
+sent to workers as `system`, which loses its precedence over a system message; the Horde does not advertise a
+developer-role feature while that holds. The default `max_length` is `512` because OpenAI clients usually omit a token limit and
 the text default of 80 is too short for a reply. The mapped params are validated against the text params model, so
 every range a text request enforces applies, and an out-of-range value returns the same `400` validation error and is
 not clamped.
@@ -251,14 +258,51 @@ they generate with a scanner and report a job as `worker_csam`; chat workers do 
 chat vision path is not screened for CSAM on any side
 ([recorded events](moderation_operations.md#recorded-events)).
 
+### Tools
+
+The tool and response format shapes are validated by the models in `horde/chat_contract.py` the front validates with.
+
+| Key                   | Value                                                                              |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `tools`               | At most `MAX_CHAT_TOOL_COUNT` (128) `{type: "function", function: {name, description?, parameters?, strict?}}`; `name` 1 to 64 characters of `[A-Za-z0-9_-]`. An empty list or null is the same as none |
+| `tool_choice`         | `none`, `auto`, `required` or `{type: "function", function: {name}}`. Null, or `none` without tools, is the same as none |
+| `parallel_tool_calls` | Boolean; stored with tools, dropped without them                                   |
+| `response_format`     | `{type: "text"}`, `{type: "json_object"}` or `{type: "json_schema", json_schema: {name, schema, description?, strict?}}`; `schema` is required. `text` or null is the same as none |
+
+The compact JSON of `tools`, `tool_choice` and `response_format` together may be at most `MAX_CHAT_TOOL_SPEC_BYTES`
+(256 KiB); more returns `400 UnsupportedChatParameter`. A `tool_choice` other than `none` without a non-empty `tools`,
+or one forcing a function `tools` does not define, returns `400 ChatRequestConflict`.
+
+An `assistant` message may carry `tool_calls`, 1 to `MAX_CHAT_TOOL_CALL_COUNT` (128) `{id, type: "function",
+function: {name, arguments}}`, and then a null or absent `content`. A `tool` message carries `role`, `content` (a
+string or text parts) and `tool_call_id` (1 to 256 characters), which has to be the `id` of a tool call in an earlier
+assistant message of the same request; otherwise `400 UnsupportedChatParameter` names `messages[i].tool_call_id`. Both
+are stored and sent to the worker unchanged, with an assistant message's `content` stored as null when it was absent.
+
+The values a request applies are stored in `waiting_prompts.chat_extras` (`build_chat_extras`), each in the shape the
+client sent and only when it changes the answer:
+
+```json
+{
+  "tools": [{"type": "function", "function": {"name": "lookup_weather", "parameters": {"type": "object"}}}],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "response_format": {"type": "json_schema", "json_schema": {"name": "colour", "schema": {"type": "object"}}}
+}
+```
+
+`tool_choice` `none` beside tools is stored, since a worker given the tools without it would default to `auto`. The
+column is NULL when the request applies none of them.
+
 ### Refused keys and values
 
 Any key outside the lists above returns `400 UnsupportedChatParameter`, and the message names the key. This covers
-`tools`, `tool_choice`, `response_format`, `logprobs`, `top_logprobs`, `logit_bias`, `modalities`, `audio`,
-`prediction` and `reasoning_effort`, as well as:
+`logprobs`, `top_logprobs`, `logit_bias`, `modalities`, `audio`, `prediction` and `reasoning_effort`, as well as:
 
-- a message key other than `role`, `content` and `name` (for example `messages[0].tool_calls`);
-- a role other than `system`, `developer`, `user` and `assistant` (for example `messages[0].role=tool`);
+- a message key outside its role's keys: `role`, `content` and `name`, plus `tool_calls` on an `assistant` message,
+  and `role`, `content` and `tool_call_id` on a `tool` message (for example `messages[0].tool_calls` on a `user`
+  message, or `messages[0].name` on a `tool` message);
+- a role other than `system`, `developer`, `user`, `assistant` and `tool` (for example `messages[0].role=function`);
 - a content part whose type is not `text` or, on a `user` message, `image_url` (for example
   `messages[0].content[1].type=input_audio`, or `messages[0].content[0].type=image_url` on an `assistant` message);
 - an unknown key in `horde` (for example `horde.models`);
@@ -284,13 +328,16 @@ it, so the adjustment cannot be recomputed at status time.
 
 The request's `prompt` column holds the messages flattened into one string: each message as `role: text`, with the
 parts of a message and the messages themselves joined by newlines and each image part rendered as `[image]`
-(`CHAT_IMAGE_PLACEHOLDER`). It is an estimate only. The character-based
+(`CHAT_IMAGE_PLACEHOLDER`). An assistant message's `tool_calls` follow its text as compact JSON, a `tool` message is
+`tool: <text>`, and the compact JSON of the stored `tools` and of a `json_schema` response format follow the messages,
+since the worker renders both into its prompt. It is an estimate only. The character-based
 token estimate, `context_fit` sizing, kudos and moderation read it; no worker receives it. `submitted_prompt` holds
 the flattened messages as submitted.
 
 Every rewrite validation makes to the flattened prompt is mirrored onto the messages. The replacement filter applied
 for flagged users and NSFW models is applied to each message text, a text the filter empties becomes an empty string,
-and the prompt is flattened again from the result. `messages` therefore always holds what workers receive.
+and the prompt is flattened again from the result. `messages` therefore always holds what workers receive. Tool call
+arguments, the tool definitions and the response format are JSON documents and are not rewritten.
 
 ## Chat declaration on pop
 
@@ -318,8 +365,14 @@ The feature vocabulary (`ChatFeature`) grows by adding names; a name never chang
 | `presence_penalty`  | it sends a non-zero `presence_penalty`         |
 | `frequency_penalty` | it sends a non-zero `frequency_penalty`        |
 | `vision`            | a message carries an image part; the worker also has to declare an image transport |
+| `tools`             | it stores `tools` with a `tool_choice` other than `none`, or any message is a `tool` message or carries `tool_calls` |
+| `json_object`       | its `response_format` type is `json_object`    |
+| `json_schema`       | its `response_format` type is `json_schema`    |
 
-A field at its documented default needs nothing.
+A field at its documented default needs nothing. `required_chat_features` is the only place these are derived: it runs
+once when the request is created and stores the sorted names in `waiting_prompts.chat_required_features`, which
+`TextWorker.chat_refusal_reason` compares with the worker's `chat_features`, so eligibility never loads a candidate's
+messages or extras.
 
 ### Eligibility
 
@@ -327,8 +380,8 @@ A chat request goes to a worker only when every rule holds. The queue query appl
 applies the rest and repeats them for worker availability:
 
 1. The worker declared `chat_jobs` on its latest pop and its `model_id` is the request's model.
-2. Every feature the request needs is in the worker's `chat_features`, and a request with images finds an image
-   transport in its `image_transports`. The queue query withholds requests with images from a worker without both,
+2. Every feature in the request's `chat_required_features` is in the worker's `chat_features`, and a request with
+   images finds an image transport in its `image_transports`. The queue query withholds requests with images from a worker without both,
    testing `messages` for an image part by JSONB containment on chat rows only, and computes the same test for the
    returned page so `can_generate` does not load candidates' messages.
 3. The request's `max_context_length` and `max_length` fit the worker's `chat_limits`, never its text limits.
@@ -348,7 +401,8 @@ A text job's pop response does not carry a `chat` key. A chat job's response has
 
 | Field                                                                  | Value                                                         |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `messages`                                                             | The stored array; roles `system`, `user`, `assistant`; image parts as in [Images](#images) |
+| `messages`                                                             | The stored array; roles `system`, `user`, `assistant`, `tool`; `tool_calls` and `tool_call_id` as stored; image parts as in [Images](#images) |
+| `tools`, `tool_choice`, `parallel_tool_calls`, `response_format`       | Each only when stored in `chat_extras`, exactly as stored     |
 | `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `rep_pen`, `top_k`, `min_p` | Always present; the client's value or `1.0`, `1.0`, `0`, `0`, `1.0`, `0`, `0` |
 | `stop_sequence`, `seed`                                                | Only when the client sent them                                |
 | `max_length`, `max_context_length`                                     | The validated budgets                                         |
@@ -364,9 +418,9 @@ chat job.
 
 | Field                  | Type                                      | Required | Meaning                                                    |
 | ---------------------- | ----------------------------------------- | -------- | ---------------------------------------------------------- |
-| `message`              | `{role: "assistant", content}`            | yes      | The reply; an empty `content` is a completed reply          |
-| `finish_reason`        | `stop`, `length` or `content_filter`      | yes      | Why the worker stopped                                     |
-| `native_finish_reason` | string, at most 32 characters             | no       | The backend's own reason                                   |
+| `message`              | `{role: "assistant", content, tool_calls?}` | yes    | The reply; an empty `content` is a completed reply. `tool_calls` holds 1 to 128 calls as minted by the backend; `content` may be null only with them |
+| `finish_reason`        | `stop`, `length`, `content_filter` or `tool_calls` | yes | Why the worker stopped; `tool_calls` needs a non-empty `message.tool_calls`. A forced `tool_choice` may finish with `stop` and calls |
+| `native_finish_reason` | string, at most 32 characters             | no       | The backend's reason                                       |
 | `prompt_tokens`, `completion_tokens` | integer, 0 to 10,000,000    | no       | Omit a count the backend did not report; stored as null     |
 | `model_id`             | string                                    | yes      | Has to be the generation's `assigned_model`                 |
 | `state`                | `ok`, `censored`, `csam`, `faulted`       | no       | As for text jobs                                           |
@@ -380,18 +434,21 @@ nor `message`; it is handled as any faulted text submission.
 
 The submit goes through the text path's compare-and-set: one update claims the pending generation and writes
 `generation` (the message content), `message`, `finish_reason`, `native_finish_reason`, the counts and `charge_basis`
-together, so a submit that loses to a cancel or a duplicate writes none of them, and every predicate that reads
-`generation` treats chat and text alike. An empty `content` completes the generation, is charged and rewarded, and
-counts towards the per-model empty-generation counter.
+together, so a submit that loses to a cancel or a duplicate does not write any of them, and every predicate that reads
+`generation` treats chat and text alike. `message` is stored with `tool_calls` when present and NUL replaced in every
+string (`build_stored_reply`); `generation` holds the content, or an empty string when it is null. An empty `content`
+completes the generation, is charged and rewarded, and counts towards the per-model empty-generation counter unless
+the reply carries tool calls, which are a complete reply.
 
 ### Pricing
 
 A chat generation is charged and rewarded exactly as a text generation with the same reply, through the text kudos
-formula, and stores `charge_basis` `output_estimate`. The formula's token count is the reply's characters divided by
-4, rounded up, at least 20 and at most the requested `max_length`, so a short reply to a large `max_tokens` is not
+formula, and stores `charge_basis` `output_estimate`. The reply's characters are the content plus each tool call's
+function name and arguments (`chat_reply_characters`, read by `TextProcessingGeneration.get_things_count`). The
+formula's token count is those characters divided by 4, rounded up, at least 20 and at most the requested `max_length`, so a short reply to a large `max_tokens` is not
 charged the full request. Reported token counts are stored and shown on the status route and never change the charge.
 The basis is computed in one place, `TextProcessingGeneration.get_charge_basis`. The status route returns, per
-generation, `message`, `finish_reason`,
+generation, `message` (with `tool_calls` when the worker submitted them), `finish_reason` as submitted,
 `native_finish_reason`, `prompt_tokens`, `completion_tokens`, `charge_basis` and `queue_wait_seconds`, the seconds from
 the request's creation to the generation's assignment. The text status route returns none of them.
 
@@ -445,8 +502,8 @@ false), `chat_features` (text array), `chat_max_context_length`, `chat_max_lengt
 `image_transports` (text array); and `processing_gens.message` (JSONB), `finish_reason` and `native_finish_reason`
 (varchar 32), `prompt_tokens`, `completion_tokens`, `charge_basis` (varchar 16), `assigned_model`,
 `assigned_max_context_length`, `assigned_max_length` and `image_transport` (varchar 16); and
-`waiting_prompts.operation_key` (UUID), `operation_fingerprint` (char 64) and
-`context_adjustments` (JSONB). Every column is nullable or has a constant default, so no table is rewritten. The
+`waiting_prompts.operation_key` (UUID), `operation_fingerprint` (char 64),
+`context_adjustments` (JSONB), `chat_extras` (JSONB, deferred in the ORM) and `chat_required_features` (text array). Every column is nullable or has a constant default, so no table is rewritten. The
 unique partial index `ix_waiting_prompts_user_operation_key` on `(user_id, operation_key) WHERE operation_key IS NOT
 NULL` is built with `CREATE UNIQUE INDEX CONCURRENTLY`, which cannot run inside a transaction block; a failed
 build leaves an invalid index. `db.create_all()` does not add columns to existing tables.

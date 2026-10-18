@@ -128,7 +128,7 @@ Each entry is built from the model's `chat` object in that list:
 | `context_length`, `top_provider.context_length` | `chat.max_context_length`, the largest an online chat worker declares. |
 | `top_provider.max_completion_tokens` | `chat.max_length`, the largest an online chat worker declares. |
 | `architecture` | Text in and out; `input_modalities` adds `image`, and `modality` becomes `text+image->text`, when a worker declares the `vision` feature. |
-| `supported_parameters` | `max_tokens`, `temperature`, `top_p` and `stop`, then `seed`, `frequency_penalty` and `presence_penalty` for each a worker declares as a feature. |
+| `supported_parameters` | `max_tokens`, `temperature`, `top_p` and `stop`, then `seed`, `frequency_penalty` and `presence_penalty` for each a worker declares as a feature; `tools`, `tool_choice` and `parallel_tool_calls` with the `tools` feature; `response_format` with `json_object` or `json_schema`. |
 | `x_horde.workers` | `chat.workers`, the online chat workers serving the model. |
 | `x_horde.queued` | The model's queue, which chat requests share with text requests; absent when the horde reports none. |
 
@@ -202,9 +202,10 @@ The core OpenAI keys are forwarded: `model`, `messages`, `stream`, `stream_optio
 `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed` and `n`.
 `max_tokens` and `max_completion_tokens` must agree when both are sent and lie between 16 and 4096; with neither, the
 horde generates up to 512 tokens. `n` must be 1. `stop` is a string or up to four strings. `stream_options` needs
-`"stream": true`. Message roles are `system`, `developer`, `user` and `assistant`; `developer` is stored as `system`,
-which loses its precedence over `system`. Content is a string or an array of `text` parts; a `user` message may also
-carry `image_url` parts (see [Image inputs](#image-inputs)).
+`"stream": true`. Message roles are `system`, `developer`, `user`, `assistant` and `tool`; `developer` is stored as
+`system`, which loses its precedence over `system`; an `assistant` message may carry `tool_calls` and a `tool` message
+answers one by `tool_call_id` (see the [chat front reference](../reference/chat_front.md)). Content is a string or an
+array of `text` parts; a `user` message may also carry `image_url` parts (see [Image inputs](#image-inputs)).
 
 Stock clients send some keys at their defaults; these are accepted and dropped: empty or null `tools`, null or
 `"none"` `tool_choice`, `response_format: {"type": "text"}`, `logprobs: false`, `top_logprobs: 0`,

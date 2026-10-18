@@ -23,6 +23,10 @@ A worker declares which optional request features it implements as
 request needs. [`build_chat_job_payload`][horde.classes.kobold.chat_request.build_chat_job_payload] fills
 the sampling defaults a chat job's payload always carries.
 
+A request may offer the model tools and ask for a response format; the values the request applies are stored apart
+from the messages ([`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras]) and forwarded to the
+worker as stored. The history may carry the model's earlier tool calls and ``tool`` messages answering them.
+
 A user message may carry image parts, as a data URL or an http(s) URL. The native route stores each image in object
 storage and keeps only a reference to it in the stored messages
 ([`replace_image_urls`][horde.classes.kobold.chat_request.replace_image_urls]); at pop the reference becomes a signed
@@ -48,6 +52,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     ValidationError,
+    model_validator,
 )
 
 from horde import exceptions as e
@@ -57,7 +62,18 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
     MAX_CHAT_TEXT_BYTES,
+    MAX_CHAT_TOOL_CALL_COUNT,
+    MAX_CHAT_TOOL_CALL_ID_LENGTH,
+    MAX_CHAT_TOOL_COUNT,
+    MAX_CHAT_TOOL_SPEC_BYTES,
     ChatHordeOptions,
+    ChatNamedToolChoice,
+    ChatResponseFormat,
+    ChatResponseFormatType,
+    ChatTool,
+    ChatToolCall,
+    ChatToolChoice,
+    ChatToolChoiceMode,
 )
 from horde.classes.kobold.request_fit import (
     MAX_CONTEXT_LENGTH_PARAMETER,
@@ -84,12 +100,15 @@ __all__ = [
     "ChatRole",
     "ChatSubmittedMessage",
     "FinishReason",
+    "build_chat_extras",
     "build_chat_image_key",
     "build_chat_job_payload",
     "build_model_names",
     "build_operation_fingerprint",
+    "build_stored_reply",
     "build_text_params",
     "build_worker_targeting",
+    "chat_reply_characters",
     "flatten_messages",
     "has_image_parts",
     "list_chat_image_keys",
@@ -140,12 +159,15 @@ SUPPORTED_REQUEST_KEYS = frozenset(
         "stream_options",
         "user",
         "metadata",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+        "response_format",
         "horde",
     },
 )
-"""Top-level keys a chat request may carry. Any other key, ``tools`` and ``response_format`` among them, is
-refused by name rather than dropped, so a client never receives a reply that silently ignored part of its
-request."""
+"""Top-level keys a chat request may carry. Any other key, ``logprobs`` and ``audio`` among them, is refused by name
+rather than dropped, so a client never receives a reply that silently ignored part of its request."""
 
 SUPPORTED_MESSAGE_KEYS = frozenset(
     {
@@ -154,7 +176,25 @@ SUPPORTED_MESSAGE_KEYS = frozenset(
         "name",
     },
 )
-"""Keys a message may carry. Tool calls and audio live in other keys, which are refused."""
+"""Keys a system, developer or user message may carry. Audio lives in other keys, which are refused."""
+
+ROLE_MESSAGE_KEYS: Mapping[str, frozenset[str]] = {
+    "assistant": SUPPORTED_MESSAGE_KEYS | {"tool_calls"},
+    "tool": frozenset(
+        {
+            "role",
+            "content",
+            "tool_call_id",
+        },
+    ),
+}
+"""Keys a message of these roles may carry in place of
+[`SUPPORTED_MESSAGE_KEYS`][horde.classes.kobold.chat_request.SUPPORTED_MESSAGE_KEYS]. Only an assistant message
+records tool calls, and only a ``tool`` message answers one; OpenAI defines no participant name on a ``tool``
+message, so one is refused like any other key outside the schema."""
+
+MESSAGE_KEY_NAMES = frozenset().union(SUPPORTED_MESSAGE_KEYS, *ROLE_MESSAGE_KEYS.values())
+"""Every message key some role may carry, which a message whose role is not a string is checked against."""
 
 SUPPORTED_HORDE_OPTION_KEYS = frozenset(ChatHordeOptions.model_fields)
 """Keys of the ``horde`` extension object, read from the model the front shares. Other text request options are not
@@ -165,6 +205,9 @@ TEXT_CONTENT_PART_TYPE = "text"
 
 IMAGE_URL_CONTENT_PART_TYPE = "image_url"
 """The content part type carrying an image, which only a user message may use."""
+
+COMPACT_JSON_SEPARATORS = (",", ":")
+"""The separators of compact JSON, used for the tool spec bound and the flattened prompt alike."""
 
 IMAGE_PART_ROLES = frozenset(
     {
@@ -234,6 +277,9 @@ class FinishReason(enum.StrEnum):
     CONTENT_FILTER = "content_filter"
     """The backend withheld or cut the reply on a content rule."""
 
+    TOOL_CALLS = "tool_calls"
+    """The model called one or more tools; the submitted message carries them."""
+
 
 class ChargeBasis(enum.StrEnum):
     """What a generation's charge and reward are computed from."""
@@ -263,6 +309,15 @@ class ChatFeature(enum.StrEnum):
     VISION = "vision"
     """The loaded model reads image parts. A worker also has to declare an image transport to receive them."""
 
+    TOOLS = "tools"
+    """The worker renders tool definitions and tool turns into its template and submits the model's tool calls."""
+
+    JSON_OBJECT = "json_object"
+    """The backend constrains the reply to a JSON object."""
+
+    JSON_SCHEMA = "json_schema"
+    """The backend constrains the reply to a client JSON Schema."""
+
 
 class ChatImageTransport(enum.StrEnum):
     """How a worker accepts a chat job's images, declared in ``image_transports`` on pop."""
@@ -288,7 +343,10 @@ class ChatRole(enum.StrEnum):
     """The person in the conversation."""
 
     ASSISTANT = "assistant"
-    """An earlier model reply."""
+    """An earlier model reply, which may carry the tool calls the model made."""
+
+    TOOL = "tool"
+    """The result of a tool call, answering one of an earlier assistant message's ``tool_calls`` by id."""
 
 
 class ChatImageDetail(enum.StrEnum):
@@ -343,11 +401,33 @@ class ChatMessage(BaseModel):
     role: ChatRole
     """Who wrote the message."""
 
-    content: StrictStr | list[Annotated[ChatTextPart | ChatImagePart, Field(discriminator="type")]]
-    """The message text as one string, or an array of parts. Only a user message may hold image parts."""
+    content: StrictStr | list[Annotated[ChatTextPart | ChatImagePart, Field(discriminator="type")]] | None = None
+    """The message text as one string, or an array of parts. Only a user message may hold image parts. Null only on
+    an assistant message that carries ``tool_calls``."""
 
     name: StrictStr | None = None
     """An optional participant name, passed to the worker unchanged."""
+
+    tool_calls: list[ChatToolCall] | None = Field(default=None, min_length=1, max_length=MAX_CHAT_TOOL_CALL_COUNT)
+    """The tool calls an assistant message made, passed to the worker unchanged."""
+
+    tool_call_id: StrictStr | None = Field(default=None, min_length=1, max_length=MAX_CHAT_TOOL_CALL_ID_LENGTH)
+    """The id of the tool call a ``tool`` message answers; required on a ``tool`` message."""
+
+    @model_validator(mode="after")
+    def validate_content_and_tool_fields(self) -> ChatMessage:
+        """Validate that only a tool-calling message omits its content and that a ``tool`` message names its call.
+
+        Which roles may carry ``tool_calls`` and ``tool_call_id`` at all is checked by key before validation.
+
+        Raises:
+            ValueError: The content is null without tool calls, or a ``tool`` message has no ``tool_call_id``.
+        """
+        if self.content is None and not self.tool_calls:
+            raise ValueError("'content' may be null only on an assistant message that carries 'tool_calls'")
+        if self.role == ChatRole.TOOL and self.tool_call_id is None:
+            raise ValueError("a 'tool' message needs 'tool_call_id'")
+        return self
 
 
 class ChatCompletionRequest(BaseModel):
@@ -406,6 +486,18 @@ class ChatCompletionRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     """Accepted for client compatibility and not applied."""
 
+    tools: list[ChatTool] | None = Field(default=None, max_length=MAX_CHAT_TOOL_COUNT)
+    """The functions the model may call. An empty list is the same as none."""
+
+    tool_choice: ChatToolChoice | None = None
+    """Whether and which tool the model has to call. ``none`` is the same as sending no tools."""
+
+    parallel_tool_calls: StrictBool | None = None
+    """Whether the model may call several tools in one reply; forwarded only with tools."""
+
+    response_format: ChatResponseFormat | None = None
+    """The shape the reply has to take. ``text`` is the same as none."""
+
     horde: ChatHordeOptions = Field(default_factory=ChatHordeOptions)
     """Request options OpenAI has no key for, validated by the model the front shares."""
 
@@ -418,8 +510,22 @@ class ChatSubmittedMessage(BaseModel):
     role: Literal["assistant"]
     """Always ``assistant``."""
 
-    content: StrictStr
-    """The reply text. An empty string is a completed reply with no visible text."""
+    content: StrictStr | None = None
+    """The reply text. An empty string is a completed reply with no visible text; null only with ``tool_calls``."""
+
+    tool_calls: list[ChatToolCall] | None = Field(default=None, min_length=1, max_length=MAX_CHAT_TOOL_CALL_COUNT)
+    """The tool calls the model made, as the backend minted them."""
+
+    @model_validator(mode="after")
+    def validate_content_or_tool_calls(self) -> ChatSubmittedMessage:
+        """Validate that the content is null only when the message carries tool calls.
+
+        Raises:
+            ValueError: The content is null and there are no tool calls.
+        """
+        if self.content is None and not self.tool_calls:
+            raise ValueError("'content' may be null only when 'tool_calls' is set")
+        return self
 
 
 def _raise_unsupported(key_path: str) -> None:
@@ -453,11 +559,12 @@ def _reject_unsupported_message(message: object, message_index: int) -> None:
     if not isinstance(message, Mapping):
         return
 
+    role = message.get("role")
+    allowed_keys = ROLE_MESSAGE_KEYS.get(role, SUPPORTED_MESSAGE_KEYS) if isinstance(role, str) else MESSAGE_KEY_NAMES
     for message_key in message:
-        if message_key not in SUPPORTED_MESSAGE_KEYS:
+        if message_key not in allowed_keys:
             _raise_unsupported(f"messages[{message_index}].{message_key}")
 
-    role = message.get("role")
     if isinstance(role, str) and role not in {chat_role.value for chat_role in ChatRole}:
         _raise_unsupported(f"messages[{message_index}].role={role}")
 
@@ -508,9 +615,10 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
         chat_request: The validated request.
 
     Raises:
-        horde.exceptions.BadRequest: With ``UnsupportedChatParameter`` for an ``n`` other than 1 or messages over
-            the shared size limits, ``ChatRequestConflict`` for differing token limits, or an image validation
-            failure for too many, malformed or oversized image URLs.
+        horde.exceptions.BadRequest: With ``UnsupportedChatParameter`` for an ``n`` other than 1, messages or a
+            tool spec over the shared size limits, or a ``tool`` message answering no earlier tool call;
+            ``ChatRequestConflict`` for differing token limits or a ``tool_choice`` the tools do not allow; or an
+            image validation failure for too many, malformed or oversized image URLs.
     """
     if chat_request.n is not None and chat_request.n != SUPPORTED_CHOICE_COUNT:
         _raise_unsupported(f"n={chat_request.n}")
@@ -533,6 +641,62 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
             rc=UNSUPPORTED_CHAT_PARAMETER_RC,
         )
     _validate_image_urls(_submitted_image_urls(chat_request))
+    _reject_conflicting_tool_values(chat_request)
+
+
+def _tool_spec_bytes(chat_request: ChatCompletionRequest) -> int:
+    """Return the UTF-8 size of the compact JSON of ``tools``, ``tool_choice`` and ``response_format`` together.
+
+    Args:
+        chat_request: The validated request.
+
+    Returns:
+        The bytes of the three values as the client sent them, nulls left out.
+    """
+    tool_spec = {
+        "tools": [tool.model_dump(mode="json", exclude_none=True) for tool in chat_request.tools or ()],
+        "tool_choice": _dump_tool_choice(chat_request.tool_choice),
+        "response_format": _dump_response_format(chat_request.response_format),
+    }
+    return len(_compact_json(tool_spec).encode())
+
+
+def _reject_conflicting_tool_values(chat_request: ChatCompletionRequest) -> None:
+    """Refuse a tool spec over its size bound, a ``tool_choice`` the tools do not allow, and an unanswerable tool turn.
+
+    Args:
+        chat_request: The validated request.
+
+    Raises:
+        horde.exceptions.BadRequest: With ``UnsupportedChatParameter`` for a tool spec over
+            [`MAX_CHAT_TOOL_SPEC_BYTES`][horde.chat_contract.MAX_CHAT_TOOL_SPEC_BYTES] or a ``tool`` message whose
+            ``tool_call_id`` no earlier assistant message's tool call has; ``ChatRequestConflict`` for a
+            ``tool_choice`` other than ``none`` without tools, or one forcing a function the tools do not define.
+    """
+    if _tool_spec_bytes(chat_request) > MAX_CHAT_TOOL_SPEC_BYTES:
+        raise e.BadRequest(
+            f"'tools', 'tool_choice' and 'response_format' may take at most {MAX_CHAT_TOOL_SPEC_BYTES} bytes together.",
+            rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+        )
+
+    tool_choice = chat_request.tool_choice
+    tool_names = {tool.function.name for tool in chat_request.tools or ()}
+    if tool_choice is not None and tool_choice != ChatToolChoiceMode.NONE and not tool_names:
+        raise e.BadRequest("'tool_choice' needs a non-empty 'tools'.", rc=CHAT_REQUEST_CONFLICT_RC)
+    if isinstance(tool_choice, ChatNamedToolChoice) and tool_choice.function.name not in tool_names:
+        raise e.BadRequest(
+            f"'tool_choice' forces the function '{tool_choice.function.name}', which 'tools' does not define.",
+            rc=CHAT_REQUEST_CONFLICT_RC,
+        )
+
+    earlier_tool_call_ids: set[str] = set()
+    for message_index, message in enumerate(chat_request.messages):
+        if message.role == ChatRole.TOOL and message.tool_call_id not in earlier_tool_call_ids:
+            raise e.BadRequest(
+                f"'messages[{message_index}].tool_call_id' does not match a tool call of an earlier assistant message.",
+                rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+            )
+        earlier_tool_call_ids.update(tool_call.id for tool_call in message.tool_calls or ())
 
 
 def _submitted_image_urls(chat_request: ChatCompletionRequest) -> list[str]:
@@ -546,7 +710,7 @@ def _submitted_image_urls(chat_request: ChatCompletionRequest) -> list[str]:
     """
     image_urls: list[str] = []
     for message in chat_request.messages:
-        if isinstance(message.content, str):
+        if not isinstance(message.content, list):
             continue
         image_urls.extend(content_part.image_url.url for content_part in message.content if isinstance(content_part, ChatImagePart))
     return image_urls
@@ -565,7 +729,7 @@ def _message_text_bytes(chat_request: ChatCompletionRequest) -> int:
     for message in chat_request.messages:
         if isinstance(message.content, str):
             text_bytes += len(message.content.encode())
-        else:
+        elif message.content is not None:
             text_bytes += sum(len(content_part.text.encode()) for content_part in message.content if isinstance(content_part, ChatTextPart))
     return text_bytes
 
@@ -671,7 +835,13 @@ def _reject_stored_nuls(chat_request: ChatCompletionRequest) -> None:
 
     Metadata and user are deliberately ignored by the native route and are not persisted.
     """
-    pending: list[Any] = [serialize_messages(chat_request), chat_request.stop, chat_request.model, chat_request.horde.model_dump()]
+    pending: list[Any] = [
+        serialize_messages(chat_request),
+        build_chat_extras(chat_request),
+        chat_request.stop,
+        chat_request.model,
+        chat_request.horde.model_dump(),
+    ]
     while pending:
         value = pending.pop()
         if isinstance(value, str) and "\x00" in value:
@@ -686,21 +856,69 @@ def serialize_messages(chat_request: ChatCompletionRequest) -> list[dict[str, An
     """Return the request's messages as the JSON array stored on the request and sent to the worker.
 
     A ``developer`` message is stored as ``system``, so a worker only meets the roles every chat template knows.
+    ``tool`` messages and an assistant message's ``tool_calls`` are stored unchanged.
 
     Args:
         chat_request: The validated request.
 
     Returns:
-        One dict per message, in the shape the client sent, without keys the client left unset.
+        One dict per message, in the shape the client sent, without keys the client left unset. ``content`` is always
+        present, null on an assistant message that only calls tools, as OpenAI sends it.
     """
     serialized_messages: list[dict[str, Any]] = []
     for message in chat_request.messages:
-        serialized_message = message.model_dump(mode="json", exclude_none=True)
+        serialized_message = {"content": None, **message.model_dump(mode="json", exclude_none=True)}
         if message.role == ChatRole.DEVELOPER:
             serialized_message["role"] = ChatRole.SYSTEM.value
         serialized_messages.append(serialized_message)
 
     return serialized_messages
+
+
+def _compact_json(value: object) -> str:
+    """Return a value as compact JSON, non-ASCII text kept as it is."""
+    return json.dumps(value, separators=COMPACT_JSON_SEPARATORS, ensure_ascii=False)
+
+
+def _dump_tool_choice(tool_choice: ChatToolChoice | None) -> str | dict[str, Any] | None:
+    """Return a ``tool_choice`` as the JSON value the client sent."""
+    if isinstance(tool_choice, ChatNamedToolChoice):
+        return tool_choice.model_dump(mode="json")
+    return None if tool_choice is None else tool_choice.value
+
+
+def _dump_response_format(response_format: ChatResponseFormat | None) -> dict[str, Any] | None:
+    """Return a ``response_format`` as the JSON value the client sent, with the schema under its ``schema`` key."""
+    if response_format is None:
+        return None
+    return response_format.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+def build_chat_extras(chat_request: ChatCompletionRequest) -> dict[str, Any] | None:
+    """Return the tool and response format keys the request applies, as stored and forwarded to the worker.
+
+    A value that means the default is left out: an empty ``tools``, a ``text`` response format, and a
+    ``tool_choice`` or ``parallel_tool_calls`` without tools. ``tool_choice`` ``none`` beside tools is kept, since a
+    worker given the tools without it would apply its own default of ``auto`` and let the model call them.
+
+    Args:
+        chat_request: The validated request.
+
+    Returns:
+        A dict holding only those of ``tools``, ``tool_choice``, ``parallel_tool_calls`` and ``response_format`` the
+        request applies, each in the shape the client sent; None when it applies none.
+    """
+    chat_extras: dict[str, Any] = {}
+    if chat_request.tools:
+        chat_extras["tools"] = [tool.model_dump(mode="json", exclude_none=True) for tool in chat_request.tools]
+        if chat_request.tool_choice is not None:
+            chat_extras["tool_choice"] = _dump_tool_choice(chat_request.tool_choice)
+        if chat_request.parallel_tool_calls is not None:
+            chat_extras["parallel_tool_calls"] = chat_request.parallel_tool_calls
+    response_format = chat_request.response_format
+    if response_format is not None and response_format.type != ChatResponseFormatType.TEXT.value:
+        chat_extras["response_format"] = _dump_response_format(response_format)
+    return chat_extras or None
 
 
 def _is_image_part(content_part: Mapping[str, Any]) -> bool:
@@ -717,9 +935,11 @@ def message_text(message: Mapping[str, Any]) -> str:
         message: One entry of the stored ``messages`` array.
 
     Returns:
-        The message's text.
+        The message's text; empty for an assistant message whose content is null.
     """
-    content = message["content"]
+    content = message.get("content")
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
 
@@ -737,7 +957,9 @@ def has_image_parts(messages: Sequence[Mapping[str, Any]]) -> bool:
     Returns:
         True when at least one image part is present.
     """
-    return any(not isinstance(message["content"], str) and any(_is_image_part(part) for part in message["content"]) for message in messages)
+    return any(
+        isinstance(content := message.get("content"), list) and any(_is_image_part(part) for part in content) for message in messages
+    )
 
 
 def list_image_urls(messages: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -753,8 +975,8 @@ def list_image_urls(messages: Sequence[Mapping[str, Any]]) -> list[str]:
     """
     image_urls: list[str] = []
     for message in messages:
-        content = message["content"]
-        if isinstance(content, str):
+        content = message.get("content")
+        if not isinstance(content, list):
             continue
         image_urls.extend(content_part["image_url"]["url"] for content_part in content if _is_image_part(content_part))
 
@@ -777,8 +999,8 @@ def _replace_image_urls_in_order(
     replaced_messages: list[dict[str, Any]] = []
     for message in messages:
         replaced_message = dict(message)
-        content = message["content"]
-        if not isinstance(content, str):
+        content = message.get("content")
+        if isinstance(content, list):
             replaced_message["content"] = [
                 {**content_part, "image_url": {**content_part["image_url"], "url": replace_url(content_part["image_url"]["url"])}}
                 if _is_image_part(content_part)
@@ -881,19 +1103,86 @@ def resolve_image_references(
     return _replace_image_urls_in_order(messages, resolve_reference)
 
 
-def flatten_messages(messages: Sequence[Mapping[str, Any]]) -> str:
+def _flattened_message(message: Mapping[str, Any]) -> str:
+    """Return one stored message as it appears in the flattened prompt: ``role: text``, then any tool calls as JSON."""
+    flattened = f"{message['role']}: {message_text(message)}"
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        flattened = f"{flattened}{FLATTENED_MESSAGE_SEPARATOR}{_compact_json(tool_calls)}"
+    return flattened
+
+
+def flatten_messages(messages: Sequence[Mapping[str, Any]], chat_extras: Mapping[str, Any] | None = None) -> str:
     """Return the messages joined into the single string stored as the request's prompt.
 
     The string is an estimate only: the token estimate, kudos and moderation read it, and no worker
-    ever receives it.
+    ever receives it. A worker renders the tool definitions and a JSON Schema response format into its prompt too,
+    so both follow the messages as compact JSON, and an assistant message's tool calls follow its text.
 
     Args:
         messages: The stored ``messages`` array.
+        chat_extras: The request's stored extras, from
+            [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras].
 
     Returns:
-        Each message as ``role: text``, joined with newlines.
+        Each message as ``role: text``, a ``tool`` message as ``tool: <text>``, joined with newlines, followed by
+        the ``tools`` JSON and the ``json_schema`` response format JSON when the request carries them.
     """
-    return FLATTENED_MESSAGE_SEPARATOR.join(f"{message['role']}: {message_text(message)}" for message in messages)
+    flattened_parts = [_flattened_message(message) for message in messages]
+    chat_extras = chat_extras or {}
+    if "tools" in chat_extras:
+        flattened_parts.append(_compact_json(chat_extras["tools"]))
+    response_format = chat_extras.get("response_format")
+    if response_format is not None and response_format["type"] == ChatResponseFormatType.JSON_SCHEMA:
+        flattened_parts.append(_compact_json(response_format))
+    return FLATTENED_MESSAGE_SEPARATOR.join(flattened_parts)
+
+
+def _replace_nuls(value: Any) -> Any:
+    """Return a JSON value with NUL replaced by U+FFFD in every string, the text submission's replacement policy."""
+    if isinstance(value, str):
+        return value.replace("\x00", "\ufffd")
+    if isinstance(value, dict):
+        return {key: _replace_nuls(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_replace_nuls(item) for item in value]
+    return value
+
+
+def build_stored_reply(message: ChatSubmittedMessage) -> dict[str, Any]:
+    """Return a worker's submitted message as stored on its generation and shown in the status.
+
+    PostgreSQL text and JSONB both reject NUL, so every string has it replaced, as a text submission's generation
+    does.
+
+    Args:
+        message: The validated submitted message.
+
+    Returns:
+        ``{role, content}``, with ``tool_calls`` only when the message carries them; ``content`` is null only then.
+    """
+    stored_reply = message.model_dump(mode="json")
+    if message.tool_calls is None:
+        del stored_reply["tool_calls"]
+    replaced_reply: dict[str, Any] = _replace_nuls(stored_reply)
+    return replaced_reply
+
+
+def chat_reply_characters(message: Mapping[str, Any]) -> int:
+    """Return the characters a submitted chat reply is charged on.
+
+    The text formula prices a reply by its characters. A tool call is output the model generated as well, so its
+    function name and arguments count with the content.
+
+    Args:
+        message: The stored assistant message a worker submitted.
+
+    Returns:
+        The length of the content, plus the length of each tool call's function name and arguments.
+    """
+    content = message.get("content") or ""
+    tool_calls = message.get("tool_calls") or ()
+    return len(content) + sum(len(tool_call["function"]["name"]) + len(tool_call["function"]["arguments"]) for tool_call in tool_calls)
 
 
 def rewrite_message_texts(
@@ -916,10 +1205,10 @@ def rewrite_message_texts(
     rewritten_messages: list[dict[str, Any]] = []
     for message in messages:
         rewritten_message = dict(message)
-        content = message["content"]
+        content = message.get("content")
         if isinstance(content, str):
             rewritten_message["content"] = rewrite_text(content) or ""
-        else:
+        elif isinstance(content, list):
             rewritten_message["content"] = [
                 content_part if _is_image_part(content_part) else {**content_part, "text": rewrite_text(content_part["text"]) or ""}
                 for content_part in content
@@ -1001,7 +1290,8 @@ def build_operation_fingerprint(chat_request: ChatCompletionRequest) -> str:
 
     The hash covers the request as the horde applies it: the messages as stored (``developer`` rewritten to
     ``system``, unset keys left out), the text params the request maps onto, the model list, and every ``horde``
-    option with its default filled in, except ``operation_key`` and ``dry_run``. Two bodies that differ only in how
+    option with its default filled in, except ``operation_key`` and ``dry_run``, and under ``extras`` the tools and
+    response format the request applies, only when it applies any. Two bodies that differ only in how
     they say the same thing, such as ``max_tokens`` against ``max_completion_tokens`` or an option sent at its
     default against one left out, share a fingerprint. Keys that are accepted and not applied (``stream``,
     ``stream_options``, ``user``, ``metadata``) are not in the hash.
@@ -1020,22 +1310,39 @@ def build_operation_fingerprint(chat_request: ChatCompletionRequest) -> str:
         "models": build_model_names(chat_request),
         "horde": chat_request.horde.model_dump(mode="json", exclude=set(OPERATION_FINGERPRINT_EXCLUDED_HORDE_KEYS)),
     }
+    # Left out when empty, so the fingerprint of a request without tools or a response format covers the keys above only.
+    chat_extras = build_chat_extras(chat_request)
+    if chat_extras is not None:
+        effective_request["extras"] = chat_extras
     canonical_json = json.dumps(effective_request, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
-def required_chat_features(params: Mapping[str, Any]) -> set[ChatFeature]:
-    """Return the worker features a chat request's params need.
+def required_chat_features(
+    params: Mapping[str, Any],
+    messages: Sequence[Mapping[str, Any]],
+    chat_extras: Mapping[str, Any] | None,
+) -> set[ChatFeature]:
+    """Return every worker feature a chat request needs.
 
+    The only place a request's features are derived. The set is stored on the request when it is created, so
+    eligibility compares a worker's declaration with it without loading the messages or extras of any candidate.
     A value at its documented default needs nothing, so a request that sends a zero penalty is served by any chat
     worker.
 
     Args:
         params: The request's stored text params.
+        messages: The request's stored messages.
+        chat_extras: The request's stored extras, from
+            [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras].
 
     Returns:
-        ``seed`` when a seed is set, and each penalty whose value is not zero.
+        ``seed`` when a seed is set; each penalty whose value is not zero; ``vision`` when a message carries an image
+        part; ``tools`` when the request offers tools under a ``tool_choice`` other than ``none``, or any message is a
+        ``tool`` message or carries tool calls, since the worker's template has to render those turns; and
+        ``json_object`` or ``json_schema`` by the response format's type.
     """
+    chat_extras = chat_extras or {}
     needed_features: set[ChatFeature] = set()
     if params.get("seed") is not None:
         needed_features.add(ChatFeature.SEED)
@@ -1043,6 +1350,15 @@ def required_chat_features(params: Mapping[str, Any]) -> set[ChatFeature]:
         default_penalty = CHAT_SAMPLING_DEFAULTS[penalty_feature.value]
         if params.get(penalty_feature.value, default_penalty) != default_penalty:
             needed_features.add(penalty_feature)
+    if has_image_parts(messages):
+        needed_features.add(ChatFeature.VISION)
+    carries_tool_turns = any(message["role"] == ChatRole.TOOL or message.get("tool_calls") for message in messages)
+    offers_tools = "tools" in chat_extras and chat_extras.get("tool_choice") != ChatToolChoiceMode.NONE.value
+    if offers_tools or carries_tool_turns:
+        needed_features.add(ChatFeature.TOOLS)
+    response_format = chat_extras.get("response_format")
+    if response_format is not None:
+        needed_features.add(ChatFeature(response_format["type"]))
 
     return needed_features
 

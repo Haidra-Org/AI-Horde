@@ -47,18 +47,30 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
-from horde.chat_contract import CHAT_REQUEST_CONFLICT_ERROR_TYPE, INTERNAL_HORDE_OPTION_KEYS, ChatHordeOptions
+from horde.chat_contract import (
+    CHAT_REQUEST_CONFLICT_ERROR_TYPE,
+    INTERNAL_HORDE_OPTION_KEYS,
+    MAX_CHAT_TOOL_CALL_ID_LENGTH,
+    ChatFunctionCall,
+    ChatHordeOptions,
+    ChatResponseFormat,
+    ChatTool,
+    ChatToolCall,
+    ChatToolChoice,
+)
 
 __all__ = [
     "BAD_REQUEST_CODE",
     "CHAT_REQUEST_CONFLICT_CODE",
     "DEFAULT_NO_OP_PARAMETERS",
+    "SUPPORTED_MESSAGE_KEYS",
     "UNSUPPORTED_PARAMETER_CODE",
     "UNSUPPORTED_PARAMETER_ERROR_TYPE",
     "ChatCompletionChoice",
     "ChatCompletionChunk",
     "ChatCompletionChunkChoice",
     "ChatCompletionChunkDelta",
+    "ChatCompletionChunkToolCall",
     "ChatCompletionRequest",
     "ChatCompletionResponse",
     "ChatCompletionResponseMessage",
@@ -152,6 +164,9 @@ class ChatRole(StrEnum):
     ASSISTANT = "assistant"
     """A previous reply of the model."""
 
+    TOOL = "tool"
+    """The result of a tool call, answering the call whose id it carries."""
+
 
 class ImageDetail(StrEnum):
     """The OpenAI ``detail`` hint of an image part; forwarded to the worker unchanged."""
@@ -172,6 +187,9 @@ class FinishReason(StrEnum):
 
     CONTENT_FILTER = "content_filter"
     """The output was withheld by a filter."""
+
+    TOOL_CALLS = "tool_calls"
+    """The model called one or more tools and waits for their results."""
 
 
 class OpenAIErrorType(StrEnum):
@@ -215,9 +233,13 @@ def _is_empty_or_null(value: object, _request_body: Mapping[str, object]) -> boo
     return value is None or (isinstance(value, list) and not value)
 
 
-def _is_null_or_none_choice(value: object, _request_body: Mapping[str, object]) -> bool:
-    """Return whether ``value`` is null or the string ``none``."""
-    return value is None or value == "none"
+def _is_null_or_none_choice(value: object, request_body: Mapping[str, object]) -> bool:
+    """Return whether ``value`` is null, or the string ``none`` on a request without tools.
+
+    With tools, ``none`` is forwarded: dropping it would leave the tools under the native default, which lets the model
+    call them.
+    """
+    return value is None or (value == "none" and _is_empty_or_null(request_body.get("tools"), request_body))
 
 
 def _is_text_response_format(value: object, _request_body: Mapping[str, object]) -> bool:
@@ -265,21 +287,41 @@ DEFAULT_NO_OP_PARAMETERS: Mapping[str, NoOpPredicate] = MappingProxyType(
 )
 """Keys accepted and dropped when they hold their documented default, each with the test for that default.
 
-Stock clients send these unprompted. Any other value of one of these keys is refused by name, as is any key that is
-neither here nor a field of [`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest].
+Stock clients send these unprompted. A key here that is also a field of
+[`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest] (``tools``, ``tool_choice``, ``response_format``,
+``parallel_tool_calls``) is validated and forwarded when it holds any other value. Any other value of the remaining
+keys is refused by name, as is any key that is neither here nor a field of the request model.
 """
 
-ACCEPTED_MESSAGE_KEYS: frozenset[str] = frozenset(
+COMMON_MESSAGE_KEYS: frozenset[str] = frozenset(
     {
         "role",
         "content",
         "name",
     },
 )
-"""The message keys a chat message carries; others (``tool_calls``, ``audio``, ...) belong to features not served."""
+"""The message keys of a ``system``, ``developer`` or ``user`` message, and of a message whose role is not served."""
+
+SUPPORTED_MESSAGE_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        ChatRole.SYSTEM.value: COMMON_MESSAGE_KEYS,
+        ChatRole.DEVELOPER.value: COMMON_MESSAGE_KEYS,
+        ChatRole.USER.value: COMMON_MESSAGE_KEYS,
+        ChatRole.ASSISTANT.value: COMMON_MESSAGE_KEYS | {"tool_calls"},
+        ChatRole.TOOL.value: frozenset(
+            {
+                "role",
+                "content",
+                "tool_call_id",
+            },
+        ),
+    },
+)
+"""The message keys each role may carry; any other key (``audio``, ``tool_calls`` outside an assistant message,
+``tool_call_id`` outside a tool message, ...) is refused by its path. OpenAI defines no ``name`` on a tool message."""
 
 ACCEPTED_ROLES: frozenset[str] = frozenset(chat_role.value for chat_role in ChatRole)
-"""The role strings a message may carry; ``tool`` and ``function`` belong to features not served."""
+"""The role strings a message may carry; ``function`` belongs to the legacy function calling, which is not served."""
 
 
 def find_refused_parameter(request_body: Mapping[str, object]) -> RefusedParameter | None:
@@ -324,13 +366,14 @@ def find_refused_parameter(request_body: Mapping[str, object]) -> RefusedParamet
 
 def _find_refused_in_message(message: Mapping[str, object], *, message_index: int) -> RefusedParameter | None:
     """Return the first refused key, role or content part of one raw message, or None."""
+    role = message.get("role")
+    role_keys = SUPPORTED_MESSAGE_KEYS.get(role, COMMON_MESSAGE_KEYS) if isinstance(role, str) else COMMON_MESSAGE_KEYS
     for message_key in message:
-        if message_key not in ACCEPTED_MESSAGE_KEYS:
+        if message_key not in role_keys:
             return RefusedParameter(
                 parameter=f"messages[{message_index}].{message_key}",
-                message=f"The message key '{message_key}' is not supported; only text messages are served.",
+                message=f"The message key '{message_key}' is not supported on a '{role}' message.",
             )
-    role = message.get("role")
     if isinstance(role, str) and role not in ACCEPTED_ROLES:
         return RefusedParameter(
             parameter=f"messages[{message_index}].role",
@@ -374,13 +417,20 @@ def _find_refused_horde_option(horde_options: Mapping[str, object]) -> RefusedPa
 def drop_default_no_ops(request_body: Mapping[str, object]) -> dict[str, object]:
     """Return a copy of ``request_body`` without the keys of the default no-op table.
 
-    Call it only after [`find_refused_parameter`][horde.oai.schema.find_refused_parameter] found nothing, which
-    guarantees every such key holds its default.
+    Only a key holding its default is dropped, so a request model field of the table holding another value stays for
+    validation. Call it only after [`find_refused_parameter`][horde.oai.schema.find_refused_parameter] found nothing,
+    which guarantees every other key of the table holds its default.
 
     Args:
         request_body: The decoded JSON request body.
     """
-    return {request_key: value for request_key, value in request_body.items() if request_key not in DEFAULT_NO_OP_PARAMETERS}
+    return {request_key: value for request_key, value in request_body.items() if not _holds_no_op_default(request_key, value, request_body)}
+
+
+def _holds_no_op_default(request_key: str, value: object, request_body: Mapping[str, object]) -> bool:
+    """Return whether ``request_key`` is in the default no-op table and ``value`` is its default."""
+    no_op_predicate = DEFAULT_NO_OP_PARAMETERS.get(request_key)
+    return no_op_predicate is not None and no_op_predicate(value, request_body)
 
 
 class TextContentPart(BaseModel):
@@ -424,19 +474,64 @@ ContentPart = Annotated[TextContentPart | ImageContentPart, Field(discriminator=
 
 
 class ChatMessage(BaseModel):
-    """Represents one message of a chat request."""
+    """Represents one message of a chat request.
+
+    Which keys each role may carry is enforced by [`find_refused_parameter`][horde.oai.schema.find_refused_parameter]
+    before validation (see [`SUPPORTED_MESSAGE_KEYS`][horde.oai.schema.SUPPORTED_MESSAGE_KEYS]). Counts, sizes and
+    whether a ``tool_call_id`` answers an earlier call are the native route's checks.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     role: ChatRole
     """Who wrote the message."""
 
-    content: StrictStr | Annotated[list[ContentPart], Field(min_length=1)]
-    """The message text as one string, or an array of parts; only a user message may hold image parts, which
-    [`find_refused_parameter`][horde.oai.schema.find_refused_parameter] enforces before validation."""
-
     name: StrictStr | None = None
     """An optional participant name, passed through to the worker."""
+
+    tool_call_id: Annotated[StrictStr, Field(min_length=1, max_length=MAX_CHAT_TOOL_CALL_ID_LENGTH)] | None = Field(
+        default=None,
+        validate_default=True,
+    )
+    """The id of the call a ``tool`` message answers; required on a tool message."""
+
+    tool_calls: Annotated[list[ChatToolCall], Field(min_length=1)] | None = None
+    """The tool calls of an earlier assistant reply, forwarded unchanged."""
+
+    # Declared after ``tool_calls`` so its validator can read them and report at this path; the default is validated
+    # so an omitted content is checked too.
+    content: StrictStr | Annotated[list[ContentPart], Field(min_length=1)] | None = Field(default=None, validate_default=True)
+    """The message text as one string, or an array of parts; only a user message may hold image parts, which
+    [`find_refused_parameter`][horde.oai.schema.find_refused_parameter] enforces before validation. Null or omitted
+    only on an assistant message with ``tool_calls``."""
+
+    @field_validator("content", mode="after")
+    @classmethod
+    def validate_content_present(
+        cls,
+        content: str | list[TextContentPart | ImageContentPart] | None,
+        info: ValidationInfo,
+    ) -> str | list[TextContentPart | ImageContentPart] | None:
+        """Validate that only an assistant message with tool calls lacks content.
+
+        Raises:
+            ValueError: The content is null or omitted on any other message.
+        """
+        if content is None and not (info.data.get("role") is ChatRole.ASSISTANT and info.data.get("tool_calls")):
+            raise ValueError("'content' may be null only on an assistant message with 'tool_calls'.")
+        return content
+
+    @field_validator("tool_call_id", mode="after")
+    @classmethod
+    def validate_tool_message_answers_a_call(cls, tool_call_id: str | None, info: ValidationInfo) -> str | None:
+        """Validate that a tool message carries the id of the call it answers.
+
+        Raises:
+            ValueError: A tool message has no ``tool_call_id``.
+        """
+        if tool_call_id is None and info.data.get("role") is ChatRole.TOOL:
+            raise ValueError("A tool message needs the 'tool_call_id' of the call it answers.")
+        return tool_call_id
 
 
 class StreamOptions(BaseModel):
@@ -513,6 +608,18 @@ class ChatCompletionRequest(BaseModel):
     metadata: Annotated[dict[MetadataKey, MetadataValue], Field(max_length=MAX_METADATA_PAIRS)] | None = None
     """Free-form annotations; accepted, unused and not persisted."""
 
+    tools: list[ChatTool] | None = None
+    """The functions the model may call, forwarded verbatim; an empty or null list is dropped before validation."""
+
+    tool_choice: ChatToolChoice | None = None
+    """Whether and which tool the model calls, forwarded verbatim; null, and ``none`` without tools, are dropped."""
+
+    parallel_tool_calls: StrictBool | None = None
+    """Whether the model may call several tools in one reply, forwarded verbatim; dropped on a request without tools."""
+
+    response_format: ChatResponseFormat | None = None
+    """The output format, forwarded verbatim; ``{"type": "text"}`` is dropped before validation."""
+
     horde: ChatHordeOptions | None = None
     """The Horde extension object."""
 
@@ -588,15 +695,29 @@ def _drop_absent_fields(model: BaseModel, handler: SerializerFunctionWrapHandler
 
 
 class ChatCompletionResponseMessage(BaseModel):
-    """Represents the assistant message of one completion choice."""
+    """Represents the assistant message of one completion choice.
+
+    ``content`` is always written, null included; ``tool_calls`` only when the worker returned calls.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     role: Literal["assistant"] = "assistant"
     """Always ``assistant``."""
 
-    content: str
-    """The generated text."""
+    content: str | None
+    """The generated text; null only when the worker answered with tool calls alone."""
+
+    tool_calls: list[ChatToolCall] | None = None
+    """The tool calls the worker returned, unchanged."""
+
+    @model_serializer(mode="wrap")
+    def serialize_without_absent_tool_calls(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+        """Convert the message to a dict, leaving ``tool_calls`` out when the worker returned none."""
+        serialised: dict[str, object] = handler(self)
+        if self.tool_calls is None:
+            serialised.pop("tool_calls", None)
+        return serialised
 
 
 class ChatCompletionChoice(BaseModel):
@@ -850,6 +971,24 @@ class ModelList(BaseModel):
     """The text models with at least one online chat worker serving them."""
 
 
+class ChatCompletionChunkToolCall(BaseModel):
+    """Represents one whole tool call in a streamed ``delta``, with the position a client accumulates it by."""
+
+    model_config = ConfigDict(frozen=True)
+
+    index: int
+    """The position of the call in the reply's ``tool_calls``, from 0."""
+
+    id: str
+    """The id the worker returned for the call."""
+
+    type: Literal["function"] = "function"
+    """Always ``function``."""
+
+    function: ChatFunctionCall
+    """The function called and its arguments."""
+
+
 class ChatCompletionChunkDelta(BaseModel):
     """Represents the ``delta`` of one streamed choice; unset fields are left out of the chunk."""
 
@@ -860,6 +999,9 @@ class ChatCompletionChunkDelta(BaseModel):
 
     content: str | None = None
     """The generated text in the content chunk, otherwise absent."""
+
+    tool_calls: list[ChatCompletionChunkToolCall] | None = None
+    """The tool calls in the content chunk when the worker returned any, otherwise absent."""
 
 
 class ChatCompletionChunkChoice(BaseModel):

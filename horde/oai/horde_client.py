@@ -35,6 +35,7 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from horde.chat_contract import ChatToolCall
 from horde.oai.metrics import FrontMetrics, NativeCallOutcome, NativeCallType
 
 __all__ = [
@@ -235,7 +236,10 @@ class HordeChatMessage(BaseModel):
     """The role of the message, ``assistant`` for a reply."""
 
     content: str | None = None
-    """The reply text; an empty string is a completed, empty reply."""
+    """The reply text; an empty string is a completed, empty reply, and null comes only with ``tool_calls``."""
+
+    tool_calls: list[ChatToolCall] | None = None
+    """The tool calls the worker returned, in the shape the native route validated them in."""
 
 
 class HordeChatGeneration(BaseModel):

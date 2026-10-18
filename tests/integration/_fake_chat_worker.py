@@ -79,30 +79,35 @@ def build_pop_body(
 def build_chat_submit_body(
     *,
     generation_id: str,
-    content: str,
+    content: str | None,
     model_id: str,
     finish_reason: str = "stop",
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
     native_finish_reason: str | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a chat job's submit body, without ``generation``.
 
     Args:
         generation_id: The popped generation id.
-        content: The assistant reply.
+        content: The assistant reply; null for a reply that only calls tools.
         model_id: The model the job ran on.
         finish_reason: Why generation stopped.
         prompt_tokens: The prompt token count; left out when None.
         completion_tokens: The generated token count; left out when None.
         native_finish_reason: The backend's own stop reason; left out when None.
+        tool_calls: The tool calls the model made; left out of the message when None.
 
     Returns:
         The JSON body for ``POST /v2/generate/text/submit``.
     """
+    message: dict[str, Any] = {"role": "assistant", "content": content}
+    if tool_calls is not None:
+        message["tool_calls"] = tool_calls
     submit_body: dict[str, Any] = {
         "id": generation_id,
-        "message": {"role": "assistant", "content": content},
+        "message": message,
         "finish_reason": finish_reason,
         "model_id": model_id,
         "state": "ok",

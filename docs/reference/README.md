@@ -25,6 +25,6 @@ The concepts they assume (what a worker is, what a job's lifecycle means) are in
 | [Image model reference loader reference](model_reference.md) | Where the image model reference comes from, how beta (pending) models are merged over it, the environment that configures both, and what the loader exposes. |
 | [Style contract reference](style_contract.md) | What an image or text style may declare about the params a request may set and the placeholders its prompt accepts, and how a text request is sized against the prompt it ends up sending. |
 | [Chat requests reference](chat_requests.md) | Chat routes and their text mapping, known models, operation keys, chat declaration on pop, chat job payload, structured submit, pricing, chat model list, admission flag and completion signal. |
-| [Chat front reference](chat_front.md) | The horde.oai package by concern, the metrics the front records with their labels, and the fields of the line it logs per finished request. |
+| [Chat front reference](chat_front.md) | The horde.oai package by concern, its request keys, message roles, response, stream and model card shapes, its metrics and labels, and its per-request log line. |
 | [Outbound requests reference](outbound_requests.md) | Which client-supplied URLs the horde requests, the address check every hop passes, and the timeouts, redirect limits and byte caps of image fetches and webhooks. |
 <!-- END GENERATED: documents -->

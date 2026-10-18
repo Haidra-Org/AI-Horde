@@ -13,7 +13,7 @@ from horde.bridge_reference import (
 )
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.processing_generation import ProcessingGeneration, json_column_type
-from horde.classes.kobold.chat_request import ChargeBasis
+from horde.classes.kobold.chat_request import ChargeBasis, chat_reply_characters
 from horde.classes.kobold.genstats import record_text_statistic
 from horde.flask import db
 from horde.logger import logger
@@ -41,6 +41,22 @@ def is_empty_text_generation(generation: str | None) -> bool:
     if generation is None:
         return True
     return not generation.strip()
+
+
+def is_empty_submission(generation: str | None, message: object) -> bool:
+    """Report whether a submission is an empty generation for the empty-generation counter.
+
+    A chat reply that calls tools is complete without any text, so it is never empty.
+
+    Args:
+        generation: The text the worker submitted, or a chat reply's content.
+        message: The chat reply as stored, or None for a text submission.
+
+    Returns:
+        True when the text has no visible characters and the reply carries no tool calls.
+    """
+    calls_tools = isinstance(message, dict) and bool(message.get("tool_calls"))
+    return is_empty_text_generation(generation) and not calls_tools
 
 
 def build_empty_generation_attributes(model: str | None, bridge_agent: str | None, state: str) -> dict[str, str]:
@@ -74,8 +90,9 @@ class TextProcessingGeneration(ProcessingGeneration):
     wp = db.relationship("TextWaitingPrompt", back_populates="processing_gens")
     worker = db.relationship("TextWorker", back_populates="processing_gens")
     message = db.Column(json_column_type(none_as_null=True), nullable=True)
-    """The assistant message a chat worker submitted, ``{role, content}``. NULL on text generations. ``generation``
-    holds the same content, so every predicate that reads ``generation`` treats chat and text alike."""
+    """The assistant message a chat worker submitted, ``{role, content}`` with ``tool_calls`` when the model called
+    tools. NULL on text generations. ``generation`` holds the same content, or an empty string when the content is
+    null, so every predicate that reads ``generation`` treats chat and text alike."""
     finish_reason = db.Column(db.String(32), nullable=True)
     """Why a chat worker stopped generating, a ``FinishReason`` value. NULL on text generations."""
     native_finish_reason = db.Column(db.String(32), nullable=True)
@@ -250,7 +267,7 @@ class TextProcessingGeneration(ProcessingGeneration):
 
         # Checked before super() so the raw submission is examined, but reported
         # after it so the log can include the kudos awarded.
-        submission_is_empty = is_empty_text_generation(generation)
+        submission_is_empty = is_empty_submission(generation, kwargs.get("message"))
 
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         if submission_is_empty:
@@ -278,11 +295,26 @@ class TextProcessingGeneration(ProcessingGeneration):
             publish_chat_event(request_id, ChatEvent.DONE, generation_count)
 
     def get_things_count(self, generation=None):
-        if generation is None:
-            if self.generation is None:
-                return 0
-            generation = self.generation
-        quick_token_count = math.ceil(len(generation) / 4)
+        """Return the output estimate the generation is charged on: its characters divided by 4, rounded up, at least
+        20 and at most the requested ``max_length``.
+
+        Args:
+            generation: Text to estimate in place of the stored generation.
+
+        Returns:
+            The estimate. A stored chat reply is counted by
+            [`chat_reply_characters`][horde.classes.kobold.chat_request.chat_reply_characters], so tool calls are
+            charged as output.
+        """
+        if generation is not None:
+            character_count = len(generation)
+        elif self.message is not None:
+            character_count = chat_reply_characters(self.message)
+        elif self.generation is not None:
+            character_count = len(self.generation)
+        else:
+            return 0
+        quick_token_count = math.ceil(character_count / 4)
         if quick_token_count < 20:
             quick_token_count = 20
         if self.wp.things > quick_token_count:

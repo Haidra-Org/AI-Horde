@@ -2,10 +2,18 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from typing import Any
+
 from flask_restx import fields, reqparse
 
 from horde.apis.models import v2
-from horde.chat_contract import ChatContextFit
+from horde.chat_contract import (
+    MAX_CHAT_TOOL_CALL_COUNT,
+    MAX_CHAT_TOOL_CALL_ID_LENGTH,
+    MAX_CHAT_TOOL_COUNT,
+    MAX_CHAT_TOOL_SPEC_BYTES,
+    ChatContextFit,
+)
 from horde.classes.base.style_application import MAX_TEMPLATE_FIELD_WORDS
 from horde.classes.base.style_contract import MAX_TEMPLATE_FIELDS
 from horde.classes.kobold.chat_request import (
@@ -26,6 +34,21 @@ from horde.classes.kobold.request_fit import (
     ContextFit,
 )
 from horde.vars import horde_title
+
+
+class NullableStringField(fields.Raw):
+    """A string field that may also be null.
+
+    Swagger 2 has no nullable type, and the schema a validated route checks a body against is the documented one, so
+    the field declares no type and carries the ``x-nullable`` vendor extension instead. The endpoint's own model
+    checks the value.
+    """
+
+    __schema_type__ = None
+
+    def schema(self) -> dict[str, Any]:
+        """Return the field's schema, marked ``x-nullable``."""
+        return {**super().schema(), "x-nullable": True}
 
 
 class TextParsers(v2.Parsers):
@@ -358,12 +381,32 @@ class TextModels(v2.Models):
                 "messages": fields.List(
                     fields.Raw,
                     description=(
-                        "The OpenAI chat messages array, in place of a prompt. Each entry has a role (system, user or "
-                        "assistant) and a content that is a string or an array of parts. A user message's parts may be "
-                        "image parts, {type: image_url, image_url: {url, detail?}}, whose url is a signed JPEG download "
-                        "URL for a worker that declared the url transport, or a data:image/jpeg;base64 URL for one that "
-                        "declared only base64. A developer message is sent as system. The worker applies its own chat "
-                        "template."
+                        "The OpenAI chat messages array, in place of a prompt. Each entry has a role (system, user, "
+                        "assistant or tool) and a content that is a string or an array of parts. A user message's parts "
+                        "may be image parts, {type: image_url, image_url: {url, detail?}}, whose url is a signed JPEG "
+                        "download URL for a worker that declared the url transport, or a data:image/jpeg;base64 URL for "
+                        "one that declared only base64. An assistant message may carry tool_calls, with content null "
+                        "when it carries nothing else; a tool message carries tool_call_id, the id of the call it "
+                        "answers. A developer message is sent as system. The worker applies its own chat template."
+                    ),
+                ),
+                "tools": fields.List(
+                    fields.Raw,
+                    description="The request's OpenAI tools, as the client sent them; only when the request offers tools.",
+                ),
+                "tool_choice": fields.Raw(
+                    description=(
+                        "The request's tool_choice as the client sent it: 'auto', 'required' or {type: function, "
+                        "function: {name}}; only when the client sent it with tools."
+                    ),
+                ),
+                "parallel_tool_calls": fields.Boolean(
+                    description="The request's parallel_tool_calls; only when the client sent it with tools.",
+                ),
+                "response_format": fields.Raw(
+                    description=(
+                        "The request's response_format as the client sent it, {type: json_object} or {type: "
+                        "json_schema, json_schema: {name, schema, description?, strict?}}; absent for text."
                     ),
                 ),
                 "temperature": fields.Float(description="Sampling temperature; 1.0 when the client did not set it."),
@@ -488,8 +531,10 @@ class TextModels(v2.Models):
                     fields.String,
                     description=(
                         "The optional chat features the worker implements: "
-                        f"{', '.join(feature.value for feature in ChatFeature)}. A chat request that sets one of them "
-                        "to a non-default value only goes to workers that list it. Unknown names are ignored."
+                        f"{', '.join(feature.value for feature in ChatFeature)}. A chat request that needs one of "
+                        "them (a non-default seed or penalty, image parts, tools or a history with tool calls, a "
+                        "json_object or json_schema response format) only goes to workers that list it. Unknown names "
+                        "are ignored."
                     ),
                 ),
                 "chat_limits": fields.Nested(
@@ -726,13 +771,38 @@ class TextModels(v2.Models):
                 "total": fields.Raw(description="The total amount of requests fulfilled for each model."),
             },
         )
+        self.model_chat_function_call = api.model(
+            "ChatFunctionCall",
+            {
+                "name": fields.String(description="The function called."),
+                "arguments": fields.String(description="The arguments as the model wrote them, a JSON document in a string."),
+            },
+        )
+        self.model_chat_tool_call = api.model(
+            "ChatToolCall",
+            {
+                "id": fields.String(
+                    description=f"The id a tool message answers, 1 to {MAX_CHAT_TOOL_CALL_ID_LENGTH} characters.",
+                ),
+                "type": fields.String(enum=["function"], description="Always 'function'."),
+                "function": fields.Nested(self.model_chat_function_call),
+            },
+        )
         self.input_model_chat_submitted_message = api.model(
             "ChatSubmittedMessage",
             {
                 "role": fields.String(required=True, enum=["assistant"], description="Always 'assistant'."),
-                "content": fields.String(
-                    required=True,
-                    description="The reply text. An empty string is a completed reply with no visible text.",
+                "content": NullableStringField(
+                    description=(
+                        "The reply text, a string. An empty string is a completed reply with no visible text; null only with tool_calls."
+                    ),
+                ),
+                "tool_calls": fields.List(
+                    fields.Nested(self.model_chat_tool_call),
+                    description=(
+                        f"The tool calls the model made, 1 to {MAX_CHAT_TOOL_CALL_COUNT}, with the ids the backend "
+                        "minted. A tool call is a complete reply and is charged as output with the content."
+                    ),
                 ),
             },
         )
@@ -749,7 +819,8 @@ class TextModels(v2.Models):
                     enum=[finish_reason.value for finish_reason in FinishReason],
                     description=(
                         "Chat jobs only, required: why the worker stopped generating. 'stop' for an end of reply or "
-                        "stop sequence, 'length' at max_length, 'content_filter' when the backend withheld output."
+                        "stop sequence, 'length' at max_length, 'content_filter' when the backend withheld output, "
+                        "'tool_calls' when the model called tools, which needs message.tool_calls."
                     ),
                 ),
                 "native_finish_reason": fields.String(
@@ -983,15 +1054,27 @@ class TextModels(v2.Models):
                     description="Who wrote the message. A developer message is stored and sent to workers as system.",
                 ),
                 "content": fields.Raw(
-                    required=True,
                     description=(
                         "The message text, as a string or as an array of parts: ChatTextPart, or on a user message "
                         "{type: image_url, image_url: {url, detail?}} with a base64 image data URL or an http(s) URL. "
                         "At most 5 images per request, 1 for users who are neither trusted nor patrons, each at most "
-                        "5 MiB and 3072*3072 pixels."
+                        "5 MiB and 3072*3072 pixels. A tool message takes text only. Null or absent only on an "
+                        "assistant message with tool_calls."
                     ),
                 ),
-                "name": fields.String(description="An optional participant name, passed to the worker unchanged."),
+                "name": fields.String(
+                    description="An optional participant name, passed to the worker unchanged. Not on a tool message.",
+                ),
+                "tool_calls": fields.List(
+                    fields.Nested(self.model_chat_tool_call),
+                    description=f"Assistant messages only: the tool calls the model made, 1 to {MAX_CHAT_TOOL_CALL_COUNT}.",
+                ),
+                "tool_call_id": fields.String(
+                    description=(
+                        "Tool messages only, required: the id of the tool call this message answers, which a tool "
+                        "call of an earlier assistant message has to carry."
+                    ),
+                ),
             },
         )
         self.model_chat_horde_options = api.model(
@@ -1058,6 +1141,33 @@ class TextModels(v2.Models):
                 "stream_options": fields.Raw(description="Accepted and not applied on this route."),
                 "user": fields.String(description="Accepted and not applied."),
                 "metadata": fields.Raw(description="Accepted and not applied."),
+                "tools": fields.List(
+                    fields.Raw,
+                    description=(
+                        f"OpenAI function tools, {{type: function, function: {{name, description?, parameters?, "
+                        f"strict?}}}}, at most {MAX_CHAT_TOOL_COUNT}. Forwarded to the worker as sent; a request with "
+                        "tools only goes to workers that declare the tools feature. An empty list is the same as none."
+                    ),
+                ),
+                "tool_choice": fields.Raw(
+                    description=(
+                        "'none', 'auto', 'required' or {type: function, function: {name}}. 'none' is the same as "
+                        "sending no tools; any other value needs tools, and a named function has to be one of them, "
+                        "or the request is refused with ChatRequestConflict."
+                    ),
+                ),
+                "parallel_tool_calls": fields.Boolean(
+                    description="Whether the model may call several tools in one reply; forwarded with tools, dropped without.",
+                ),
+                "response_format": fields.Raw(
+                    description=(
+                        "{type: text}, {type: json_object} or {type: json_schema, json_schema: {name, schema, "
+                        "description?, strict?}}. text is the same as none; the other two only go to workers that "
+                        "declare the feature of that name. "
+                        f"tools, tool_choice and response_format may take {MAX_CHAT_TOOL_SPEC_BYTES} bytes of compact "
+                        "JSON together; more is refused with UnsupportedChatParameter."
+                    ),
+                ),
                 "horde": fields.Nested(self.model_chat_horde_options, description="Horde options OpenAI has no key for."),
             },
         )
@@ -1065,7 +1175,12 @@ class TextModels(v2.Models):
             "GenerationChat",
             self.response_model_generation_result,
             {
-                "message": fields.Raw(description="The assistant message the worker submitted, with role and content."),
+                "message": fields.Raw(
+                    description=(
+                        "The assistant message the worker submitted, with role and content, and tool_calls when the "
+                        "model called tools (content is then null or text)."
+                    ),
+                ),
                 "finish_reason": fields.String(
                     enum=[finish_reason.value for finish_reason in FinishReason],
                     description="Why the worker stopped generating.",

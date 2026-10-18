@@ -5,9 +5,11 @@
 """Render a streamed chat answer as server-sent events.
 
 The Horde produces the whole text before it reports a generation, so a stream is buffered: keepalive comments while
-the request waits (``: horde queue_position=7 wait_time=42``), then the finished completion as a role chunk, one
-content chunk, a finish chunk carrying ``x_horde``, the usage chunk when the client asked for it, and ``[DONE]``.
-Nullable choice fields remain explicit; absent delta members are omitted.
+the request waits (``: horde queue_position=7 wait_time=42``), then the finished completion as a role chunk, a
+content chunk when the reply has text, a tool-call chunk when it has calls, a finish chunk carrying ``x_horde``, the
+usage chunk when the client asked for it, and ``[DONE]``. The tool-call chunk carries every call whole with its
+``index``, so a client that accumulates deltas rebuilds the calls. Nullable choice fields remain explicit; absent delta
+members are omitted.
 
 An error after the headers is one ``data:`` event carrying the same ``{"error": {...}}`` envelope as a response
 before headers, with null fields written explicitly and no choice, followed by ``[DONE]``.
@@ -19,11 +21,13 @@ import json
 
 from sse_starlette import ServerSentEvent
 
+from horde.chat_contract import ChatToolCall
 from horde.oai.horde_client import HordeChatStatus
 from horde.oai.schema import (
     ChatCompletionChunk,
     ChatCompletionChunkChoice,
     ChatCompletionChunkDelta,
+    ChatCompletionChunkToolCall,
     ChatCompletionResponse,
     OpenAIErrorEnvelope,
 )
@@ -73,13 +77,32 @@ def build_completion_events(completion: ChatCompletionResponse, *, include_usage
             ChatCompletionChunkChoice(index=choice.index, delta=ChatCompletionChunkDelta(role="assistant")) for choice in completion.choices
         ],
     )
-    content_chunk = _build_chunk(
-        completion,
-        choices=[
-            ChatCompletionChunkChoice(index=choice.index, delta=ChatCompletionChunkDelta(content=choice.message.content))
-            for choice in completion.choices
-        ],
-    )
+    # Text and tool calls travel in separate chunks, as OpenAI streams them: clients such as KoboldAI Lite read
+    # tool-call deltas only from chunks that carry no content, so a chunk holding both would lose the calls.
+    body_chunks: list[ChatCompletionChunk] = []
+    if any(choice.message.content is not None for choice in completion.choices):
+        body_chunks.append(
+            _build_chunk(
+                completion,
+                choices=[
+                    ChatCompletionChunkChoice(index=choice.index, delta=ChatCompletionChunkDelta(content=choice.message.content))
+                    for choice in completion.choices
+                ],
+            ),
+        )
+    if any(choice.message.tool_calls for choice in completion.choices):
+        body_chunks.append(
+            _build_chunk(
+                completion,
+                choices=[
+                    ChatCompletionChunkChoice(
+                        index=choice.index,
+                        delta=ChatCompletionChunkDelta(tool_calls=_chunk_tool_calls(choice.message.tool_calls)),
+                    )
+                    for choice in completion.choices
+                ],
+            ),
+        )
     finish_chunk = _build_chunk(
         completion,
         choices=[
@@ -95,7 +118,7 @@ def build_completion_events(completion: ChatCompletionResponse, *, include_usage
     )
     events = [
         _chunk_event(role_chunk, include_usage=include_usage),
-        _chunk_event(content_chunk, include_usage=include_usage),
+        *(_chunk_event(body_chunk, include_usage=include_usage) for body_chunk in body_chunks),
         _chunk_event(finish_chunk, include_usage=include_usage),
     ]
     if include_usage:
@@ -122,6 +145,16 @@ def build_error_events(envelope: OpenAIErrorEnvelope) -> list[ServerSentEvent]:
     return [
         ServerSentEvent(data=envelope.model_dump_json()),
         ServerSentEvent(data=DONE_MARKER),
+    ]
+
+
+def _chunk_tool_calls(tool_calls: list[ChatToolCall] | None) -> list[ChatCompletionChunkToolCall] | None:
+    """Return a reply's tool calls as delta entries, each with its position in the reply, or None when it has none."""
+    if tool_calls is None:
+        return None
+    return [
+        ChatCompletionChunkToolCall(index=call_index, id=tool_call.id, type=tool_call.type, function=tool_call.function)
+        for call_index, tool_call in enumerate(tool_calls)
     ]
 
 

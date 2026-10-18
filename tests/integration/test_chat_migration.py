@@ -83,6 +83,8 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 ("processing_gens", "message", "jsonb", None, "YES"),
                 ("processing_gens", "native_finish_reason", "character varying", 32, "YES"),
                 ("processing_gens", "prompt_tokens", "integer", None, "YES"),
+                ("waiting_prompts", "chat_extras", "jsonb", None, "YES"),
+                ("waiting_prompts", "chat_required_features", "ARRAY", None, "YES"),
                 ("waiting_prompts", "context_adjustments", "jsonb", None, "YES"),
                 ("waiting_prompts", "is_chat", "boolean", None, "NO"),
                 ("waiting_prompts", "messages", "jsonb", None, "YES"),

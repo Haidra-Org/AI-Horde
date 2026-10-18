@@ -221,11 +221,11 @@ The errors returned by the AI horde are always in this json format
 | TooManyStyleExamples | An image style can have at most 4 examples |
 | TooManyWorkers | Untrusted users can have at most 3 distinct workers |
 | TooManyWorkersTrusted | Trusted users cannot onboard more than 20 workers without contacting the team |
-| UnsupportedChatParameter | A chat request used a key, role, value or content part the horde does not serve; the message names it |
-| ChatRequestConflict | Two keys of a chat request contradict each other, such as differing `max_tokens` and `max_completion_tokens`, or both `horde.only` and `horde.ignore` |
+| UnsupportedChatParameter | A chat request used a key, role, value or content part the horde does not serve, a `tool` message's `tool_call_id` matches no earlier tool call, or its tools and response format exceed their size bound; the message names it |
+| ChatRequestConflict | Two keys of a chat request contradict each other, such as differing `max_tokens` and `max_completion_tokens`, or both `horde.only` and `horde.ignore`, or a `tool_choice` other than `none` without tools or forcing a function the tools do not define |
 | ChatAdmissionDisabled | This horde is not accepting new chat requests (HTTP 503); queued chat requests are still served |
 | ChatDeclarationInvalid | A text pop set `chat_jobs` without `chat_limits` or `model_id`, or with a `model_id` that contains a colon or is not one of the worker's models |
-| ChatSubmitInvalid | A chat job's submit lacked a valid `message` or `finish_reason`, carried `generation`, or a text job's submit carried `message` |
+| ChatSubmitInvalid | A chat job's submit lacked a valid `message` or `finish_reason`, had null `content` without `tool_calls`, gave the `tool_calls` finish reason without tool calls, carried `generation`, or a text job's submit carried `message` |
 | ChatModelMismatch | A chat job's submit named another `model_id` than the model the job was assigned |
 | UnknownChatModel | A chat request's model is not in the text model reference and no online worker serves chat jobs with it (HTTP 404) |
 | ChatImageStorageUnavailable | A chat request's images could not be stored; nothing was queued or charged (HTTP 503) |

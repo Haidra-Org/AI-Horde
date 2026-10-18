@@ -23,10 +23,12 @@ from horde.classes.kobold.chat_request import (
     build_chat_job_payload,
     has_image_parts,
     list_chat_image_keys,
+    required_chat_features,
     resolve_image_references,
     select_image_transport,
 )
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
+from horde.classes.kobold.worker import text_array_column_type
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -82,6 +84,16 @@ class TextWaitingPrompt(WaitingPrompt):
     """The OpenAI ``messages`` array of a chat request, sent to the worker in place of the prompt; NULL on every
     other text request. Deferred, so only the request a worker is assigned loads it. ``prompt`` then holds the
     flattened messages, which only the token estimate, kudos and moderation read."""
+    chat_extras = db.deferred(db.Column(json_column_type(none_as_null=True), nullable=True))
+    """The ``tools``, ``tool_choice``, ``parallel_tool_calls`` and ``response_format`` a chat request applies, from
+    [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras], each only when set and in the shape
+    the client sent; NULL when it applies none and on every other text request. Deferred like ``messages``, and added
+    to the job payload at pop as stored."""
+    chat_required_features = db.Column(text_array_column_type, nullable=True)
+    """The ``ChatFeature`` names a chat request needs, from
+    [`required_chat_features`][horde.classes.kobold.chat_request.required_chat_features], written once when the
+    request is created; NULL on every other text request. Eligibility compares a worker's declaration with it, so the
+    queue scan never loads the deferred messages or extras of a candidate."""
     operation_key = db.deferred(db.Column(uuid_column_type(), nullable=True))
     """The key a native caller sent to identify one submission of a chat request, claimed when the request is
     activated; NULL on every other request. Unique per user while the row exists, so a repeated submission finds the
@@ -119,6 +131,11 @@ class TextWaitingPrompt(WaitingPrompt):
         # The total amount of to pixelsteps requested.
         self.total_usage = round(self.max_length * self.n / hv.thing_divisors["text"], 2)
         self.softprompt = kwargs.get("softprompt")
+        if self.is_chat:
+            # Read while the messages and extras the request was created with are still in memory.
+            self.chat_required_features = sorted(
+                feature.value for feature in required_chat_features(self.params, self.messages or [], self.chat_extras)
+            )
         self.prepare_job_payload(self.params)
 
     @logger.catch(reraise=True)
@@ -243,14 +260,16 @@ class TextWaitingPrompt(WaitingPrompt):
             payload: The job payload, which for a chat job carries no prompt.
 
         Returns:
-            The pop response. A chat job's payload carries ``messages`` and the response carries ``chat: true``;
-            a text job's response is unchanged.
+            The pop response. A chat job's payload carries ``messages``, and each of ``tools``, ``tool_choice``,
+            ``parallel_tool_calls`` and ``response_format`` the request stored, exactly as stored; the response
+            carries ``chat: true``. A text job's response is unchanged.
         """
         if not self.is_chat:
             return super().get_pop_payload(procgen_list, payload)
 
         chat_payload = dict(payload)
         chat_payload["messages"] = self.build_worker_messages(procgen_list[0])
+        chat_payload.update(self.chat_extras or {})
         pop_payload = super().get_pop_payload(procgen_list, chat_payload)
         pop_payload["chat"] = True
         return pop_payload

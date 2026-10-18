@@ -22,6 +22,8 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
     MAX_CHAT_TEXT_BYTES,
+    MAX_CHAT_TOOL_COUNT,
+    MAX_CHAT_TOOL_SPEC_BYTES,
     ChatHordeOptions,
 )
 from horde.classes.kobold.chat_request import (
@@ -32,11 +34,15 @@ from horde.classes.kobold.chat_request import (
     UNSUPPORTED_CHAT_PARAMETER_RC,
     ChatFeature,
     ChatImageTransport,
+    ChatSubmittedMessage,
+    build_chat_extras,
     build_chat_image_key,
     build_chat_job_payload,
     build_model_names,
+    build_stored_reply,
     build_text_params,
     build_worker_targeting,
+    chat_reply_characters,
     flatten_messages,
     has_image_parts,
     list_chat_image_keys,
@@ -49,6 +55,7 @@ from horde.classes.kobold.chat_request import (
     select_image_transport,
     serialize_messages,
 )
+from horde.classes.kobold.processing_generation import is_empty_submission
 from horde.exceptions import KNOWN_RC
 from horde.image import MAX_CHAT_IMAGE_SIDE, load_chat_image
 
@@ -77,9 +84,6 @@ class TestUnsupportedParameters:
     @pytest.mark.parametrize(
         "unsupported_key",
         [
-            "tools",
-            "tool_choice",
-            "response_format",
             "logprobs",
             "top_logprobs",
             "logit_bias",
@@ -105,7 +109,7 @@ class TestUnsupportedParameters:
         assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
         assert "messages[0].content[1].type=input_audio" in rejection.specific
 
-    @pytest.mark.parametrize("role", ["system", "developer", "assistant"])
+    @pytest.mark.parametrize("role", ["system", "developer", "assistant", "tool"])
     def test_an_image_part_outside_a_user_message_is_refused_with_its_location(self, role: str) -> None:
         image_part = {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}
         messages = [{"role": role, "content": [{"type": "text", "text": "Look."}, image_part]}]
@@ -123,20 +127,28 @@ class TestUnsupportedParameters:
 
         assert serialize_messages(chat_request) == messages
 
-    @pytest.mark.parametrize("unsupported_role", ["tool", "function"])
-    def test_a_role_outside_the_served_roles_is_refused(self, unsupported_role: str) -> None:
-        rejection = _rejection(_body(messages=[{"role": unsupported_role, "content": "x"}]))
+    def test_a_role_outside_the_served_roles_is_refused(self) -> None:
+        rejection = _rejection(_body(messages=[{"role": "function", "content": "x"}]))
 
         assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
-        assert f"messages[0].role={unsupported_role}" in rejection.specific
+        assert "messages[0].role=function" in rejection.specific
 
-    def test_a_message_key_for_tool_calls_is_refused(self) -> None:
-        messages = [{"role": "assistant", "content": "", "tool_calls": []}]
-
-        rejection = _rejection(_body(messages=messages))
+    @pytest.mark.parametrize(
+        ("message", "refused_key"),
+        [
+            ({"role": "user", "content": "x", "tool_calls": [{"id": "c", "type": "function"}]}, "tool_calls"),
+            ({"role": "system", "content": "x", "tool_calls": []}, "tool_calls"),
+            ({"role": "user", "content": "x", "tool_call_id": "call_1"}, "tool_call_id"),
+            ({"role": "assistant", "content": "x", "tool_call_id": "call_1"}, "tool_call_id"),
+            ({"role": "tool", "content": "x", "tool_call_id": "call_1", "name": "lookup"}, "name"),
+            ({"role": "tool", "content": "x", "tool_call_id": "call_1", "tool_calls": []}, "tool_calls"),
+        ],
+    )
+    def test_a_tool_key_on_a_role_that_does_not_take_it_is_refused_by_name(self, message: dict[str, Any], refused_key: str) -> None:
+        rejection = _rejection(_body(messages=[message]))
 
         assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
-        assert "messages[0].tool_calls" in rejection.specific
+        assert f"'messages[0].{refused_key}'" in rejection.specific
 
     @pytest.mark.parametrize(
         "horde_option",
@@ -365,25 +377,311 @@ class TestParameterMapping:
         assert chat_request.horde.slow_workers is True
 
 
+LOOKUP_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "lookup_weather",
+        "description": "Look up the weather.",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+    },
+}
+"""A function tool as an OpenAI client sends it."""
+
+LOOKUP_CALL: dict[str, Any] = {
+    "id": "call_abc",
+    "type": "function",
+    "function": {"name": "lookup_weather", "arguments": '{"city":"Oslo"}'},
+}
+"""A tool call of ``LOOKUP_TOOL`` as a model makes it."""
+
+TOOL_HISTORY: list[dict[str, Any]] = [
+    {"role": "user", "content": "Weather in Oslo?"},
+    {"role": "assistant", "content": None, "tool_calls": [LOOKUP_CALL]},
+    {"role": "tool", "content": "Rain, 7C", "tool_call_id": "call_abc"},
+]
+"""A conversation in which the model called a tool and the client answered it."""
+
+JSON_SCHEMA_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "colour",
+        "schema": {"type": "object", "properties": {"name": {"type": "string"}}},
+        "strict": True,
+    },
+}
+"""A ``json_schema`` response format as an OpenAI client sends it."""
+
+
+def _required_features(body: dict[str, Any]) -> set[ChatFeature]:
+    chat_request = parse_chat_request(body)
+    return required_chat_features(build_text_params(chat_request), serialize_messages(chat_request), build_chat_extras(chat_request))
+
+
 class TestRequiredFeatures:
     def test_a_request_at_default_values_needs_no_feature(self) -> None:
-        params = build_text_params(parse_chat_request(_body(frequency_penalty=0, presence_penalty=0.0)))
-
-        assert required_chat_features(params) == set()
+        assert _required_features(_body(frequency_penalty=0, presence_penalty=0.0)) == set()
 
     def test_each_non_default_optional_value_needs_its_feature(self) -> None:
-        params = build_text_params(parse_chat_request(_body(seed=7, frequency_penalty=0.2, presence_penalty=0.3)))
-
-        assert required_chat_features(params) == {
+        assert _required_features(_body(seed=7, frequency_penalty=0.2, presence_penalty=0.3)) == {
             ChatFeature.SEED,
             ChatFeature.FREQUENCY_PENALTY,
             ChatFeature.PRESENCE_PENALTY,
         }
 
     def test_a_zero_seed_still_needs_the_seed_feature(self) -> None:
-        params = build_text_params(parse_chat_request(_body(seed=0)))
+        assert _required_features(_body(seed=0)) == {ChatFeature.SEED}
 
-        assert required_chat_features(params) == {ChatFeature.SEED}
+    def test_image_parts_need_the_vision_feature(self) -> None:
+        image_part = {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}
+
+        assert _required_features(_body(messages=[{"role": "user", "content": [image_part]}])) == {ChatFeature.VISION}
+
+    def test_offered_tools_need_the_tools_feature(self) -> None:
+        assert _required_features(_body(tools=[LOOKUP_TOOL])) == {ChatFeature.TOOLS}
+        assert _required_features(_body(tools=[LOOKUP_TOOL], tool_choice="required")) == {ChatFeature.TOOLS}
+
+    def test_tools_under_tool_choice_none_need_no_feature(self) -> None:
+        assert _required_features(_body(tools=[LOOKUP_TOOL], tool_choice="none")) == set()
+
+    def test_tools_under_tool_choice_none_with_a_tool_history_need_the_tools_feature(self) -> None:
+        assert _required_features(_body(messages=TOOL_HISTORY, tools=[LOOKUP_TOOL], tool_choice="none")) == {ChatFeature.TOOLS}
+
+    def test_a_tool_history_needs_the_tools_feature_without_offered_tools(self) -> None:
+        assert _required_features(_body(messages=TOOL_HISTORY)) == {ChatFeature.TOOLS}
+
+    @pytest.mark.parametrize(
+        ("response_format", "expected"),
+        [
+            ({"type": "text"}, set()),
+            ({"type": "json_object"}, {ChatFeature.JSON_OBJECT}),
+            (JSON_SCHEMA_FORMAT, {ChatFeature.JSON_SCHEMA}),
+        ],
+    )
+    def test_a_structured_response_format_needs_the_feature_of_its_type(
+        self,
+        response_format: dict[str, Any],
+        expected: set[ChatFeature],
+    ) -> None:
+        assert _required_features(_body(response_format=response_format)) == expected
+
+
+class TestTools:
+    def test_tools_and_a_response_format_are_stored_as_sent(self) -> None:
+        named_choice = {"type": "function", "function": {"name": "lookup_weather"}}
+        chat_request = parse_chat_request(
+            _body(tools=[LOOKUP_TOOL], tool_choice=named_choice, parallel_tool_calls=False, response_format=JSON_SCHEMA_FORMAT),
+        )
+
+        assert build_chat_extras(chat_request) == {
+            "tools": [LOOKUP_TOOL],
+            "tool_choice": named_choice,
+            "parallel_tool_calls": False,
+            "response_format": JSON_SCHEMA_FORMAT,
+        }
+
+    def test_a_mode_tool_choice_is_stored_as_its_name(self) -> None:
+        chat_request = parse_chat_request(_body(tools=[LOOKUP_TOOL], tool_choice="auto"))
+
+        assert build_chat_extras(chat_request) == {"tools": [LOOKUP_TOOL], "tool_choice": "auto"}
+
+    @pytest.mark.parametrize(
+        "default_values",
+        [
+            {},
+            {"tools": [], "tool_choice": None, "response_format": None, "parallel_tool_calls": None},
+            {"response_format": {"type": "text"}},
+            {"tool_choice": "none"},
+            {"parallel_tool_calls": True},
+        ],
+    )
+    def test_values_meaning_the_default_store_nothing(self, default_values: dict[str, Any]) -> None:
+        assert build_chat_extras(parse_chat_request(_body(**default_values))) is None
+
+    def test_tool_choice_none_beside_tools_is_stored_so_the_worker_does_not_default_to_auto(self) -> None:
+        chat_request = parse_chat_request(_body(tools=[LOOKUP_TOOL], tool_choice="none", parallel_tool_calls=True))
+
+        assert build_chat_extras(chat_request) == {"tools": [LOOKUP_TOOL], "tool_choice": "none", "parallel_tool_calls": True}
+
+    def test_a_json_object_format_is_stored_without_tools(self) -> None:
+        chat_request = parse_chat_request(_body(response_format={"type": "json_object"}, parallel_tool_calls=True))
+
+        assert build_chat_extras(chat_request) == {"response_format": {"type": "json_object"}}
+
+    @pytest.mark.parametrize(
+        "tool_choice",
+        [
+            "auto",
+            "required",
+            {"type": "function", "function": {"name": "lookup_weather"}},
+        ],
+    )
+    def test_a_tool_choice_without_tools_is_a_conflict(self, tool_choice: Any) -> None:
+        for tools in (None, []):
+            rejection = _rejection(_body(tools=tools, tool_choice=tool_choice))
+
+            assert rejection.rc == CHAT_REQUEST_CONFLICT_RC
+
+    def test_forcing_a_function_the_tools_do_not_define_is_a_conflict(self) -> None:
+        rejection = _rejection(_body(tools=[LOOKUP_TOOL], tool_choice={"type": "function", "function": {"name": "send_email"}}))
+
+        assert rejection.rc == CHAT_REQUEST_CONFLICT_RC
+        assert "send_email" in rejection.specific
+
+    def test_more_tools_than_the_cap_are_refused(self) -> None:
+        tools = [{"type": "function", "function": {"name": f"tool_{index}"}} for index in range(MAX_CHAT_TOOL_COUNT + 1)]
+
+        rejection = _rejection(_body(tools=tools))
+
+        assert "tools" in rejection.specific
+
+    def test_the_tool_cap_itself_is_accepted(self) -> None:
+        tools = [{"type": "function", "function": {"name": f"tool_{index}"}} for index in range(MAX_CHAT_TOOL_COUNT)]
+
+        assert len(build_chat_extras(parse_chat_request(_body(tools=tools)))["tools"]) == MAX_CHAT_TOOL_COUNT
+
+    def test_a_tool_spec_over_the_byte_cap_is_refused(self) -> None:
+        large_tool = {"type": "function", "function": {"name": "big", "description": "x" * MAX_CHAT_TOOL_SPEC_BYTES}}
+
+        rejection = _rejection(_body(tools=[large_tool]))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert str(MAX_CHAT_TOOL_SPEC_BYTES) in rejection.specific
+
+    def test_the_response_format_counts_towards_the_tool_spec_bound(self) -> None:
+        large_format = {"type": "json_schema", "json_schema": {"name": "big", "schema": {"description": "x" * MAX_CHAT_TOOL_SPEC_BYTES}}}
+
+        assert _rejection(_body(response_format=large_format)).rc == UNSUPPORTED_CHAT_PARAMETER_RC
+
+    @pytest.mark.parametrize(
+        "malformed_tools",
+        [
+            [{"type": "function", "function": {"name": "has space"}}],
+            [{"type": "function", "function": {"name": ""}}],
+            [{"type": "retrieval", "function": {"name": "lookup"}}],
+            [{"type": "function", "function": {"name": "lookup", "unknown": 1}}],
+        ],
+    )
+    def test_a_malformed_tool_is_refused(self, malformed_tools: list[dict[str, Any]]) -> None:
+        assert _rejection(_body(tools=malformed_tools)).rc == "BadRequest"
+
+    @pytest.mark.parametrize(
+        "malformed_format",
+        [
+            {"type": "json_schema", "json_schema": {"name": "colour"}},
+            {"type": "json_schema"},
+            {"type": "yaml"},
+        ],
+    )
+    def test_a_malformed_response_format_is_refused(self, malformed_format: dict[str, Any]) -> None:
+        assert "response_format" in _rejection(_body(response_format=malformed_format)).specific
+
+
+class TestToolMessages:
+    def test_a_tool_history_is_stored_unchanged(self) -> None:
+        assert serialize_messages(parse_chat_request(_body(messages=TOOL_HISTORY))) == TOOL_HISTORY
+
+    def test_an_assistant_message_omitting_content_with_tool_calls_is_stored_with_null_content(self) -> None:
+        messages = [TOOL_HISTORY[0], {"role": "assistant", "tool_calls": [LOOKUP_CALL]}]
+
+        assert serialize_messages(parse_chat_request(_body(messages=messages)))[1] == {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [LOOKUP_CALL],
+        }
+
+    def test_a_tool_message_answering_no_earlier_call_is_refused_by_path(self) -> None:
+        messages = [*TOOL_HISTORY, {"role": "tool", "content": "Sunny", "tool_call_id": "call_unknown"}]
+
+        rejection = _rejection(_body(messages=messages))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert "'messages[3].tool_call_id'" in rejection.specific
+
+    def test_a_tool_message_answering_a_later_call_is_refused(self) -> None:
+        messages = [TOOL_HISTORY[0], TOOL_HISTORY[2], TOOL_HISTORY[1]]
+
+        assert "'messages[1].tool_call_id'" in _rejection(_body(messages=messages)).specific
+
+    def test_a_tool_message_needs_its_tool_call_id(self) -> None:
+        rejection = _rejection(_body(messages=[*TOOL_HISTORY[:2], {"role": "tool", "content": "Rain"}]))
+
+        assert "tool_call_id" in rejection.specific
+
+    @pytest.mark.parametrize("role", ["user", "assistant", "system"])
+    def test_null_content_without_tool_calls_is_refused(self, role: str) -> None:
+        rejection = _rejection(_body(messages=[{"role": role, "content": None}]))
+
+        assert "content" in rejection.specific
+
+    def test_an_empty_tool_calls_list_is_refused(self) -> None:
+        rejection = _rejection(_body(messages=[{"role": "assistant", "content": "x", "tool_calls": []}]))
+
+        assert "tool_calls" in rejection.specific
+
+    def test_flattening_renders_tool_calls_tool_results_and_the_tool_spec(self) -> None:
+        chat_request = parse_chat_request(_body(messages=TOOL_HISTORY, tools=[LOOKUP_TOOL], response_format=JSON_SCHEMA_FORMAT))
+
+        flattened = flatten_messages(serialize_messages(chat_request), build_chat_extras(chat_request))
+
+        assert flattened.split("\n") == [
+            "user: Weather in Oslo?",
+            "assistant: ",
+            '[{"id":"call_abc","type":"function","function":{"name":"lookup_weather","arguments":"{\\"city\\":\\"Oslo\\"}"}}]',
+            "tool: Rain, 7C",
+            '[{"type":"function","function":{"name":"lookup_weather","description":"Look up the weather.",'
+            '"parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}]',
+            '{"type":"json_schema","json_schema":{"name":"colour","schema":{"type":"object","properties":{"name":'
+            '{"type":"string"}}},"strict":true}}',
+        ]
+
+    def test_flattening_leaves_a_json_object_format_out(self) -> None:
+        chat_request = parse_chat_request(_body(response_format={"type": "json_object"}))
+
+        assert flatten_messages(serialize_messages(chat_request), build_chat_extras(chat_request)) == "system: Be brief.\nuser: Hello?"
+
+    def test_rewriting_leaves_a_null_content_and_the_tool_calls_alone(self) -> None:
+        assert rewrite_message_texts(TOOL_HISTORY, str.upper) == [
+            {"role": "user", "content": "WEATHER IN OSLO?"},
+            TOOL_HISTORY[1],
+            {"role": "tool", "content": "RAIN, 7C", "tool_call_id": "call_abc"},
+        ]
+
+
+class TestSubmittedReply:
+    def test_null_content_is_accepted_with_tool_calls(self) -> None:
+        reply = ChatSubmittedMessage.model_validate({"role": "assistant", "content": None, "tool_calls": [LOOKUP_CALL]})
+
+        assert build_stored_reply(reply) == {"role": "assistant", "content": None, "tool_calls": [LOOKUP_CALL]}
+
+    @pytest.mark.parametrize(
+        "submitted",
+        [
+            {"role": "assistant", "content": None},
+            {"role": "assistant"},
+            {"role": "assistant", "content": None, "tool_calls": []},
+            {"role": "assistant", "content": "x", "tool_calls": [{**LOOKUP_CALL, "id": ""}]},
+        ],
+    )
+    def test_a_reply_without_content_or_with_malformed_tool_calls_is_refused(self, submitted: dict[str, Any]) -> None:
+        with pytest.raises(ValidationError):
+            ChatSubmittedMessage.model_validate(submitted)
+
+    def test_a_text_reply_is_stored_without_a_tool_calls_key_and_with_nul_replaced(self) -> None:
+        reply = ChatSubmittedMessage.model_validate({"role": "assistant", "content": "a\x00b"})
+
+        assert build_stored_reply(reply) == {"role": "assistant", "content": "a\ufffdb"}
+
+    def test_the_charged_characters_include_each_tool_call_name_and_arguments(self) -> None:
+        reply = {"role": "assistant", "content": "Checking.", "tool_calls": [LOOKUP_CALL, LOOKUP_CALL]}
+
+        assert chat_reply_characters(reply) == len("Checking.") + 2 * (len("lookup_weather") + len('{"city":"Oslo"}'))
+        assert chat_reply_characters({"role": "assistant", "content": None, "tool_calls": [LOOKUP_CALL]}) == 29
+        assert chat_reply_characters({"role": "assistant", "content": "four"}) == 4
+
+    def test_a_reply_that_calls_tools_is_not_an_empty_generation(self) -> None:
+        assert is_empty_submission("", {"role": "assistant", "content": None, "tool_calls": [LOOKUP_CALL]}) is False
+        assert is_empty_submission("", {"role": "assistant", "content": ""}) is True
+        assert is_empty_submission("", None) is True
 
 
 class TestChatJobPayload:

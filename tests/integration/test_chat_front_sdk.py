@@ -8,14 +8,17 @@ The module serves the native Flask app over HTTP with ``werkzeug.serving.make_se
 each in a daemon thread on an ephemeral loopback port, so every SDK call crosses both real listeners. The Horde
 publishes chat signals to the test Redis (database 7) that the front subscribes to. A
 [`FakeChatWorker`][tests.integration._fake_chat_worker.FakeChatWorker] on its own thread pops through a Flask test
-client and submits [`FIXED_REPLY`][tests.integration.test_chat_front_sdk.FIXED_REPLY] for every chat job. It declares
-``vision`` with the ``url`` image transport, so an image request reaches it with a signed URL; the image case needs
-the test object store as well.
+client and submits [`FIXED_REPLY`][tests.integration.test_chat_front_sdk.FIXED_REPLY] for a plain chat job, a tool
+call for a job offering tools, the answer to a tool result, and a JSON document for a structured output job (see
+[`build_reply_message`][tests.integration.test_chat_front_sdk.build_reply_message]). It declares ``vision`` with the
+``url`` image transport, so an image request reaches it with a signed URL; the image case needs the test object store
+as well. It also declares ``tools`` and ``json_schema``, so tool and structured output requests are eligible for it.
 """
 
 from __future__ import annotations
 
 import base64
+import json
 import os
 import socket
 import threading
@@ -29,7 +32,8 @@ import openai
 import pytest
 import redis
 import uvicorn
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
+from openai.types.shared_params import ResponseFormatJSONSchema
 from PIL import Image
 
 from horde.oai.app import create_app as create_front_app
@@ -66,8 +70,59 @@ CHAT_MESSAGES: list[ChatCompletionMessageParam] = [
 ]
 """The messages of every completion request."""
 
-WORKER_CHAT_FEATURES: list[str] = [*DEFAULT_CHAT_FEATURES, "vision"]
-"""The chat features the fake worker declares: koboldcpp's, plus ``vision`` so image requests are eligible for it."""
+WORKER_CHAT_FEATURES: list[str] = [
+    *DEFAULT_CHAT_FEATURES,
+    "vision",
+    "tools",
+    "json_schema",
+]
+"""The chat features the fake worker declares: koboldcpp's, plus ``vision``, ``tools`` and ``json_schema`` so image,
+tool and structured output requests are eligible for it."""
+
+WEATHER_TOOL: ChatCompletionToolParam = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Read the current weather of a city.",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+    },
+}
+"""The tool the tool rounds offer."""
+
+WEATHER_CALL_ID: str = "call_weather_1"
+"""The id the fake worker gives the tool call it returns."""
+
+WEATHER_ARGUMENTS: str = '{"city":"Paris"}'
+"""The arguments of the tool call the fake worker returns."""
+
+WEATHER_TOOL_RESULT: str = "18C and clear"
+"""The tool result the client sends back."""
+
+TOOL_ANSWER_REPLY: str = "It is 18C and clear in Paris."
+"""The reply the fake worker submits for a job whose last message is a tool result."""
+
+TOOL_MESSAGES: list[ChatCompletionMessageParam] = [
+    {"role": "user", "content": "What is the weather in Paris?"},
+]
+"""The opening messages of the tool rounds."""
+
+COLOUR_RESPONSE_FORMAT: ResponseFormatJSONSchema = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "colour",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {"colour": {"type": "string"}},
+            "required": ["colour"],
+            "additionalProperties": False,
+        },
+    },
+}
+"""The structured output format of the structured output round."""
+
+STRUCTURED_REPLY: dict[str, str] = {"colour": "blue"}
+"""The JSON document the fake worker submits for a structured output job."""
 
 WORKER_IMAGE_TRANSPORTS: list[str] = ["url"]
 """The image transports the fake worker declares; only ``url``, so an image reaches it as a signed URL."""
@@ -188,8 +243,30 @@ def horde_api_root(app: Flask) -> Iterator[str]:
         native_server.server_close()
 
 
+def build_reply_message(payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Return the assistant message and finish reason the fake worker submits for a popped chat payload.
+
+    A job offering tools whose last message is not a tool result gets one call of
+    [`WEATHER_TOOL`][tests.integration.test_chat_front_sdk.WEATHER_TOOL] with null content; a tool result gets
+    [`TOOL_ANSWER_REPLY`][tests.integration.test_chat_front_sdk.TOOL_ANSWER_REPLY]; a ``json_schema`` job gets
+    [`STRUCTURED_REPLY`][tests.integration.test_chat_front_sdk.STRUCTURED_REPLY]; anything else gets
+    [`FIXED_REPLY`][tests.integration.test_chat_front_sdk.FIXED_REPLY].
+    """
+    last_role = payload["messages"][-1]["role"]
+    if payload.get("tools") and last_role != "tool":
+        tool_call = {"id": WEATHER_CALL_ID, "type": "function", "function": {"name": "get_weather", "arguments": WEATHER_ARGUMENTS}}
+        return {"role": "assistant", "content": None, "tool_calls": [tool_call]}, "tool_calls"
+    if last_role == "tool":
+        return {"role": "assistant", "content": TOOL_ANSWER_REPLY}, "stop"
+    response_format = payload.get("response_format") or {}
+    if response_format.get("type") == "json_schema":
+        return {"role": "assistant", "content": json.dumps(STRUCTURED_REPLY)}, "stop"
+    return {"role": "assistant", "content": FIXED_REPLY}, "stop"
+
+
 class FixedReplyWorker:
-    """Pop chat jobs on a thread and submit [`FIXED_REPLY`][tests.integration.test_chat_front_sdk.FIXED_REPLY] for each.
+    """Pop chat jobs on a thread and submit the reply
+    [`build_reply_message`][tests.integration.test_chat_front_sdk.build_reply_message] picks for each.
 
     Thread Safety:
         The thread builds its own Flask test client; each of its requests pushes and pops its own app context, so it
@@ -250,16 +327,19 @@ class FixedReplyWorker:
         generation_id = pop_result["id"]
         if generation_id is None:
             return False
-        self.served_payloads.append(pop_result["payload"])
-        submit_response = worker.submit(
-            build_chat_submit_body(
-                generation_id=generation_id,
-                content=FIXED_REPLY,
-                model_id=CHAT_MODEL,
-                prompt_tokens=WORKER_PROMPT_TOKENS,
-                completion_tokens=WORKER_COMPLETION_TOKENS,
-            ),
+        payload = pop_result["payload"]
+        self.served_payloads.append(payload)
+        reply_message, finish_reason = build_reply_message(payload)
+        submit_body = build_chat_submit_body(
+            generation_id=generation_id,
+            content=reply_message["content"] or "",
+            model_id=CHAT_MODEL,
+            finish_reason=finish_reason,
+            prompt_tokens=WORKER_PROMPT_TOKENS,
+            completion_tokens=WORKER_COMPLETION_TOKENS,
         )
+        submit_body["message"] = reply_message
+        submit_response = worker.submit(submit_body)
         if submit_response.status_code != 200:
             self.failures.append(f"submit {submit_response.status_code}: {submit_response.get_data(as_text=True)}")
         return True
@@ -462,3 +542,65 @@ def test_an_image_reaches_a_url_worker_as_a_signed_url(sdk_client: openai.OpenAI
     assert image_part["image_url"]["url"].startswith(SIGNED_URL_PREFIXES)
     assert image_part["image_url"]["url"] != data_url
     assert image_part["image_url"]["detail"] == "low"
+
+
+def test_a_tool_call_round_returns_the_call_and_then_answers_the_result(
+    sdk_client: openai.OpenAI,
+    fixed_reply_worker: FixedReplyWorker,
+) -> None:
+    messages = list(TOOL_MESSAGES)
+
+    calling = sdk_client.chat.completions.create(model=CHAT_MODEL, messages=messages, tools=[WEATHER_TOOL])
+
+    [calling_choice] = calling.choices
+    assert calling_choice.finish_reason == "tool_calls"
+    assert calling_choice.message.content is None
+    assert calling_choice.message.tool_calls is not None
+    [tool_call] = calling_choice.message.tool_calls
+    assert tool_call.type == "function"
+    assert tool_call.id == WEATHER_CALL_ID
+    assert tool_call.function.name == "get_weather"
+    assert tool_call.function.arguments == WEATHER_ARGUMENTS
+    assert fixed_reply_worker.served_payloads[-1]["tools"] == [WEATHER_TOOL]
+
+    # SDK users continue a tool round by appending the returned message object; the SDK sends only its set fields.
+    messages.append(calling_choice.message)  # type: ignore[arg-type]
+    messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": WEATHER_TOOL_RESULT})
+    answering = sdk_client.chat.completions.create(model=CHAT_MODEL, messages=messages, tools=[WEATHER_TOOL])
+
+    [answering_choice] = answering.choices
+    assert answering_choice.finish_reason == "stop"
+    assert answering_choice.message.content == TOOL_ANSWER_REPLY
+    assert answering_choice.message.tool_calls is None
+    served_messages = fixed_reply_worker.served_payloads[-1]["messages"]
+    assert served_messages[-2]["tool_calls"][0]["id"] == WEATHER_CALL_ID
+    assert served_messages[-1] == {"role": "tool", "tool_call_id": WEATHER_CALL_ID, "content": WEATHER_TOOL_RESULT}
+
+
+def test_a_streamed_tool_call_accumulates_in_the_sdk(sdk_client: openai.OpenAI) -> None:
+    with sdk_client.chat.completions.stream(model=CHAT_MODEL, messages=TOOL_MESSAGES, tools=[WEATHER_TOOL]) as stream:
+        final_completion = stream.get_final_completion()
+
+    [choice] = final_completion.choices
+    assert choice.finish_reason == "tool_calls"
+    assert choice.message.tool_calls is not None
+    [tool_call] = choice.message.tool_calls
+    assert tool_call.id == WEATHER_CALL_ID
+    assert tool_call.function.name == "get_weather"
+    assert tool_call.function.arguments == WEATHER_ARGUMENTS
+
+
+def test_a_json_schema_response_format_reaches_the_worker_and_returns_its_document(
+    sdk_client: openai.OpenAI,
+    fixed_reply_worker: FixedReplyWorker,
+) -> None:
+    completion = sdk_client.chat.completions.create(
+        model=CHAT_MODEL,
+        messages=CHAT_MESSAGES,
+        response_format=COLOUR_RESPONSE_FORMAT,
+    )
+
+    content = completion.choices[0].message.content
+    assert content is not None
+    assert json.loads(content) == STRUCTURED_REPLY
+    assert fixed_reply_worker.served_payloads[-1]["response_format"] == COLOUR_RESPONSE_FORMAT

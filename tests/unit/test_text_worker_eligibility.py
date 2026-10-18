@@ -113,7 +113,7 @@ CHAT_MESSAGES = [{"role": "user", "content": "Hello?"}]
 """A minimal conversation for a chat request."""
 
 
-def _make_chat_request(user: Any, params: dict[str, Any] | None = None) -> TextWaitingPrompt:
+def _make_chat_request(user: Any, params: dict[str, Any] | None = None, messages: list[dict[str, Any]] | None = None) -> TextWaitingPrompt:
     request = TextWaitingPrompt(
         worker_ids=[],
         models=[CHAT_MODEL],
@@ -121,7 +121,7 @@ def _make_chat_request(user: Any, params: dict[str, Any] | None = None) -> TextW
         user_id=user.id,
         params={"n": 1, "max_length": 512, "max_context_length": 4096, **(params or {})},
         is_chat=True,
-        messages=CHAT_MESSAGES,
+        messages=CHAT_MESSAGES if messages is None else messages,
     )
     request.validated_backends = False
     db.session.commit()
@@ -269,9 +269,7 @@ def test_a_chat_request_with_images_needs_vision_and_an_image_transport(
 ) -> None:
     user = make_user()
     worker = _make_chat_worker(user, **image_declaration)
-    image_request = _make_chat_request(user)
-    image_request.messages = IMAGE_CHAT_MESSAGES
-    db.session.commit()
+    image_request = _make_chat_request(user, messages=IMAGE_CHAT_MESSAGES)
 
     assert _chat_eligibility(worker, image_request) == expected
 
@@ -299,9 +297,8 @@ def test_the_pop_query_withholds_image_requests_from_a_worker_that_cannot_take_i
     vision_worker = _make_chat_worker(user, chat_features=[ChatFeature.VISION.value], image_transports=["url"])
     plain_request = _make_chat_request(user)
     plain_request.slow_workers = True
-    image_request = _make_chat_request(user)
+    image_request = _make_chat_request(user, messages=IMAGE_CHAT_MESSAGES)
     image_request.slow_workers = True
-    image_request.messages = IMAGE_CHAT_MESSAGES
     for request in (plain_request, image_request):
         request.active = True
     db.session.commit()

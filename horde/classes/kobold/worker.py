@@ -19,7 +19,7 @@ from horde.bridge_reference import (
     is_backed_validated,
 )
 from horde.classes.base.worker import Worker
-from horde.classes.kobold.chat_request import ChatFeature, ChatImageTransport, required_chat_features
+from horde.classes.kobold.chat_request import ChatFeature, ChatImageTransport
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -274,19 +274,18 @@ class TextWorker(Worker):
 
         Returns:
             ``chat_jobs`` when the worker did not opt in or does not serve the request's model with chat,
-            ``chat_features`` when it lacks a feature the request needs (``vision`` with an image transport for a
-            request carrying images), ``max_context_length`` or ``max_length`` when the request exceeds a chat
-            limit, or None when it can serve the request.
+            ``chat_features`` when it lacks a feature the request's stored ``chat_required_features`` lists (and an
+            image transport besides ``vision`` for a request carrying images), ``max_context_length`` or
+            ``max_length`` when the request exceeds a chat limit, or None when it can serve the request.
         """
         if not self.accepts_chat_jobs or self.chat_model_id is None:
             return "chat_jobs"
         if requested_models and self.chat_model_id not in requested_models:
             return "chat_jobs"
-        declared_features = set(self.chat_features or ())
-        if not {feature.value for feature in required_chat_features(waiting_prompt.params)} <= declared_features:
+        needed_features = set(waiting_prompt.chat_required_features or ())
+        if not needed_features <= set(self.chat_features or ()):
             return "chat_features"
-        # The request side is only read when the worker cannot take images, so a vision worker never loads it.
-        if not self.serves_chat_images() and waiting_prompt.needs_chat_images():
+        if ChatFeature.VISION.value in needed_features and not self.serves_chat_images():
             return "chat_features"
         if self.chat_max_context_length is None or self.chat_max_context_length < waiting_prompt.max_context_length:
             return "max_context_length"

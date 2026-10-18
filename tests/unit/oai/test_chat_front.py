@@ -436,3 +436,125 @@ async def test_health_reports_liveness_readiness_and_subscription_separately(sta
 
     assert subscribed.json() == {"live": True, "ready": True, "signal_subscribed": True, "inflight": 0}
     assert poll_only.json() == {"live": True, "ready": True, "signal_subscribed": False, "inflight": 0}
+
+
+TOOL_CALLS: list[dict[str, object]] = [
+    {"id": "call_a", "type": "function", "function": {"name": "get_weather", "arguments": '{"city":"Paris"}'}},
+    {"id": "call_b", "type": "function", "function": {"name": "get_weather", "arguments": '{"city":"Oslo"}'}},
+]
+"""Two tool calls a worker returns in one reply."""
+
+
+def tool_call_status(*, content: str | None = None) -> dict[str, object]:
+    """Return a finished status whose one generation answers with ``TOOL_CALLS`` and ``finish_reason: tool_calls``."""
+    status = done_status(finish_reason="tool_calls", native_finish_reason="tool_calls")
+    status["generations"][0]["text"] = ""
+    status["generations"][0]["message"] = {"role": "assistant", "content": content, "tool_calls": TOOL_CALLS}
+    return status
+
+
+async def test_a_tool_call_reply_returns_the_calls_with_null_content(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = tool_call_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 200
+    [choice] = response.json()["choices"]
+    assert choice["message"] == {"role": "assistant", "content": None, "tool_calls": TOOL_CALLS}
+    assert choice["finish_reason"] == "tool_calls"
+    assert "notice" not in response.json()["x_horde"]
+
+
+async def test_a_reply_with_text_and_tool_calls_returns_both(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = tool_call_status(content="Checking both cities.")
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.json()["choices"][0]["message"] == {
+        "role": "assistant",
+        "content": "Checking both cities.",
+        "tool_calls": TOOL_CALLS,
+    }
+
+
+async def test_a_reply_without_tool_calls_has_no_tool_calls_key(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert "tool_calls" not in response.json()["choices"][0]["message"]
+
+
+async def test_a_browser_preflight_is_answered_for_any_origin(start_front: StartFront) -> None:
+    """A browser client sends a preflight before posting with a bearer key; the front answers it for every origin."""
+    async with start_front() as front:
+        preflight = await front.client.options(
+            "/v1/chat/completions",
+            headers={
+                "Origin": "https://lite.koboldai.net",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        response = await front.client.get("/v1/models", headers={"Origin": "https://lite.koboldai.net"})
+
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "*"
+    assert "authorization" in preflight.headers["access-control-allow-headers"].lower()
+    assert "POST" in preflight.headers["access-control-allow-methods"]
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert "Retry-After" in response.headers["access-control-expose-headers"]
+
+
+@pytest.mark.parametrize("content", [None, "Checking both cities."])
+async def test_a_streamed_tool_call_reply_sends_indexed_calls_in_their_own_chunk(start_front: StartFront, content: str | None) -> None:
+    """The tool-call chunk carries no content: clients that read tool calls only from content-free chunks must see them."""
+    chat_body = build_chat_body(stream=True, stream_options={"include_usage": True})
+    async with start_front() as front:
+        front.horde.status_payload = tool_call_status(content=content)
+        response = await front.client.post("/v1/chat/completions", json=chat_body)
+
+    payloads = data_payloads(parse_sse_events(response.text))
+    assert payloads[-1] == "[DONE]"
+    chunks = [json.loads(payload) for payload in payloads[:-1]]
+    role_chunk, *body_chunks, finish_chunk, usage_chunk = chunks
+    assert role_chunk["choices"][0]["delta"] == {"role": "assistant"}
+    expected_body_deltas: list[dict[str, object]] = []
+    if content is not None:
+        expected_body_deltas.append({"content": content})
+    expected_body_deltas.append(
+        {"tool_calls": [{"index": call_index, **tool_call} for call_index, tool_call in enumerate(TOOL_CALLS)]},
+    )
+    assert [body_chunk["choices"][0]["delta"] for body_chunk in body_chunks] == expected_body_deltas
+    assert finish_chunk["choices"][0]["delta"] == {}
+    assert finish_chunk["choices"][0]["finish_reason"] == "tool_calls"
+    assert "notice" not in finish_chunk["x_horde"]
+    assert usage_chunk["choices"] == []
+
+
+async def test_models_list_tool_and_response_format_parameters_from_declared_features(start_front: StartFront) -> None:
+    model_list = [
+        {"name": "tools-model", "chat": {"workers": 1, "features": ["tools"]}},
+        {"name": "json-object-model", "chat": {"workers": 1, "features": ["json_object"]}},
+        {"name": "json-schema-model", "chat": {"workers": 1, "features": ["json_schema", "seed", "tools"]}},
+    ]
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=model_list)
+        response = await front.client.get("/v1/models")
+
+    supported_by_model = {model["id"]: model["supported_parameters"] for model in response.json()["data"]}
+    assert supported_by_model == {
+        "tools-model": ["max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "parallel_tool_calls"],
+        "json-object-model": ["max_tokens", "temperature", "top_p", "stop", "response_format"],
+        "json-schema-model": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "seed",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "response_format",
+        ],
+    }

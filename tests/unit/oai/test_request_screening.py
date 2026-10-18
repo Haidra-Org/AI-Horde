@@ -35,6 +35,23 @@ def user_image_messages(*image_parts: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+WEATHER_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Read the current weather.",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+    },
+}
+"""A function tool as the OpenAI SDK sends it."""
+
+WEATHER_CALL: dict[str, Any] = {
+    "id": "call_1",
+    "type": "function",
+    "function": {"name": "get_weather", "arguments": '{"city":"Paris"}'},
+}
+"""An assistant tool call answering [`WEATHER_TOOL`][tests.unit.oai.test_request_screening.WEATHER_TOOL]."""
+
 NO_OP_ROWS: list[tuple[str, object]] = [
     ("tools", []),
     ("tools", None),
@@ -67,13 +84,9 @@ async def test_default_no_op_is_accepted_and_not_forwarded(start_front: StartFro
 @pytest.mark.parametrize(
     ("body_overrides", "expected_param"),
     [
-        ({"tools": [{"type": "function", "function": {"name": "f", "parameters": {}}}]}, "tools"),
-        ({"tool_choice": "auto"}, "tool_choice"),
-        ({"response_format": {"type": "json_object"}}, "response_format"),
         ({"logprobs": True}, "logprobs"),
         ({"top_logprobs": 2}, "top_logprobs"),
         ({"top_logprobs": False}, "top_logprobs"),
-        ({"parallel_tool_calls": True, "tools": [{"type": "function"}]}, "parallel_tool_calls"),
         ({"store": True}, "store"),
         ({"service_tier": "flex"}, "service_tier"),
         ({"logit_bias": {"50256": -100}}, "logit_bias"),
@@ -87,9 +100,16 @@ async def test_default_no_op_is_accepted_and_not_forwarded(start_front: StartFro
         ({"prompt_cache_key": "k"}, "prompt_cache_key"),
         ({"session_id": "s"}, "session_id"),
         ({"some_future_key": 1}, "some_future_key"),
-        ({"messages": [{"role": "tool", "content": "x", "tool_call_id": "1"}]}, "messages[0].tool_call_id"),
-        ({"messages": [{"role": "tool", "content": "x"}]}, "messages[0].role"),
-        ({"messages": [{"role": "assistant", "content": "", "tool_calls": []}]}, "messages[0].tool_calls"),
+        ({"messages": [{"role": "user", "content": "x", "tool_call_id": "call_1"}]}, "messages[0].tool_call_id"),
+        ({"messages": [{"role": "assistant", "content": "x", "tool_call_id": "call_1"}]}, "messages[0].tool_call_id"),
+        ({"messages": [{"role": "user", "content": "x", "tool_calls": [WEATHER_CALL]}]}, "messages[0].tool_calls"),
+        ({"messages": [{"role": "system", "content": "x", "tool_calls": [WEATHER_CALL]}]}, "messages[0].tool_calls"),
+        (
+            {"messages": [{"role": "tool", "content": "x", "tool_call_id": "call_1", "tool_calls": [WEATHER_CALL]}]},
+            "messages[0].tool_calls",
+        ),
+        ({"messages": [{"role": "tool", "content": "x", "tool_call_id": "call_1", "name": "f"}]}, "messages[0].name"),
+        ({"messages": [{"role": "function", "content": "x", "name": "f"}]}, "messages[0].role"),
         (
             {
                 "messages": [
@@ -174,6 +194,16 @@ async def test_agreeing_token_limits_and_n_of_one_are_accepted(start_front: Star
         ({"temperature": "hot"}, None),
         ({"user": "u" * 300}, "user"),
         ({"horde": {"context_fit": "truncate_oldest"}}, "horde.context_fit"),
+        ({"messages": [{"role": "assistant", "content": None}]}, "messages[0].content"),
+        ({"messages": [{"role": "assistant"}]}, "messages[0].content"),
+        ({"messages": [{"role": "user", "content": None}]}, "messages[0].content"),
+        ({"messages": [{"role": "assistant", "content": "", "tool_calls": []}]}, "messages[0].tool_calls"),
+        ({"messages": [{"role": "tool", "content": "72F"}]}, "messages[0].tool_call_id"),
+        ({"tools": [{"type": "function"}]}, "tools[0].function"),
+        ({"tools": [{"type": "retrieval", "function": {"name": "f"}}]}, "tools[0].type"),
+        ({"tool_choice": "sometimes"}, "tool_choice"),
+        ({"response_format": {"type": "json_schema", "json_schema": {"name": "answer"}}}, "response_format.json_schema.schema"),
+        ({"parallel_tool_calls": "yes", "tools": [WEATHER_TOOL]}, "parallel_tool_calls"),
     ],
 )
 async def test_invalid_values_are_bad_requests(
@@ -302,3 +332,103 @@ async def test_an_image_part_with_an_unknown_detail_is_a_bad_request(start_front
     assert response.json()["error"]["code"] == "BadRequest"
     assert response.json()["error"]["param"].startswith("messages[1].content")
     assert front.horde.submit_route.call_count == 0
+
+
+STRUCTURED_OUTPUT_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "colour",
+        "strict": True,
+        "schema": {"type": "object", "properties": {"colour": {"type": "string", "default": None}}, "required": ["colour"]},
+    },
+}
+"""A structured output format as the OpenAI SDK sends it, with a null inside the schema the worker has to receive."""
+
+
+async def test_tools_tool_choice_and_parallel_tool_calls_are_forwarded_verbatim(start_front: StartFront) -> None:
+    tool_choice = {"type": "function", "function": {"name": "get_weather"}}
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(tools=[WEATHER_TOOL], tool_choice=tool_choice, parallel_tool_calls=False),
+        )
+
+    assert response.status_code == 200
+    submitted_body = front.horde.submitted_body()
+    assert submitted_body["tools"] == [WEATHER_TOOL]
+    assert submitted_body["tool_choice"] == tool_choice
+    assert submitted_body["parallel_tool_calls"] is False
+
+
+@pytest.mark.parametrize("tool_choice", ["none", "auto", "required"])
+async def test_a_tool_choice_mode_is_forwarded_with_tools(start_front: StartFront, tool_choice: str) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(tools=[WEATHER_TOOL], tool_choice=tool_choice))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["tool_choice"] == tool_choice
+
+
+async def test_a_tool_choice_without_tools_is_forwarded_for_the_native_route_to_judge(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(tool_choice="auto"))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["tool_choice"] == "auto"
+    assert "tools" not in front.horde.submitted_body()
+
+
+@pytest.mark.parametrize("response_format", [{"type": "json_object"}, STRUCTURED_OUTPUT_FORMAT])
+async def test_a_response_format_is_forwarded_under_the_clients_keys(start_front: StartFront, response_format: dict[str, Any]) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(response_format=response_format))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["response_format"] == response_format
+
+
+async def test_a_tool_round_in_the_history_is_forwarded_verbatim(start_front: StartFront) -> None:
+    messages = [
+        {"role": "user", "content": "Weather in Paris?"},
+        {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]},
+        {"role": "tool", "content": "18C and clear", "tool_call_id": "call_1"},
+        {"role": "assistant", "content": "It is 18C.", "tool_calls": [WEATHER_CALL]},
+        {"role": "tool", "content": [{"type": "text", "text": "18C"}], "tool_call_id": "call_1"},
+    ]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages, tools=[WEATHER_TOOL]))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["messages"] == messages
+
+
+async def test_an_omitted_assistant_content_beside_tool_calls_is_forwarded_as_null(start_front: StartFront) -> None:
+    messages = [
+        {"role": "user", "content": "Weather in Paris?"},
+        {"role": "assistant", "tool_calls": [WEATHER_CALL]},
+        {"role": "tool", "content": "18C", "tool_call_id": "call_1"},
+    ]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages, tools=[WEATHER_TOOL]))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["messages"][1] == {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]}
+
+
+async def test_tools_and_a_schema_count_toward_the_estimated_prompt_tokens(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status(prompt_tokens=None)
+        plain = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        with_tools = await front.client.post("/v1/chat/completions", json=build_chat_body(tools=[WEATHER_TOOL]))
+        with_schema = await front.client.post("/v1/chat/completions", json=build_chat_body(response_format=STRUCTURED_OUTPUT_FORMAT))
+
+    plain_prompt_tokens = plain.json()["usage"]["prompt_tokens"]
+    assert with_tools.json()["usage"]["prompt_tokens"] > plain_prompt_tokens
+    assert with_schema.json()["usage"]["prompt_tokens"] > plain_prompt_tokens
+    assert with_tools.json()["x_horde"]["estimated_usage"] is True

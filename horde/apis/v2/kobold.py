@@ -37,9 +37,12 @@ from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX
 from horde.classes.kobold.chat_request import (
     MAX_NATIVE_FINISH_REASON_LENGTH,
     ChatSubmittedMessage,
+    FinishReason,
+    build_chat_extras,
     build_chat_image_key,
     build_model_names,
     build_operation_fingerprint,
+    build_stored_reply,
     build_text_params,
     build_worker_targeting,
     flatten_messages,
@@ -696,6 +699,8 @@ class ChatAsyncGenerate(TextAsyncGenerate):
     which neither fetches nor stores them."""
     chat_image_keys: tuple[str, ...] = ()
     """The object keys this submission stored images under, deleted again when activation fails."""
+    chat_extras = None
+    """The tools and response format the request applies, from ``build_chat_extras``, or None."""
 
     @api.expect(parsers.chat_generate_parser, models.input_model_chat_generation)
     @api.marshal_with(
@@ -714,9 +719,14 @@ class ChatAsyncGenerate(TextAsyncGenerate):
     def post(self):
         """Initiate an asynchronous chat request.
         The body is an OpenAI chat-completions request with text messages, and image parts on user messages,
-        without tools, response formats, logprobs, audio or file content, plus an optional 'horde' object for the
-        request options OpenAI has no key for. A key, value or content part outside the supported set is refused
-        with the UnsupportedChatParameter return code, and a body above the size limit with RequestTooLarge (413).
+        without logprobs, audio or file content, plus an optional 'horde' object for the request options OpenAI has
+        no key for. A key, value or content part outside the supported set is refused with the
+        UnsupportedChatParameter return code, and a body above the size limit with RequestTooLarge (413).
+        tools, tool_choice, parallel_tool_calls and response_format are stored and sent to the worker as the client
+        sent them. A request offering tools, or whose history carries tool calls or tool messages, only goes to
+        workers declaring the tools feature; a json_object or json_schema response format only to workers declaring
+        that feature. A tool_choice other than none without tools, or forcing a function the tools do not define, is
+        refused with ChatRequestConflict; a tool message answering no earlier tool call with UnsupportedChatParameter.
         Each image, a base64 data URL or an http(s) URL, is validated, stored, and charged the extra source image
         tax; a URL resolving or redirecting to a private address is refused with SourceImageUrlRefused. Only
         workers declaring the vision feature and an image transport serve a request with images.
@@ -813,13 +823,14 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         # Checked against the text params model, so a chat request accepts exactly the ranges a text request does.
         models.input_model_generation_payload.validate(text_params, self.api.refresolver, self.api.format_checker)
         self.messages = serialize_messages(chat_request)
+        self.chat_extras = build_chat_extras(chat_request)
         horde_options = chat_request.horde
         worker_ids, worker_blacklist = build_worker_targeting(chat_request)
         return ParseResult(
             {
                 "apikey": header_args["apikey"],
                 "Client-Agent": header_args["Client-Agent"],
-                "prompt": flatten_messages(self.messages),
+                "prompt": flatten_messages(self.messages, self.chat_extras),
                 "params": text_params,
                 "models": build_model_names(chat_request),
                 "softprompt": None,
@@ -1014,14 +1025,14 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         The only rewrite text validation makes is the replacement filter applied for flagged users and NSFW
         models; the same filter is applied to each text, and the prompt is flattened again from the result.
         """
-        if self.prompt == flatten_messages(self.messages):
+        if self.prompt == flatten_messages(self.messages, self.chat_extras):
             return
 
         self.messages = rewrite_message_texts(
             self.messages,
             lambda message_text: prompt_checker.nsfw_model_prompt_replace(message_text, self.models),
         )
-        self.prompt = flatten_messages(self.messages)
+        self.prompt = flatten_messages(self.messages, self.chat_extras)
 
     def get_waiting_prompt_arguments(self):
         """Return the arguments the chat request's TextWaitingPrompt is created with.
@@ -1032,6 +1043,7 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         waiting_prompt_arguments = super().get_waiting_prompt_arguments()
         waiting_prompt_arguments["is_chat"] = True
         waiting_prompt_arguments["messages"] = self.messages
+        waiting_prompt_arguments["chat_extras"] = self.chat_extras
         waiting_prompt_arguments["context_adjustments"] = self.context_adjustments
         if list_image_urls(self.messages):
             # The id is chosen here so the row is written with each image already replaced by the reference to the
@@ -1201,8 +1213,9 @@ class TextJobSubmit(JobSubmitTemplate):
     def set_generation(self):
         """Check a chat job's structured submission, then store the generation.
 
-        For a chat job, the message content becomes the ``generation`` string, written in the same update as the
-        message itself, so every predicate that reads ``generation`` treats chat and text alike.
+        For a chat job, the message content becomes the ``generation`` string, an empty string when the content is
+        null, written in the same update as the message itself, so every predicate that reads ``generation`` treats
+        chat and text alike.
 
         Raises:
             horde.exceptions.BadRequest: With ``ChatSubmitInvalid`` when a chat job's submission lacks a valid
@@ -1240,6 +1253,9 @@ class TextJobSubmit(JobSubmitTemplate):
             ) from None
         if self.args.finish_reason is None:
             raise e.BadRequest("A chat job's submission needs 'finish_reason'.", rc="ChatSubmitInvalid")
+        # The other direction is not enforced: a forced tool_choice finishes with 'stop' under OpenAI.
+        if self.args.finish_reason == FinishReason.TOOL_CALLS and not chat_message.tool_calls:
+            raise e.BadRequest("A 'tool_calls' finish reason needs 'message.tool_calls'.", rc="ChatSubmitInvalid")
         native_finish_reason = self.args.native_finish_reason
         if native_finish_reason is not None:
             native_finish_reason = native_finish_reason.replace("\x00", "\ufffd")
@@ -1256,8 +1272,8 @@ class TextJobSubmit(JobSubmitTemplate):
             )
         # PostgreSQL JSONB rejects escaped NUL as well as text columns rejecting literal NUL. Keep the structured
         # message and generation identical in the atomic claim, using the text submission's replacement policy.
-        self.chat_message = chat_message.model_copy(update={"content": chat_message.content.replace("\x00", "\ufffd")})
-        self.args["generation"] = self.chat_message.content
+        self.chat_message = build_stored_reply(chat_message)
+        self.args["generation"] = self.chat_message["content"] or ""
 
     def get_submission_details(self):
         """Return a chat job's structured reply for ``set_generation``; a text job carries none.
@@ -1268,7 +1284,7 @@ class TextJobSubmit(JobSubmitTemplate):
         if not self.procgen.wp.is_chat:
             return {}
         return {
-            "message": self.chat_message.model_dump(mode="json") if self.chat_message is not None else None,
+            "message": self.chat_message,
             "finish_reason": self.args.finish_reason,
             "native_finish_reason": self.args.native_finish_reason,
             "prompt_tokens": self.args.prompt_tokens,

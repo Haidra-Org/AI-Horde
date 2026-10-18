@@ -292,10 +292,21 @@ def test_the_assigned_model_and_limits_survive_a_later_change_of_declaration(
     [
         {"generation": "Blue.", "state": "ok"},
         {"message": {"role": "assistant", "content": "Blue."}, "model_id": CHAT_MODEL, "state": "ok"},
-        {"message": {"role": "assistant", "content": "Blue.", "tool_calls": []}, "finish_reason": "stop", "model_id": CHAT_MODEL},
+        {"message": {"role": "assistant", "content": "Blue.", "audio": {"id": "a"}}, "finish_reason": "stop", "model_id": CHAT_MODEL},
         {"message": {"role": "assistant", "content": "Blue."}, "generation": "Blue.", "finish_reason": "stop", "model_id": CHAT_MODEL},
+        {"message": {"role": "assistant", "content": "Blue.", "tool_calls": []}, "finish_reason": "stop", "model_id": CHAT_MODEL},
+        {"message": {"role": "assistant", "content": None}, "finish_reason": "stop", "model_id": CHAT_MODEL},
+        {"message": {"role": "assistant", "content": "Blue."}, "finish_reason": "tool_calls", "model_id": CHAT_MODEL},
     ],
-    ids=["generation-only", "no-finish-reason", "extra-message-key", "message-and-generation"],
+    ids=[
+        "generation-only",
+        "no-finish-reason",
+        "extra-message-key",
+        "message-and-generation",
+        "empty-tool-calls",
+        "null-content-without-tool-calls",
+        "tool-calls-finish-without-tool-calls",
+    ],
 )
 def test_a_chat_submit_without_a_valid_structured_reply_is_refused(
     client,
@@ -650,12 +661,13 @@ def test_turning_admission_off_refuses_new_chat_requests_and_keeps_serving_queue
 @pytest.mark.parametrize(
     "chat_body_overrides",
     [
-        {"tools": []},
+        {"logprobs": True},
         {"n": 2},
         {"horde": {"models": ["other/model"]}},
         {"messages": [{"role": "assistant", "content": [{"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}]}]},
+        {"messages": [{"role": "user", "content": "Hi"}, {"role": "tool", "content": "Rain", "tool_call_id": "call_unknown"}]},
     ],
-    ids=["tools", "n", "horde-models", "assistant-image-part"],
+    ids=["logprobs", "n", "horde-models", "assistant-image-part", "unanswered-tool-message"],
 )
 def test_an_unsupported_chat_parameter_is_refused_with_its_return_code(
     client,
@@ -718,7 +730,7 @@ def test_a_chat_dry_run_prices_the_request_without_queueing_it(client, request_h
     [
         ("prompt_tokens", -1),
         ("completion_tokens", 10_000_001),
-        ("finish_reason", "tool_calls"),
+        ("finish_reason", "tool_call"),
         ("native_finish_reason", "x" * 33),
     ],
 )
@@ -1129,6 +1141,7 @@ def test_worker_nuls_are_sanitised_in_the_atomic_structured_submission(
         {"messages": [{"role": "user", "content": [{"type": "text", "text": "Blue\x00"}]}]},
         {"messages": [{"role": "user", "content": "Blue", "name": "name\x00"}]},
         {"stop": "stop\x00"},
+        {"tools": [{"type": "function", "function": {"name": "lookup", "description": "Look\x00"}}]},
     ],
 )
 def test_client_nuls_are_refused_before_storage_and_leave_the_session_usable(
@@ -1147,3 +1160,166 @@ def test_client_nuls_are_refused_before_storage_and_leave_the_session_usable(
         assert db.session.query(TextWaitingPrompt).count() == before
     valid_id = _submit_chat_request(client, request_headers)
     _cancel(client, request_headers, "chat", valid_id)
+
+
+LOOKUP_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "lookup_weather",
+        "description": "Look up the weather.",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+    },
+}
+"""A function tool as an OpenAI client sends it."""
+
+TOOL_HISTORY: list[dict[str, Any]] = [
+    {"role": "user", "content": "Weather in Oslo, then Bergen?"},
+    {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": "call_oslo", "type": "function", "function": {"name": "lookup_weather", "arguments": '{"city":"Oslo"}'}}],
+    },
+    {"role": "tool", "content": "Rain, 7C", "tool_call_id": "call_oslo"},
+]
+"""A conversation in which the model called a tool once and the client answered it."""
+
+TOOLS_REQUEST_EXTRAS: dict[str, Any] = {
+    "tools": [LOOKUP_TOOL],
+    "tool_choice": "auto",
+    "parallel_tool_calls": False,
+    "response_format": {"type": "json_object"},
+}
+"""The four extra keys of a tools request, as the client sends them and as the worker receives them."""
+
+LONG_ARGUMENTS = '{"city":"Bergen","detail":"' + "d" * 160 + '"}'
+"""Tool call arguments long enough that their characters, and not the minimum, set the output estimate."""
+
+TOOLS_FEATURES = ["tools", "json_object"]
+"""The features a worker declares to serve ``TOOLS_REQUEST_EXTRAS``."""
+
+
+def test_a_tools_request_waits_for_a_worker_declaring_tools_and_is_not_possible_without_one(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    assert chat_worker.pop(chat_features=["json_object"])["id"] is None
+    request_id = _submit_chat_request(client, request_headers, messages=TOOL_HISTORY, **TOOLS_REQUEST_EXTRAS)
+
+    assert chat_worker.pop(chat_features=["json_object"])["id"] is None
+    assert _chat_status(client, request_headers, request_id)["is_possible"] is False
+    assert chat_worker.pop(chat_features=TOOLS_FEATURES)["id"] is not None
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_tool_history_alone_needs_a_worker_declaring_tools(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, messages=TOOL_HISTORY)
+
+    assert chat_worker.pop(chat_features=[])["id"] is None
+    pop_result = chat_worker.pop(chat_features=["tools"])
+    assert pop_result["id"] is not None, pop_result
+    assert not {"tools", "tool_choice", "parallel_tool_calls", "response_format"} & set(pop_result["payload"])
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_tool_call_reply_is_popped_submitted_shown_and_charged_by_its_arguments(
+    app,
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    monkeypatch,
+) -> None:
+    from horde.classes.kobold import processing_generation
+    from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+    from horde.flask import db
+
+    empty_generation_counts: list[dict[str, str]] = []
+
+    class RecordingCounter:
+        def add(self, amount: int, attributes: dict[str, str]) -> None:
+            empty_generation_counts.append(attributes)
+
+    monkeypatch.setattr(processing_generation, "text_empty_generations", RecordingCounter())
+    request_id = _submit_chat_request(client, request_headers, messages=TOOL_HISTORY, max_tokens=80, **TOOLS_REQUEST_EXTRAS)
+
+    pop_result = chat_worker.pop(chat_features=TOOLS_FEATURES)
+
+    assert pop_result["id"] is not None, pop_result
+    assert pop_result["payload"]["messages"] == TOOL_HISTORY
+    assert {key: pop_result["payload"][key] for key in TOOLS_REQUEST_EXTRAS} == TOOLS_REQUEST_EXTRAS
+    tool_call = {"id": "call_bergen", "type": "function", "function": {"name": "lookup_weather", "arguments": LONG_ARGUMENTS}}
+    submit_response = chat_worker.submit(
+        build_chat_submit_body(
+            generation_id=pop_result["id"],
+            content=None,
+            tool_calls=[tool_call],
+            finish_reason="tool_calls",
+            model_id=CHAT_MODEL,
+        ),
+    )
+    assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
+
+    status = _chat_status(client, request_headers, request_id)
+    assert status["done"] is True
+    [generation] = status["generations"]
+    assert generation["message"] == {"role": "assistant", "content": None, "tool_calls": [tool_call]}
+    assert generation["finish_reason"] == "tool_calls"
+    assert generation["text"] == ""
+    assert empty_generation_counts == []
+
+    with app.app_context():
+        flattened_prompt = db.session.get(TextWaitingPrompt, uuid.UUID(request_id)).prompt
+    assert "tool: Rain, 7C" in flattened_prompt
+    assert '"call_oslo"' in flattened_prompt
+    assert '"lookup_weather","description"' in flattened_prompt
+    _submit_text_request(client, request_headers, prompt=flattened_prompt)
+    text_pop = chat_worker.pop()
+    assert text_pop["id"] is not None, text_pop
+    charged_characters = "x" * (len("lookup_weather") + len(LONG_ARGUMENTS))
+    text_submit = chat_worker.submit({"id": text_pop["id"], "generation": charged_characters, "state": "ok", "seed": 0})
+    assert text_submit.status_code == 200, text_submit.get_data(as_text=True)
+    assert submit_response.get_json()["reward"] == text_submit.get_json()["reward"]
+
+
+def test_a_json_schema_request_goes_only_to_a_worker_declaring_json_schema(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {"name": "colour", "schema": {"type": "object", "properties": {"name": {"type": "string"}}}},
+    }
+    request_id = _submit_chat_request(client, request_headers, response_format=response_format)
+
+    assert chat_worker.pop(chat_features=["json_object", "tools"])["id"] is None
+    pop_result = chat_worker.pop(chat_features=["json_schema"])
+
+    assert pop_result["id"] is not None, pop_result
+    assert pop_result["payload"]["response_format"] == response_format
+    _cancel(client, request_headers, "chat", request_id)
+
+
+@pytest.mark.parametrize(
+    "chat_body_overrides",
+    [
+        {"tool_choice": "auto"},
+        {"tools": [LOOKUP_TOOL], "tool_choice": {"type": "function", "function": {"name": "send_email"}}},
+    ],
+    ids=["tool-choice-without-tools", "unknown-forced-function"],
+)
+def test_a_tool_choice_the_tools_do_not_allow_is_a_conflict(
+    client,
+    request_headers: dict[str, str],
+    chat_body_overrides: dict[str, Any],
+) -> None:
+    chat_body = {"model": CHAT_MODEL, "messages": CHAT_MESSAGES, **chat_body_overrides}
+
+    response = client.post("/api/v2/generate/chat/async", json=chat_body, headers=request_headers)
+
+    assert response.status_code == 400
+    assert response.get_json()["rc"] == "ChatRequestConflict"

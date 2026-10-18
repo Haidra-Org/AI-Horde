@@ -1,6 +1,6 @@
 ---
 title: "Chat front reference"
-summary: "The horde.oai package by concern, the metrics the front records with their labels, and the fields of the line it logs per finished request."
+summary: "The horde.oai package by concern, its request keys, message roles, response, stream and model card shapes, its metrics and labels, and its per-request log line."
 topics: [operations, requests]
 order: 110
 ---
@@ -45,6 +45,65 @@ model list routes over the horde's native `/v2/generate/chat` routes (see
 | Completion signal subscription and liveness ping | `horde/oai/waiter.py` | `CompletionSignalListener` |
 | Per-request wait, poll and deadline | `horde/oai/waiter.py` | `ChatRequestWatcher`, `WaitBudget`, `WakeSource` |
 | Instruments and bucket boundaries | `horde/oai/metrics.py` | `FrontMetrics`, `histogram_views` |
+
+## Request keys
+
+The front validates a request against `ChatCompletionRequest` after two screening steps in `horde/oai/schema.py`.
+`find_refused_parameter` refuses, by path, any key that is neither a request field nor in `DEFAULT_NO_OP_PARAMETERS`,
+and any key of that table holding a value other than its default. `drop_default_no_ops` then drops the table's keys
+that hold their default.
+
+| Keys | Handling |
+| --- | --- |
+| `model`, `messages`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `n`, `horde` | Validated and forwarded; null counts as omitted. |
+| `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Validated against the `horde/chat_contract.py` shapes and forwarded verbatim; a `json_schema` response format is forwarded with its `schema` key and needs one. Dropped at their default: empty or null `tools`, null `tool_choice` and `"none"` without tools, `parallel_tool_calls` without tools, `{"type": "text"}`. |
+| `stream`, `stream_options`, `user`, `metadata` | Applied or accepted by the front and not forwarded. |
+| `logprobs`, `top_logprobs`, `store`, `service_tier` | Dropped at their default (`false`, `0`, `false`, `auto` or `default`); any other value is 400. |
+
+The native route checks the conflicts (a `tool_choice` without tools, a forced function the tools do not define, a
+`tool_call_id` no earlier call carries) and the sizes in `MAX_CHAT_TOOL_*`.
+
+## Message roles
+
+| Role | Keys | Content |
+| --- | --- | --- |
+| `system`, `developer` | `role`, `content`, `name` | A string or `text` parts. |
+| `user` | `role`, `content`, `name` | A string, or `text` and `image_url` parts. |
+| `assistant` | `role`, `content`, `name`, `tool_calls` | A string or `text` parts; null or omitted only with `tool_calls`, and then forwarded as null. |
+| `tool` | `role`, `content`, `tool_call_id` (required) | A string or `text` parts. |
+
+A key outside its role's set (`SUPPORTED_MESSAGE_KEYS`) is 400 `UnsupportedChatParameter` with `param` at its path,
+such as `messages[1].tool_call_id`.
+
+## Response shape
+
+`choices[i].message` is `{"role": "assistant", "content": ..., "tool_calls": [...]}`. `content` is always written and
+is null only when the worker returned tool calls without text; `tool_calls` is written only when the worker returned
+calls, each `{"id", "type": "function", "function": {"name", "arguments"}}` as the worker sent it. `finish_reason` is
+`stop`, `length`, `content_filter` or `tool_calls`. `x_horde.notice` marks a reply with neither visible text nor tool
+calls.
+
+A stream sends, after its keepalive comments, these `chat.completion.chunk` events:
+
+1. `delta: {"role": "assistant"}`.
+2. A content chunk with the whole `delta.content`, when the reply has text.
+3. A tool-call chunk with `delta.tool_calls`, when the reply has calls, each call whole with its 0-based `index`,
+   `id`, `type` and `function`. It carries no content, because some clients read tool calls only from such chunks.
+4. `delta: {}` with `finish_reason`, `native_finish_reason` and `x_horde`.
+5. `choices: []` with `usage`, when `stream_options.include_usage` was true.
+6. `data: [DONE]`.
+
+The front answers browser preflights and allows any origin on every response (`Access-Control-Allow-Origin: *`),
+exposing `Retry-After` and `x-should-retry`, so a web client such as KoboldAI Lite can call it with a bearer key.
+
+## Model card fields
+
+`GET /v1/models` lists each text model with at least one online chat worker. `context_length` and
+`top_provider.max_completion_tokens` are the largest the workers declare; `architecture.input_modalities` adds `image`
+for `vision`. `supported_parameters` is `max_tokens`, `temperature`, `top_p` and `stop`, then `seed`,
+`frequency_penalty` and `presence_penalty` for the features of the same names, `tools`, `tool_choice` and
+`parallel_tool_calls` for `tools`, and `response_format` for `json_object` or `json_schema`. `x_horde` carries the
+worker count and the queued work.
 
 ## Telemetry configuration
 

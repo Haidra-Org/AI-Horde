@@ -7,17 +7,20 @@ entry to the OpenAI model entry, and an error to the OpenAI error envelope.
 
 Usage counts come from the worker's report when there is one. A worker that does not report counts gets an estimate
 of one token per [`CHARACTERS_PER_ESTIMATED_TOKEN`][horde.oai.mapping.CHARACTERS_PER_ESTIMATED_TOKEN] characters, and
-``x_horde.estimated_usage`` says so. A generation whose reply holds no visible text gets
+``x_horde.estimated_usage`` says so. A generation whose reply holds neither visible text nor tool calls gets
 [`EMPTY_RETURN_NOTICE`][horde.oai.mapping.EMPTY_RETURN_NOTICE] in ``x_horde.notice``.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import uuid
 from collections.abc import Sequence
 from http import HTTPStatus
+from typing import cast
 
+from horde.chat_contract import ChatJsonSchemaResponseFormat, ChatResponseFormat, ChatTool, ChatToolCall
 from horde.oai.horde_client import HordeActiveModel, HordeChatGeneration, HordeChatStatus
 from horde.oai.schema import (
     ChatCompletionChoice,
@@ -52,6 +55,7 @@ __all__ = [
     "estimate_tokens",
     "flatten_messages",
     "generation_content",
+    "generation_tool_calls",
 ]
 
 CHARACTERS_PER_ESTIMATED_TOKEN: int = 3
@@ -108,6 +112,35 @@ FEATURE_SUPPORTED_PARAMETERS: tuple[str, ...] = (
 )
 """The OpenAI request fields a model lists only when an online chat worker declares the chat feature of that name."""
 
+TOOLS_FEATURE: str = "tools"
+"""The chat feature of a worker that serves function calling."""
+
+TOOL_SUPPORTED_PARAMETERS: tuple[str, ...] = (
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+)
+"""The OpenAI request fields a model lists when an online chat worker declares
+[`TOOLS_FEATURE`][horde.oai.mapping.TOOLS_FEATURE]."""
+
+RESPONSE_FORMAT_FEATURES: frozenset[str] = frozenset(
+    {
+        "json_object",
+        "json_schema",
+    },
+)
+"""The chat features of which any one lists ``response_format`` for a model."""
+
+RESPONSE_FORMAT_PARAMETER: str = "response_format"
+"""The OpenAI request field a model lists when an online chat worker declares one of
+[`RESPONSE_FORMAT_FEATURES`][horde.oai.mapping.RESPONSE_FORMAT_FEATURES]."""
+
+COMPACT_JSON_SEPARATORS: tuple[str, str] = (
+    ",",
+    ":",
+)
+"""The separators of the compact JSON the prompt token estimate counts for tools, tool calls and schemas."""
+
 VISION_FEATURE: str = "vision"
 """The chat feature that adds the image input modality to a model list entry."""
 
@@ -139,16 +172,28 @@ def build_completion_id(request_id: str) -> str:
 def build_native_chat_body(chat_request: ChatCompletionRequest, *, operation_key: uuid.UUID) -> dict[str, object]:
     """Create the native ``POST /v2/generate/chat/async`` body for a validated request.
 
-    Omitted and null keys stay omitted, so the native route fills its defaults; ``developer`` messages and message
-    names are forwarded unchanged. The public request model refuses ``horde.operation_key``, so the key set here is
-    always the front's.
+    Omitted and null keys stay omitted, so the native route fills its defaults; ``developer`` messages, message
+    names, ``tool`` messages, tool calls, ``tools``, ``tool_choice``, ``parallel_tool_calls`` and ``response_format``
+    are forwarded unchanged, under the client's key names (``json_schema.schema`` included). The one null written is
+    the ``content`` of an assistant message that carries only tool calls, which OpenAI writes as null. The public
+    request model refuses ``horde.operation_key``, so the key set here is always the front's.
 
     Args:
         chat_request: The validated request, after the default no-op keys were dropped.
         operation_key: The key claiming this submission for its user, sent as ``horde.operation_key``; a re-sent
             submit carries the same key and body so the native route returns the request it already created.
     """
-    native_body = chat_request.model_dump(mode="json", exclude_unset=True, exclude_none=True, exclude=set(NATIVE_BODY_EXCLUDED_KEYS))
+    native_body = chat_request.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_unset=True,
+        exclude_none=True,
+        exclude=set(NATIVE_BODY_EXCLUDED_KEYS),
+    )
+    native_messages = cast("list[dict[str, object]]", native_body["messages"])
+    for native_message, message in zip(native_messages, chat_request.messages, strict=True):
+        if message.content is None:
+            native_message["content"] = None
     horde_options = native_body.get(HORDE_OPTIONS_KEY)
     native_body[HORDE_OPTIONS_KEY] = {
         **(horde_options if isinstance(horde_options, dict) else {}),
@@ -177,6 +222,10 @@ def build_model_card(active_model: HordeActiveModel) -> ModelCard | None:
         *BASE_SUPPORTED_PARAMETERS,
         *(parameter for parameter in FEATURE_SUPPORTED_PARAMETERS if parameter in declared_features),
     ]
+    if TOOLS_FEATURE in declared_features:
+        supported_parameters.extend(TOOL_SUPPORTED_PARAMETERS)
+    if RESPONSE_FORMAT_FEATURES & declared_features:
+        supported_parameters.append(RESPONSE_FORMAT_PARAMETER)
     return ModelCard(
         model_id=active_model.name,
         created=chat_offer.created or 0,
@@ -194,18 +243,43 @@ def build_model_card(active_model: HordeActiveModel) -> ModelCard | None:
     )
 
 
-def flatten_messages(messages: Sequence[ChatMessage]) -> str:
-    """Return the messages' roles and texts joined by newlines, the text the prompt token estimate counts."""
+def flatten_messages(
+    messages: Sequence[ChatMessage],
+    *,
+    tools: Sequence[ChatTool] | None = None,
+    response_format: ChatResponseFormat | None = None,
+) -> str:
+    """Return the text the prompt token estimate counts, joined by newlines.
+
+    The worker renders tool definitions and a structured output schema into the prompt, so their compact JSON counts
+    as well as each message's role, text and tool calls.
+
+    Args:
+        messages: The request's messages.
+        tools: The request's tools, when it carries any.
+        response_format: The request's response format, when it carries one; only a ``json_schema`` one adds text.
+    """
     flattened_lines: list[str] = []
+    if tools:
+        flattened_lines.append(_compact_json([tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in tools]))
+    if isinstance(response_format, ChatJsonSchemaResponseFormat):
+        flattened_lines.append(_compact_json(response_format.model_dump(mode="json", by_alias=True, exclude_none=True)))
     for message in messages:
         flattened_lines.append(message.role.value)
         if isinstance(message.content, str):
             flattened_lines.append(message.content)
-        else:
+        elif message.content is not None:
             flattened_lines.extend(
                 content_part.text if isinstance(content_part, TextContentPart) else IMAGE_PLACEHOLDER for content_part in message.content
             )
+        if message.tool_calls:
+            flattened_lines.append(_compact_json([tool_call.model_dump(mode="json") for tool_call in message.tool_calls]))
     return "\n".join(flattened_lines)
+
+
+def _compact_json(value: object) -> str:
+    """Return ``value`` as compact JSON, the form the token estimate counts."""
+    return json.dumps(value, separators=COMPACT_JSON_SEPARATORS, ensure_ascii=False)
 
 
 def estimate_tokens(text: str) -> int:
@@ -213,11 +287,24 @@ def estimate_tokens(text: str) -> int:
     return math.ceil(len(text) / CHARACTERS_PER_ESTIMATED_TOKEN)
 
 
-def generation_content(generation: HordeChatGeneration) -> str:
-    """Return a generation's reply text: the message content when present, else the plain ``text`` field."""
-    if generation.message is not None and generation.message.content is not None:
+def generation_content(generation: HordeChatGeneration) -> str | None:
+    """Return a generation's reply text: the message content when present, else the plain ``text`` field.
+
+    A message carrying tool calls supplies the content alone, so the plain field never stands in for a null content.
+
+    Returns:
+        The text, or None when the message carries tool calls and no content.
+    """
+    if generation.message is not None and (generation.message.content is not None or generation.message.tool_calls):
         return generation.message.content
     return generation.text or ""
+
+
+def generation_tool_calls(generation: HordeChatGeneration) -> list[ChatToolCall] | None:
+    """Return the tool calls of a generation's message, or None when it carries none."""
+    if generation.message is None or not generation.message.tool_calls:
+        return None
+    return generation.message.tool_calls
 
 
 def build_completion(
@@ -246,26 +333,29 @@ def build_completion(
     has_empty_return = False
     for generation_index, generation in enumerate(status.generations):
         generated_text = generation_content(generation)
+        tool_calls = generation_tool_calls(generation)
         is_filtered = generation.state in FILTERED_GENERATION_STATES
-        if not is_filtered and not generated_text.strip():
+        if not is_filtered and tool_calls is None and not (generated_text or "").strip():
             has_empty_return = True
         choices.append(
             ChatCompletionChoice(
                 index=generation_index,
-                message=ChatCompletionResponseMessage(content=generated_text),
+                message=ChatCompletionResponseMessage(content=generated_text, tool_calls=tool_calls),
                 finish_reason=FinishReason.CONTENT_FILTER if is_filtered else _finish_reason(generation.finish_reason),
                 native_finish_reason=generation.native_finish_reason,
             ),
         )
         if generation.completion_tokens is None:
-            completion_tokens += estimate_tokens(generated_text)
+            completion_tokens += estimate_tokens(_generated_output_text(generated_text, tool_calls))
             estimated_usage = True
         else:
             completion_tokens += generation.completion_tokens
         if prompt_tokens is None and generation.prompt_tokens is not None:
             prompt_tokens = generation.prompt_tokens
     if prompt_tokens is None:
-        prompt_tokens = estimate_tokens(flatten_messages(chat_request.messages))
+        prompt_tokens = estimate_tokens(
+            flatten_messages(chat_request.messages, tools=chat_request.tools, response_format=chat_request.response_format),
+        )
         estimated_usage = True
     first_generation = status.generations[0] if status.generations else None
     return ChatCompletionResponse(
@@ -290,6 +380,14 @@ def build_completion(
             notice=EMPTY_RETURN_NOTICE.format(request_id=request_id) if has_empty_return else None,
         ),
     )
+
+
+def _generated_output_text(generated_text: str | None, tool_calls: Sequence[ChatToolCall] | None) -> str:
+    """Return the text the completion token estimate counts: the reply text and the compact JSON of its tool calls."""
+    output_parts = [generated_text or ""]
+    if tool_calls:
+        output_parts.append(_compact_json([tool_call.model_dump(mode="json") for tool_call in tool_calls]))
+    return "\n".join(output_parts)
 
 
 def _finish_reason(reported_finish_reason: str | None) -> FinishReason:

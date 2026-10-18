@@ -41,6 +41,7 @@ import anyio
 import httpx
 import redis.asyncio
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 from opentelemetry.metrics import Meter
@@ -119,6 +120,10 @@ SHOULD_RETRY_HEADER: str = "x-should-retry"
 
 SHOULD_NOT_RETRY: str = "false"
 """The ``x-should-retry`` value sent once a retry could create a second charged job."""
+
+CORS_PREFLIGHT_MAX_AGE_SECONDS: int = 600
+"""How long a browser may reuse a preflight answer; the allowed set never changes per request, so it is the
+longest value browsers honour."""
 
 RETRY_AFTER_HEADER: str = "Retry-After"
 """The response header telling a client how many seconds to wait before retrying."""
@@ -564,6 +569,16 @@ def create_app(
 
     app = FastAPI(title="AI Horde OpenAI-compatible front", version=HORDE_VERSION, lifespan=lifespan)
     app.state.front = front_state
+    # Browser clients such as KoboldAI Lite call the front directly with a bearer key, so every origin is allowed, as
+    # the Horde API itself is served; a bearer key is not a cookie, so no credentials flag is needed.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+        expose_headers=[RETRY_AFTER_HEADER, SHOULD_RETRY_HEADER],
+        max_age=CORS_PREFLIGHT_MAX_AGE_SECONDS,
+    )
     app.add_api_route("/v1/chat/completions", _chat_completions, methods=["POST"], response_model=None)
     app.add_api_route("/v1/models", _list_models, methods=["GET"], response_model=None)
     app.add_api_route("/v1/models/{model_id:path}", _get_model, methods=["GET"], response_model=None)
@@ -737,7 +752,7 @@ def _message_text_bytes(chat_request: ChatCompletionRequest) -> int:
     for message in chat_request.messages:
         if isinstance(message.content, str):
             text_bytes += len(message.content.encode())
-        else:
+        elif message.content is not None:
             text_bytes += sum(
                 len(content_part.text.encode()) for content_part in message.content if isinstance(content_part, TextContentPart)
             )
@@ -752,7 +767,7 @@ def _find_image_limit_error(chat_request: ChatCompletionRequest) -> ChatFrontErr
     """
     image_count = 0
     for message_index, message in enumerate(chat_request.messages):
-        if isinstance(message.content, str):
+        if message.content is None or isinstance(message.content, str):
             continue
         for part_index, content_part in enumerate(message.content):
             if not isinstance(content_part, ImageContentPart):
