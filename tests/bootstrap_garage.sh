@@ -29,6 +29,16 @@ transient_bucket="${AI_HORDE_TEST_R2_TRANSIENT_BUCKET:-stable-horde}"
 permanent_bucket="${AI_HORDE_TEST_R2_PERMANENT_BUCKET:-stable-horde}"
 source_image_bucket="${AI_HORDE_TEST_R2_SOURCE_IMAGE_BUCKET:-stable-horde-source-images}"
 prompts_bucket="${AI_HORDE_TEST_R2_PROMPTS_BUCKET:-prompts}"
+evidence_bucket="${AI_HORDE_TEST_R2_EVIDENCE_BUCKET:-moderation-evidence}"
+
+# MSYS runtimes (Git Bash, MSYS2) report a MINGW*/MSYS* kernel name; their bash
+# OSTYPE can read "cygwin" as well as "msys", so it does not identify them.
+msys_path_conversion=0
+case "$(uname -s)" in
+  MINGW*|MSYS*)
+    msys_path_conversion=1
+    ;;
+esac
 
 compose() {
   docker compose -f "$compose_file" "$@"
@@ -71,6 +81,14 @@ parse_args() {
 }
 
 garage_exec() {
+  if [[ "$msys_path_conversion" == "1" ]]; then
+    # MSYS bash (Git Bash) rewrites arguments that start with "/" into Windows
+    # paths before docker sees them, so the in-container binary and config
+    # paths would not exist and the CLI would not answer. Exclude exactly those
+    # two arguments from the conversion.
+    MSYS2_ARG_CONV_EXCL="${MSYS2_ARG_CONV_EXCL:+${MSYS2_ARG_CONV_EXCL};}/garage;/etc/garage.toml" compose exec -T garage /garage -c /etc/garage.toml "$@"
+    return
+  fi
   compose exec -T garage /garage -c /etc/garage.toml "$@"
 }
 
@@ -196,7 +214,7 @@ ensure_buckets() {
   local bucket
   local output
   local -A seen=()
-  local buckets=("$transient_bucket" "$permanent_bucket" "$source_image_bucket" "$prompts_bucket")
+  local buckets=("$transient_bucket" "$permanent_bucket" "$source_image_bucket" "$prompts_bucket" "$evidence_bucket")
 
   for bucket in "${buckets[@]}"; do
     if [[ -n "${seen[$bucket]:-}" ]]; then
@@ -227,6 +245,11 @@ export R2_PERMANENT_ACCOUNT="http://127.0.0.1:${garage_s3_port}"
 export R2_TRANSIENT_BUCKET="$transient_bucket"
 export R2_PERMANENT_BUCKET="$permanent_bucket"
 export R2_SOURCE_IMAGE_BUCKET="$source_image_bucket"
+export R2_EVIDENCE_ACCOUNT="http://127.0.0.1:${garage_s3_port}"
+export R2_EVIDENCE_BUCKET="$evidence_bucket"
+export R2_EVIDENCE_REGION="garage"
+export EVIDENCE_AWS_ACCESS_KEY_ID="$garage_access_key_id"
+export EVIDENCE_AWS_SECRET_ACCESS_KEY="$garage_secret_key"
 export POSTGRES_URL="localhost:${postgres_port}/${AI_HORDE_TEST_POSTGRES_DB:-postgres}"
 export REDIS_IP="127.0.0.1"
 export REDIS_PORT="${redis_port}"
@@ -255,6 +278,11 @@ emit_powershell_exports() {
   emit_powershell_assignment R2_TRANSIENT_BUCKET "$transient_bucket"
   emit_powershell_assignment R2_PERMANENT_BUCKET "$permanent_bucket"
   emit_powershell_assignment R2_SOURCE_IMAGE_BUCKET "$source_image_bucket"
+  emit_powershell_assignment R2_EVIDENCE_ACCOUNT "http://127.0.0.1:${garage_s3_port}"
+  emit_powershell_assignment R2_EVIDENCE_BUCKET "$evidence_bucket"
+  emit_powershell_assignment R2_EVIDENCE_REGION "garage"
+  emit_powershell_assignment EVIDENCE_AWS_ACCESS_KEY_ID "$garage_access_key_id"
+  emit_powershell_assignment EVIDENCE_AWS_SECRET_ACCESS_KEY "$garage_secret_key"
   emit_powershell_assignment POSTGRES_URL "localhost:${postgres_port}/${AI_HORDE_TEST_POSTGRES_DB:-postgres}"
   emit_powershell_assignment REDIS_IP "127.0.0.1"
   emit_powershell_assignment REDIS_PORT "$redis_port"
@@ -278,8 +306,9 @@ EOF
   emit_exports
   cat <<EOF
 
-The Garage bootstrap also ensures the hard-coded prompt upload bucket exists:
+The Garage bootstrap also ensures the hard-coded prompt upload bucket and the evidence bucket exist:
   $prompts_bucket
+  $evidence_bucket
 EOF
 }
 

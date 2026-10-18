@@ -84,7 +84,15 @@ main() {
   compose up -d
 
   echo "Bootstrapping Garage and loading test env..."
-  eval "$(bash "$script_dir/bootstrap_garage.sh" --shell)"
+  # Capture before eval: a failing substitution inside eval's argument does not
+  # trip errexit, and the command would then run without the stack env and fall
+  # back to whatever the tests provision on their own.
+  local stack_env
+  if ! stack_env="$(bash "$script_dir/bootstrap_garage.sh" --shell)"; then
+    echo "Garage bootstrap failed; not running the command without the local test stack env." >&2
+    exit 1
+  fi
+  eval "$stack_env"
 
   echo "Running command with local test stack env..."
   "${command_to_run[@]}"
