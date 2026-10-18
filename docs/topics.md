@@ -15,6 +15,7 @@ procedure for one subject sit together.
 ## Vocabulary
 
 - `accounting`: how a value movement is recorded, projected, and audited.
+- `chat`: conversations sent in the OpenAI chat-completions shape: what a client sends, what a worker serves, and how the front maps between them.
 - `generation`: what a generation request asks for, and how those choices shape the result.
 - `kudos`: the kudos economy: what is earned, charged, and priced.
 - `moderation`: how prompts are filtered, what the submitter can read back, and what evidence is retained for moderators.
@@ -30,6 +31,15 @@ procedure for one subject sit together.
 - Explanation: [Kudos accounting, projection, and concurrency](explanation/kudos_accounting.md)
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
 - Reference: [Kudos accounting reference](reference/kudos_accounting.md)
+
+### chat
+
+- Explanation: [Chat requests on the Horde](explanation/chat_requests.md)
+- How-to: [Send chat completions through the OpenAI-compatible front](how-to/send_chat_completions.md)
+- How-to: [Add chat completions to a web frontend](how-to/add_chat_to_a_frontend.md)
+- How-to: [Serve chat jobs from a text worker](how-to/serve_chat_jobs.md)
+- Tutorial: [Your first chat completion through the Horde](tutorial/first_chat_completion.md)
+- Tutorial: [Serve your first chat job with koboldcpp](tutorial/first_chat_worker.md)
 
 ### generation
 
@@ -69,22 +79,29 @@ procedure for one subject sit together.
 ### requests
 
 - Explanation: [Request feasibility and queue pressure](explanation/request_feasibility_and_queue_pressure.md)
+- Explanation: [Chat requests on the Horde](explanation/chat_requests.md)
 - How-to: [Use the style endpoints](how-to/use_style_endpoints.md)
 - How-to: [Add style authoring and styled requests to a frontend](how-to/add_styles_to_a_frontend.md)
 - How-to: [Update an existing style integration](how-to/update_a_style_integration.md)
 - How-to: [Run the OpenAI-compatible chat front](how-to/run_openai_chat_front.md)
+- How-to: [Send chat completions through the OpenAI-compatible front](how-to/send_chat_completions.md)
+- How-to: [Add chat completions to a web frontend](how-to/add_chat_to_a_frontend.md)
 - Reference: [Prompt provenance reference](reference/prompt_provenance.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 - Reference: [Style contract reference](reference/style_contract.md)
 - Reference: [Chat requests reference](reference/chat_requests.md)
 - Reference: [Chat front reference](reference/chat_front.md)
 - Reference: [Outbound requests reference](reference/outbound_requests.md)
+- Tutorial: [Your first chat completion through the Horde](tutorial/first_chat_completion.md)
 
 ### workers
 
 - Explanation: [Request feasibility and queue pressure](explanation/request_feasibility_and_queue_pressure.md)
+- Explanation: [Chat requests on the Horde](explanation/chat_requests.md)
 - How-to: [Add an image baseline](how-to/add_image_baseline.md)
+- How-to: [Serve chat jobs from a text worker](how-to/serve_chat_jobs.md)
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
 - Reference: [Image model reference loader reference](reference/model_reference.md)
 - Reference: [Chat requests reference](reference/chat_requests.md)
+- Tutorial: [Serve your first chat job with koboldcpp](tutorial/first_chat_worker.md)
 <!-- END GENERATED: topics -->

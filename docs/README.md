@@ -8,6 +8,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 How this repository's service is built and how it is run:
 
+- [Tutorial](tutorial/README.md): a first working result, step by step, for someone new to a subsystem.
 - [Explanation](explanation/README.md): why a subsystem is built the way it is.
 - [Reference](reference/README.md): contracts, schemas, gate orderings, and code maps.
 - [How-to](how-to/README.md): integration guides; procedures for AI-Horde operators and developers.

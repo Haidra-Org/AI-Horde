@@ -19,4 +19,5 @@ consequences, is recorded instead in [Decisions](../decisions/index.md).
 | --- | --- |
 | [Kudos accounting, projection, and concurrency](kudos_accounting.md) | Why kudos movements are recorded as typed events, how the projector materializes them, and how spends stay safe while balances lag. |
 | [Request feasibility and queue pressure](request_feasibility_and_queue_pressure.md) | Practical guidance for using request progress, worker compatibility, capacity counts, queue estimates, and stall warnings in API clients. |
+| [Chat requests on the Horde](chat_requests.md) | Why chat requests are a text request subtype served by declaring workers and an OpenAI-compatible front, which alternatives were weighed, and what a client can and cannot rely on. |
 <!-- END GENERATED: documents -->

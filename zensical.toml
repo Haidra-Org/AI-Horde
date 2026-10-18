@@ -21,10 +21,16 @@ copyright = "AGPL-3.0-or-later"
 nav = [
     { "Home" = "README.md" },
     { "Topics" = "topics.md" },
+    { "Tutorial" = [
+        { "Overview" = "tutorial/README.md" },
+        { "Your first chat completion" = "tutorial/first_chat_completion.md" },
+        { "Serve your first chat job" = "tutorial/first_chat_worker.md" },
+    ] },
     { "Explanation" = [
         { "Overview" = "explanation/README.md" },
         { "Kudos accounting" = "explanation/kudos_accounting.md" },
         { "Request feasibility" = "explanation/request_feasibility_and_queue_pressure.md" },
+        { "Chat requests" = "explanation/chat_requests.md" },
     ] },
     { "Reference" = [
         { "Overview" = "reference/README.md" },
@@ -37,6 +43,8 @@ nav = [
         { "Style contract" = "reference/style_contract.md" },
         { "Outbound requests" = "reference/outbound_requests.md" },
         { "Chat requests" = "reference/chat_requests.md" },
+        { "Chat front" = "reference/chat_front.md" },
+        { "Outbound requests" = "reference/outbound_requests.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },
@@ -48,6 +56,9 @@ nav = [
         { "Add styles to a frontend" = "how-to/add_styles_to_a_frontend.md" },
         { "Update a style integration" = "how-to/update_a_style_integration.md" },
         { "Run the OpenAI-compatible chat front" = "how-to/run_openai_chat_front.md" },
+        { "Send chat completions" = "how-to/send_chat_completions.md" },
+        { "Add chat to a frontend" = "how-to/add_chat_to_a_frontend.md" },
+        { "Serve chat jobs" = "how-to/serve_chat_jobs.md" },
     ] },
     { "Decisions" = "decisions/index.md" },
     { "Concepts" = [
