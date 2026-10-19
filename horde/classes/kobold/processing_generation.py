@@ -246,8 +246,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         state_t0 = time.monotonic()
         state = kwargs.get("state", "ok")
         if state == "faulted":
-            self.wp.n += 1
-            self.abort()
+            self.fault_and_restart()
         elif state in ("censored", "csam"):
             self.censored = True
             db.session.commit()

@@ -6,8 +6,8 @@
 
 Both the native ``POST /v2/generate/chat/async`` route and the ``horde.oai`` front validate a request's ``horde``
 object against [`ChatHordeOptions`][horde.chat_contract.ChatHordeOptions], so the two cannot disagree on which keys
-exist or what values they take. The module imports only pydantic and the standard library, so the front can import it
-without the Flask application, its database or its configuration.
+exist or what values they take. The module imports only pydantic, the standard library and the SDK's chat policy
+vocabulary, so the front can import it without the Flask application, its database or its configuration.
 
 The module also holds the shapes both sides validate a request's tools, tool calls and response format against
 ([`ChatTool`][horde.chat_contract.ChatTool], [`ChatToolCall`][horde.chat_contract.ChatToolCall],
@@ -24,6 +24,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+from horde_sdk.generation_parameters.text.chat_policy import DEFAULT_CHAT_CONFORMANCE, ChatConformance
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationInfo, field_validator
 from pydantic_core import PydanticCustomError
 
@@ -46,6 +47,8 @@ __all__ = [
     "ChatFunctionCall",
     "ChatFunctionDefinition",
     "ChatHordeOptions",
+    "ChatImpossibleKind",
+    "ChatImpossibleReason",
     "ChatJsonObjectResponseFormat",
     "ChatJsonSchema",
     "ChatJsonSchemaResponseFormat",
@@ -143,6 +146,10 @@ class ChatHordeOptions(BaseModel):
 
     context_fit: ChatContextFit = ChatContextFit.GROW
     """What to do when the messages do not fit the context."""
+
+    conformance: ChatConformance = DEFAULT_CHAT_CONFORMANCE
+    """How closely the serving worker has to follow the OpenAI chat contract (ADR 0036). ``best_effort`` drops the
+    guarantee requirements and keeps capabilities and limits."""
 
     dry_run: StrictBool = False
     """Return the kudos cost without queueing; native callers only."""
@@ -357,3 +364,31 @@ class ChatToolCall(BaseModel):
 
     function: ChatFunctionCall
     """The function called."""
+
+
+class ChatImpossibleKind(StrEnum):
+    """Identify why no worker can take a chat request, as the chat status's ``impossible_reason`` reports it."""
+
+    DECLARATION_GAP = "declaration_gap"
+    """Online chat workers serve the request's model, but each lacks a capability or guarantee the request needs, or
+    applies a declared limit the request exceeds."""
+
+
+class ChatImpossibleReason(BaseModel):
+    """Represents why no worker can take a chat request, when waiting does not help while the online workers stay
+    the same.
+
+    The native chat status reports it and the front refuses the request on it without waiting.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    kind: ChatImpossibleKind = ChatImpossibleKind.DECLARATION_GAP
+    """The cause."""
+
+    missing_declarations: tuple[str, ...] = ()
+    """The capabilities and guarantees the request needs that a refused worker does not declare, with
+    ``image_transports`` for a worker that declares ``vision`` without a way to receive images."""
+
+    exceeded_limits: tuple[str, ...] = ()
+    """The declared limits the request exceeds on a refused worker, such as ``tools_max_temperature``."""

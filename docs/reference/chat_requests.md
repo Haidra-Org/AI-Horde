@@ -30,7 +30,9 @@ those workers keep receiving text jobs.
 | Worker targeting                 | `horde/classes/kobold/chat_request.py`          | `build_worker_targeting`                              |
 | `horde` object and size limits   | `horde/chat_contract.py`                        | `ChatHordeOptions`, `MAX_CHAT_MESSAGE_COUNT`          |
 | Flattened estimate               | `horde/classes/kobold/chat_request.py`          | `flatten_messages`                                    |
-| Feature vocabulary               | `horde/classes/kobold/chat_request.py`          | `ChatFeature`, `required_chat_features`               |
+| Declaration vocabulary           | `horde_sdk.generation_parameters.text.chat_policy` | `ChatFeature`, `ChatGuarantee`, `ChatConformance`, `required_chat_guarantees` |
+| Request requirements             | `horde/classes/kobold/chat_request.py`          | `build_chat_request_traits`, `required_chat_features`, `chat_tools_temperature` |
+| Dispatch narrowing               | `horde/classes/kobold/chat_request.py`          | `build_worker_chat_extras`                            |
 | Tool and format shapes           | `horde/chat_contract.py`                        | `ChatTool`, `ChatToolCall`, `ChatResponseFormat`      |
 | Stored tools and format          | `horde/classes/kobold/chat_request.py`          | `build_chat_extras`                                   |
 | Charged reply characters         | `horde/classes/kobold/chat_request.py`          | `chat_reply_characters`, `build_stored_reply`         |
@@ -54,9 +56,12 @@ those workers keep receiving text jobs.
 | Worker eligibility               | `horde/classes/kobold/worker.py`                | `TextWorker.chat_refusal_reason`                      |
 | Queue filter                     | `horde/database/text_functions.py`              | `get_sorted_text_wp_filtered_to_worker`               |
 | Structured submit                | `horde/apis/v2/kobold.py`                       | `TextJobSubmit.prepare_chat_submission`               |
+| Reply verification               | `horde/classes/kobold/chat_request.py`          | `verify_chat_reply`                                   |
 | Stored reply and charge basis    | `horde/classes/kobold/processing_generation.py` | `TextProcessingGeneration.get_submission_columns`     |
 | Completion signal                | `horde/chat_signal.py`                          | `publish_chat_event`                                  |
 | Expiry and fault signals         | `horde/database/threads.py`                     | `collect_chat_faults`, `publish_chat_faults`          |
+| Fault on repeated faulted jobs   | `horde/classes/base/processing_generation.py`, `horde/classes/base/waiting_prompt.py`, `horde/database/threads.py` | `ProcessingGeneration.fault_and_restart`, `WaitingPrompt.mark_faulted_after_repeated_faults`, `FAULTED_GENERATIONS_LIMIT`, `check_waiting_prompts` |
+| Declaration gap on the status    | `horde/database/functions.py`                   | `find_chat_declaration_gap`, `get_worker_availability_for_request` |
 | Signal database                  | `horde/redis_ctrl.py`                           | `chat_signal_db`                                      |
 | Image fetch, normalise, encode   | `horde/image.py`                                | `fetch_public_image`, `load_chat_image`, `encode_chat_image` |
 | Image storage at submit          | `horde/apis/v2/kobold.py`                       | `ChatAsyncGenerate.load_chat_images`, `ChatAsyncGenerate.upload_source_images` |
@@ -186,6 +191,7 @@ and values:
 | `slow_workers`                                  | boolean               | `true`  | As on text requests                                            |
 | `max_context_length`                            | positive integer      | none    | An explicit context length                                     |
 | `context_fit`                                   | `grow` or `reject`    | `grow`  | With `grow`, the context grows only up to the largest chat context an online chat worker serving the model declares |
+| `conformance`                                   | `strict` or `best_effort` | `strict` | With `strict`, only workers declaring every guarantee the request needs serve it; `best_effort` drops that requirement. See [Guarantees](#guarantees) |
 | `dry_run`                                       | boolean               | `false` | Return the kudos cost without queueing                         |
 | `operation_key`                                 | UUID                  | none    | Claims the submission for its user; see [Operation key](#operation-key) |
 
@@ -291,8 +297,9 @@ client sent and only when it changes the answer:
 }
 ```
 
-`tool_choice` `none` beside tools is stored, since a worker given the tools without it would default to `auto`. The
-column is NULL when the request applies none of them.
+`tool_choice` `none` beside tools is stored, since the request's guarantees, the dispatch narrowing below and the
+operation fingerprint depend on it. The column is NULL when the request does not apply any of them. The stored values are
+the client's; only the worker's copy is narrowed (see [Chat job pop response](#chat-job-pop-response)).
 
 ### Refused keys and values
 
@@ -341,20 +348,22 @@ arguments, the tool definitions and the response format are JSON documents and a
 
 ## Chat declaration on pop
 
-`POST /v2/generate/text/pop` takes five further fields. The worker row stores them at every pop, including a pop
+`POST /v2/generate/text/pop` takes six further fields. The worker row stores them at every pop, including a pop
 inside the 30 second window in which the other check-in fields are not rewritten, and the pop is matched against
 them. A pop without `chat_jobs` therefore withdraws the whole declaration and does not receive a chat job.
 
 | Field           | Type                                   | Required        | Meaning                                                            |
 | --------------- | -------------------------------------- | --------------- | ------------------------------------------------------------------ |
 | `chat_jobs`     | boolean                                | no, `false`     | The worker accepts chat jobs; stored as `accepts_chat_jobs`         |
-| `chat_features` | array of strings                       | no              | The optional features below that the worker implements; unknown names are ignored, absent means none |
-| `chat_limits`   | `{max_context_length, max_length}`     | with `chat_jobs` | The limits chat jobs run under; the text pop's limits bound only text jobs |
+| `prompt_jobs`   | boolean                                | no, `true`      | The worker accepts text jobs; `false` needs `chat_jobs` and makes the worker chat-only; stored as `accepts_prompt_jobs` |
+| `chat_features` | array of strings                       | no              | The optional features and the guarantees below that the worker declares, in one list; unknown names are ignored, absent means none |
+| `chat_limits`   | `{max_context_length, max_length, tools_max_temperature?}` | with `chat_jobs` | The limits chat jobs run under; the text pop's limits bound only text jobs. `tools_max_temperature` is stored as `workers.chat_tools_max_temperature` |
 | `model_id`      | string                                 | with `chat_jobs` | The model the worker serves chat jobs with; exactly one of `models` |
 | `image_transports` | array of `url`, `base64`            | no              | How the worker receives images; absent or empty means none; unknown names are ignored |
 
-A pop that sets `chat_jobs` without `chat_limits` or `model_id`, or with a `model_id` that is not one of `models`,
-returns `400 ChatDeclarationInvalid`. The native route treats `model_id` as an opaque name and does not reserve any
+A pop that sets `chat_jobs` without `chat_limits` or `model_id`, with a negative `chat_limits.tools_max_temperature`,
+or with a `model_id` that is not one of `models`, or sets `prompt_jobs` to `false` without `chat_jobs`, returns
+`400 ChatDeclarationInvalid`. The native route treats `model_id` as an opaque name and does not reserve any
 character in it.
 
 The feature vocabulary (`ChatFeature`) grows by adding names; a name never changes meaning:
@@ -369,10 +378,35 @@ The feature vocabulary (`ChatFeature`) grows by adding names; a name never chang
 | `json_object`       | its `response_format` type is `json_object`    |
 | `json_schema`       | its `response_format` type is `json_schema`    |
 
-A field at its documented default needs nothing. `required_chat_features` is the only place these are derived: it runs
-once when the request is created and stores the sorted names in `waiting_prompts.chat_required_features`, which
+A field at its documented default needs nothing.
+
+### Guarantees
+
+A guarantee (`ChatGuarantee`) states that the backend follows one part of the OpenAI contract exactly (ADR 0036).
+Guarantees share the `chat_features` list and namespace with the features above:
+
+| Guarantee                    | A `strict` request needs it when                                              |
+| ---------------------------- | ----------------------------------------------------------------------------- |
+| `tool_choice_enforced`       | it forwards tools under `tool_choice` `required` or a named function          |
+| `single_tool_call_enforced`  | it forwards tools with `parallel_tool_calls` `false`                          |
+| `structured_output_enforced` | its `response_format` is `json_schema` with `strict` `true`                   |
+| `prompt_overflow_refused`    | always                                                                        |
+
+Tools are not forwarded under `tool_choice` `none`, so `none` does not need a tool guarantee. A `best_effort`
+request does not need a guarantee. The SDK's `required_chat_guarantees` defines these rules.
+
+`required_chat_features` is the only place a request's features and guarantees are derived: it runs once when the
+request is created and stores the sorted names in `waiting_prompts.chat_required_features`, which
 `TextWorker.chat_refusal_reason` compares with the worker's `chat_features`, so eligibility never loads a candidate's
-messages or extras.
+messages or extras. The conformance mode is stored in `waiting_prompts.chat_conformance`.
+
+### Tool temperature limit
+
+`chat_limits.tools_max_temperature` is the highest temperature the backend applies as sent when tools are present.
+`waiting_prompts.chat_tools_temperature` holds the temperature the job carries when the request forwards tools, NULL
+otherwise, and is written once when the request is created. A worker whose limit is below that value is refused with `tools_max_temperature`,
+under both conformance modes, since a clamped value changes the request. A worker without the limit applies every
+temperature as sent. The SDK's `violated_chat_limit` defines the rule; the server applies it to the stored value.
 
 ### Eligibility
 
@@ -380,15 +414,34 @@ A chat request goes to a worker only when every rule holds. The queue query appl
 applies the rest and repeats them for worker availability:
 
 1. The worker declared `chat_jobs` on its latest pop and its `model_id` is the request's model.
-2. Every feature in the request's `chat_required_features` is in the worker's `chat_features`, and a request with
+2. Every feature and guarantee in the request's `chat_required_features` is in the worker's `chat_features`, and a request with
    images finds an image transport in its `image_transports`. The queue query withholds requests with images from a worker without both,
    testing `messages` for an image part by JSONB containment on chat rows only, and computes the same test for the
    returned page so `can_generate` does not load candidates' messages.
-3. The request's `max_context_length` and `max_length` fit the worker's `chat_limits`, never its text limits.
+3. The request's `max_context_length` and `max_length` fit the worker's `chat_limits` (its text limits do not
+   apply), and its `chat_tools_temperature` does not exceed the worker's `tools_max_temperature`. The queue query
+   applies both.
 4. The usual restrictions hold: `only` and `ignore`, trusted, validated, slow workers.
 
 A request no online worker can serve is accepted and waits, with `is_possible` false on the status route. A worker
 that predates chat never sees a chat request, and a text request goes to a chat worker under its text limits.
+
+### Impossible reason
+
+When no worker is eligible and nothing is processing, the chat status route also reports `impossible_reason` if the
+cause is the workers' declarations: every online chat worker serving the model that passes the queue query's rules
+was refused for a missing capability or guarantee (rule 2) or for `tools_max_temperature` (rule 3).
+
+```json
+{"kind": "declaration_gap", "missing_declarations": ["tool_choice_enforced"], "exceeded_limits": []}
+```
+
+`missing_declarations` lists the names the request needs that a refused worker does not declare, with
+`image_transports` for a worker that declares `vision` without an image transport. `exceeded_limits` lists the
+limits the request exceeds, such as `tools_max_temperature`. The field is `null` otherwise, including when no online
+worker serves the model or one is refused for any other reason, since those can change while the request waits.
+It is computed from the refusal reasons the availability pass already collects, only when that pass finds no
+eligible worker, and is cached with the availability for 60 seconds.
 
 When a chat request is assigned, the generation records the worker's `model_id`, chat context and chat length as
 `assigned_model`, `assigned_max_context_length` and `assigned_max_length`, so a later change to the declaration does
@@ -402,15 +455,19 @@ A text job's pop response does not carry a `chat` key. A chat job's response has
 | Field                                                                  | Value                                                         |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
 | `messages`                                                             | The stored array; roles `system`, `user`, `assistant`, `tool`; `tool_calls` and `tool_call_id` as stored; image parts as in [Images](#images) |
-| `tools`, `tool_choice`, `parallel_tool_calls`, `response_format`       | Each only when stored in `chat_extras`, exactly as stored     |
+| `tools`, `tool_choice`, `parallel_tool_calls`, `response_format`       | Each only when stored in `chat_extras`, narrowed as below     |
 | `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `rep_pen`, `top_k`, `min_p` | Always present; the client's value or `1.0`, `1.0`, `0`, `0`, `1.0`, `0`, `0` |
 | `stop_sequence`, `seed`                                                | Only when the client sent them                                |
 | `max_length`, `max_context_length`                                     | The validated budgets                                         |
 | `n`                                                                    | `1`                                                           |
 
-There is no `prompt`. The worker applies its own chat template, tokenises the rendered input, and fails a job that
-does not fit rather than truncating it. Every sampling field is present, so a worker's own defaults never apply to a
-chat job.
+The tool keys are narrowed for the worker (`build_worker_chat_extras`): under `tool_choice` `none` none of `tools`,
+`tool_choice` and `parallel_tool_calls` is sent; under a named `tool_choice` only that function is sent in `tools`,
+with `tool_choice` `required`. `auto` and `required` are sent as stored.
+
+The payload does not carry a `prompt`. The worker applies its chat template, tokenises the rendered input, and
+fails a job that does not fit; it does not truncate the input. Every sampling field is present, so a worker's
+defaults never apply to a chat job.
 
 ## Structured submit
 
@@ -432,6 +489,12 @@ parser. A chat submit without a valid `message` or `finish_reason`, or with `gen
 returns `400 ChatModelMismatch`. A faulted chat job submits `{id, state: "faulted", model_id}` with neither `generation`
 nor `message`; it is handled as any faulted text submission.
 
+A request whose faulted jobs exceed `FAULTED_GENERATIONS_LIMIT` (2) is faulted on the submit that crosses it, for
+text and image requests alike, and a chat request publishes its `faulted` signal at once. Without this, a request
+that fails on every attempt is handed out again after each fault until the stale-generation thread faults it, and
+each fault counts toward the worker's aborted-job threshold. The thread applies the same limit to requests whose
+jobs timed out.
+
 The submit goes through the text path's compare-and-set: one update claims the pending generation and writes
 `generation` (the message content), `message`, `finish_reason`, `native_finish_reason`, the counts and `charge_basis`
 together, so a submit that loses to a cancel or a duplicate does not write any of them, and every predicate that reads
@@ -439,6 +502,37 @@ together, so a submit that loses to a cancel or a duplicate does not write any o
 string (`build_stored_reply`); `generation` holds the content, or an empty string when it is null. An empty `content`
 completes the generation, is charged and rewarded, and counts towards the per-model empty-generation counter unless
 the reply carries tool calls, which are a complete reply.
+
+### Reply verification
+
+Before the compare-and-set, `verify_chat_reply` checks the reply against the request's stored `chat_extras` (the
+client's values, not the narrowed copy the worker received) under its `chat_conformance`. It is the third layer of
+ADR 0036, after eligibility and dispatch narrowing, and does not trust any worker declaration. A refused submit leaves the
+generation pending, the koboldcpp worker faults the job on any `400` return code, and the request faults after
+`FAULTED_GENERATIONS_LIMIT` faulted jobs, so the checks cover only what the payload proves and what OpenAI never
+returns.
+
+| Rule                                                                                | `strict`                         | `best_effort`      |
+| ----------------------------------------------------------------------------------- | -------------------------------- | ------------------ |
+| A call to a function not among the request's `tools`, or any call when it has none   | `400 ChatSubmitInvalid`          | same               |
+| Two calls with the same `id`                                                        | `400 ChatSubmitInvalid`          | same               |
+| A call under `tool_choice` `none`                                                   | `400 ChatSubmitNonconformant`    | passes             |
+| No call under `tool_choice` `required`                                              | `400 ChatSubmitNonconformant`    | passes             |
+| No call, or a call to another function, under a named `tool_choice`                 | `400 ChatSubmitNonconformant`    | passes             |
+| More than one call under `parallel_tool_calls` `false`                              | the first call is kept           | all calls kept     |
+| `json_object`, or `json_schema` without `strict`: content that is not a JSON object  | `400 ChatSubmitNonconformant`    | passes             |
+| `json_schema` with `strict` `true`: content that does not match the schema           | `400 ChatSubmitNonconformant`    | passes             |
+
+The single-call reduction runs first, so a call it drops is not checked, and the finish reason is kept as submitted.
+Under either mode, a `tool_calls` finish of a reply with calls to a request with a named `tool_choice` is stored as
+`stop` (`chat_reply_finish_reason`), since OpenAI finishes a named choice with `stop` and the worker received the
+choice as `required`.
+The submit's `horde.job_submit.done` log record then carries `dropped_tool_calls`. A reply whose `content` is empty or
+null and that carries tool calls is exempt from the response format. JSON is parsed by Python's `json` with `NaN` and
+`Infinity` refused. A strict schema is validated with `jsonschema`, by the draft its `$schema` declares and Draft
+2020-12 otherwise; references resolve only inside the schema. A schema the library cannot compile, or whose
+references do not resolve, refuses the reply with `ChatSubmitNonconformant` and a message saying the schema cannot
+be compiled, since the reply cannot be shown to match it. The request's schema is not checked when it is created.
 
 ### Pricing
 
@@ -458,12 +552,15 @@ the request's creation to the generation's assignment. The text status route ret
 each with the usual fields plus a `chat` object. Without `chat=true` the entries do not carry `chat` and the
 response is the plain list. `chat=true` with another `type` returns `400`.
 
+The text `count` leaves out the threads of workers that set `prompt_jobs: false`, since they do not serve text requests.
+A model served only by such workers is still listed, with `count` 0, and `chat.workers` reports its chat workers.
+
 | `chat` field         | Value                                                                                  |
 | -------------------- | -------------------------------------------------------------------------------------- |
 | `workers`            | Online workers, not in maintenance, that serve chat jobs with the model                |
 | `max_context_length` | The largest `chat_limits.max_context_length` among them                                |
 | `max_length`         | The largest `chat_limits.max_length` among them                                        |
-| `features`           | The sorted union of their `chat_features`                                              |
+| `features`           | The sorted union of their `chat_features`, guarantees included                         |
 | `created`            | Unix seconds of the earliest `workers.created` among them; `null` when none records it |
 
 The entry's `queued` and `jobs` are the model's queue, which chat requests share with text requests. The entries come
@@ -498,12 +595,14 @@ the request id, so it checks the status once after subscribing to cover an event
 
 `sql_statements/5.1.15.txt` adds `waiting_prompts.is_chat` (boolean, not null, default false) and
 `waiting_prompts.messages` (JSONB, deferred in the ORM); `workers.accepts_chat_jobs` (boolean, not null, default
-false), `chat_features` (text array), `chat_max_context_length`, `chat_max_length`, `chat_model_id` and
+false), `accepts_prompt_jobs` (boolean, not null, default true), `chat_features` (text array), `chat_max_context_length`, `chat_max_length`, `chat_model_id` and
 `image_transports` (text array); and `processing_gens.message` (JSONB), `finish_reason` and `native_finish_reason`
 (varchar 32), `prompt_tokens`, `completion_tokens`, `charge_basis` (varchar 16), `assigned_model`,
 `assigned_max_context_length`, `assigned_max_length` and `image_transport` (varchar 16); and
 `waiting_prompts.operation_key` (UUID), `operation_fingerprint` (char 64),
-`context_adjustments` (JSONB), `chat_extras` (JSONB, deferred in the ORM) and `chat_required_features` (text array). Every column is nullable or has a constant default, so no table is rewritten. The
+`context_adjustments` (JSONB), `chat_extras` (JSONB, deferred in the ORM), `chat_required_features` (text array),
+`chat_conformance` (varchar, not null, default `strict`) and `chat_tools_temperature` (double precision); and
+`workers.chat_tools_max_temperature` (double precision). Every column is nullable or has a constant default, so no table is rewritten. The
 unique partial index `ix_waiting_prompts_user_operation_key` on `(user_id, operation_key) WHERE operation_key IS NOT
 NULL` is built with `CREATE UNIQUE INDEX CONCURRENTLY`, which cannot run inside a transaction block; a failed
 build leaves an invalid index. `db.create_all()` does not add columns to existing tables.

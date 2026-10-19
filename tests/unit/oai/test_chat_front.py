@@ -116,6 +116,23 @@ async def test_native_body_carries_the_request_without_front_only_keys(start_fro
     }
 
 
+async def test_the_conformance_mode_is_forwarded_as_sent(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"conformance": "best_effort"}))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["horde"]["conformance"] == "best_effort"
+
+
+async def test_an_unknown_conformance_mode_is_refused_before_submitting(start_front: StartFront) -> None:
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"conformance": "lenient"}))
+
+    assert response.status_code == 400
+    assert front.horde.submit_route.call_count == 0
+
+
 async def test_non_streamed_request_returns_at_once_when_the_status_is_already_done(start_front: StartFront) -> None:
     async with start_front() as front:
         front.horde.status_payload = done_status()
@@ -536,7 +553,13 @@ async def test_models_list_tool_and_response_format_parameters_from_declared_fea
     model_list = [
         {"name": "tools-model", "chat": {"workers": 1, "features": ["tools"]}},
         {"name": "json-object-model", "chat": {"workers": 1, "features": ["json_object"]}},
-        {"name": "json-schema-model", "chat": {"workers": 1, "features": ["json_schema", "seed", "tools"]}},
+        {
+            "name": "json-schema-model",
+            "chat": {
+                "workers": 1,
+                "features": ["json_schema", "seed", "single_tool_call_enforced", "tool_choice_enforced", "tools"],
+            },
+        },
     ]
     async with start_front() as front:
         front.horde.models_route.respond(200, json=model_list)
@@ -544,7 +567,7 @@ async def test_models_list_tool_and_response_format_parameters_from_declared_fea
 
     supported_by_model = {model["id"]: model["supported_parameters"] for model in response.json()["data"]}
     assert supported_by_model == {
-        "tools-model": ["max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "parallel_tool_calls"],
+        "tools-model": ["max_tokens", "temperature", "top_p", "stop", "tools"],
         "json-object-model": ["max_tokens", "temperature", "top_p", "stop", "response_format"],
         "json-schema-model": [
             "max_tokens",
@@ -558,3 +581,27 @@ async def test_models_list_tool_and_response_format_parameters_from_declared_fea
             "response_format",
         ],
     }
+
+
+@pytest.mark.parametrize(
+    ("declared_features", "expected_tool_parameters"),
+    [
+        (["tools"], ["tools"]),
+        (["tools", "tool_choice_enforced"], ["tools", "tool_choice"]),
+        (["tools", "single_tool_call_enforced"], ["tools", "parallel_tool_calls"]),
+        (["tool_choice_enforced", "single_tool_call_enforced"], []),
+    ],
+    ids=["capability-only", "tool-choice-guarantee", "single-call-guarantee", "guarantees-without-tools"],
+)
+async def test_models_list_a_tool_constraint_only_with_its_declared_guarantee(
+    start_front: StartFront,
+    declared_features: list[str],
+    expected_tool_parameters: list[str],
+) -> None:
+    model_list = [{"name": "tools-model", "chat": {"workers": 1, "features": declared_features}}]
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=model_list)
+        response = await front.client.get("/v1/models")
+
+    (model_card,) = response.json()["data"]
+    assert model_card["supported_parameters"] == ["max_tokens", "temperature", "top_p", "stop", *expected_tool_parameters]

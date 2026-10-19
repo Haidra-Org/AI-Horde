@@ -7,14 +7,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
+from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, ChatFeature, ChatGuarantee
 
 from horde.classes.base.user import UserRoleTypes
 from horde.classes.base.worker import WorkerModel
-from horde.classes.kobold.chat_request import ChatFeature
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker, get_minimum_text_worker_speed
 from horde.database import functions
@@ -112,8 +112,23 @@ CHAT_MODEL = "koboldcpp/chat-eligibility-model"
 CHAT_MESSAGES = [{"role": "user", "content": "Hello?"}]
 """A minimal conversation for a chat request."""
 
+STRICT_BASELINE_GUARANTEE = ChatGuarantee.PROMPT_OVERFLOW_REFUSED.value
+"""The guarantee every strict chat request needs, which a conforming test worker declares."""
 
-def _make_chat_request(user: Any, params: dict[str, Any] | None = None, messages: list[dict[str, Any]] | None = None) -> TextWaitingPrompt:
+TOOL_EXTRAS: dict[str, Any] = {
+    "tools": [{"type": "function", "function": {"name": "lookup_weather", "parameters": {"type": "object"}}}],
+}
+"""Stored extras offering one tool under the default ``tool_choice`` of ``auto``."""
+
+
+def _make_chat_request(
+    user: Any,
+    params: dict[str, Any] | None = None,
+    messages: list[dict[str, Any]] | None = None,
+    *,
+    chat_extras: dict[str, Any] | None = None,
+    conformance: ChatConformance = ChatConformance.STRICT,
+) -> TextWaitingPrompt:
     request = TextWaitingPrompt(
         worker_ids=[],
         models=[CHAT_MODEL],
@@ -122,6 +137,8 @@ def _make_chat_request(user: Any, params: dict[str, Any] | None = None, messages
         params={"n": 1, "max_length": 512, "max_context_length": 4096, **(params or {})},
         is_chat=True,
         messages=CHAT_MESSAGES if messages is None else messages,
+        chat_extras=chat_extras,
+        chat_conformance=conformance.value,
     )
     request.validated_backends = False
     db.session.commit()
@@ -134,7 +151,7 @@ def _make_chat_worker(user: Any, **chat_declaration: Any) -> TextWorker:
     worker.max_context_length = 1024
     declaration = {
         "accepts_chat_jobs": True,
-        "chat_features": [ChatFeature.SEED.value, ChatFeature.PRESENCE_PENALTY.value],
+        "chat_features": [ChatFeature.SEED.value, ChatFeature.PRESENCE_PENALTY.value, STRICT_BASELINE_GUARANTEE],
         "chat_max_context_length": 8192,
         "chat_max_length": 1024,
         "chat_model_id": CHAT_MODEL,
@@ -254,10 +271,10 @@ IMAGE_CHAT_MESSAGES = [
     [
         ({}, [False, "chat_features"]),
         ({"image_transports": ["url"]}, [False, "chat_features"]),
-        ({"chat_features": [ChatFeature.VISION.value]}, [False, "chat_features"]),
-        ({"chat_features": [ChatFeature.VISION.value], "image_transports": []}, [False, "chat_features"]),
-        ({"chat_features": [ChatFeature.VISION.value], "image_transports": ["base64"]}, [True, None]),
-        ({"chat_features": [ChatFeature.VISION.value], "image_transports": ["url"]}, [True, None]),
+        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE]}, [False, "chat_features"]),
+        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": []}, [False, "chat_features"]),
+        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": ["base64"]}, [True, None]),
+        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": ["url"]}, [True, None]),
     ],
 )
 def test_a_chat_request_with_images_needs_vision_and_an_image_transport(
@@ -272,6 +289,132 @@ def test_a_chat_request_with_images_needs_vision_and_an_image_transport(
     image_request = _make_chat_request(user, messages=IMAGE_CHAT_MESSAGES)
 
     assert _chat_eligibility(worker, image_request) == expected
+
+
+def test_a_strict_chat_request_is_refused_by_a_worker_without_the_guarantees_it_needs(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """Under strict conformance a missing guarantee refuses the worker; under best effort it does not."""
+    user = make_user()
+    worker = _make_chat_worker(user, chat_features=[ChatFeature.SEED.value])
+
+    assert _chat_eligibility(worker, _make_chat_request(user)) == [False, "chat_features"]
+    assert _chat_eligibility(worker, _make_chat_request(user, conformance=ChatConformance.BEST_EFFORT)) == [True, None]
+
+
+@pytest.mark.parametrize(
+    ("tools_max_temperature", "temperature", "expected"),
+    [
+        (None, 1.5, [True, None]),
+        (1.0, 1.0, [True, None]),
+        (1.0, 1.5, [False, "tools_max_temperature"]),
+    ],
+)
+def test_a_tool_temperature_limit_refuses_a_hotter_request_that_forwards_tools(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    tools_max_temperature: float | None,
+    temperature: float,
+    expected: list[Any],
+) -> None:
+    """A worker without the limit applies any temperature with tools; one with it takes only requests within it."""
+    user = make_user()
+    worker = _make_chat_worker(
+        user,
+        chat_features=[ChatFeature.TOOLS.value, STRICT_BASELINE_GUARANTEE],
+        chat_tools_max_temperature=tools_max_temperature,
+    )
+    request = _make_chat_request(user, {"temperature": temperature}, chat_extras=TOOL_EXTRAS)
+
+    assert _chat_eligibility(worker, request) == expected
+
+
+def test_best_effort_does_not_relax_the_tool_temperature_limit(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    user = make_user()
+    worker = _make_chat_worker(user, chat_features=[ChatFeature.TOOLS.value], chat_tools_max_temperature=1.0)
+    request = _make_chat_request(user, {"temperature": 1.5}, chat_extras=TOOL_EXTRAS, conformance=ChatConformance.BEST_EFFORT)
+
+    assert _chat_eligibility(worker, request) == [False, "tools_max_temperature"]
+
+
+def test_a_tool_temperature_limit_does_not_apply_without_forwarded_tools(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """Under ``tool_choice: none`` the tools are not forwarded, so the backend does not clamp the temperature."""
+    user = make_user()
+    worker = _make_chat_worker(user, chat_tools_max_temperature=1.0)
+    request = _make_chat_request(user, {"temperature": 1.5}, chat_extras={**TOOL_EXTRAS, "tool_choice": "none"})
+
+    assert request.chat_tools_temperature is None
+    assert _chat_eligibility(worker, request) == [True, None]
+
+
+def test_the_pop_query_withholds_a_hotter_tool_request_from_a_worker_with_a_tool_temperature_limit(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    from horde.database.text_functions import get_sorted_text_wp_filtered_to_worker
+
+    user = make_user()
+    tool_features = [ChatFeature.TOOLS.value, STRICT_BASELINE_GUARANTEE]
+    limited_worker = _make_chat_worker(user, chat_features=tool_features, chat_tools_max_temperature=1.0)
+    unlimited_worker = _make_chat_worker(user, chat_features=tool_features)
+    hot_request = _make_chat_request(user, {"temperature": 1.5}, chat_extras=TOOL_EXTRAS)
+    cool_request = _make_chat_request(user, {"temperature": 0.7}, chat_extras=TOOL_EXTRAS)
+    for request in (hot_request, cool_request):
+        request.slow_workers = True
+        request.active = True
+    db.session.commit()
+
+    limited_candidates = get_sorted_text_wp_filtered_to_worker(limited_worker, [CHAT_MODEL])
+    db.session.commit()
+    unlimited_candidates = get_sorted_text_wp_filtered_to_worker(unlimited_worker, [CHAT_MODEL])
+
+    assert [candidate.id for candidate in limited_candidates] == [cool_request.id]
+    assert {candidate.id for candidate in unlimited_candidates} == {hot_request.id, cool_request.id}
+
+
+def test_a_check_in_stores_known_guarantees_and_the_tool_temperature_limit(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """Capability and guarantee names share one declared list; unknown names are dropped. The check-in debounce
+    does not hold the declaration back."""
+    user = make_user()
+    worker = _make_chat_worker(user)
+    worker.created = datetime.utcnow() - timedelta(minutes=5)
+    worker.last_check_in = datetime.utcnow()
+    db.session.commit()
+
+    worker.check_in(
+        80,
+        1024,
+        [],
+        accepts_chat_jobs=True,
+        chat_features=[ChatFeature.TOOLS.value, ChatGuarantee.TOOL_CHOICE_ENFORCED.value, "teleportation"],
+        chat_max_context_length=8192,
+        chat_max_length=1024,
+        chat_tools_max_temperature=1.0,
+        chat_model_id=CHAT_MODEL,
+    )
+
+    assert worker.chat_features == [ChatGuarantee.TOOL_CHOICE_ENFORCED.value, ChatFeature.TOOLS.value]
+    assert worker.chat_tools_max_temperature == 1.0
+
+    worker.check_in(80, 1024, [], accepts_chat_jobs=False, chat_tools_max_temperature=1.0)
+
+    assert worker.chat_tools_max_temperature is None
 
 
 def test_a_chat_request_without_images_needs_no_image_declaration(
@@ -294,7 +437,7 @@ def test_the_pop_query_withholds_image_requests_from_a_worker_that_cannot_take_i
 
     user = make_user()
     text_only_worker = _make_chat_worker(user)
-    vision_worker = _make_chat_worker(user, chat_features=[ChatFeature.VISION.value], image_transports=["url"])
+    vision_worker = _make_chat_worker(user, chat_features=[ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], image_transports=["url"])
     plain_request = _make_chat_request(user)
     plain_request.slow_workers = True
     image_request = _make_chat_request(user, messages=IMAGE_CHAT_MESSAGES)
@@ -313,3 +456,99 @@ def test_the_pop_query_withholds_image_requests_from_a_worker_that_cannot_take_i
         plain_request.id: False,
         image_request.id: True,
     }
+
+
+def test_a_chat_only_worker_refuses_text_requests_and_serves_chat_requests(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """A worker that turned text jobs off is refused every text request, whatever its text limits."""
+    user = make_user()
+    worker = _make_chat_worker(user, accepts_prompt_jobs=False)
+    text_request = _make_text_request(user, CHAT_MODEL)
+    text_request.slow_workers = True
+    text_request.max_context_length = 512
+
+    assert _chat_eligibility(worker, text_request) == [False, "prompt_jobs"]
+    assert _chat_eligibility(worker, _make_chat_request(user)) == [True, None]
+
+
+def test_availability_and_context_growth_leave_out_a_chat_only_worker_for_text_requests(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+) -> None:
+    """A text request is not possible, and its context cannot grow, on the strength of a chat-only worker."""
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    _make_chat_worker(user, accepts_prompt_jobs=False)
+    text_request = _make_text_request(user, CHAT_MODEL)
+    text_request.max_context_length = 512
+
+    assert functions.get_worker_availability_for_request(text_request).worker_count == 0
+    assert functions.get_highest_text_worker_max_context_length([CHAT_MODEL]) is None
+    assert functions.get_worker_availability_for_request(_make_chat_request(user)).worker_count == 1
+    assert functions.get_highest_text_worker_max_context_length([CHAT_MODEL], accepts_chat_jobs=True) == 8192
+
+
+def test_the_pop_query_gives_a_chat_only_worker_only_chat_requests(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """The text branch of the pop query is dropped for a chat-only worker; the chat branch is unchanged."""
+    from horde.database.text_functions import get_sorted_text_wp_filtered_to_worker
+
+    user = make_user()
+    chat_only_worker = _make_chat_worker(user, accepts_prompt_jobs=False)
+    both_worker = _make_chat_worker(user)
+    text_request = _make_text_request(user, CHAT_MODEL)
+    text_request.max_context_length = 512
+    chat_request = _make_chat_request(user)
+    for request in (text_request, chat_request):
+        request.slow_workers = True
+        request.active = True
+    db.session.commit()
+
+    chat_only_candidates = get_sorted_text_wp_filtered_to_worker(chat_only_worker, [CHAT_MODEL])
+    db.session.commit()
+    both_candidates = get_sorted_text_wp_filtered_to_worker(both_worker, [CHAT_MODEL])
+
+    assert [candidate.id for candidate in chat_only_candidates] == [chat_request.id]
+    assert {candidate.id for candidate in both_candidates} == {text_request.id, chat_request.id}
+
+
+@pytest.mark.parametrize(
+    ("accepts_chat_jobs", "accepts_prompt_jobs", "stored"),
+    [(True, False, False), (True, True, True), (False, False, True)],
+)
+def test_a_debounced_check_in_stores_the_text_job_opt_out(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    accepts_chat_jobs: bool,
+    accepts_prompt_jobs: bool,
+    stored: bool,
+) -> None:
+    """The opt-out is stored on every check-in, and only a worker that accepts chat jobs can turn text jobs off."""
+    user = make_user()
+    worker = _make_chat_worker(user)
+    worker.created = datetime.utcnow() - timedelta(minutes=5)
+    worker.last_check_in = datetime.utcnow()
+    db.session.commit()
+
+    worker.check_in(
+        80,
+        1024,
+        [],
+        accepts_chat_jobs=accepts_chat_jobs,
+        accepts_prompt_jobs=accepts_prompt_jobs,
+        chat_max_context_length=8192,
+        chat_max_length=1024,
+        chat_model_id=CHAT_MODEL,
+    )
+    db.session.commit()
+
+    assert worker.accepts_prompt_jobs is stored

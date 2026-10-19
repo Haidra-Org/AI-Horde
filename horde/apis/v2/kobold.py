@@ -3,12 +3,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
+import math
 from datetime import datetime
 
 from botocore.exceptions import BotoCoreError, ClientError
 from flask import request
 from flask_restx import Resource, marshal_with, reqparse
 from flask_restx.reqparse import ParseResult
+from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, ChatLimitName
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
@@ -45,12 +47,14 @@ from horde.classes.kobold.chat_request import (
     build_stored_reply,
     build_text_params,
     build_worker_targeting,
+    chat_reply_finish_reason,
     flatten_messages,
     list_image_urls,
     parse_chat_request,
     replace_image_urls,
     rewrite_message_texts,
     serialize_messages,
+    verify_chat_reply,
 )
 from horde.classes.kobold.genstats import (
     get_compiled_textgen_stats_models,
@@ -447,6 +451,19 @@ class TextAsyncGenerate(GenerateTemplate):
         )
 
 
+def add_impossible_reason(wp_status: dict[str, object], worker_availability: database.RequestWorkerAvailability) -> None:
+    """Add ``impossible_reason`` to a status the request cannot progress under, when its cause is a declaration gap.
+
+    A client can refuse at once on a gap and keep waiting on any other cause.
+
+    Args:
+        wp_status: The request's status, changed in place.
+        worker_availability: The eligibility the status was built from.
+    """
+    if not wp_status["is_possible"] and worker_availability.impossible_reason is not None:
+        wp_status["impossible_reason"] = worker_availability.impossible_reason.model_dump(mode="json")
+
+
 class TextAsyncStatus(Resource):
     chat_requests = False
     """Whether this route serves chat requests. Each family's routes report the other family's requests as not found."""
@@ -523,6 +540,7 @@ class TextAsyncStatus(Resource):
             eligible_worker_threads=worker_availability.thread_count,
             might_stall=worker_availability.might_stall,
         )
+        add_impossible_reason(wp_status, worker_availability)
         # wp_status is a fully materialized plain dict; release the pooled
         # connection before flask_restx marshalling/JSON serialization and the
         # response write, so it is not held across non-DB work.
@@ -573,6 +591,7 @@ class TextAsyncStatus(Resource):
             eligible_worker_threads=worker_availability.thread_count,
             might_stall=worker_availability.might_stall,
         )
+        add_impossible_reason(wp_status, worker_availability)
         logger.info(f"Request with ID {wp.id} has been cancelled.")
         # FIXME: I pevent it at the moment due to the race conditions
         # The WPCleaner is going to clean it up anyway
@@ -1044,6 +1063,7 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         waiting_prompt_arguments["is_chat"] = True
         waiting_prompt_arguments["messages"] = self.messages
         waiting_prompt_arguments["chat_extras"] = self.chat_extras
+        waiting_prompt_arguments["chat_conformance"] = self.chat_request.horde.conformance.value
         waiting_prompt_arguments["context_adjustments"] = self.context_adjustments
         if list_image_urls(self.messages):
             # The id is chosen here so the row is written with each image already replaced by the reference to the
@@ -1109,7 +1129,8 @@ class TextJobPop(JobPopTemplate):
         """Check if there are generation requests queued for fulfillment.
         This endpoint is used by registered workers only.
         A worker that sets chat_jobs also receives chat jobs, whose response carries chat: true and a payload with
-        messages in place of a prompt (the GenerationPayloadChat model).
+        messages in place of a prompt (the GenerationPayloadChat model). A worker that also sets prompt_jobs to false
+        receives only chat jobs.
         """
         # Splitting the post to its own function so that I can have the decorators of post on each extended class
         # Without copying the whole post() code
@@ -1125,14 +1146,32 @@ class TextJobPop(JobPopTemplate):
 
         Raises:
             horde.exceptions.BadRequest: With ``ChatDeclarationInvalid`` when ``chat_jobs`` is set without
-                ``chat_limits`` or ``model_id``, or ``model_id`` is not one of ``models``.
+                ``chat_limits`` or ``model_id``, ``chat_limits.tools_max_temperature`` is set and is not a
+                non-negative number, ``model_id`` is not one of ``models``, or ``prompt_jobs`` is false without
+                ``chat_jobs``.
         """
         if not self.args.chat_jobs:
+            if self.args.prompt_jobs is False:
+                raise e.BadRequest(
+                    "A worker that sets prompt_jobs to false has to set chat_jobs, or it can receive no job.",
+                    rc="ChatDeclarationInvalid",
+                )
             return
         chat_limits = self.args.chat_limits or {}
         if not isinstance(chat_limits.get("max_context_length"), int) or not isinstance(chat_limits.get("max_length"), int):
             raise e.BadRequest(
                 "A worker that sets chat_jobs has to send chat_limits with max_context_length and max_length.",
+                rc="ChatDeclarationInvalid",
+            )
+        tools_max_temperature = chat_limits.get(ChatLimitName.TOOLS_MAX_TEMPERATURE.value)
+        if tools_max_temperature is not None and (
+            isinstance(tools_max_temperature, bool)
+            or not isinstance(tools_max_temperature, int | float)
+            or not math.isfinite(tools_max_temperature)
+            or tools_max_temperature < 0
+        ):
+            raise e.BadRequest(
+                "chat_limits.tools_max_temperature has to be a non-negative number when it is set.",
                 rc="ChatDeclarationInvalid",
             )
         model_id = self.args.model_id
@@ -1158,9 +1197,12 @@ class TextJobPop(JobPopTemplate):
             threads=self.args.threads,
             bridge_agent=self.args.bridge_agent,
             accepts_chat_jobs=self.args.chat_jobs,
+            # JSON null leaves the default, as an absent key does.
+            accepts_prompt_jobs=self.args.prompt_jobs is not False,
             chat_features=self.args.chat_features,
             chat_max_context_length=chat_limits.get("max_context_length"),
             chat_max_length=chat_limits.get("max_length"),
+            chat_tools_max_temperature=chat_limits.get(ChatLimitName.TOOLS_MAX_TEMPERATURE.value),
             chat_model_id=self.args.model_id,
             image_transports=self.args.image_transports,
         )
@@ -1187,6 +1229,9 @@ CHAT_SUBMIT_KEYS = (
 class TextJobSubmit(JobSubmitTemplate):
     gentype = "text"
     decorators = [limiter.limit("60/second")]
+    dropped_tool_call_count = 0
+    """The tool calls verification dropped from a chat reply under ``parallel_tool_calls: false``, for the submit
+    log; zero for every other submit."""
 
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
     @api.marshal_with(models.response_model_job_submit, code=200, description="Generation Submitted")
@@ -1219,8 +1264,10 @@ class TextJobSubmit(JobSubmitTemplate):
 
         Raises:
             horde.exceptions.BadRequest: With ``ChatSubmitInvalid`` when a chat job's submission lacks a valid
-                message or finish reason, or a text job's carries a message; ``ChatModelMismatch`` when a chat
-                job's ``model_id`` is not the model it was assigned.
+                message or finish reason, calls a function the request did not offer or repeats a call id, or a text
+                job's carries a message; ``ChatSubmitNonconformant`` when a ``strict`` request's ``tool_choice`` or
+                ``response_format`` rules the reply out; ``ChatModelMismatch`` when a chat job's ``model_id`` is not
+                the model it was assigned.
         """
         if self.procgen.wp.is_chat:
             self.prepare_chat_submission()
@@ -1233,10 +1280,15 @@ class TextJobSubmit(JobSubmitTemplate):
     def prepare_chat_submission(self):
         """Validate a chat job's submission and store its message content as the generation.
 
-        A faulted submission needs no message; it is handled as any faulted text submission.
+        A faulted submission needs no message; it is handled as any faulted text submission. The reply is verified
+        against the request it answers by
+        [`verify_chat_reply`][horde.classes.kobold.chat_request.verify_chat_reply], and the reply it returns is the
+        one stored, with the finish reason from
+        [`chat_reply_finish_reason`][horde.classes.kobold.chat_request.chat_reply_finish_reason].
 
         Raises:
-            horde.exceptions.BadRequest: With ``ChatSubmitInvalid`` or ``ChatModelMismatch``.
+            horde.exceptions.BadRequest: With ``ChatSubmitInvalid``, ``ChatSubmitNonconformant`` or
+                ``ChatModelMismatch``.
         """
         if self.args.state == "faulted":
             self.chat_message = None
@@ -1253,7 +1305,7 @@ class TextJobSubmit(JobSubmitTemplate):
             ) from None
         if self.args.finish_reason is None:
             raise e.BadRequest("A chat job's submission needs 'finish_reason'.", rc="ChatSubmitInvalid")
-        # The other direction is not enforced: a forced tool_choice finishes with 'stop' under OpenAI.
+        # The other direction is not enforced: a named tool_choice finishes with 'stop' and its call under OpenAI.
         if self.args.finish_reason == FinishReason.TOOL_CALLS and not chat_message.tool_calls:
             raise e.BadRequest("A 'tool_calls' finish reason needs 'message.tool_calls'.", rc="ChatSubmitInvalid")
         native_finish_reason = self.args.native_finish_reason
@@ -1270,10 +1322,25 @@ class TextJobSubmit(JobSubmitTemplate):
                 f"'model_id' has to be '{self.procgen.assigned_model}', the model this job was assigned.",
                 rc="ChatModelMismatch",
             )
+        waiting_prompt = self.procgen.wp
+        verified_message = verify_chat_reply(chat_message, waiting_prompt.chat_extras, ChatConformance(waiting_prompt.chat_conformance))
+        self.dropped_tool_call_count = len(chat_message.tool_calls or ()) - len(verified_message.tool_calls or ())
+        chat_message = verified_message
+        self.args["finish_reason"] = chat_reply_finish_reason(self.args.finish_reason, chat_message, waiting_prompt.chat_extras)
         # PostgreSQL JSONB rejects escaped NUL as well as text columns rejecting literal NUL. Keep the structured
         # message and generation identical in the atomic claim, using the text submission's replacement policy.
         self.chat_message = build_stored_reply(chat_message)
         self.args["generation"] = self.chat_message["content"] or ""
+
+    def get_submission_log_details(self) -> dict[str, object]:
+        """Return how many tool calls verification dropped from a chat reply, when it dropped any.
+
+        Returns:
+            dict: ``dropped_tool_calls`` with the count, or nothing.
+        """
+        if not self.dropped_tool_call_count:
+            return {}
+        return {"dropped_tool_calls": self.dropped_tool_call_count}
 
     def get_submission_details(self):
         """Return a chat job's structured reply for ``set_generation``; a text job carries none.

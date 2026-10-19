@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
+from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATION_NAMES, ChatFeature, ChatLimitName
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, relationship
@@ -19,7 +20,7 @@ from horde.bridge_reference import (
     is_backed_validated,
 )
 from horde.classes.base.worker import Worker
-from horde.classes.kobold.chat_request import ChatFeature, ChatImageTransport
+from horde.classes.kobold.chat_request import ChatImageTransport
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -74,14 +75,20 @@ class TextWorker(Worker):
     accepts_chat_jobs = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.false())
     """Whether the worker's last pop opted into chat jobs, which carry ``messages`` instead of a prompt. Off by
     default because a worker that predates chat jobs would find no prompt in their payload."""
+    accepts_prompt_jobs = db.Column(db.Boolean, default=True, nullable=False, server_default=expression.true())
+    """Whether the worker's last pop accepts plain text jobs, which carry a prompt. On by default because every
+    worker that predates the field serves them; only a worker that also accepts chat jobs may turn it off."""
     chat_features = db.Column(text_array_column_type, nullable=True)
-    """The ``ChatFeature`` names the worker's last pop declared. NULL or empty means none; unknown names are not
-    stored."""
+    """The capability and guarantee names (``ChatFeature`` and ``ChatGuarantee``) the worker's last pop declared.
+    NULL or empty means none; unknown names are not stored."""
     chat_max_context_length = db.Column(db.Integer, nullable=True)
     """The context length the worker serves chat jobs at, from its last pop. Independent of ``max_context_length``,
     which bounds text jobs."""
     chat_max_length = db.Column(db.Integer, nullable=True)
     """The most tokens the worker generates for a chat job, from its last pop. Independent of ``max_length``."""
+    chat_tools_max_temperature = db.Column(db.Float, nullable=True)
+    """The highest temperature the worker's backend applies as sent when tools are present, from its last pop's
+    ``chat_limits``. NULL when the worker applies every temperature as sent or does not accept chat jobs."""
     chat_model_id = db.Column(db.String, nullable=True)
     """The model the worker serves chat jobs with, from its last pop. A chat request is only given to a worker whose
     ``chat_model_id`` is the request's model."""
@@ -103,9 +110,11 @@ class TextWorker(Worker):
         softprompts,
         *,
         accepts_chat_jobs=False,
+        accepts_prompt_jobs=True,
         chat_features: Sequence[str] | None = None,
         chat_max_context_length: int | None = None,
         chat_max_length: int | None = None,
+        chat_tools_max_temperature: float | None = None,
         chat_model_id: str | None = None,
         image_transports: Sequence[str] | None = None,
         **kwargs,
@@ -113,11 +122,14 @@ class TextWorker(Worker):
         # The chat declaration is replaced at every pop, outside the check-in debounce: this request's chat
         # eligibility and payload shape are decided from these fields, and a worker that stops declaring chat must
         # not receive a chat payload. Unchanged values leave the row clean, so a steady worker adds no UPDATE; a
-        # changed one is written by the commit the pop makes after check-in.
+        # changed one is written by the commit the pop makes after check-in. The plain-job opt-out is part of the
+        # declaration for the same reason: a chat-only worker must not receive a prompt.
         self.accepts_chat_jobs = accepts_chat_jobs
-        self.chat_features = sorted(set(chat_features or ()) & {feature.value for feature in ChatFeature}) if accepts_chat_jobs else None
+        self.accepts_prompt_jobs = accepts_prompt_jobs or not accepts_chat_jobs
+        self.chat_features = sorted(set(chat_features or ()) & KNOWN_CHAT_DECLARATION_NAMES) if accepts_chat_jobs else None
         self.chat_max_context_length = chat_max_context_length if accepts_chat_jobs else None
         self.chat_max_length = chat_max_length if accepts_chat_jobs else None
+        self.chat_tools_max_temperature = chat_tools_max_temperature if accepts_chat_jobs else None
         self.chat_model_id = chat_model_id if accepts_chat_jobs else None
         self.image_transports = (
             sorted(set(image_transports or ()) & {transport.value for transport in ChatImageTransport}) if accepts_chat_jobs else None
@@ -243,6 +255,8 @@ class TextWorker(Worker):
             if chat_refusal is not None:
                 return [False, chat_refusal]
         else:
+            if not self.accepts_prompt_jobs:
+                return [False, "prompt_jobs"]
             if self.max_context_length < waiting_prompt.max_context_length:
                 return [False, "max_context_length"]
             if self.max_length < waiting_prompt.max_length:
@@ -274,8 +288,9 @@ class TextWorker(Worker):
 
         Returns:
             ``chat_jobs`` when the worker did not opt in or does not serve the request's model with chat,
-            ``chat_features`` when it lacks a feature the request's stored ``chat_required_features`` lists (and an
-            image transport besides ``vision`` for a request carrying images), ``max_context_length`` or
+            ``chat_features`` when it lacks a capability or guarantee the request's stored ``chat_required_features``
+            lists (and an image transport besides ``vision`` for a request carrying images), ``tools_max_temperature``
+            when the backend would clamp the temperature of a request that forwards tools, ``max_context_length`` or
             ``max_length`` when the request exceeds a chat limit, or None when it can serve the request.
         """
         if not self.accepts_chat_jobs or self.chat_model_id is None:
@@ -287,11 +302,35 @@ class TextWorker(Worker):
             return "chat_features"
         if ChatFeature.VISION.value in needed_features and not self.serves_chat_images():
             return "chat_features"
+        # The SDK's violated_chat_limit defines this rule; the stored projection lets the pop query and this check
+        # apply it without loading the request's extras. It holds under every conformance mode.
+        if (
+            waiting_prompt.chat_tools_temperature is not None
+            and self.chat_tools_max_temperature is not None
+            and waiting_prompt.chat_tools_temperature > self.chat_tools_max_temperature
+        ):
+            return ChatLimitName.TOOLS_MAX_TEMPERATURE.value
         if self.chat_max_context_length is None or self.chat_max_context_length < waiting_prompt.max_context_length:
             return "max_context_length"
         if self.chat_max_length is None or self.chat_max_length < waiting_prompt.max_length:
             return "max_length"
         return None
+
+    def missing_chat_declarations(self, waiting_prompt: Any) -> set[str]:
+        """Return the declaration names the worker lacks for a chat request it refused with ``chat_features``.
+
+        Args:
+            waiting_prompt: The chat request.
+
+        Returns:
+            The capabilities and guarantees the request's stored ``chat_required_features`` lists that the worker
+            does not declare, with ``image_transports`` when it declares ``vision`` without a way to receive images.
+        """
+        needed_features = set(waiting_prompt.chat_required_features or ())
+        missing_declarations = needed_features - set(self.chat_features or ())
+        if ChatFeature.VISION.value in needed_features - missing_declarations and not self.image_transports:
+            missing_declarations.add("image_transports")
+        return missing_declarations
 
     def serves_chat_images(self) -> bool:
         """Return whether the worker's chat declaration lets it receive a chat request's images.

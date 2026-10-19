@@ -9,18 +9,19 @@ import random
 import time
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import logfire
-from sqlalchemy import JSON, inspect, or_, select
+from sqlalchemy import JSON, case, func, inspect, or_, select
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, object_session, relationship
-from sqlalchemy.sql import expression
+from sqlalchemy.sql import ColumnElement, expression, null
 
 from horde import vars as hv
 from horde.bridge_reference import check_bridge_capability
@@ -80,8 +81,57 @@ EXTRA_SOURCE_IMAGE_HORDE_TAX = 5
 """The horde tax, in kudos, on each image a request stores beyond its prompt: an extra source image, or a chat
 request's image. Each one adds storage and transfer the generation itself does not pay for."""
 
+FAULTED_GENERATIONS_LIMIT = 2
+"""How many faulted generations a request tolerates; one more faults the request. A request that fails on every
+attempt, such as one no worker can build, is otherwise dispatched again after each fault, and every fault counts
+toward the aborted-job threshold that puts the worker serving it into maintenance."""
+
 json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
+
+
+@dataclass(frozen=True)
+class RequestCompletionSnapshot:
+    """Represents what decides whether a request is completed, read from the database in one statement.
+
+    Each statement sees the rows as committed when it starts, so values read by separate statements can mix states
+    from before and after another session's commit, such as an ``n`` read before a pop and generation counts read
+    after it.
+    """
+
+    n: int
+    """How many jobs still wait for a worker, restarted ones included."""
+    faulted: bool
+    """Whether the request is faulted."""
+    completed_jobs: int
+    """The request's real generations that stored a result; faulted ones are not counted."""
+    processing_jobs: int
+    """The request's real generations a worker is still working on."""
+    fault_reason: str | None
+    """The message stored with the request's last refused reply or worker fault; None for requests that keep none."""
+    fault_rc: str | None
+    """The return code stored with ``fault_reason``."""
+    cancelled: bool = False
+    """Whether maintenance stopped dispatching jobs; work already in flight can still return results."""
+
+    def is_completed(self, jobs: int) -> bool:
+        """Return whether a request asking for ``jobs`` generations is completed in this snapshot.
+
+        A request is completed when it is faulted, or when no job waits, none is processing and either maintenance
+        cancelled its remaining jobs or as many generations stored a result as it asked for. Cancellation retains
+        partial results and lets workers already processing finish. Faulted generations do not count: a third
+        attempt (two faulted, one processing, none waiting) read as completed for the whole attempt.
+
+        Args:
+            jobs: How many generations the request asked for.
+        """
+        if self.faulted:
+            return True
+        return self.is_settled() and (self.cancelled or self.completed_jobs >= jobs)
+
+    def is_settled(self) -> bool:
+        """Return whether no job of the request waits for a worker and none is processing."""
+        return self.n <= 0 and self.processing_jobs == 0
 
 
 class WPAllowedWorkers(db.Model):
@@ -473,6 +523,13 @@ class WaitingPrompt(db.Model):
         selected_from_priority_queue: bool = False,
         priority_user_ids: Sequence[int | str] = (),
     ):
+        """Assign up to ``amount`` of this request's waiting jobs to ``worker`` and return the pop payload.
+
+        Concurrency:
+            The taken jobs are committed with the first generation's row rather than on their own, so a status read
+            never sees them taken without a generation. The request's row lock from the pop query is therefore held
+            across the model selection and that INSERT.
+        """
         with logfire.span(
             "horde.wp.start_generation",
             wp_id=str(self.id),
@@ -565,8 +622,10 @@ class WaitingPrompt(db.Model):
         could_be_first_assignment = current_n == self.jobs
         self.n -= safe_amount
         payload = self.get_job_payload(current_n)
-        # This does a commit as well
-        self.refresh(worker)
+        # Not committed here: the first generation's constructor commits the taken jobs with it. Committed alone,
+        # a restarted request would show no job waiting, none processing and its faulted ones finished, which reads
+        # as completed.
+        self.refresh(worker, commit=False)
         procgen_class = procgen_classes[self.wp_type]
         gens_list = []
         dispatch_batch_id = uuid.uuid4()
@@ -591,6 +650,9 @@ class WaitingPrompt(db.Model):
             gens_list.append(new_gen)
             if self.faulted:
                 break
+        if not gens_list:
+            # No generation constructor committed the expiry refresh.
+            db.session.commit()
         if gen_span is not None:
             gen_span.set_attribute("horde.procgens_created", len(gens_list))
         if gens_list:
@@ -700,14 +762,94 @@ class WaitingPrompt(db.Model):
             .count()
         )
 
-    def is_completed(self):
-        if self.faulted:
-            return True
-        if self.needs_gen():
-            return False
-        if self.count_finished_jobs() - self.count_processing_jobs() < self.jobs:
-            return False
-        return True
+    def read_completion_snapshot(self) -> RequestCompletionSnapshot:
+        """Return the request's queued jobs, fault/cancellation state and generation counts in one statement.
+
+        The values loaded on this instance are not used: they can predate a fault or a pop that the counts include.
+        A request whose row was deleted at expiry after this instance loaded has no generations left, so its loaded
+        ``n`` and fault flag decide.
+        """
+        procgen_class = procgen_classes[self.wp_type]
+        completed_jobs = (
+            select(func.count(procgen_class.id))
+            .where(
+                procgen_class.wp_id == self.id,
+                procgen_class.fake.is_(False),
+                procgen_class.faulted.is_(False),
+                procgen_class.generation.is_not(None),
+            )
+            .scalar_subquery()
+        )
+        processing_jobs = (
+            select(func.count(procgen_class.id))
+            .where(
+                procgen_class.wp_id == self.id,
+                procgen_class.fake.is_(False),
+                procgen_class.faulted.is_(False),
+                procgen_class.generation.is_(None),
+            )
+            .scalar_subquery()
+        )
+        fault_reason_column, fault_rc_column = self.fault_detail_columns()
+        completion_row = (
+            db.session.query(
+                WaitingPrompt.n,
+                WaitingPrompt.faulted,
+                completed_jobs,
+                processing_jobs,
+                fault_reason_column,
+                fault_rc_column,
+                WaitingPrompt.terminal_outcome,
+            )
+            .filter(WaitingPrompt.id == self.id)
+            .one_or_none()
+        )
+        if completion_row is None:
+            return RequestCompletionSnapshot(
+                n=self.n,
+                faulted=self.faulted,
+                completed_jobs=0,
+                processing_jobs=0,
+                fault_reason=None,
+                fault_rc=None,
+                cancelled=self.terminal_outcome == RequestTerminalOutcome.CANCELLED.value,
+            )
+        (
+            stored_n,
+            stored_faulted,
+            completed_job_count,
+            processing_job_count,
+            stored_fault_reason,
+            stored_fault_rc,
+            terminal_outcome,
+        ) = completion_row
+        return RequestCompletionSnapshot(
+            n=stored_n,
+            faulted=stored_faulted,
+            completed_jobs=completed_job_count,
+            processing_jobs=processing_job_count,
+            fault_reason=stored_fault_reason,
+            fault_rc=stored_fault_rc,
+            cancelled=terminal_outcome == RequestTerminalOutcome.CANCELLED.value,
+        )
+
+    def fault_detail_columns(self) -> tuple[ColumnElement[str | None], ColumnElement[str | None]]:
+        """Return the columns the completion snapshot reads the request's fault message and return code from.
+
+        Requests that store no fault details read two nulls.
+        """
+        return null(), null()
+
+    def status_fault_details(self, completion: RequestCompletionSnapshot) -> dict[str, Any]:
+        """Return the fault fields the status adds for ``completion``; none for requests that store no fault details."""
+        return {}
+
+    def is_completed(self) -> bool:
+        """Return whether the request is faulted, or settled with all results stored or remaining jobs cancelled.
+
+        Decided on one [`read_completion_snapshot`][horde.classes.base.waiting_prompt.WaitingPrompt.read_completion_snapshot].
+        """
+        return self.read_completion_snapshot().is_completed(self.jobs)
 
     def count_processing_gens(self):
         ret_dict = {
@@ -754,6 +896,12 @@ class WaitingPrompt(db.Model):
     ) -> dict[str, Any]:
         """Return the request's current generation and queue status.
 
+        The completion snapshot is the first read, and the generations are loaded after it, so every generation the
+        snapshot counts as finished is in the list: a status is never done without the generation that completed it,
+        nor done from a fault it does not report. The caller must therefore not load this request's
+        ``processing_gens`` earlier in the session; an earlier load would keep generations as they were then. The
+        status routes load only the request and the worker availability and queue figures before calling this.
+
         Args:
             request_avg: Horde-wide average generation throughput.
             active_worker_count: Counts of active workers and their threads.
@@ -767,27 +915,28 @@ class WaitingPrompt(db.Model):
         Returns:
             Materialized request status ready for API serialization.
         """
-
+        completion = self.read_completion_snapshot()
         active_worker_thread_count = active_worker_count[1]
         ret_dict = self.count_processing_gens()
-        # `self.n` holds the value read when this instance was loaded, which is
-        # earlier than the generation counts above: a generation started in
-        # between is counted here while `n` still includes the slot it consumed,
-        # reporting more outstanding generations than the request asked for. The
-        # slot count reconciles `waiting` against the counts actually reported.
-        # A faulted generation returns its slot to `n` and is reported separately
-        # as `restarted`, so it is not subtracted here. `jobs` is zero on rows
-        # predating the column, where no reconciliation is possible.
-        waiting = max(self.n, 0)
+        # The snapshot's `n` is read earlier than the generation counts above: a
+        # generation started in between is counted here while `n` still includes
+        # the slot it consumed, reporting more outstanding generations than the
+        # request asked for. The slot count reconciles `waiting` against the
+        # counts actually reported. A faulted generation returns its slot to `n`
+        # and is reported separately as `restarted`, so it is not subtracted here.
+        # `jobs` is zero on rows predating the column, where no reconciliation is
+        # possible.
+        waiting = max(completion.n, 0)
         if self.jobs > 0:
             waiting = min(waiting, max(self.jobs - ret_dict["processing"] - ret_dict["finished"], 0))
         ret_dict["waiting"] = waiting
         # This might still happen due to a race condition on parallel requests. Not sure how to avoid it.
-        if self.n < 0:
+        if completion.n < 0:
             logger.error("Request was popped more times than requested!")
 
-        ret_dict["done"] = self.is_completed()
-        ret_dict["faulted"] = self.faulted
+        ret_dict["done"] = completion.is_completed(self.jobs)
+        ret_dict["faulted"] = completion.faulted
+        ret_dict.update(self.status_fault_details(completion))
         # Lite mode does not include the generations, to spare me download size
         if not lite:
             ret_dict["generations"] = self.get_generations()
@@ -847,7 +996,7 @@ class WaitingPrompt(db.Model):
         if availability_known and ret_dict["waiting"] > 0 and ret_dict["processing"] == 0:
             thing_divisor = hv.thing_divisors[self.wp_type]
             own_queued_work = self.things * ret_dict["waiting"] / thing_divisor
-            already_started = ret_dict["finished"] > 0 or ret_dict["restarted"] > 0 or self.n < self.jobs
+            already_started = ret_dict["finished"] > 0 or ret_dict["restarted"] > 0 or completion.n < self.jobs
             if queued_things >= own_queued_work and queued_n >= ret_dict["waiting"]:
                 try:
                     forecast = calculate_scheduling_forecast(
@@ -936,11 +1085,106 @@ class WaitingPrompt(db.Model):
         horde_tax = 1 + (EXTRA_SOURCE_IMAGE_HORDE_TAX * extra_source_images_count) + kudos_adjustment
         return (self.calculate_extra_kudos_burn(kudos) * self.n) + horde_tax
 
-    def log_faulted_prompt(self):
+    def log_faulted_prompt(self) -> None:
         """Extendable function to log why a request was aborted"""
         logger.warning(
             f"Faulting waiting prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs",
         )
+
+    def mark_faulted_after_repeated_faults(self) -> bool:
+        """Fault the request once more than `FAULTED_GENERATIONS_LIMIT` of its generations have faulted, uncommitted.
+
+        The caller commits, so the fault that crossed the limit and the request's fault become visible together. The
+        submit route applies the rule through
+        [`fault_and_restart`][horde.classes.base.processing_generation.ProcessingGeneration.fault_and_restart]; the
+        stale-generation thread applies the same limit to every request in its own pass.
+
+        Returns:
+            True when this call faulted the request.
+        """
+        procgen_class = procgen_classes[self.wp_type]
+        faulted_generations = (
+            db.session.query(procgen_class.id)
+            .filter(
+                procgen_class.wp_id == self.id,
+                procgen_class.faulted.is_(True),
+            )
+            .count()
+        )
+        if faulted_generations <= FAULTED_GENERATIONS_LIMIT:
+            return False
+        return self._claim_fault()
+
+    def mark_faulted_when_stranded(self) -> bool:
+        """Fault the request, uncommitted, when no job waits or processes and fewer results are stored than it asked for.
+
+        A faulted job that is not restarted, such as an image job once the request has as many finished or faulted
+        jobs as it asked for, leaves such a request with nothing more to do; without the fault it would never complete.
+
+        Returns:
+            True when this call faulted the request.
+        """
+        completion = self.read_completion_snapshot()
+        has_all_results = completion.completed_jobs >= self.jobs
+        if completion.faulted or completion.cancelled or not completion.is_settled() or has_all_results:
+            return False
+        return self._claim_fault()
+
+    def _claim_fault(self) -> bool:
+        """Fault the request and claim its faulted terminal outcome, uncommitted, unless it is already faulted.
+
+        Returns:
+            True when this call faulted the request.
+        """
+        faulted_at = datetime.utcnow()
+        # Conditional on the stored flag so a concurrent submit or the thread cannot fault and log the request twice.
+        updated_rows = (
+            db.session.query(WaitingPrompt)
+            .filter(
+                WaitingPrompt.id == self.id,
+                WaitingPrompt.faulted.is_(False),
+            )
+            .update(
+                {
+                    WaitingPrompt.faulted: True,
+                    WaitingPrompt.terminal_outcome: case(
+                        (WaitingPrompt.terminal_outcome.is_(None), RequestTerminalOutcome.FAULTED.value),
+                        else_=WaitingPrompt.terminal_outcome,
+                    ),
+                    WaitingPrompt.terminal_recorded_at: case(
+                        (WaitingPrompt.terminal_outcome.is_(None), faulted_at),
+                        else_=WaitingPrompt.terminal_recorded_at,
+                    ),
+                },
+                synchronize_session="fetch",
+            )
+        )
+        return updated_rows == 1
+
+    def requeue_faulted_job(self) -> None:
+        """Put one faulted job back as an SQL-side ``n = n + 1``, uncommitted, unless maintenance cancelled it.
+
+        The increment is computed by the database, so it cannot overwrite a pop's decrement committed after this
+        instance loaded ``n``.
+        """
+        db.session.query(WaitingPrompt).filter(
+            WaitingPrompt.id == self.id,
+            or_(WaitingPrompt.terminal_outcome.is_(None), WaitingPrompt.terminal_outcome != RequestTerminalOutcome.CANCELLED.value),
+        ).update(
+            {WaitingPrompt.n: WaitingPrompt.n + 1},
+            synchronize_session=False,
+        )
+
+    def report_repeated_faults(self) -> None:
+        """Report a request faulted for repeated faults, once its fault is committed."""
+        self.log_faulted_prompt()
+
+    def report_stranded_fault(self) -> None:
+        """Report a request faulted because a fault left it with nothing to do and results missing, once committed.
+
+        Only image requests can be left so: a chat or text fault always restarts its job.
+        """
+        logger.warning(f"Faulting waiting prompt {self.id}: a faulted job was not restarted and no other job remains")
 
     def delete(self):
         from horde.database.kudos_reservations import release_reservation
@@ -960,7 +1204,7 @@ class WaitingPrompt(db.Model):
         db.session.commit()
 
     def abort_for_maintenance(self):
-        """sets all waiting requests to 0, so that all clients pick them up once the client gen is completed"""
+        """Cancel queued jobs, retaining partial results and allowing in-flight jobs to settle before reporting done."""
         try:
             if self.is_completed():
                 return

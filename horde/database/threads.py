@@ -26,6 +26,7 @@ from horde import vars as hv
 from horde.argparser import args
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.user import User
+from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
 from horde.classes.base.worker import SPEED_BASELINE_THINGS_PER_SEC, WorkerPerformance, WorkerTemplate
 from horde.classes.kobold.chat_request import list_chat_image_keys
 from horde.classes.kobold.genstats import CompiledTextGensStatsTotals, CompiledTextGenStatsModels
@@ -459,12 +460,13 @@ def check_waiting_prompts():
             modifed_procgens = 0
             for proc_gen in all_proc_gen:
                 if proc_gen.is_stale():
-                    proc_gen.abort()
-                    proc_gen.wp.n += 1
+                    # Share the worker-submit claim: rows loaded above can have completed or faulted since then.
+                    proc_gen.fault_and_restart(stale=True)
                     modifed_procgens += 1
             if modifed_procgens >= 1:
                 db.session.commit()
-            # Faults WP with 3 or more faulted Procgens
+            # Faults WP with more than FAULTED_GENERATIONS_LIMIT faulted Procgens; the submit route applies the same
+            # rule when a worker faults a generation, so this pass catches what that path does not see.
             # The grouped query returns only request IDs whose fault count
             # crossed the retry limit. Conceptual aggregate before HAVING:
             #
@@ -477,7 +479,7 @@ def check_waiting_prompts():
                 )
                 .filter(procgen_class.faulted == True)  # noqa E712
                 .group_by(procgen_class.wp_id)
-                .having(func.count(procgen_class.wp_id) > 2)
+                .having(func.count(procgen_class.wp_id) > FAULTED_GENERATIONS_LIMIT)
             )
             wp_ids = [wp_id[0] for wp_id in wp_ids]
             waiting_prompts = db.session.query(wp_class).filter(wp_class.id.in_(wp_ids)).filter(wp_class.faulted == False)  # noqa E712

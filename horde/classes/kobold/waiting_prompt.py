@@ -9,6 +9,7 @@ from collections.abc import Collection
 from decimal import Decimal
 from typing import Any
 
+from horde_sdk.generation_parameters.text.chat_policy import DEFAULT_CHAT_CONFORMANCE, ChatConformance
 from sqlalchemy import Text, cast
 from sqlalchemy.orm import Mapped, query_expression
 from sqlalchemy.sql import ColumnElement, expression
@@ -21,6 +22,9 @@ from horde.classes.kobold.chat_request import (
     CHAT_IMAGE_DATA_URL_PREFIX,
     ChatImageTransport,
     build_chat_job_payload,
+    build_chat_request_traits,
+    build_worker_chat_extras,
+    chat_tools_temperature,
     has_image_parts,
     list_chat_image_keys,
     required_chat_features,
@@ -90,10 +94,23 @@ class TextWaitingPrompt(WaitingPrompt):
     the client sent; NULL when it applies none and on every other text request. Deferred like ``messages``, and added
     to the job payload at pop as stored."""
     chat_required_features = db.Column(text_array_column_type, nullable=True)
-    """The ``ChatFeature`` names a chat request needs, from
+    """The capability and guarantee names a chat request needs under its conformance mode, from
     [`required_chat_features`][horde.classes.kobold.chat_request.required_chat_features], written once when the
     request is created; NULL on every other text request. Eligibility compares a worker's declaration with it, so the
     queue scan never loads the deferred messages or extras of a candidate."""
+    chat_conformance = db.Column(
+        db.String,
+        default=DEFAULT_CHAT_CONFORMANCE.value,
+        nullable=False,
+        server_default=DEFAULT_CHAT_CONFORMANCE.value,
+    )
+    """The ``ChatConformance`` mode a chat request selected in its ``horde`` object (ADR 0036). Text requests hold the
+    default, which nothing reads for them. Kept so the reply can be checked under the same mode on submit."""
+    chat_tools_temperature = db.Column(db.Float, nullable=True)
+    """The projection of a chat request's traits that the ``tools_max_temperature`` limit reads, from
+    [`chat_tools_temperature`][horde.classes.kobold.chat_request.chat_tools_temperature]: the forwarded temperature
+    when the request forwards tool definitions, NULL otherwise and on every other text request. Written once like
+    ``chat_required_features``, so the pop query compares it without loading the deferred extras."""
     operation_key = db.deferred(db.Column(uuid_column_type(), nullable=True))
     """The key a native caller sent to identify one submission of a chat request, claimed when the request is
     activated; NULL on every other request. Unique per user while the row exists, so a repeated submission finds the
@@ -134,8 +151,15 @@ class TextWaitingPrompt(WaitingPrompt):
         if self.is_chat:
             # Read while the messages and extras the request was created with are still in memory.
             self.chat_required_features = sorted(
-                feature.value for feature in required_chat_features(self.params, self.messages or [], self.chat_extras)
+                feature.value
+                for feature in required_chat_features(
+                    self.params,
+                    self.messages or [],
+                    self.chat_extras,
+                    ChatConformance(self.chat_conformance or DEFAULT_CHAT_CONFORMANCE),
+                )
             )
+            self.chat_tools_temperature = chat_tools_temperature(build_chat_request_traits(self.params, self.chat_extras))
         self.prepare_job_payload(self.params)
 
     @logger.catch(reraise=True)
@@ -260,8 +284,9 @@ class TextWaitingPrompt(WaitingPrompt):
             payload: The job payload, which for a chat job carries no prompt.
 
         Returns:
-            The pop response. A chat job's payload carries ``messages``, and each of ``tools``, ``tool_choice``,
-            ``parallel_tool_calls`` and ``response_format`` the request stored, exactly as stored; the response
+            The pop response. A chat job's payload carries ``messages``, and the ``tools``, ``tool_choice``,
+            ``parallel_tool_calls`` and ``response_format`` the request stored, narrowed by
+            [`build_worker_chat_extras`][horde.classes.kobold.chat_request.build_worker_chat_extras]; the response
             carries ``chat: true``. A text job's response is unchanged.
         """
         if not self.is_chat:
@@ -269,7 +294,7 @@ class TextWaitingPrompt(WaitingPrompt):
 
         chat_payload = dict(payload)
         chat_payload["messages"] = self.build_worker_messages(procgen_list[0])
-        chat_payload.update(self.chat_extras or {})
+        chat_payload.update(build_worker_chat_extras(self.chat_extras))
         pop_payload = super().get_pop_payload(procgen_list, chat_payload)
         pop_payload["chat"] = True
         return pop_payload
@@ -340,6 +365,15 @@ class TextWaitingPrompt(WaitingPrompt):
         logger.warning(
             f"Faulting waiting text prompt {self.id} with payload '{self.gen_payload}' due to too many faulted jobs",
         )
+
+    def report_repeated_faults(self) -> None:
+        """Report the fault as the base does, and signal a waiting chat client at once."""
+        super().report_repeated_faults()
+        if self.is_chat:
+            # Imported here because the thread module imports this one.
+            from horde.database.threads import collect_chat_faults, publish_chat_faults
+
+            publish_chat_faults(collect_chat_faults([self.id]))
 
     def get_status(self, **kwargs):
         ret_dict = super().get_status(**kwargs)

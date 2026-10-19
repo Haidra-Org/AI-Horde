@@ -21,6 +21,11 @@ message and a Redis outage; its interval stretches with the request's reported w
 The deadline bounds the wait, not the outcome: a status read that returns a terminal outcome is returned even when it
 completes after the deadline. At the deadline one final read runs under its own allowance; only a request still
 waiting after it raises [`ChatWaitTimeoutError`][horde.oai.waiter.ChatWaitTimeoutError].
+
+A request no worker is eligible for, with nothing processing, ends the wait after the fail-fast grace, which covers a
+worker restart or model load. A status that reports the cause as a declaration gap ends it at once with
+[`DeclarationGapError`][horde.oai.waiter.DeclarationGapError]: a worker coming back does not supply a declaration no
+online worker serving the model makes.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ import redis.exceptions
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from horde.chat_contract import ChatImpossibleReason
 from horde.oai.horde_client import HordeAPIError, HordeChatStatus, HordeClient, HordeCredentials, HordeUnavailableError
 from horde.oai.metrics import FrontMetrics
 
@@ -54,6 +60,7 @@ __all__ = [
     "CompletionEventKind",
     "CompletionSignalListener",
     "CompletionSubscription",
+    "DeclarationGapError",
     "NoEligibleWorkerError",
     "WaitBudget",
     "WakeSource",
@@ -146,7 +153,8 @@ class ChatWaitTimeoutError(Exception):
 
 
 class NoEligibleWorkerError(Exception):
-    """The Horde reported no eligible worker, with nothing processing, for longer than the fail-fast grace."""
+    """The Horde reported no eligible worker, with nothing processing, for longer than the fail-fast grace, or with a
+    cause the grace does not change."""
 
     def __init__(self, message: str, *, status: HordeChatStatus | None) -> None:
         """Create the error.
@@ -158,6 +166,23 @@ class NoEligibleWorkerError(Exception):
         super().__init__(message)
         self.status: HordeChatStatus | None = status
         """The last status read."""
+
+
+class DeclarationGapError(NoEligibleWorkerError):
+    """The Horde reported that the online chat workers serving the model lack a declaration the request needs or apply
+    a limit it exceeds; raised on the first such status, without the grace."""
+
+    def __init__(self, message: str, *, status: HordeChatStatus, impossible_reason: ChatImpossibleReason) -> None:
+        """Create the error.
+
+        Args:
+            message: What happened.
+            status: The status that reported the gap.
+            impossible_reason: The missing declarations and exceeded limits it reported.
+        """
+        super().__init__(message, status=status)
+        self.impossible_reason: ChatImpossibleReason = impossible_reason
+        """The missing declarations and exceeded limits."""
 
 
 class WaitBudget(BaseModel):
@@ -432,7 +457,8 @@ class ChatRequestWatcher:
 
         Raises:
             ChatWaitTimeoutError: The request was still waiting after the deadline and the final status read.
-            NoEligibleWorkerError: No eligible worker, with nothing processing, for longer than the grace.
+            NoEligibleWorkerError: No eligible worker, with nothing processing, for longer than the grace, or at once
+                as its subclass ``DeclarationGapError`` when the status reports a declaration gap.
             HordeAPIError: A status read before the deadline failed in a way waiting cannot fix, such as 404.
         """
         status = await self._read_before_deadline(WakeSource.IMMEDIATE)
@@ -491,11 +517,18 @@ class ChatRequestWatcher:
         """Mutate the fail-fast clock from ``status`` and raise once the grace has passed.
 
         Raises:
+            DeclarationGapError: No eligible worker, nothing processing, and the status reports a declaration gap.
             NoEligibleWorkerError: No eligible worker and nothing processing for at least the grace.
         """
         if status.is_possible or status.processing > 0:
             self._impossible_since = None
             return
+        if status.impossible_reason is not None:
+            raise DeclarationGapError(
+                f"No online worker declares what chat request {self.request_id} needs.",
+                status=status,
+                impossible_reason=status.impossible_reason,
+            )
         now = self._clock()
         if self._impossible_since is None:
             self._impossible_since = now

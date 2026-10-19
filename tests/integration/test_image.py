@@ -262,3 +262,68 @@ def test_flux_image_gen(client, request_headers: dict[str, str]) -> None:
     assert retrieve_results["kudos"] > 1
     assert retrieve_results["done"] is True
     _cancel_image_request(client, request_headers, req_id)
+
+
+@pytest.mark.parametrize("stale_last_fault", [False, True])
+def test_an_image_request_whose_unrestarted_fault_leaves_nothing_to_do_reads_faulted(
+    app,
+    client,
+    request_headers: dict[str, str],
+    stale_last_fault: bool,
+) -> None:
+    """The second fault of a one-image request is not restarted, since its earlier fault counts toward the jobs the
+    request asked for. With nothing waiting or processing and no image stored, the request faults in that commit
+    rather than reading done with no image or staying open for good."""
+    async_dict = {
+        "prompt": "a lighthouse keeper counting faulted jobs by candlelight",
+        "nsfw": True,
+        "censor_nsfw": False,
+        "r2": True,
+        "trusted_workers": True,
+        "params": {"width": 512, "height": 512, "steps": 8, "sampler_name": "k_euler_a"},
+        "models": TEST_MODELS,
+    }
+    async_req = client.post("/api/v2/generate/async", json=async_dict, headers=request_headers)
+    assert async_req.status_code < 400, async_req.get_data(as_text=True)
+    req_id = async_req.get_json()["id"]
+    pop_dict = {
+        "name": "CICD Fake Dreamer",
+        "models": TEST_MODELS,
+        "bridge_agent": "AI Horde Worker reGen:9.0.1-citests:https://github.com/Haidra-Org/horde-worker-reGen",
+        "nsfw": True,
+        "amount": 1,
+        "max_pixels": 4194304,
+        "allow_unsafe_ipaddr": True,
+    }
+    try:
+        for attempt in range(2):
+            pop_req = client.post("/api/v2/generate/pop", json=pop_dict, headers=request_headers)
+            assert pop_req.status_code < 400, pop_req.get_data(as_text=True)
+            job_id = pop_req.get_json()["id"]
+            assert job_id is not None, pop_req.get_json()
+            if stale_last_fault and attempt == 1:
+                import uuid
+
+                from horde.classes.stable.processing_generation import ImageProcessingGeneration
+                from horde.flask import db
+
+                with app.app_context():
+                    generation = db.session.get(ImageProcessingGeneration, uuid.UUID(job_id))
+                    assert generation.restarts_after_fault() is False
+                    generation.fault_and_restart(stale=True)
+                    assert generation.faulted is True
+                continue
+            submit_req = client.post(
+                "/api/v2/generate/submit",
+                json={"id": job_id, "generation": "", "state": "faulted", "seed": 0},
+                headers=request_headers,
+            )
+            assert submit_req.status_code < 400, submit_req.get_data(as_text=True)
+
+        status = client.get(f"/api/v2/generate/status/{req_id}", headers=request_headers).get_json()
+        if stale_last_fault:
+            assert (status["done"], status["faulted"], status["waiting"]) == (False, False, 1)
+        else:
+            assert (status["done"], status["faulted"], status["generations"]) == (True, True, [])
+    finally:
+        _cancel_image_request(client, request_headers, req_id)

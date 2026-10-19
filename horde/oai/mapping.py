@@ -20,6 +20,8 @@ from collections.abc import Sequence
 from http import HTTPStatus
 from typing import cast
 
+from horde_sdk.generation_parameters.text.chat_policy import ChatFeature, ChatGuarantee
+
 from horde.chat_contract import ChatJsonSchemaResponseFormat, ChatResponseFormat, ChatTool, ChatToolCall
 from horde.oai.horde_client import HordeActiveModel, HordeChatGeneration, HordeChatStatus
 from horde.oai.schema import (
@@ -112,21 +114,25 @@ FEATURE_SUPPORTED_PARAMETERS: tuple[str, ...] = (
 )
 """The OpenAI request fields a model lists only when an online chat worker declares the chat feature of that name."""
 
-TOOLS_FEATURE: str = "tools"
+TOOLS_FEATURE: str = ChatFeature.TOOLS.value
 """The chat feature of a worker that serves function calling."""
 
-TOOL_SUPPORTED_PARAMETERS: tuple[str, ...] = (
-    "tools",
-    "tool_choice",
-    "parallel_tool_calls",
-)
+TOOL_SUPPORTED_PARAMETERS: tuple[str, ...] = ("tools",)
 """The OpenAI request fields a model lists when an online chat worker declares
 [`TOOLS_FEATURE`][horde.oai.mapping.TOOLS_FEATURE]."""
 
+GUARANTEED_TOOL_PARAMETERS: dict[str, str] = {
+    "tool_choice": ChatGuarantee.TOOL_CHOICE_ENFORCED.value,
+    "parallel_tool_calls": ChatGuarantee.SINGLE_TOOL_CALL_ENFORCED.value,
+}
+"""The OpenAI tool fields a model lists only when an online chat worker also declares the guarantee mapped to each.
+A strict request that sets one of them to a constraining value needs that guarantee (ADR 0036), so a card without it
+does not advertise the field."""
+
 RESPONSE_FORMAT_FEATURES: frozenset[str] = frozenset(
     {
-        "json_object",
-        "json_schema",
+        ChatFeature.JSON_OBJECT.value,
+        ChatFeature.JSON_SCHEMA.value,
     },
 )
 """The chat features of which any one lists ``response_format`` for a model."""
@@ -141,7 +147,7 @@ COMPACT_JSON_SEPARATORS: tuple[str, str] = (
 )
 """The separators of the compact JSON the prompt token estimate counts for tools, tool calls and schemas."""
 
-VISION_FEATURE: str = "vision"
+VISION_FEATURE: str = ChatFeature.VISION.value
 """The chat feature that adds the image input modality to a model list entry."""
 
 TEXT_MODALITY: str = "text"
@@ -224,6 +230,9 @@ def build_model_card(active_model: HordeActiveModel) -> ModelCard | None:
     ]
     if TOOLS_FEATURE in declared_features:
         supported_parameters.extend(TOOL_SUPPORTED_PARAMETERS)
+        supported_parameters.extend(
+            parameter for parameter, guarantee in GUARANTEED_TOOL_PARAMETERS.items() if guarantee in declared_features
+        )
     if RESPONSE_FORMAT_FEATURES & declared_features:
         supported_parameters.append(RESPONSE_FORMAT_PARAMETER)
     return ModelCard(

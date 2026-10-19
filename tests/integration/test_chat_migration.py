@@ -83,18 +83,22 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 ("processing_gens", "message", "jsonb", None, "YES"),
                 ("processing_gens", "native_finish_reason", "character varying", 32, "YES"),
                 ("processing_gens", "prompt_tokens", "integer", None, "YES"),
+                ("waiting_prompts", "chat_conformance", "character varying", None, "NO"),
                 ("waiting_prompts", "chat_extras", "jsonb", None, "YES"),
                 ("waiting_prompts", "chat_required_features", "ARRAY", None, "YES"),
+                ("waiting_prompts", "chat_tools_temperature", "double precision", None, "YES"),
                 ("waiting_prompts", "context_adjustments", "jsonb", None, "YES"),
                 ("waiting_prompts", "is_chat", "boolean", None, "NO"),
                 ("waiting_prompts", "messages", "jsonb", None, "YES"),
                 ("waiting_prompts", "operation_fingerprint", "character", 64, "YES"),
                 ("waiting_prompts", "operation_key", "uuid", None, "YES"),
                 ("workers", "accepts_chat_jobs", "boolean", None, "NO"),
+                ("workers", "accepts_prompt_jobs", "boolean", None, "NO"),
                 ("workers", "chat_features", "ARRAY", None, "YES"),
                 ("workers", "chat_max_context_length", "integer", None, "YES"),
                 ("workers", "chat_max_length", "integer", None, "YES"),
                 ("workers", "chat_model_id", "character varying", None, "YES"),
+                ("workers", "chat_tools_max_temperature", "double precision", None, "YES"),
                 ("workers", "image_transports", "ARRAY", None, "YES"),
             ]
 
@@ -103,11 +107,21 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 {"worker_id": worker_id},
             ).scalar_one()
             assert existing_worker_opt_in is False
+            existing_worker_takes_text_jobs = connection.execute(
+                sqlalchemy.text("SELECT accepts_prompt_jobs FROM workers WHERE id = :worker_id"),
+                {"worker_id": worker_id},
+            ).scalar_one()
+            assert existing_worker_takes_text_jobs is True
             existing_request_is_chat = connection.execute(
                 sqlalchemy.text("SELECT is_chat FROM waiting_prompts WHERE id = :request_id"),
                 {"request_id": request_id},
             ).scalar_one()
             assert existing_request_is_chat is False
+            existing_request_conformance = connection.execute(
+                sqlalchemy.text("SELECT chat_conformance FROM waiting_prompts WHERE id = :request_id"),
+                {"request_id": request_id},
+            ).scalar_one()
+            assert existing_request_conformance == "strict"
 
             operation_key_index = connection.execute(
                 sqlalchemy.text(

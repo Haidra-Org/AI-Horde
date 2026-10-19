@@ -350,6 +350,29 @@ def test_a_faulted_chat_submit_needs_neither_generation_nor_message(
     _cancel(client, request_headers, "chat", request_id)
 
 
+def test_a_request_faults_on_the_submit_that_takes_it_past_the_faulted_generations_limit(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    chat_events: Any,
+) -> None:
+    """The submit route faults the request and signals its client without waiting for the stale-generation thread."""
+    from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
+
+    request_id = _submit_chat_request(client, request_headers)
+    for _ in range(FAULTED_GENERATIONS_LIMIT + 1):
+        assert _chat_status(client, request_headers, request_id)["faulted"] is False
+        pop_result = chat_worker.pop()
+        assert pop_result["id"] is not None, pop_result
+        response = chat_worker.submit(build_faulted_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL))
+        assert response.status_code == 200, response.get_data(as_text=True)
+
+    status = _chat_status(client, request_headers, request_id)
+    assert status["faulted"] is True
+    assert chat_worker.pop()["id"] is None
+    assert (chat_signal_channel(request_id), {"id": request_id, "event": "faulted", "generations": 0}) in _received_events(chat_events)
+
+
 def test_a_text_submit_without_generation_is_still_refused_by_the_parser(client, request_headers: dict[str, str]) -> None:
     response = client.post(
         "/api/v2/generate/text/submit",
@@ -530,6 +553,88 @@ def test_chat_jobs_without_chat_limits_is_refused_on_pop(client, request_headers
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "ChatDeclarationInvalid"
+
+
+def test_prompt_jobs_off_without_chat_jobs_is_refused_on_pop(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """A worker that turns text jobs off without opting into chat jobs could receive no job, so the pop is refused."""
+    for chat_jobs in (None, False):
+        response = chat_worker.pop_response(chat_jobs=chat_jobs, prompt_jobs=False)
+
+        assert response.status_code == 400
+        assert response.get_json()["rc"] == "ChatDeclarationInvalid"
+        assert "prompt_jobs" in response.get_json()["message"]
+
+
+def test_a_chat_only_worker_pops_chat_jobs_and_never_text_jobs(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """With prompt_jobs false a worker receives the queued chat job and leaves the queued text job waiting."""
+    text_request_id = _submit_text_request(client, request_headers)
+    chat_request_id = _submit_chat_request(client, request_headers)
+
+    chat_only = chat_worker.pop(prompt_jobs=False)
+    nothing_else = chat_worker.pop(prompt_jobs=False)
+    text_pop = chat_worker.pop()
+
+    assert chat_only["id"] is not None, chat_only
+    assert chat_only["chat"] is True
+    assert nothing_else["id"] is None, nothing_else
+    assert text_pop["id"] is not None, text_pop
+    assert text_pop["payload"]["prompt"] == "a plain text prompt for a plain text worker"
+    _cancel(client, request_headers, "chat", chat_request_id)
+    _cancel(client, request_headers, "text", text_request_id)
+
+
+def test_a_chat_only_pop_needs_no_text_limits(client, request_headers: dict[str, str]) -> None:
+    """max_length and max_context_length bound only text jobs, so a chat-only pop may leave them out."""
+    pop_body = {
+        "name": WORKER_NAME,
+        "models": [CHAT_MODEL],
+        "bridge_agent": request_headers["Client-Agent"],
+        "chat_jobs": True,
+        "prompt_jobs": False,
+        "chat_limits": {"max_context_length": 8192, "max_length": 1024},
+        "model_id": CHAT_MODEL,
+    }
+
+    response = client.post("/api/v2/generate/text/pop", json=pop_body, headers=request_headers)
+
+    assert response.status_code == 200, response.get_data(as_text=True)
+
+
+def test_the_text_job_opt_out_is_applied_inside_the_check_in_debounce(
+    app,
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """A debounced check-in still stores prompt_jobs, so the next pop's text eligibility follows what it sent."""
+    chat_worker.pop()
+    _age_worker_into_the_check_in_debounce(app, WORKER_NAME)
+    text_request_id = _submit_text_request(client, request_headers)
+
+    chat_only = chat_worker.pop(prompt_jobs=False)
+    assert chat_only["id"] is None, chat_only
+    assert not _stored_accepts_prompt_jobs(app, WORKER_NAME)
+    text_pop = chat_worker.pop()
+
+    assert text_pop["id"] is not None, text_pop
+    assert _stored_accepts_prompt_jobs(app, WORKER_NAME)
+    _cancel(client, request_headers, "text", text_request_id)
+
+
+def _stored_accepts_prompt_jobs(app, worker_name: str) -> bool:
+    from horde.classes.kobold.worker import TextWorker
+    from horde.flask import db
+
+    with app.app_context():
+        return bool(db.session.query(TextWorker.accepts_prompt_jobs).filter_by(name=worker_name).scalar())
 
 
 def test_a_developer_message_reaches_the_worker_as_a_system_message(
@@ -918,7 +1023,9 @@ def test_a_model_only_the_reference_lists_is_accepted_and_reported_as_not_possib
 
     assert response.status_code == 202, response.get_data(as_text=True)
     request_id = response.get_json()["id"]
-    assert _chat_status(client, request_headers, request_id)["is_possible"] is False
+    status = _chat_status(client, request_headers, request_id)
+    assert status["is_possible"] is False
+    assert status["impossible_reason"] is None
     _cancel(client, request_headers, "chat", request_id)
 
 
@@ -1323,3 +1430,358 @@ def test_a_tool_choice_the_tools_do_not_allow_is_a_conflict(
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "ChatRequestConflict"
+
+
+EMAIL_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {"name": "send_email", "parameters": {"type": "object", "properties": {"to": {"type": "string"}}}},
+}
+"""A second function tool, beside ``LOOKUP_TOOL``."""
+
+NAMED_LOOKUP_CHOICE: dict[str, Any] = {"type": "function", "function": {"name": "lookup_weather"}}
+"""A ``tool_choice`` forcing ``LOOKUP_TOOL``."""
+
+TOOL_KEYS = frozenset(
+    {
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+    },
+)
+"""The payload keys that carry tool definitions and constraints."""
+
+
+def _stored_chat_declaration(app, worker_name: str) -> tuple[list[str], float | None]:
+    from horde.classes.kobold.worker import TextWorker
+    from horde.flask import db
+
+    with app.app_context():
+        stored_row = db.session.query(TextWorker.chat_features, TextWorker.chat_tools_max_temperature).filter_by(name=worker_name).one()
+        return list(stored_row.chat_features or ()), stored_row.chat_tools_max_temperature
+
+
+def test_a_pop_stores_declared_guarantees_beside_features_and_the_tool_temperature_limit(app, chat_worker: FakeChatWorker) -> None:
+    chat_worker.pop(chat_features=["tools", "not_a_known_name"], chat_guarantees=["tool_choice_enforced"], tools_max_temperature=1.0)
+
+    assert _stored_chat_declaration(app, WORKER_NAME) == (["tool_choice_enforced", "tools"], 1.0)
+
+    chat_worker.pop(chat_features=["tools"], chat_guarantees=[])
+
+    assert _stored_chat_declaration(app, WORKER_NAME) == (["tools"], None)
+
+
+def test_a_negative_tool_temperature_limit_is_refused_on_pop(chat_worker: FakeChatWorker) -> None:
+    response = chat_worker.pop_response(tools_max_temperature=-0.5)
+
+    assert response.status_code == 400
+    assert response.get_json()["rc"] == "ChatDeclarationInvalid"
+
+
+def test_a_strict_named_tool_choice_waits_for_a_worker_enforcing_tool_choice_and_receives_only_that_tool(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, tools=[EMAIL_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)
+
+    assert chat_worker.pop(chat_features=["tools"], chat_guarantees=["prompt_overflow_refused"])["id"] is None
+    pop_result = chat_worker.pop(chat_features=["tools"])
+
+    assert pop_result["id"] is not None, pop_result
+    assert pop_result["payload"]["tools"] == [LOOKUP_TOOL]
+    assert pop_result["payload"]["tool_choice"] == "required"
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_best_effort_named_tool_choice_is_served_by_a_worker_without_guarantees(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(
+        client,
+        request_headers,
+        tools=[EMAIL_TOOL, LOOKUP_TOOL],
+        tool_choice=NAMED_LOOKUP_CHOICE,
+        horde={"conformance": "best_effort"},
+    )
+
+    pop_result = chat_worker.pop(chat_features=["tools"], chat_guarantees=[])
+
+    assert pop_result["id"] is not None, pop_result
+    assert pop_result["payload"]["tools"] == [LOOKUP_TOOL]
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_tool_choice_none_forwards_no_tool_fields(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], tool_choice="none", parallel_tool_calls=False)
+
+    pop_result = chat_worker.pop(chat_features=[], chat_guarantees=["prompt_overflow_refused"])
+
+    assert pop_result["id"] is not None, pop_result
+    assert not TOOL_KEYS & set(pop_result["payload"])
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_tool_request_hotter_than_a_worker_tool_temperature_limit_waits_for_another_worker(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], temperature=1.5)
+
+    assert chat_worker.pop(chat_features=["tools"], tools_max_temperature=1.0)["id"] is None
+    assert chat_worker.pop(chat_features=["tools"])["id"] is not None
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_strict_named_tool_choice_no_online_worker_enforces_reports_the_missing_guarantee(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, tools=[EMAIL_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)
+
+    assert chat_worker.pop(chat_features=["tools"], chat_guarantees=["prompt_overflow_refused"])["id"] is None
+    status = _chat_status(client, request_headers, request_id)
+
+    assert status["is_possible"] is False
+    assert status["impossible_reason"] == {
+        "kind": "declaration_gap",
+        "missing_declarations": ["tool_choice_enforced"],
+        "exceeded_limits": [],
+    }
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_tool_request_hotter_than_every_worker_tool_temperature_limit_reports_the_limit(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], temperature=1.5)
+
+    assert chat_worker.pop(chat_features=["tools"], tools_max_temperature=1.0)["id"] is None
+    status = _chat_status(client, request_headers, request_id)
+
+    assert status["is_possible"] is False
+    assert status["impossible_reason"] == {
+        "kind": "declaration_gap",
+        "missing_declarations": [],
+        "exceeded_limits": ["tools_max_temperature"],
+    }
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_request_a_worker_can_take_reports_no_impossible_reason(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    chat_worker.pop(chat_features=["tools"])
+    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL])
+
+    status = _chat_status(client, request_headers, request_id)
+
+    assert status["is_possible"] is True
+    assert status["impossible_reason"] is None
+    _cancel(client, request_headers, "chat", request_id)
+
+
+VERIFIED_FEATURES = ["tools", "json_object", "json_schema"]
+"""The features a worker declares to pop every request the reply verification tests make."""
+
+COLOUR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}},
+    "required": ["name"],
+    "additionalProperties": False,
+}
+"""A JSON Schema for one named colour."""
+
+
+def _colour_format(*, strict: bool) -> dict[str, Any]:
+    return {"type": "json_schema", "json_schema": {"name": "colour", "schema": COLOUR_SCHEMA, "strict": strict}}
+
+
+def _tool_call(name: str = "lookup_weather", call_id: str = "call_one") -> dict[str, Any]:
+    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": '{"city":"Bergen"}'}}
+
+
+def _serve_reply(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    request_overrides: dict[str, Any],
+    *,
+    content: str | None,
+    tool_calls: list[dict[str, Any]] | None = None,
+) -> tuple[str, Any]:
+    """Queue a chat request, pop it with every feature and guarantee declared, and submit one reply to it."""
+    request_id = _submit_chat_request(client, request_headers, **request_overrides)
+    pop_result = chat_worker.pop(chat_features=VERIFIED_FEATURES)
+    assert pop_result["id"] is not None, pop_result
+    submit_response = chat_worker.submit(
+        build_chat_submit_body(
+            generation_id=pop_result["id"],
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason="tool_calls" if tool_calls else "stop",
+            model_id=CHAT_MODEL,
+        ),
+    )
+    return request_id, submit_response
+
+
+NONCONFORMANT_REPLIES = [
+    pytest.param({"tools": [LOOKUP_TOOL], "tool_choice": "none"}, None, [_tool_call()], id="none-with-call"),
+    pytest.param({"tools": [LOOKUP_TOOL], "tool_choice": "required"}, "Sunny.", None, id="required-without-call"),
+    pytest.param({"tools": [EMAIL_TOOL, LOOKUP_TOOL], "tool_choice": NAMED_LOOKUP_CHOICE}, "Sunny.", None, id="named-without-call"),
+    pytest.param(
+        {"tools": [EMAIL_TOOL, LOOKUP_TOOL], "tool_choice": NAMED_LOOKUP_CHOICE},
+        None,
+        [_tool_call("send_email")],
+        id="named-other-function",
+    ),
+    pytest.param({"response_format": {"type": "json_object"}}, "Blue.", None, id="json-object-not-json"),
+    pytest.param({"response_format": _colour_format(strict=True)}, '{"name": 7}', None, id="strict-schema-mismatch"),
+]
+"""Requests with a reply each that the request's ``tool_choice`` or ``response_format`` rules out."""
+
+
+@pytest.mark.parametrize(("request_overrides", "content", "tool_calls"), NONCONFORMANT_REPLIES)
+def test_a_strict_request_refuses_a_reply_its_tool_choice_or_response_format_rules_out(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    request_overrides: dict[str, Any],
+    content: str | None,
+    tool_calls: list[dict[str, Any]] | None,
+) -> None:
+    request_id, submit_response = _serve_reply(
+        client, request_headers, chat_worker, request_overrides, content=content, tool_calls=tool_calls
+    )
+
+    assert submit_response.status_code == 400
+    assert submit_response.get_json()["rc"] == "ChatSubmitNonconformant"
+    assert _chat_status(client, request_headers, request_id)["done"] is False
+    _cancel(client, request_headers, "chat", request_id)
+
+
+@pytest.mark.parametrize(("request_overrides", "content", "tool_calls"), NONCONFORMANT_REPLIES)
+def test_a_best_effort_request_shows_that_reply_as_submitted(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    request_overrides: dict[str, Any],
+    content: str | None,
+    tool_calls: list[dict[str, Any]] | None,
+) -> None:
+    best_effort_overrides = {**request_overrides, "horde": {"conformance": "best_effort"}}
+
+    request_id, submit_response = _serve_reply(
+        client, request_headers, chat_worker, best_effort_overrides, content=content, tool_calls=tool_calls
+    )
+
+    assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
+    [generation] = _chat_status(client, request_headers, request_id)["generations"]
+    expected_message: dict[str, Any] = {"role": "assistant", "content": content}
+    if tool_calls is not None:
+        expected_message["tool_calls"] = tool_calls
+    assert generation["message"] == expected_message
+
+
+@pytest.mark.parametrize("conformance", ["strict", "best_effort"])
+@pytest.mark.parametrize(
+    "tool_calls",
+    [[_tool_call("send_email")], [_tool_call(), _tool_call()]],
+    ids=["function-not-offered", "repeated-call-id"],
+)
+def test_a_reply_no_client_could_use_is_refused_under_every_conformance_mode(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    tool_calls: list[dict[str, Any]],
+    conformance: str,
+) -> None:
+    request_overrides = {"tools": [LOOKUP_TOOL], "horde": {"conformance": conformance}}
+
+    request_id, submit_response = _serve_reply(client, request_headers, chat_worker, request_overrides, content=None, tool_calls=tool_calls)
+
+    assert submit_response.status_code == 400
+    assert submit_response.get_json()["rc"] == "ChatSubmitInvalid"
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_strict_single_call_request_shows_only_the_first_of_several_calls(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    monkeypatch,
+) -> None:
+    from horde.apis.v2 import base
+
+    log_records: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(base.logfire, "info", lambda event_name, **attributes: log_records.append((event_name, attributes)))
+    first_call, second_call = _tool_call(call_id="call_one"), _tool_call("send_email", "call_two")
+    request_overrides = {"tools": [EMAIL_TOOL, LOOKUP_TOOL], "parallel_tool_calls": False}
+
+    request_id, submit_response = _serve_reply(
+        client, request_headers, chat_worker, request_overrides, content=None, tool_calls=[first_call, second_call]
+    )
+
+    assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
+    [generation] = _chat_status(client, request_headers, request_id)["generations"]
+    assert generation["message"] == {"role": "assistant", "content": None, "tool_calls": [first_call]}
+    assert generation["finish_reason"] == "tool_calls"
+    [submit_record] = [attributes for event_name, attributes in log_records if event_name == "horde.job_submit.done"]
+    assert submit_record["dropped_tool_calls"] == 1
+
+
+@pytest.mark.parametrize("conformance", ["strict", "best_effort"])
+def test_a_named_tool_choice_reply_finishes_with_stop_as_under_openai(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    conformance: str,
+) -> None:
+    request_overrides = {"tools": [EMAIL_TOOL, LOOKUP_TOOL], "tool_choice": NAMED_LOOKUP_CHOICE, "horde": {"conformance": conformance}}
+
+    request_id, submit_response = _serve_reply(
+        client, request_headers, chat_worker, request_overrides, content=None, tool_calls=[_tool_call()]
+    )
+
+    assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
+    [generation] = _chat_status(client, request_headers, request_id)["generations"]
+    assert generation["finish_reason"] == "stop"
+    assert generation["message"]["tool_calls"] == [_tool_call()]
+
+
+def test_a_strict_schema_reply_matching_the_schema_completes(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_overrides = {"response_format": _colour_format(strict=True)}
+
+    request_id, submit_response = _serve_reply(client, request_headers, chat_worker, request_overrides, content='{"name": "blue"}')
+
+    assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
+    assert _chat_status(client, request_headers, request_id)["generations"][0]["text"] == '{"name": "blue"}'
+
+
+def test_a_non_strict_schema_accepts_any_json_object(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_overrides = {"response_format": _colour_format(strict=False)}
+
+    request_id, submit_response = _serve_reply(client, request_headers, chat_worker, request_overrides, content='{"name": 7}')
+
+    assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
+    assert _chat_status(client, request_headers, request_id)["done"] is True

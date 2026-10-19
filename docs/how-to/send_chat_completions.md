@@ -78,12 +78,13 @@ curl -s "$OAI_BASE_URL/models" | jq '.data[] | {id, context_length, max: .top_pr
 | `x_horde.queued` | The model's queued work, shared with text requests. |
 | `context_length` | The largest context any of those workers declares. |
 | `top_provider.max_completion_tokens` | The largest `max_tokens` any of those workers declares. |
-| `supported_parameters` | `max_tokens`, `temperature`, `top_p`, `stop`; then `seed`, `frequency_penalty`, `presence_penalty`, `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` when a worker declares the feature. |
+| `supported_parameters` | `max_tokens`, `temperature`, `top_p`, `stop`; then `seed`, `frequency_penalty`, `presence_penalty`, `tools`, `response_format` when a worker declares the feature; `tool_choice` and `parallel_tool_calls` only when a worker serving tools also declares the guarantee that enforces them (see [Conformance](#conformance)). |
 | `architecture.input_modalities` | Includes `image` when a worker accepts images. |
 
 The fields are the maxima and union across the model's workers, and they are availability hints: a request at the
 largest `max_tokens` fits only the workers that declare it, and the workers online can change before the request is
-picked up. A request that no online worker can serve ends with 503 `no_eligible_worker` (see
+picked up. A request that no online worker can serve ends with 503 `no_eligible_worker`, or at once with 404
+`no_worker_supports_features` when the model's online workers lack a declaration it needs (see
 [Errors and retries](#errors-and-retries)).
 
 Verification: the model you configured appears in `.data[].id`, with `x_horde.workers` at least 1 and every optional
@@ -168,6 +169,7 @@ The `horde` object carries the Horde options OpenAI does not have a key for:
 | `slow_workers` | `true` | `false` excludes workers the Horde marks slow. |
 | `max_context_length` | none | An explicit context length; a worker serves the request only when its declared chat context is at least this. |
 | `context_fit` | `grow` | `grow` raises the context to fit the messages, up to the largest chat context an online worker for the model declares. `reject` refuses messages that do not fit the context. |
+| `conformance` | `strict` | `strict` sends the request only to workers that follow every part of the OpenAI contract it relies on. `best_effort` also accepts workers that may deviate; see [Conformance](#conformance). |
 
 Any other key in `horde`, including `dry_run` and `operation_key`, is 400 `UnsupportedChatParameter`. Restrictions
 narrow the eligible workers, so a combination no online worker satisfies ends with `no_eligible_worker`.
@@ -222,6 +224,28 @@ the returned `message` object to the history replays it correctly.
 Verification: the first reply's `message.tool_calls[0].function.name` is the function asked for, and the follow-up
 reply has `finish_reason` `stop` with text and no `tool_calls`.
 
+## Conformance
+
+By default (`"conformance": "strict"`) a request goes only to workers that declare the guarantees it relies on: an
+enforced `tool_choice` for `required` or a forced function, at most one call under `parallel_tool_calls: false`, schema
+adherence for a `json_schema` format with `strict: true`, and refusal rather than trimming of a prompt that does not
+fit. A request that needs a guarantee no online worker serving the model declares ends at once with 404
+`no_worker_supports_features`, and the message names the guarantee.
+
+To accept workers that may deviate, for example a backend that renders the same prompt for every `tool_choice`, send:
+
+```json
+{"horde": {"conformance": "best_effort"}}
+```
+
+Under `best_effort` the reply may not follow those parts of the contract. Features and limits still apply in both
+modes: a worker that clamps the temperature when tools are present does not receive a tools request above its limit,
+and a tools request above the limit of every online worker ends at once with 404 `no_worker_supports_features`.
+`tool_choice: "none"` does not need a guarantee, since the worker does not receive tool definitions under it.
+
+Verification: a request with a forced `tool_choice` that waited under `strict` on a model whose card does not list
+`tool_choice` is picked up under `best_effort`.
+
 ## Structured output
 
 `response_format` takes `{"type": "json_object"}` or `{"type": "json_schema", "json_schema": {"name", "schema",
@@ -274,6 +298,7 @@ The front's own codes:
 | 400 | `UnsupportedChatParameter`, `ChatRequestConflict`, `BadRequest` | | See [Keys the front refuses](#keys-the-front-refuses). |
 | 401 | `InvalidAuthorizationHeader` | | `Authorization` is not `Bearer <key>`. |
 | 404 | `model_not_found` | | The model id contains `:`. |
+| 404 | `no_worker_supports_features` | `false` | Online workers serve the model, but none declares a capability or guarantee the request needs, or the request exceeds a limit each declares, such as the temperature limit with tools. Returned on the first status read, without the grace period; the request is cancelled. |
 | 408 | `RequestBodyTimeout` | | The body arrived too slowly; the request was not submitted. |
 | 408 | `ChatRequestTimeout` | `false` | The request was still waiting at the front's deadline and was cancelled. |
 | 413 | `RequestTooLarge` | | The body exceeds the front's byte limit. |
@@ -293,6 +318,9 @@ Retry rules:
 - `no_eligible_worker` means the request as sent has no worker online: check the model card for the model's workers,
   `supported_parameters` and `max_completion_tokens`, and change the request or wait for workers; the same request
   fails the same way.
+- `no_worker_supports_features` names what is missing. Drop or change the feature, lower the temperature, or send
+  `horde.conformance: "best_effort"` when the missing names are guarantees; the same request fails the same way
+  until a worker declaring them comes online.
 - A stream always carries `x-should-retry: false`.
 
 Verification: a request for a model the Horde knows but no worker serves returns 503 with `"code":

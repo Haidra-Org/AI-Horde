@@ -43,6 +43,7 @@ import redis.asyncio
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from horde_sdk.generation_parameters.text.chat_policy import ChatGuarantee
 from loguru import logger
 from opentelemetry.metrics import Meter
 from pydantic import ValidationError
@@ -50,7 +51,12 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.background import BackgroundTask
 from starlette.requests import ClientDisconnect
 
-from horde.chat_contract import CHAT_REQUEST_CONFLICT_ERROR_TYPE, MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT
+from horde.chat_contract import (
+    CHAT_REQUEST_CONFLICT_ERROR_TYPE,
+    MAX_CHAT_IMAGE_BYTES,
+    MAX_CHAT_IMAGE_COUNT,
+    ChatImpossibleReason,
+)
 from horde.consts import ANONYMOUS_API_KEY, HORDE_VERSION
 from horde.oai.attribution import build_client_agent
 from horde.oai.horde_client import (
@@ -90,6 +96,7 @@ from horde.oai.waiter import (
     ChatWaitTimeoutError,
     CompletionSignalListener,
     CompletionSubscription,
+    DeclarationGapError,
     NoEligibleWorkerError,
     WaitBudget,
     WakeSource,
@@ -182,6 +189,14 @@ MODEL_NOT_FOUND_CODE: str = "model_not_found"
 
 NO_ELIGIBLE_WORKER_CODE: str = "no_eligible_worker"
 """The error code of a request no online worker could serve within the fail-fast grace."""
+
+NO_WORKER_SUPPORTS_FEATURES_CODE: str = "no_worker_supports_features"
+"""The error code of a request the online workers serving its model cannot take because of what they declare: a
+capability or guarantee none declares, or a declared limit the request exceeds. OpenRouter answers the same case,
+no endpoint supporting the requested features, with a 404."""
+
+GUARANTEE_NAMES: frozenset[str] = frozenset(guarantee.value for guarantee in ChatGuarantee)
+"""The declaration names that are guarantees, which ``horde.conformance: best_effort`` stops requiring."""
 
 OPERATION_KEY_CONFLICT_CODE: str = "OperationKeyConflict"
 """The Horde rc for an operation key already claimed with a different request."""
@@ -1287,6 +1302,8 @@ def _wait_error(error: ChatWaitTimeoutError | NoEligibleWorkerError | HordeAPIEr
             metadata=ErrorMetadata(request_id=request_id),
             job_may_exist=True,
         )
+    if isinstance(error, DeclarationGapError):
+        return _declaration_gap_error(error.impossible_reason, request_id=request_id)
     if isinstance(error, NoEligibleWorkerError):
         return ChatFrontError(
             status_code=HTTPStatus.SERVICE_UNAVAILABLE,
@@ -1297,6 +1314,34 @@ def _wait_error(error: ChatWaitTimeoutError | NoEligibleWorkerError | HordeAPIEr
             job_may_exist=True,
         )
     return _horde_error(error, request_id=request_id, job_may_exist=True)
+
+
+def _declaration_gap_error(impossible_reason: ChatImpossibleReason, *, request_id: str) -> ChatFrontError:
+    """Create the 404 for a request the online workers serving its model cannot take because of what they declare.
+
+    Retrying the same request does not help until a worker declaring the missing names comes online, so the error
+    carries no ``Retry-After``.
+    """
+    causes: list[str] = []
+    if impossible_reason.missing_declarations:
+        causes.append(
+            "no online worker serving the model declares " + ", ".join(impossible_reason.missing_declarations),
+        )
+    if impossible_reason.exceeded_limits:
+        causes.append(
+            f"the request exceeds the {', '.join(impossible_reason.exceeded_limits)} limit of every online worker serving the model",
+        )
+    message = f"No worker can serve this request: {'; '.join(causes) or 'the workers lack a declaration it needs'}."
+    if GUARANTEE_NAMES.intersection(impossible_reason.missing_declarations):
+        message += " Guarantees are not required under horde.conformance 'best_effort'."
+    message += " The request was cancelled."
+    return ChatFrontError(
+        status_code=HTTPStatus.NOT_FOUND,
+        message=message,
+        code=NO_WORKER_SUPPORTS_FEATURES_CODE,
+        metadata=ErrorMetadata(request_id=request_id),
+        job_may_exist=True,
+    )
 
 
 def _status_error_needs_cancel(error: HordeAPIError) -> bool:

@@ -1395,6 +1395,7 @@ class JobSubmitTemplate(Resource):
                 procgen_id=str(self.procgen.id),
                 kudos_reward=self.kudos,
                 outcome=outcome,
+                **self.get_submission_log_details(),
             )
         return ({"reward": self.kudos}, 200)
 
@@ -1418,6 +1419,14 @@ class JobSubmitTemplate(Resource):
             kwargs["gen_metadata"] = gen_metadata
         kwargs.update(self.get_submission_details())
         self.kudos = self.procgen.set_generation(**kwargs)
+
+    def get_submission_log_details(self) -> dict[str, object]:
+        """Return what a gentype adds to the submit's ``horde.job_submit.done`` log record.
+
+        Returns:
+            dict: Extra log attributes; none by default.
+        """
+        return {}
 
     def get_submission_details(self):
         """Return what a gentype's submission carries beyond the shared fields, passed on to ``set_generation``.

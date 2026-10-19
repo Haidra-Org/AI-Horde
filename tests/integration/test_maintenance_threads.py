@@ -59,6 +59,15 @@ def _redis_get(key: str):
     return horde_redis_module.horde_redis.horde_r.get(key)
 
 
+def _mark_faulted_after_repeated_faults_and_commit(waiting_prompt) -> bool:
+    """Apply the repeated-fault limit to ``waiting_prompt`` and commit, as the submit route's fault commit does."""
+    from horde.flask import db
+
+    request_faulted = waiting_prompt.mark_faulted_after_repeated_faults()
+    db.session.commit()
+    return request_faulted
+
+
 def _refresh_text_queue_position_cache() -> None:
     from horde.database import functions
 
@@ -183,6 +192,49 @@ class TestCheckWaitingPrompts:
         with app.app_context():
             faulted = db.session.query(TextWaitingPrompt).filter_by(id=request_id).one()
             assert faulted.terminal_outcome == RequestTerminalOutcome.FAULTED.value
+
+    def test_a_request_at_the_faulted_generations_limit_stays_open_and_one_more_fault_faults_it_once(
+        self,
+        client,
+        app,
+        api_key,
+        make_api_user,
+    ):
+        """The thread and the submit route apply one limit; the request faults only past it, and only once."""
+        from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
+        from horde.classes.kobold.processing_generation import TextProcessingGeneration
+        from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+        from horde.classes.kobold.worker import TextWorker
+        from horde.database import threads
+        from horde.flask import db
+
+        request_id = _queue_text_wp(client, api_key)
+        worker_user = make_api_user(trusted=True, kudos=100)
+        with app.app_context():
+            worker = TextWorker(user_id=worker_user.id, name="maintenance-fault-limit-worker")
+            db.session.add(worker)
+            db.session.commit()
+            worker_id = worker.id
+            for _ in range(FAULTED_GENERATIONS_LIMIT):
+                procgen = TextProcessingGeneration(wp_id=request_id, worker_id=worker_id, model=TEXT_MODEL)
+                procgen.faulted = True
+            db.session.commit()
+
+        threads.check_waiting_prompts()
+
+        with app.app_context():
+            waiting_prompt = db.session.query(TextWaitingPrompt).filter_by(id=request_id).one()
+            assert waiting_prompt.faulted is False
+            assert _mark_faulted_after_repeated_faults_and_commit(waiting_prompt) is False
+            procgen = TextProcessingGeneration(wp_id=request_id, worker_id=worker_id, model=TEXT_MODEL)
+            procgen.faulted = True
+            db.session.commit()
+            assert _mark_faulted_after_repeated_faults_and_commit(waiting_prompt) is True
+            assert _mark_faulted_after_repeated_faults_and_commit(waiting_prompt) is False
+            assert db.session.query(TextWaitingPrompt).filter_by(id=request_id).one().faulted is True
+
+        response = client.delete(f"/api/v2/generate/text/status/{request_id}", headers=_headers(api_key))
+        assert response.status_code == 200
 
 
 class TestCacheBuilders:

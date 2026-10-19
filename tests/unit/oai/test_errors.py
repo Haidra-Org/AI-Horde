@@ -308,6 +308,63 @@ async def test_no_eligible_worker_past_the_grace_is_503_and_cancels(start_front:
         assert response.json()["error"]["metadata"] == {"request_id": REQUEST_ID, "retry_after": 30}
 
 
+def gap_status(*, missing_declarations: list[str], exceeded_limits: list[str], kind: str = "declaration_gap") -> dict[str, object]:
+    """Return the native status of a request the online workers cannot take because of what they declare."""
+    return {
+        **waiting_status(is_possible=False),
+        "impossible_reason": {"kind": kind, "missing_declarations": missing_declarations, "exceeded_limits": exceeded_limits},
+    }
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_a_declaration_gap_is_404_on_the_first_status_without_the_grace_and_cancels(start_front: StartFront, stream: bool) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = gap_status(missing_declarations=["tool_choice_enforced"], exceeded_limits=[])
+        started_at = time.monotonic()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream))
+        elapsed_seconds = time.monotonic() - started_at
+
+    assert elapsed_seconds < FAST_TEST_SETTINGS.fail_fast_grace_seconds / 2
+    assert front.horde.cancel_route.call_count == 1
+    assert response.headers[SHOULD_RETRY] == "false"
+    assert "retry-after" not in response.headers
+    if stream:
+        assert response.status_code == 200
+        payloads = data_payloads(parse_sse_events(response.text))
+        error = json.loads(payloads[0])["error"]
+        assert payloads[-1] == "[DONE]"
+    else:
+        assert response.status_code == 404
+        error = response.json()["error"]
+    assert error["code"] == "no_worker_supports_features"
+    assert error["type"] == "not_found_error"
+    assert "declares tool_choice_enforced" in error["message"]
+    assert "best_effort" in error["message"]
+    assert error["metadata"] == {"request_id": REQUEST_ID}
+
+
+async def test_an_exceeded_limit_is_404_naming_the_limit(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = gap_status(missing_declarations=[], exceeded_limits=["tools_max_temperature"])
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 404
+    error = response.json()["error"]
+    assert error["code"] == "no_worker_supports_features"
+    assert "exceeds the tools_max_temperature limit" in error["message"]
+    assert "best_effort" not in error["message"]
+
+
+async def test_an_impossible_reason_of_an_unknown_kind_waits_out_the_grace(start_front: StartFront) -> None:
+    fail_fast_settings = FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 0.2})
+    async with start_front(fail_fast_settings) as front:
+        front.horde.status_payload = gap_status(missing_declarations=["x"], exceeded_limits=[], kind="a_later_kind")
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "no_eligible_worker"
+
+
 async def test_no_eligible_worker_does_not_fail_while_a_worker_is_processing(start_front: StartFront) -> None:
     fail_fast_settings = FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 0.1, "fallback_poll_seconds": 0.05})
     async with start_front(fail_fast_settings, with_redis=False) as front:

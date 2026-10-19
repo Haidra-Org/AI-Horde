@@ -13,8 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from horde_sdk.generation_parameters.text.chat_policy import ChatGuarantee
+
 __all__ = [
     "DEFAULT_CHAT_FEATURES",
+    "DEFAULT_CHAT_GUARANTEES",
     "FakeChatWorker",
     "build_chat_submit_body",
     "build_faulted_chat_submit_body",
@@ -24,6 +27,10 @@ __all__ = [
 DEFAULT_CHAT_FEATURES = ("seed", "presence_penalty")
 """The features the fake worker declares unless told otherwise, matching what koboldcpp declares."""
 
+DEFAULT_CHAT_GUARANTEES = tuple(guarantee.value for guarantee in ChatGuarantee)
+"""The guarantees the fake worker declares unless told otherwise: every one, as a fully conforming backend, so a
+strict request is refused only where a test withholds a guarantee."""
+
 
 def build_pop_body(
     *,
@@ -31,10 +38,13 @@ def build_pop_body(
     models: list[str],
     bridge_agent: str,
     chat_jobs: bool | None,
+    prompt_jobs: bool | None = None,
     model_id: str | None = None,
     chat_features: list[str] | None = None,
+    chat_guarantees: list[str] | None = None,
     chat_max_context_length: int = 8192,
     chat_max_length: int = 1024,
+    tools_max_temperature: float | None = None,
     max_context_length: int = 4096,
     max_length: int = 512,
     image_transports: list[str] | None = None,
@@ -46,10 +56,14 @@ def build_pop_body(
         models: The models the worker serves.
         bridge_agent: The worker's bridge agent string.
         chat_jobs: Whether to opt into chat jobs; None leaves the key out, as a worker that predates chat does.
+        prompt_jobs: Whether to accept text jobs; None leaves the key out, which accepts them.
         model_id: The chat model; the first of ``models`` when omitted.
         chat_features: The declared chat features; ``DEFAULT_CHAT_FEATURES`` when omitted.
+        chat_guarantees: The declared chat guarantees, sent in the same list as the features;
+            ``DEFAULT_CHAT_GUARANTEES`` when omitted.
         chat_max_context_length: The chat context limit.
         chat_max_length: The chat output limit.
+        tools_max_temperature: The tool temperature limit; left out of ``chat_limits`` when None.
         max_context_length: The text context limit.
         max_length: The text output limit.
         image_transports: The declared image transports; left out when None.
@@ -67,9 +81,16 @@ def build_pop_body(
     }
     if chat_jobs is not None:
         pop_body["chat_jobs"] = chat_jobs
+    if prompt_jobs is not None:
+        pop_body["prompt_jobs"] = prompt_jobs
     if chat_jobs:
-        pop_body["chat_features"] = list(DEFAULT_CHAT_FEATURES) if chat_features is None else chat_features
+        pop_body["chat_features"] = [
+            *(DEFAULT_CHAT_FEATURES if chat_features is None else chat_features),
+            *(DEFAULT_CHAT_GUARANTEES if chat_guarantees is None else chat_guarantees),
+        ]
         pop_body["chat_limits"] = {"max_context_length": chat_max_context_length, "max_length": chat_max_length}
+        if tools_max_temperature is not None:
+            pop_body["chat_limits"]["tools_max_temperature"] = tools_max_temperature
         pop_body["model_id"] = models[0] if model_id is None else model_id
     if image_transports is not None:
         pop_body["image_transports"] = image_transports

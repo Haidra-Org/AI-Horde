@@ -11,11 +11,14 @@
 -- and the hash of the request it claimed it for; context_adjustments records how the context length
 -- was changed to fit the messages, for the chat status. chat_extras holds the request's tools,
 -- tool_choice, parallel_tool_calls and response_format and, like messages, is loaded only for an
--- assigned request; chat_required_features lists the worker features the request needs, written once
--- when the request is created, so eligibility reads it without loading either JSONB column.
+-- assigned request; chat_required_features lists the worker capabilities and guarantees the request
+-- needs, written once when the request is created, so eligibility reads it without loading either JSONB
+-- column. chat_conformance holds the conformance mode the request selected; chat_tools_temperature holds
+-- the temperature the request forwards with tools, NULL when it forwards none, which the pop query
+-- compares with a worker's tool temperature limit.
 -- The workers columns hold the chat declaration a worker sends on each pop: whether it accepts chat
--- jobs, the optional features it implements, its chat limits, the model it serves chat jobs with and
--- the transports it accepts images by.
+-- jobs and whether it still accepts text jobs, the optional features and guarantees it declares, its chat
+-- limits, the model it serves chat jobs with and the transports it accepts images by.
 -- The processing_gens columns hold a chat worker's structured reply (the message with any tool calls,
 -- finish reasons and reported token counts), the basis the generation was charged on, the worker's
 -- declaration as it stood when the generation was assigned, and the transport the request's images
@@ -30,10 +33,14 @@ ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS operation_fingerprint CHAR(
 ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS context_adjustments JSONB;
 ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS chat_extras JSONB;
 ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS chat_required_features TEXT[];
+ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS chat_conformance VARCHAR NOT NULL DEFAULT 'strict';
+ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS chat_tools_temperature DOUBLE PRECISION;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS accepts_chat_jobs BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS accepts_prompt_jobs BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_features TEXT[];
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_max_context_length INTEGER;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_max_length INTEGER;
+ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_tools_max_temperature DOUBLE PRECISION;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_model_id VARCHAR;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS image_transports TEXT[];
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS message JSONB;

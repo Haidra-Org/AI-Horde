@@ -44,6 +44,7 @@ model list routes over the horde's native `/v2/generate/chat` routes (see
 | Native HTTP client and root rotation | `horde/oai/horde_client.py` | `HordeClient`, `create_http_client` |
 | Completion signal subscription and liveness ping | `horde/oai/waiter.py` | `CompletionSignalListener` |
 | Per-request wait, poll and deadline | `horde/oai/waiter.py` | `ChatRequestWatcher`, `WaitBudget`, `WakeSource` |
+| No eligible worker and declaration gap | `horde/oai/waiter.py`, `horde/oai/app.py` | `NoEligibleWorkerError`, `DeclarationGapError`, `_wait_error` |
 | Instruments and bucket boundaries | `horde/oai/metrics.py` | `FrontMetrics`, `histogram_views` |
 
 ## Request keys
@@ -96,13 +97,25 @@ A stream sends, after its keepalive comments, these `chat.completion.chunk` even
 The front answers browser preflights and allows any origin on every response (`Access-Control-Allow-Origin: *`),
 exposing `Retry-After` and `x-should-retry`, so a web client such as KoboldAI Lite can call it with a bearer key.
 
+## No eligible worker
+
+While the native status reports `is_possible` false with nothing processing, the front waits `fail_fast_grace_seconds`
+for a worker to appear, then cancels the request and returns 503 `no_eligible_worker` with `Retry-After: 30`. When
+the status carries an `impossible_reason` of kind `declaration_gap` (see
+[Impossible reason](chat_requests.md#impossible-reason)), it cancels at once and returns 404
+`no_worker_supports_features`, OpenRouter's status for no endpoint supporting the requested features, with no
+`Retry-After`. The message names the missing declarations or the exceeded limit, and adds that guarantees are not
+required under `best_effort` when a guarantee is missing. After stream headers the same error is the SSE error event.
+An `impossible_reason` of a kind the front does not know is ignored, so the grace applies.
+
 ## Model card fields
 
 `GET /v1/models` lists each text model with at least one online chat worker. `context_length` and
 `top_provider.max_completion_tokens` are the largest the workers declare; `architecture.input_modalities` adds `image`
 for `vision`. `supported_parameters` is `max_tokens`, `temperature`, `top_p` and `stop`, then `seed`,
-`frequency_penalty` and `presence_penalty` for the features of the same names, `tools`, `tool_choice` and
-`parallel_tool_calls` for `tools`, and `response_format` for `json_object` or `json_schema`. `x_horde` carries the
+`frequency_penalty` and `presence_penalty` for the features of the same names, `tools` for `tools`, with
+`tool_choice` added under the `tool_choice_enforced` guarantee and `parallel_tool_calls` under
+`single_tool_call_enforced`, and `response_format` for `json_object` or `json_schema`. `x_horde` carries the
 worker count and the queued work.
 
 ## Telemetry configuration
@@ -127,7 +140,7 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | --- | --- | --- | --- |
 | `horde.oai.requests.admitted` | counter | `streamed` | Chat requests that took an in-flight slot. |
 | `horde.oai.requests.refused` | counter | `status_code`, `code` | Chat requests refused before an in-flight slot: body size (413), body read timeout (408 `RequestBodyTimeout`), validation (400, 404), authorization (401), `FrontAtCapacity` (503). |
-| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed` | Admitted requests answered with an error status before any header: horde refusals at submit, 408 `ChatRequestTimeout`, 503 `no_eligible_worker`, 502 `ChatRequestFaulted` and `HordeUnavailable`. |
+| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed` | Admitted requests answered with an error status before any header: horde refusals at submit, 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 503 `no_eligible_worker`, 502 `ChatRequestFaulted` and `HordeUnavailable`. |
 | `horde.oai.stream.failures` | counter | `code` | Streamed requests whose 200 headers were sent and which ended in an SSE error event. |
 | `horde.oai.inflight` | observable gauge | none | Requests holding an in-flight slot. |
 | `horde.oai.inflight.sources` | observable gauge | none | Distinct client addresses holding at least one slot. |

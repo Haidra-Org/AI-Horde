@@ -12,6 +12,7 @@ from typing import Any
 import logfire
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import expression
 
 from horde.classes.base.kudos import kudos_event
@@ -476,10 +477,72 @@ class ProcessingGeneration(db.Model):
         if self.is_completed() or self.is_faulted():
             return
         self.faulted = True
-        self.worker.log_aborted_job()
+        self.log_worker_abort()
         self.log_aborted_generation()
         db.session.commit()
         self._record_capacity_return()
+
+    def fault_and_restart(self, *, stale: bool = False) -> None:
+        """Fault this pending generation on a worker report or timeout and apply retries and the fault limit atomically.
+
+        A status read between a separate fault commit and the restart would show the request with nothing waiting, and
+        one before the request's fault would offer the job to another worker. A fault that is not restarted and leaves
+        nothing waiting or processing with results missing faults the request in the same commit, since it could
+        otherwise never complete. Once the fault is committed it is reported at once, then the worker's counters and the
+        statistic are written; a failure there is logged and leaves the fault in place.
+
+        Args:
+            stale: Retry a timed-out job even when the image worker-fault policy would stop retrying. A request
+                cancelled by maintenance never receives a retry, regardless of this flag.
+
+        Concurrency:
+            The fault is a compare-and-set on the stored row: only a submit that moves the generation from pending to
+            faulted restarts its job, so a repeated or concurrent faulted submit, or one racing the stale-generation
+            thread, restarts it once. The restart is an SQL-side ``n = n + 1``, so it cannot overwrite a concurrent
+            pop's decrement.
+        """
+        # Decided before the fault, so the rule sees the request as it was when the worker reported it.
+        # Timeouts have always retried image jobs too; worker-reported image faults use their own retry policy.
+        restarts_job = stale or self.restarts_after_fault()
+        generation_class = type(self)
+        claimed_rows = (
+            db.session.query(generation_class)
+            .filter(
+                generation_class.id == self.id,
+                generation_class.faulted.is_(False),
+                generation_class.generation.is_(None),
+            )
+            .update({generation_class.faulted: True}, synchronize_session="fetch")
+        )
+        if claimed_rows != 1:
+            # Already finished or faulted by another submit or the stale-generation thread; this submit did not write.
+            return
+        if restarts_job:
+            self.wp.requeue_faulted_job()
+        request_faulted = self.wp.mark_faulted_after_repeated_faults()
+        request_stranded = False
+        if not restarts_job and not request_faulted:
+            request_stranded = self.wp.mark_faulted_when_stranded()
+        db.session.commit()
+        if request_faulted:
+            self.wp.report_repeated_faults()
+        if request_stranded:
+            self.wp.report_stranded_fault()
+        try:
+            self.log_worker_abort()
+            self.log_aborted_generation()
+            self._record_capacity_return()
+        except SQLAlchemyError as error:
+            db.session.rollback()
+            logger.error(f"Recording the fault of generation {self.id} failed after the fault was committed: {error}")
+
+    def restarts_after_fault(self) -> bool:
+        """Return whether a worker's fault of this generation puts its job back on the request; it always does."""
+        return True
+
+    def log_worker_abort(self) -> None:
+        """Count this generation's abort on its worker as a dropped job."""
+        self.worker.log_aborted_job()
 
     def _record_capacity_return(self) -> None:
         """Record one returned worker thread when this pop batch is terminal."""

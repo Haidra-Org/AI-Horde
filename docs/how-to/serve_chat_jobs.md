@@ -66,10 +66,29 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   | `json_object`       | The backend constrains the reply to one JSON object                                 |
   | `json_schema`       | The backend constrains the reply to the client's JSON Schema                        |
 
+  The same list carries guarantees: a guarantee states that the backend follows one part of the OpenAI contract
+  exactly, where it could otherwise deviate on purpose ([ADR 0036](../decisions/0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md)).
+  A request is `strict` unless the client opts into `best_effort`, and a strict request that needs a guarantee waits
+  for a worker that declares it. Declare a guarantee only when the backend implements the behaviour; operator
+  configuration can withhold a guarantee and does not add one.
+
+  | Guarantee                    | The worker promises                                                              |
+  | ---------------------------- | -------------------------------------------------------------------------------- |
+  | `tool_choice_enforced`       | Under `required` or a named function the reply calls a tool (that function), never prose alone; under `none` it calls none |
+  | `single_tool_call_enforced`  | Under `parallel_tool_calls: false` the reply carries at most one call            |
+  | `structured_output_enforced` | A `json_schema` reply satisfies the schema, or the job is faulted; the backend does not fall back to free text |
+  | `prompt_overflow_refused`    | A prompt that does not fit `chat_limits.max_context_length` faults the job and is not trimmed |
+
+  Every strict request needs `prompt_overflow_refused`, so a worker that does not declare it serves only
+  `best_effort` requests.
+
 - `chat_limits` bounds chat jobs only. The pop's `max_context_length` and `max_length` keep bounding text jobs. Set
   `chat_limits.max_context_length` to the context the backend really has for one conversation, rendered template and
   reply together, and `chat_limits.max_length` to the most tokens it generates for one reply. A request that
-  exceeds either limit is not sent to the worker.
+  exceeds either limit is not sent to the worker. Set the optional `chat_limits.tools_max_temperature` when the
+  backend lowers the temperature while tools are present: a request that forwards tools at a higher temperature is
+  then not sent to the worker, under either conformance mode, since a clamped value changes the request. Leave it out
+  when the backend applies every temperature as sent.
 - `model_id` is the model the worker serves chat jobs with, and it has to be one of `models`. The native route treats
   it as an opaque name. The OpenAI-compatible front reserves `:` for model variants and answers 404 for any model id
   that contains one, so a model name with a colon can be served natively and cannot be reached through the front
@@ -77,10 +96,14 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   colon.
 - `image_transports` lists how the worker accepts images: `url`, `base64` or both. Leave it out, or send it empty,
   when the worker takes no images (see [step 5](#5-serve-images)).
+- `prompt_jobs` is optional and defaults to `true`. Send `"prompt_jobs": false` with `chat_jobs: true` to serve chat
+  jobs only: the worker then does not receive text jobs, does not make a text request possible, and may leave out
+  `max_length` and `max_context_length`.
 
-Verification: the pop returns 200. A pop that sets `chat_jobs` without `chat_limits` or `model_id`, or with a
-`model_id` outside `models`, returns `400 ChatDeclarationInvalid` and its message says which field is wrong. Within
-about ten seconds (the model cache refresh) the model list shows the declaration:
+Verification: the pop returns 200. A pop that sets `chat_jobs` without `chat_limits` or `model_id`, with a negative
+`chat_limits.tools_max_temperature`, or with a `model_id` outside `models`, or that sets `prompt_jobs: false` without
+`chat_jobs`, returns `400 ChatDeclarationInvalid` and its message says which field is wrong. Within about ten seconds
+(the model cache refresh) the model list shows the declaration:
 
 ```bash
 curl -s "<HORDE_URL>/api/v2/status/models?type=text&chat=true" | jq '.[] | select(.name == "<model-name>") | .chat'
@@ -144,8 +167,10 @@ Verification: send a conversation longer than `chat_limits.max_context_length` a
 
 ## 4. Serve tools and structured output
 
-`tools`, `tool_choice`, `parallel_tool_calls` and `response_format` arrive exactly as the client sent them, and only
-when they change the answer ([Tools](../reference/chat_requests.md#tools)). Pass them to the backend unchanged.
+`tools`, `tool_choice`, `parallel_tool_calls` and `response_format` arrive as the client sent them, and only when they
+change the answer ([Tools](../reference/chat_requests.md#tools)), with two narrowings: under `tool_choice: none` no
+tool key arrives, and under a named `tool_choice` only that function arrives, with `tool_choice: "required"`. Pass
+them to the backend unchanged.
 
 - Declare `tools` only when the template renders tool definitions, assistant tool calls and tool results, and the
   worker returns the model's calls as `tool_calls`. A request needs `tools` when it offers tools under a `tool_choice`
@@ -212,7 +237,8 @@ Send `message`, `finish_reason` and `model_id` in place of `generation`
 - `finish_reason` is one of `stop`, `length`, `content_filter` and `tool_calls`. Map the backend's reason onto them:
   `length` when generation reached `max_length`, `tool_calls` when the reply carries calls, `content_filter` when the
   backend withheld or cut the reply on a content rule, and `stop` otherwise. `tool_calls` needs a non-empty
-  `message.tool_calls`; a forced `tool_choice` may finish with `stop` and calls.
+  `message.tool_calls`; a forced `tool_choice` may finish with `stop` and calls. Report `tool_calls` as the backend
+  does: the horde stores `stop` for a reply to a named `tool_choice`, which is what OpenAI returns.
 - `native_finish_reason` is the backend's reason, at most 32 characters. It is optional and shown to the client
   beside `finish_reason`.
 - `prompt_tokens` and `completion_tokens` are sent only when the backend reported them. Leave a count out rather
@@ -228,17 +254,41 @@ The horde refuses a submit it cannot store as a reply:
   client receives the reply as an OpenAI choice, which needs a message and a finish reason, and a `tool_calls` reason
   tells the client to look for calls.
 - `400 ChatSubmitInvalid` for `message` on a text job's submit, whose reply is `generation`.
+- `400 ChatSubmitInvalid` for a call to a function the request's `tools` do not define, or two calls with the same
+  `id`, under either conformance mode. The client dispatches a call by its name and answers it by its id. A request
+  with a named `tool_choice` reaches the worker with one tool, but the check uses every tool the client offered.
 - `400 ChatModelMismatch` for a `model_id` other than the assigned model. The generation records the model it was
   assigned to, and the client is told which model answered.
 - `400` for a token count outside 0 to 10,000,000.
+
+A `strict` request's reply also has to honour the request
+([Reply verification](../reference/chat_requests.md#reply-verification)). The horde checks what the reply proves,
+whatever the worker declared, so a backend that declares a guarantee it does not keep has its submits refused:
+
+- `400 ChatSubmitNonconformant` for a call under `tool_choice: none` (the worker received no tools then), for no call
+  under `tool_choice: "required"`, which is also what a named choice arrives as, or for a call to another function
+  than the named one.
+- `400 ChatSubmitNonconformant` for content that is not a JSON object under `response_format` `json_object` or a
+  `json_schema` without `strict`, or content that does not match a `strict` `json_schema`. A reply that only calls
+  tools, with empty or null content, is not checked against the format.
+- More than one call under `parallel_tool_calls: false` is not refused: the horde keeps the first and the client
+  receives one call. Submit the calls as the backend produced them.
+
+A `best_effort` request's reply is checked only for the function names and ids above. Each refusal is definitive:
+fault the job ([step 7](#7-fault-a-job)), do not resubmit the same reply, and withdraw a guarantee the backend
+keeps failing.
 
 Verification: the submit returns `{"reward": <kudos>}`, and the requester's `GET
 <HORDE_URL>/api/v2/generate/chat/status/<request-id>` shows `done: true` and the submitted `message`,
 `finish_reason`, token counts and `charge_basis: "output_estimate"`. Covered by
 `test_a_chat_request_completes_with_its_structured_reply_and_signals`,
 `test_a_tool_call_reply_is_popped_submitted_shown_and_charged_by_its_arguments`,
-`test_a_submit_naming_another_model_than_the_assigned_one_is_refused` and
-`test_a_chat_submit_without_a_valid_structured_reply_is_refused`.
+`test_a_submit_naming_another_model_than_the_assigned_one_is_refused`,
+`test_a_chat_submit_without_a_valid_structured_reply_is_refused`,
+`test_a_strict_request_refuses_a_reply_its_tool_choice_or_response_format_rules_out`,
+`test_a_best_effort_request_shows_that_reply_as_submitted`,
+`test_a_reply_no_client_could_use_is_refused_under_every_conformance_mode` and
+`test_a_strict_single_call_request_shows_only_the_first_of_several_calls`.
 
 Reversal: none. An accepted submit is settled; a second submit for the same job returns `400 DuplicateGen`.
 
@@ -341,7 +391,7 @@ The Horde's integration tests drive a minimal conforming worker, `tests/integrat
 submit with `tool_calls` and a null `content`, the faulted submit and the text-job coexistence are each asserted
 there. A worker author can compare a new worker's pop and submit bodies with the ones that worker sends, and run those
 tests against a local horde to see the server's refusals (`ChatDeclarationInvalid`, `ChatSubmitInvalid`,
-`ChatModelMismatch`) with their exact messages.
+`ChatSubmitNonconformant`, `ChatModelMismatch`) with their exact messages.
 
 ## Related
 

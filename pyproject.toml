@@ -78,6 +78,8 @@ dependencies = [
     # depends on sniffio, and a failed import is never cached, so without it every Horde call from the front
     # walked the whole import path and cost more CPU than the request itself.
     "sniffio",
+    # A chat job's reply to a strict json_schema response format is validated against the client's schema on submit.
+    "jsonschema>=4.26,<5",
 ]
 license = {file = "LICENSE"}
 classifiers = [

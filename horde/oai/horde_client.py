@@ -33,9 +33,9 @@ from http import HTTPStatus
 
 import httpx
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidatorFunctionWrapHandler, field_validator
 
-from horde.chat_contract import ChatToolCall
+from horde.chat_contract import ChatImpossibleReason, ChatToolCall
 from horde.oai.metrics import FrontMetrics, NativeCallOutcome, NativeCallType
 
 __all__ = [
@@ -324,6 +324,19 @@ class HordeChatStatus(BaseModel):
 
     context_adjustments: list[object] | None = None
     """The context changes the Horde applied to fit the messages, when it reports any."""
+
+    impossible_reason: ChatImpossibleReason | None = None
+    """Why no worker can take the request when waiting does not help, such as a declaration gap; None otherwise."""
+
+    @field_validator("impossible_reason", mode="wrap")
+    @classmethod
+    def _ignore_unknown_impossible_reason(cls, value: object, handler: ValidatorFunctionWrapHandler) -> ChatImpossibleReason | None:
+        """Read a reason of a kind this front does not know as none, so a newer Horde leaves the front waiting."""
+        try:
+            impossible_reason: ChatImpossibleReason | None = handler(value)
+        except ValidationError:
+            return None
+        return impossible_reason
 
 
 class HordeChatModelOffer(BaseModel):

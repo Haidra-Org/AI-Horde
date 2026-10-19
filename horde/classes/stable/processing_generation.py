@@ -94,6 +94,13 @@ class ImageProcessingGeneration(ProcessingGeneration):
             f" from by worker: {self.worker.name} ({self.worker.id})",
         )
 
+    def restarts_after_fault(self) -> bool:
+        """Return whether a worker's fault of this generation puts its job back on the request.
+
+        Only while the request has fewer finished generations than it asked for, earlier faulted ones counted.
+        """
+        return self.wp.count_finished_jobs() < self.wp.jobs
+
     def set_generation(self, generation, things_per_sec, **kwargs):
         with logfire.span("horde.stable.set_generation", procgen_id=str(self.id), wp_id=str(self.wp_id)):
             return self._set_generation_inner(generation, things_per_sec, **kwargs)
@@ -123,9 +130,7 @@ class ImageProcessingGeneration(ProcessingGeneration):
             #     }
             #     upload_prompt(prompt_dict)
         elif state == "faulted":
-            if self.wp.count_finished_jobs() < self.wp.jobs:
-                self.wp.n += 1
-            self.abort()
+            self.fault_and_restart()
         submit_state_handling_duration.record(time.monotonic() - state_t0, {"horde.gentype": "image"})
         if self.is_completed():
             return 0

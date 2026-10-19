@@ -5,6 +5,12 @@
 from typing import Any
 
 from flask_restx import fields, reqparse
+from horde_sdk.generation_parameters.text.chat_policy import (
+    DEFAULT_CHAT_CONFORMANCE,
+    ChatConformance,
+    ChatFeature,
+    ChatGuarantee,
+)
 
 from horde.apis.models import v2
 from horde.chat_contract import (
@@ -13,6 +19,7 @@ from horde.chat_contract import (
     MAX_CHAT_TOOL_COUNT,
     MAX_CHAT_TOOL_SPEC_BYTES,
     ChatContextFit,
+    ChatImpossibleKind,
 )
 from horde.classes.base.style_application import MAX_TEMPLATE_FIELD_WORDS
 from horde.classes.base.style_contract import MAX_TEMPLATE_FIELDS
@@ -21,7 +28,6 @@ from horde.classes.kobold.chat_request import (
     MAX_NATIVE_FINISH_REASON_LENGTH,
     MAX_REPORTED_TOKEN_COUNT,
     ChargeBasis,
-    ChatFeature,
     ChatImageTransport,
     ChatRole,
     FinishReason,
@@ -108,17 +114,25 @@ class TextParsers(v2.Parsers):
             location="json",
         )
         self.job_pop_parser.add_argument(
+            "prompt_jobs",
+            type=bool,
+            required=False,
+            default=True,
+            help="The worker accepts text jobs, which carry a prompt. False requires chat_jobs.",
+            location="json",
+        )
+        self.job_pop_parser.add_argument(
             "chat_features",
             type=list,
             required=False,
-            help="The optional chat features the worker implements.",
+            help="The optional chat features the worker implements and the chat guarantees its backend keeps.",
             location="json",
         )
         self.job_pop_parser.add_argument(
             "chat_limits",
             type=dict,
             required=False,
-            help="The context and output limits for chat jobs. Required with chat_jobs.",
+            help="The context, output and tool temperature limits for chat jobs. Required with chat_jobs.",
             location="json",
         )
         self.job_pop_parser.add_argument(
@@ -501,6 +515,15 @@ class TextModels(v2.Models):
                     min=1,
                     description="The most tokens the worker generates for a chat job.",
                 ),
+                # No schema minimum: a negative value is refused by the pop with ChatDeclarationInvalid, as the other
+                # declaration errors are, rather than by the generic payload validation.
+                "tools_max_temperature": fields.Float(
+                    description=(
+                        "The highest temperature, at least 0, the backend applies as sent when tools are present. A "
+                        "chat request that forwards tools at a higher temperature is not given to the worker. Absent "
+                        "means every temperature is applied as sent."
+                    ),
+                ),
             },
         )
         self.input_model_job_pop = api.inherit(
@@ -524,17 +547,27 @@ class TextModels(v2.Models):
                     default=False,
                     description=(
                         "The worker accepts chat jobs, which carry messages instead of a prompt. A worker that sets "
-                        "it still receives text jobs. Requires chat_limits and model_id."
+                        "it still receives text jobs unless prompt_jobs is false. Requires chat_limits and model_id."
+                    ),
+                ),
+                "prompt_jobs": fields.Boolean(
+                    default=True,
+                    description=(
+                        "The worker accepts text jobs, which carry a prompt. False, together with chat_jobs, makes "
+                        "the worker chat-only: it receives only chat jobs, and max_length and max_context_length "
+                        "do not apply. False without chat_jobs is refused."
                     ),
                 ),
                 "chat_features": fields.List(
                     fields.String,
                     description=(
                         "The optional chat features the worker implements: "
-                        f"{', '.join(feature.value for feature in ChatFeature)}. A chat request that needs one of "
-                        "them (a non-default seed or penalty, image parts, tools or a history with tool calls, a "
-                        "json_object or json_schema response format) only goes to workers that list it. Unknown names "
-                        "are ignored."
+                        f"{', '.join(feature.value for feature in ChatFeature)}; and the parts of the OpenAI chat "
+                        f"contract its backend follows exactly: {', '.join(guarantee.value for guarantee in ChatGuarantee)}. "
+                        "A chat request that needs a feature (a non-default seed or penalty, image parts, tools or a "
+                        "history with tool calls, a json_object or json_schema response format) only goes to workers "
+                        "that list it; under strict conformance so does a request that needs a guarantee. Unknown "
+                        "names are ignored."
                     ),
                 ),
                 "chat_limits": fields.Nested(
@@ -1100,6 +1133,15 @@ class TextModels(v2.Models):
                         "serves, or reject the request."
                     ),
                 ),
+                "conformance": fields.String(
+                    default=DEFAULT_CHAT_CONFORMANCE.value,
+                    enum=[conformance.value for conformance in ChatConformance],
+                    description=(
+                        "How closely the serving worker has to follow the OpenAI chat contract. strict only uses "
+                        "workers that declare every guarantee the request needs; best_effort drops that requirement "
+                        "and keeps the feature and limit checks."
+                    ),
+                ),
                 "dry_run": fields.Boolean(default=False, description="When true, return the kudos cost without queueing."),
                 "operation_key": fields.String(
                     description=(
@@ -1210,6 +1252,29 @@ class TextModels(v2.Models):
                 ),
             },
         )
+        self.response_model_chat_impossible_reason = api.model(
+            "ChatImpossibleReason",
+            {
+                "kind": fields.String(
+                    enum=[impossible_kind.value for impossible_kind in ChatImpossibleKind],
+                    description=(
+                        "'declaration_gap': online chat workers serve the model, but none declares every capability "
+                        "and guarantee the request needs, or each applies a limit the request exceeds."
+                    ),
+                ),
+                "missing_declarations": fields.List(
+                    fields.String,
+                    description=(
+                        "The capabilities and guarantees the refused workers lack, with 'image_transports' for a "
+                        "worker declaring vision without a way to receive images."
+                    ),
+                ),
+                "exceeded_limits": fields.List(
+                    fields.String,
+                    description="The declared limits the request exceeds, such as 'tools_max_temperature'.",
+                ),
+            },
+        )
         self.response_model_chat_status_full = api.inherit(
             "RequestStatusChat",
             self.response_model_wp_status_lite,
@@ -1218,6 +1283,15 @@ class TextModels(v2.Models):
                 "context_adjustments": fields.List(
                     fields.Nested(self.response_model_chat_context_adjustment),
                     description="How the horde changed the request's context length; null when it did not.",
+                ),
+                "impossible_reason": fields.Nested(
+                    self.response_model_chat_impossible_reason,
+                    allow_null=True,
+                    description=(
+                        "Why no worker can take the request when the cause is the workers' declarations, which waiting "
+                        "does not change while the online workers stay the same; null when is_possible is true or no "
+                        "worker serves the model at all."
+                    ),
                 ),
             },
         )

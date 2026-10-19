@@ -46,6 +46,7 @@ One decision per record: what was chosen, what was rejected, and what it cost.
 | [Fill OpenAI sampling defaults server-side and map the developer role to system](0033-fill-openai-sampling-defaults-and-map-the-developer-role.md) | proposed | 2026-10-17 |
 | [Map chat errors to the OpenAI envelope with OpenRouter's status vocabulary](0034-map-chat-errors-to-the-openai-envelope-with-openrouter-status-vocabulary.md) | proposed | 2026-10-17 |
 | [Keep anonymous access on the chat front](0035-keep-anonymous-access-on-the-chat-front.md) | proposed | 2026-10-17 |
+| [Route chat requests by declared guarantees under a conformance mode](0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md) | proposed | 2026-10-19 |
 
 ## Relationships
 
@@ -87,6 +88,7 @@ flowchart TD
     r0033["0033: Fill OpenAI sampling defaults server-…"]
     r0034["0034: Map chat errors to the OpenAI envelop…"]
     r0035["0035: Keep anonymous access on the chat fro…"]
+    r0036["0036: Route chat requests by declared guara…"]
     r0001 --> r0003
     r0001 --> r0004
     r0001 --> r0005

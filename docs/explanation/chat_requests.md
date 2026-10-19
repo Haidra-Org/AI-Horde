@@ -116,7 +116,38 @@ worker's declaration with that stored list and does not load a candidate's messa
 
 Two properties follow. A worker that predates chat never sends `chat_jobs`, so it never receives a job without a
 prompt. A worker that declares chat keeps receiving text jobs under its text limits, so opting in does not take
-text work away. The cost is trust: a misconfigured worker can declare a feature it does not honour.
+text work away; a worker that wants chat jobs only says so with `prompt_jobs: false`. The cost is trust: a
+misconfigured worker can declare a feature it does not honour.
+
+### Guarantees and the conformance mode
+
+A backend can accept every field and still deviate from the contract on purpose: it may render the same prompt for
+every `tool_choice`, clamp the temperature when tools are present, or trim a prompt that does not fit. Each is a
+reasonable local choice, and over the horde the requester sees only the reply. A capability says the worker acts on an
+input; a guarantee says the reply follows that part of the contract exactly
+([ADR 0036](../decisions/0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md)). Both share the
+`chat_features` list, and a numeric limit such as `tools_max_temperature` joins `chat_limits`.
+
+A request is `strict` unless its `horde` object selects `best_effort`, because the clients that cannot opt in are the
+plain OpenAI clients that expect OpenAI behaviour. Under `strict`, `required_chat_features` adds the guarantees the
+request relies on to the stored list, so eligibility compares them like features. Under `best_effort` the request does
+not require a guarantee. Limits apply in both modes, since a clamped value changes the request, and a mode governs
+only how faithfully the reply follows the request.
+
+The contract is held in three layers, each independent of the others. Routing sends a request only to a worker
+whose declaration covers it. Dispatch narrows what a job carries where the contract allows: under `tool_choice: none`
+the worker receives no tool definitions, so `none` needs no guarantee, and a named `tool_choice` reaches the worker as
+that one function under `required`. The stored request keeps the client's values, and the submit checks the reply
+against them.
+
+The submit check trusts no declaration, so a false one costs the worker refused submissions rather than the requester
+a wrong reply. It verifies only what the payload proves. Under `strict` a call under `none`, a missing or other call
+under a forced choice, and content that is not the requested JSON or does not match a `strict` schema are refused;
+several calls under `parallel_tool_calls: false` are cut to the first, since an OpenAI client would only ever see one.
+Under either mode a call to a function the client did not offer, or two calls sharing an id, is refused, because no
+client can dispatch or answer such a reply. A refused submit faults the job on the worker and counts towards faulting
+the request, so the check refuses only what OpenAI would never return. A trimmed prompt or a hidden tool-selection pass
+does not show in the reply and is not verified.
 
 ### Strict handling of unsupported parameters
 
@@ -223,7 +254,8 @@ price of a resolver and revision store, invisible to model pickers, and lost by 
   without a second charge ([ADR 0026](../decisions/0026-classify-client-retries-and-recover-submits-by-operation-key.md));
   a retry by the client is a new, charged request.
 - **The answer asked for.** Every parameter was either honoured by a worker that declared it or refused before the
-  request was queued.
+  request was queued. Under `strict`, a reply's tool calls follow `tool_choice` and `parallel_tool_calls`, and its
+  content follows `response_format`, whatever the worker declared.
 - **Stream order.** A stream's chunks arrive in the order above, and an error after the headers arrives as one error
   event followed by `[DONE]`.
 - **Failure behaviour.** A worker that cannot serve a job faults it and the job goes to another worker. A request that
@@ -240,8 +272,8 @@ price of a resolver and revision store, invisible to model pickers, and lost by 
 - **Identical answers across workers.** The defaults are the same everywhere; backends, quantisations and templates
   are not.
 - **Verified capabilities.** A feature is honoured by a worker that declared it, and the declaration is the worker's
-  claim.
-- **Token counts.** They are what the worker's backend reported, and null where it reported none.
+  claim. Only what the reply itself shows is checked; a trimmed prompt or a clamped sampler is not.
+- **Token counts.** They are what the worker's backend reported, and null where it did not report them.
 
 ## Related
 

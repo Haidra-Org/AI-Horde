@@ -12,6 +12,14 @@ from io import BytesIO
 from typing import Any
 
 import pytest
+from horde_sdk.generation_parameters.text.chat_policy import (
+    ChatConformance,
+    ChatFeature,
+    ChatGuarantee,
+    ChatRequestTraits,
+    ChatResponseFormatType,
+    ChatToolChoiceMode,
+)
 from PIL import Image
 from pydantic import ValidationError
 
@@ -30,19 +38,24 @@ from horde.classes.kobold.chat_request import (
     CHAT_IMAGE_PLACEHOLDER,
     CHAT_IMAGE_REFERENCE_PREFIX,
     CHAT_REQUEST_CONFLICT_RC,
+    CHAT_SUBMIT_INVALID_RC,
+    CHAT_SUBMIT_NONCONFORMANT_RC,
     DEFAULT_CHAT_MAX_TOKENS,
     UNSUPPORTED_CHAT_PARAMETER_RC,
-    ChatFeature,
     ChatImageTransport,
     ChatSubmittedMessage,
     build_chat_extras,
     build_chat_image_key,
     build_chat_job_payload,
+    build_chat_request_traits,
     build_model_names,
     build_stored_reply,
     build_text_params,
+    build_worker_chat_extras,
     build_worker_targeting,
     chat_reply_characters,
+    chat_reply_finish_reason,
+    chat_tools_temperature,
     flatten_messages,
     has_image_parts,
     list_chat_image_keys,
@@ -54,6 +67,7 @@ from horde.classes.kobold.chat_request import (
     rewrite_message_texts,
     select_image_transport,
     serialize_messages,
+    verify_chat_reply,
 )
 from horde.classes.kobold.processing_generation import is_empty_submission
 from horde.exceptions import KNOWN_RC
@@ -273,6 +287,14 @@ class TestSharedHordeOptions:
     def test_the_native_vocabulary_is_the_shared_models_fields(self) -> None:
         assert parse_chat_request(_body()).horde == ChatHordeOptions()
 
+    def test_conformance_defaults_to_strict_and_accepts_best_effort(self) -> None:
+        assert parse_chat_request(_body()).horde.conformance is ChatConformance.STRICT
+        assert parse_chat_request(_body(horde={"conformance": "best_effort"})).horde.conformance is ChatConformance.BEST_EFFORT
+
+    def test_an_unknown_conformance_is_refused(self) -> None:
+        with pytest.raises(ValidationError):
+            ChatHordeOptions.model_validate({"conformance": "lenient"})
+
 
 class TestSizeLimits:
     def test_more_messages_than_the_shared_cap_are_refused(self) -> None:
@@ -412,12 +434,199 @@ JSON_SCHEMA_FORMAT: dict[str, Any] = {
 """A ``json_schema`` response format as an OpenAI client sends it."""
 
 
-def _required_features(body: dict[str, Any]) -> set[ChatFeature]:
+def _required_features(
+    body: dict[str, Any],
+    conformance: ChatConformance = ChatConformance.BEST_EFFORT,
+) -> set[ChatFeature | ChatGuarantee]:
     chat_request = parse_chat_request(body)
-    return required_chat_features(build_text_params(chat_request), serialize_messages(chat_request), build_chat_extras(chat_request))
+    return required_chat_features(
+        build_text_params(chat_request),
+        serialize_messages(chat_request),
+        build_chat_extras(chat_request),
+        conformance,
+    )
+
+
+def _traits(body: dict[str, Any]) -> ChatRequestTraits:
+    chat_request = parse_chat_request(body)
+    return build_chat_request_traits(build_text_params(chat_request), build_chat_extras(chat_request))
+
+
+NAMED_LOOKUP_CHOICE: dict[str, Any] = {"type": "function", "function": {"name": "lookup_weather"}}
+"""A ``tool_choice`` forcing ``LOOKUP_TOOL``."""
+
+OTHER_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {"name": "send_email", "parameters": {"type": "object"}},
+}
+"""A second function tool, beside ``LOOKUP_TOOL``."""
+
+
+class TestRequestTraits:
+    def test_a_request_without_extras_has_the_api_defaults(self) -> None:
+        assert _traits(_body()) == ChatRequestTraits(
+            offers_tools=False,
+            tool_choice_mode=ChatToolChoiceMode.AUTO,
+            parallel_tool_calls=True,
+            response_format_type=None,
+            strict_schema=False,
+            temperature=1.0,
+        )
+
+    def test_the_sent_values_are_read_from_params_and_extras(self) -> None:
+        assert _traits(
+            _body(
+                temperature=0.4,
+                tools=[LOOKUP_TOOL],
+                tool_choice=NAMED_LOOKUP_CHOICE,
+                parallel_tool_calls=False,
+                response_format=JSON_SCHEMA_FORMAT,
+            ),
+        ) == ChatRequestTraits(
+            offers_tools=True,
+            tool_choice_mode=ChatToolChoiceMode.NAMED,
+            parallel_tool_calls=False,
+            response_format_type=ChatResponseFormatType.JSON_SCHEMA,
+            strict_schema=True,
+            temperature=0.4,
+        )
+
+    @pytest.mark.parametrize(
+        ("tool_choice", "expected"),
+        [
+            ("none", ChatToolChoiceMode.NONE),
+            ("auto", ChatToolChoiceMode.AUTO),
+            ("required", ChatToolChoiceMode.REQUIRED),
+        ],
+    )
+    def test_a_mode_tool_choice_is_its_policy_mode(self, tool_choice: str, expected: ChatToolChoiceMode) -> None:
+        assert _traits(_body(tools=[LOOKUP_TOOL], tool_choice=tool_choice)).tool_choice_mode is expected
+
+    def test_a_json_object_format_is_not_a_strict_schema(self) -> None:
+        traits = _traits(_body(response_format={"type": "json_object"}))
+
+        assert traits.response_format_type is ChatResponseFormatType.JSON_OBJECT
+        assert traits.strict_schema is False
+
+
+class TestToolsTemperature:
+    def test_tools_under_auto_store_the_forwarded_temperature(self) -> None:
+        assert chat_tools_temperature(_traits(_body(tools=[LOOKUP_TOOL], tool_choice="auto", temperature=1.5))) == 1.5
+
+    def test_tools_without_a_temperature_store_the_default(self) -> None:
+        assert chat_tools_temperature(_traits(_body(tools=[LOOKUP_TOOL]))) == 1.0
+
+    def test_tools_under_none_store_nothing(self) -> None:
+        assert chat_tools_temperature(_traits(_body(tools=[LOOKUP_TOOL], tool_choice="none", temperature=1.5))) is None
+
+    def test_a_request_without_tools_stores_nothing(self) -> None:
+        assert chat_tools_temperature(_traits(_body(temperature=1.5))) is None
+
+
+class TestRequiredGuarantees:
+    """Under strict conformance a request also needs the guarantees its traits call for (ADR 0036)."""
+
+    def test_every_strict_request_needs_the_prompt_overflow_guarantee(self) -> None:
+        assert _required_features(_body(), ChatConformance.STRICT) == {ChatGuarantee.PROMPT_OVERFLOW_REFUSED}
+
+    def test_best_effort_needs_no_guarantee(self) -> None:
+        assert _required_features(
+            _body(tools=[LOOKUP_TOOL], tool_choice="required", parallel_tool_calls=False, response_format=JSON_SCHEMA_FORMAT),
+        ) == {ChatFeature.TOOLS, ChatFeature.JSON_SCHEMA}
+
+    def test_tools_under_auto_need_no_tool_guarantee(self) -> None:
+        assert _required_features(_body(tools=[LOOKUP_TOOL]), ChatConformance.STRICT) == {
+            ChatFeature.TOOLS,
+            ChatGuarantee.PROMPT_OVERFLOW_REFUSED,
+        }
+
+    @pytest.mark.parametrize("tool_choice", ["required", NAMED_LOOKUP_CHOICE])
+    def test_a_forcing_tool_choice_needs_the_tool_choice_guarantee(self, tool_choice: str | dict[str, Any]) -> None:
+        assert _required_features(_body(tools=[LOOKUP_TOOL], tool_choice=tool_choice), ChatConformance.STRICT) == {
+            ChatFeature.TOOLS,
+            ChatGuarantee.TOOL_CHOICE_ENFORCED,
+            ChatGuarantee.PROMPT_OVERFLOW_REFUSED,
+        }
+
+    def test_tool_choice_none_needs_no_tool_guarantee(self) -> None:
+        assert _required_features(
+            _body(tools=[LOOKUP_TOOL], tool_choice="none", parallel_tool_calls=False),
+            ChatConformance.STRICT,
+        ) == {ChatGuarantee.PROMPT_OVERFLOW_REFUSED}
+
+    def test_tool_choice_none_with_a_tool_history_needs_the_tools_feature_and_no_tool_guarantee(self) -> None:
+        assert _required_features(
+            _body(messages=TOOL_HISTORY, tools=[LOOKUP_TOOL], tool_choice="none"),
+            ChatConformance.STRICT,
+        ) == {ChatFeature.TOOLS, ChatGuarantee.PROMPT_OVERFLOW_REFUSED}
+
+    def test_tools_without_parallel_calls_need_the_single_call_guarantee(self) -> None:
+        assert _required_features(_body(tools=[LOOKUP_TOOL], parallel_tool_calls=False), ChatConformance.STRICT) == {
+            ChatFeature.TOOLS,
+            ChatGuarantee.SINGLE_TOOL_CALL_ENFORCED,
+            ChatGuarantee.PROMPT_OVERFLOW_REFUSED,
+        }
+
+    def test_a_strict_json_schema_needs_the_structured_output_guarantee(self) -> None:
+        assert _required_features(_body(response_format=JSON_SCHEMA_FORMAT), ChatConformance.STRICT) == {
+            ChatFeature.JSON_SCHEMA,
+            ChatGuarantee.STRUCTURED_OUTPUT_ENFORCED,
+            ChatGuarantee.PROMPT_OVERFLOW_REFUSED,
+        }
+
+    def test_a_non_strict_json_schema_needs_no_structured_output_guarantee(self) -> None:
+        loose_format = {**JSON_SCHEMA_FORMAT, "json_schema": {**JSON_SCHEMA_FORMAT["json_schema"], "strict": False}}
+
+        assert _required_features(_body(response_format=loose_format), ChatConformance.STRICT) == {
+            ChatFeature.JSON_SCHEMA,
+            ChatGuarantee.PROMPT_OVERFLOW_REFUSED,
+        }
+
+
+class TestWorkerChatExtras:
+    """The worker's copy of the extras is narrowed to what the tool choice lets the model call."""
+
+    def test_tool_choice_none_forwards_no_tool_keys(self) -> None:
+        chat_extras = build_chat_extras(
+            parse_chat_request(
+                _body(tools=[LOOKUP_TOOL], tool_choice="none", parallel_tool_calls=False, response_format={"type": "json_object"}),
+            ),
+        )
+
+        assert build_worker_chat_extras(chat_extras) == {"response_format": {"type": "json_object"}}
+
+    def test_a_named_choice_forwards_only_that_function_under_required(self) -> None:
+        chat_extras = build_chat_extras(
+            parse_chat_request(_body(tools=[OTHER_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE, parallel_tool_calls=False)),
+        )
+
+        assert build_worker_chat_extras(chat_extras) == {
+            "tools": [LOOKUP_TOOL],
+            "tool_choice": "required",
+            "parallel_tool_calls": False,
+        }
+
+    @pytest.mark.parametrize("tool_choice", ["auto", "required"])
+    def test_auto_and_required_forward_the_extras_as_stored(self, tool_choice: str) -> None:
+        chat_extras = build_chat_extras(parse_chat_request(_body(tools=[OTHER_TOOL, LOOKUP_TOOL], tool_choice=tool_choice)))
+
+        assert build_worker_chat_extras(chat_extras) == chat_extras
+
+    def test_narrowing_leaves_the_stored_extras_unchanged(self) -> None:
+        chat_extras = build_chat_extras(parse_chat_request(_body(tools=[OTHER_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)))
+        stored_copy = {**chat_extras, "tools": list(chat_extras["tools"])}
+
+        build_worker_chat_extras(chat_extras)
+
+        assert chat_extras == stored_copy
+
+    def test_a_request_without_extras_forwards_nothing(self) -> None:
+        assert build_worker_chat_extras(None) == {}
 
 
 class TestRequiredFeatures:
+    """The capabilities a request needs, which apply under every conformance mode."""
+
     def test_a_request_at_default_values_needs_no_feature(self) -> None:
         assert _required_features(_body(frequency_penalty=0, presence_penalty=0.0)) == set()
 
@@ -497,7 +706,7 @@ class TestTools:
     def test_values_meaning_the_default_store_nothing(self, default_values: dict[str, Any]) -> None:
         assert build_chat_extras(parse_chat_request(_body(**default_values))) is None
 
-    def test_tool_choice_none_beside_tools_is_stored_so_the_worker_does_not_default_to_auto(self) -> None:
+    def test_tool_choice_none_beside_tools_is_stored_as_sent(self) -> None:
         chat_request = parse_chat_request(_body(tools=[LOOKUP_TOOL], tool_choice="none", parallel_tool_calls=True))
 
         assert build_chat_extras(chat_request) == {"tools": [LOOKUP_TOOL], "tool_choice": "none", "parallel_tool_calls": True}
@@ -682,6 +891,255 @@ class TestSubmittedReply:
         assert is_empty_submission("", {"role": "assistant", "content": None, "tool_calls": [LOOKUP_CALL]}) is False
         assert is_empty_submission("", {"role": "assistant", "content": ""}) is True
         assert is_empty_submission("", None) is True
+
+
+COLOUR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}},
+    "required": ["name"],
+    "additionalProperties": False,
+}
+"""A JSON Schema for one named colour."""
+
+
+def _stored_extras(**request_overrides: Any) -> dict[str, Any] | None:
+    return build_chat_extras(parse_chat_request(_body(**request_overrides)))
+
+
+def _schema_format(schema: dict[str, Any], *, strict: bool | None = True) -> dict[str, Any]:
+    json_schema: dict[str, Any] = {"name": "colour", "schema": schema}
+    if strict is not None:
+        json_schema["strict"] = strict
+    return {"type": "json_schema", "json_schema": json_schema}
+
+
+def _call(name: str = "lookup_weather", call_id: str = "call_abc") -> dict[str, Any]:
+    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": "{}"}}
+
+
+def _reply(content: str | None = None, tool_calls: list[dict[str, Any]] | None = None) -> ChatSubmittedMessage:
+    return ChatSubmittedMessage.model_validate({"role": "assistant", "content": content, "tool_calls": tool_calls})
+
+
+def _verification_refusal(
+    reply: ChatSubmittedMessage,
+    chat_extras: dict[str, Any] | None,
+    conformance: ChatConformance = ChatConformance.STRICT,
+) -> e.BadRequest:
+    with pytest.raises(e.BadRequest) as raised:
+        verify_chat_reply(reply, chat_extras, conformance)
+    return raised.value
+
+
+class TestReplyVerification:
+    """A submitted reply is checked against the client's stored extras under the request's conformance mode."""
+
+    def test_both_submit_return_codes_are_known(self) -> None:
+        assert {CHAT_SUBMIT_INVALID_RC, CHAT_SUBMIT_NONCONFORMANT_RC} <= set(KNOWN_RC)
+
+    def test_a_reply_honouring_the_request_is_returned_unchanged(self) -> None:
+        reply = _reply(tool_calls=[_call()])
+
+        assert verify_chat_reply(reply, _stored_extras(tools=[LOOKUP_TOOL], tool_choice="required"), ChatConformance.STRICT) == reply
+
+    def test_a_plain_reply_to_a_request_without_extras_passes(self) -> None:
+        reply = _reply("Blue.")
+
+        assert verify_chat_reply(reply, None, ChatConformance.STRICT) == reply
+
+    def test_a_strict_tool_choice_none_refuses_a_call(self) -> None:
+        refusal = _verification_refusal(_reply(tool_calls=[_call()]), _stored_extras(tools=[LOOKUP_TOOL], tool_choice="none"))
+
+        assert refusal.rc == CHAT_SUBMIT_NONCONFORMANT_RC
+        assert "'none'" in refusal.specific
+
+    def test_a_strict_tool_choice_required_refuses_a_reply_without_a_call(self) -> None:
+        refusal = _verification_refusal(_reply("Sunny."), _stored_extras(tools=[LOOKUP_TOOL], tool_choice="required"))
+
+        assert refusal.rc == CHAT_SUBMIT_NONCONFORMANT_RC
+        assert "'required'" in refusal.specific
+
+    @pytest.mark.parametrize(
+        "tool_calls",
+        [None, [_call("send_email")], [_call(), _call("send_email", "call_def")]],
+        ids=["no-call", "other-function", "named-and-other-function"],
+    )
+    def test_a_strict_named_tool_choice_refuses_a_reply_not_calling_only_that_function(
+        self, tool_calls: list[dict[str, Any]] | None
+    ) -> None:
+        chat_extras = _stored_extras(tools=[OTHER_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)
+
+        refusal = _verification_refusal(_reply("Sunny." if tool_calls is None else None, tool_calls), chat_extras)
+
+        assert refusal.rc == CHAT_SUBMIT_NONCONFORMANT_RC
+        assert "forces 'lookup_weather'" in refusal.specific
+
+    @pytest.mark.parametrize(
+        ("request_overrides", "reply"),
+        [
+            ({"tools": [LOOKUP_TOOL], "tool_choice": "none"}, _reply(tool_calls=[_call()])),
+            ({"tools": [LOOKUP_TOOL], "tool_choice": "required"}, _reply("Sunny.")),
+            ({"tools": [OTHER_TOOL, LOOKUP_TOOL], "tool_choice": NAMED_LOOKUP_CHOICE}, _reply(tool_calls=[_call("send_email")])),
+            ({"response_format": {"type": "json_object"}}, _reply("not json")),
+            ({"response_format": _schema_format(COLOUR_SCHEMA)}, _reply('{"name": 7}')),
+        ],
+        ids=["none-with-call", "required-without-call", "named-other-function", "json-object-not-json", "strict-schema-mismatch"],
+    )
+    def test_best_effort_passes_a_reply_strict_would_refuse(self, request_overrides: dict[str, Any], reply: ChatSubmittedMessage) -> None:
+        chat_extras = _stored_extras(**request_overrides)
+
+        assert _verification_refusal(reply, chat_extras).rc == CHAT_SUBMIT_NONCONFORMANT_RC
+        assert verify_chat_reply(reply, chat_extras, ChatConformance.BEST_EFFORT) == reply
+
+    @pytest.mark.parametrize("conformance", list(ChatConformance))
+    def test_a_call_to_a_function_the_request_did_not_offer_is_refused_under_every_mode(self, conformance: ChatConformance) -> None:
+        refusal = _verification_refusal(_reply(tool_calls=[_call("send_email")]), _stored_extras(tools=[LOOKUP_TOOL]), conformance)
+
+        assert refusal.rc == CHAT_SUBMIT_INVALID_RC
+        assert "'send_email'" in refusal.specific
+
+    @pytest.mark.parametrize("conformance", list(ChatConformance))
+    def test_a_call_to_a_request_without_tools_is_refused_under_every_mode(self, conformance: ChatConformance) -> None:
+        refusal = _verification_refusal(_reply(tool_calls=[_call()]), None, conformance)
+
+        assert refusal.rc == CHAT_SUBMIT_INVALID_RC
+        assert "offered no tools" in refusal.specific
+
+    @pytest.mark.parametrize("conformance", list(ChatConformance))
+    def test_two_calls_sharing_an_id_are_refused_under_every_mode(self, conformance: ChatConformance) -> None:
+        refusal = _verification_refusal(_reply(tool_calls=[_call(), _call()]), _stored_extras(tools=[LOOKUP_TOOL]), conformance)
+
+        assert refusal.rc == CHAT_SUBMIT_INVALID_RC
+        assert "'id'" in refusal.specific
+
+    def test_a_strict_single_call_request_keeps_only_the_first_call(self) -> None:
+        first_call, second_call = _call(call_id="call_one"), _call("send_email", "call_two")
+        chat_extras = _stored_extras(tools=[OTHER_TOOL, LOOKUP_TOOL], parallel_tool_calls=False)
+
+        verified_reply = verify_chat_reply(_reply(tool_calls=[first_call, second_call]), chat_extras, ChatConformance.STRICT)
+
+        assert build_stored_reply(verified_reply) == {"role": "assistant", "content": None, "tool_calls": [first_call]}
+
+    def test_a_call_the_single_call_reduction_drops_is_not_checked(self) -> None:
+        chat_extras = _stored_extras(tools=[LOOKUP_TOOL], parallel_tool_calls=False)
+
+        verified_reply = verify_chat_reply(_reply(tool_calls=[_call(), _call("undeclared")]), chat_extras, ChatConformance.STRICT)
+
+        assert verified_reply.tool_calls is not None
+        assert [tool_call.function.name for tool_call in verified_reply.tool_calls] == ["lookup_weather"]
+
+    @pytest.mark.parametrize(
+        ("parallel_tool_calls", "conformance"),
+        [(True, ChatConformance.STRICT), (False, ChatConformance.BEST_EFFORT)],
+        ids=["parallel-strict", "single-best-effort"],
+    )
+    def test_several_calls_are_kept_when_the_reduction_does_not_apply(
+        self, parallel_tool_calls: bool, conformance: ChatConformance
+    ) -> None:
+        reply = _reply(tool_calls=[_call(call_id="call_one"), _call(call_id="call_two")])
+        chat_extras = _stored_extras(tools=[LOOKUP_TOOL], parallel_tool_calls=parallel_tool_calls)
+
+        assert verify_chat_reply(reply, chat_extras, conformance) == reply
+
+    @pytest.mark.parametrize(
+        "content",
+        ["Blue.", "", "[1, 2]", '"blue"', '{"name": NaN}'],
+        ids=["text", "empty", "array", "string", "nan"],
+    )
+    def test_a_strict_json_object_format_refuses_content_that_is_not_a_json_object(self, content: str) -> None:
+        refusal = _verification_refusal(_reply(content), _stored_extras(response_format={"type": "json_object"}))
+
+        assert refusal.rc == CHAT_SUBMIT_NONCONFORMANT_RC
+        assert "'json_object'" in refusal.specific
+
+    def test_a_strict_json_object_format_accepts_a_json_object(self) -> None:
+        reply = _reply('{"name": "blue"}')
+
+        assert verify_chat_reply(reply, _stored_extras(response_format={"type": "json_object"}), ChatConformance.STRICT) == reply
+
+    def test_tool_calls_without_content_are_exempt_from_the_format(self) -> None:
+        reply = _reply(tool_calls=[_call()])
+        chat_extras = _stored_extras(tools=[LOOKUP_TOOL], response_format=_schema_format(COLOUR_SCHEMA))
+
+        assert verify_chat_reply(reply, chat_extras, ChatConformance.STRICT) == reply
+
+    def test_a_strict_schema_accepts_a_matching_reply(self) -> None:
+        reply = _reply('{"name": "blue"}')
+
+        assert verify_chat_reply(reply, _stored_extras(response_format=_schema_format(COLOUR_SCHEMA)), ChatConformance.STRICT) == reply
+
+    @pytest.mark.parametrize(
+        ("content", "failed_check"),
+        [
+            ('{"name": 7}', "'type' fails at $.name"),
+            ('{"name": "blue", "hue": 1}', "'additionalProperties' fails at $"),
+            ("{}", "'required'"),
+        ],
+        ids=["wrong-type", "extra-property", "missing-property"],
+    )
+    def test_a_strict_schema_refuses_a_reply_that_does_not_match(self, content: str, failed_check: str) -> None:
+        refusal = _verification_refusal(_reply(content), _stored_extras(response_format=_schema_format(COLOUR_SCHEMA)))
+
+        assert refusal.rc == CHAT_SUBMIT_NONCONFORMANT_RC
+        assert "does not match the request's JSON Schema 'colour'" in refusal.specific
+        assert failed_check in refusal.specific
+
+    @pytest.mark.parametrize(
+        "schema",
+        [{"type": "not-a-type"}, {"$ref": "#/$defs/missing"}, {"$ref": "https://example.com/colour.json"}],
+        ids=["invalid-schema", "missing-local-reference", "remote-reference"],
+    )
+    def test_a_strict_schema_that_cannot_be_compiled_refuses_the_reply_with_its_own_message(self, schema: dict[str, Any]) -> None:
+        refusal = _verification_refusal(_reply('{"name": "blue"}'), _stored_extras(response_format=_schema_format(schema)))
+
+        assert refusal.rc == CHAT_SUBMIT_NONCONFORMANT_RC
+        assert "cannot be compiled" in refusal.specific
+
+    def test_a_strict_schema_is_read_by_the_draft_its_schema_key_declares(self) -> None:
+        # An array under 'items' is a tuple schema in draft 7 and an invalid schema in draft 2020-12.
+        tuple_schema = {"$schema": "http://json-schema.org/draft-07/schema#", "type": "array", "items": [{"type": "string"}]}
+        chat_extras = _stored_extras(response_format=_schema_format(tuple_schema))
+
+        assert verify_chat_reply(_reply('["blue"]'), chat_extras, ChatConformance.STRICT) == _reply('["blue"]')
+        assert "'type' fails" in _verification_refusal(_reply("[7]"), chat_extras).specific
+
+    @pytest.mark.parametrize("strict", [False, None], ids=["strict-false", "strict-unset"])
+    def test_a_non_strict_schema_needs_only_a_json_object(self, strict: bool | None) -> None:
+        chat_extras = _stored_extras(response_format=_schema_format(COLOUR_SCHEMA, strict=strict))
+        mismatching_object = _reply('{"name": 7}')
+
+        assert verify_chat_reply(mismatching_object, chat_extras, ChatConformance.STRICT) == mismatching_object
+        assert _verification_refusal(_reply("[7]"), chat_extras).rc == CHAT_SUBMIT_NONCONFORMANT_RC
+
+    def test_content_nested_too_deeply_to_parse_is_refused_as_not_json(self) -> None:
+        deeply_nested = "[" * 100_000 + "]" * 100_000
+
+        refusal = _verification_refusal(_reply(deeply_nested), _stored_extras(response_format={"type": "json_object"}))
+
+        assert refusal.rc == CHAT_SUBMIT_NONCONFORMANT_RC
+
+
+class TestReplyFinishReason:
+    """The finish reason a client receives follows OpenAI's shape for the request's ``tool_choice``."""
+
+    def test_a_named_choice_answered_with_its_call_finishes_with_stop(self) -> None:
+        chat_extras = _stored_extras(tools=[OTHER_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)
+
+        assert chat_reply_finish_reason("tool_calls", _reply(tool_calls=[_call()]), chat_extras) == "stop"
+
+    @pytest.mark.parametrize("tool_choice", [None, "auto", "required"])
+    def test_a_mode_choice_keeps_the_tool_calls_finish(self, tool_choice: str | None) -> None:
+        request_overrides: dict[str, Any] = {"tools": [LOOKUP_TOOL]}
+        if tool_choice is not None:
+            request_overrides["tool_choice"] = tool_choice
+
+        assert chat_reply_finish_reason("tool_calls", _reply(tool_calls=[_call()]), _stored_extras(**request_overrides)) == "tool_calls"
+
+    @pytest.mark.parametrize("finish_reason", ["length", "content_filter", "stop"])
+    def test_a_named_choice_keeps_every_other_finish_reason(self, finish_reason: str) -> None:
+        chat_extras = _stored_extras(tools=[LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)
+
+        assert chat_reply_finish_reason(finish_reason, _reply(tool_calls=[_call()]), chat_extras) == finish_reason
 
 
 class TestChatJobPayload:

@@ -7,11 +7,12 @@ import os
 import time
 import urllib.parse
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import logfire
+from horde_sdk.generation_parameters.text.chat_policy import ChatLimitName
 from sqlalchemy import Boolean, and_, case, func, not_, or_, select
 from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload
 
@@ -21,6 +22,7 @@ from horde.bridge_reference import (
     check_bridge_capability,
     get_supported_samplers,
 )
+from horde.chat_contract import ChatImpossibleKind, ChatImpossibleReason
 from horde.classes.base.detection import Filter
 from horde.classes.base.kudos import KudosLedger, kudos_event
 from horde.classes.base.processing_generation import ProcessingGeneration
@@ -89,6 +91,46 @@ def _text_worker_softprompt_names(worker: TextWorker) -> list[str]:
     return [softprompt.softprompt for softprompt in worker.softprompts]
 
 
+CHAT_DECLARATION_REFUSALS = frozenset({"chat_features", ChatLimitName.TOOLS_MAX_TEMPERATURE.value})
+"""The `TextWorker.can_generate` refusal reasons that come from the worker's chat declaration rather than from its
+current state or the request's other options."""
+
+
+def find_chat_declaration_gap(
+    waiting_prompt: WaitingPrompt,
+    refusals: Sequence[tuple[ImageWorker | TextWorker, str]],
+) -> ChatImpossibleReason | None:
+    """Return the declaration gap of a chat request no worker is eligible for, or None when the cause is another.
+
+    A gap is reported only when every worker the eligibility query found was refused for its chat declaration. No
+    worker at all, or a worker refused for another reason, can change without the request changing, so the client
+    keeps waiting for it.
+
+    Args:
+        waiting_prompt: The request no worker is eligible for.
+        refusals: Each worker the eligibility query found, with the reason ``can_generate`` refused it.
+
+    Returns:
+        The names the refused workers lack or the limits they apply, or None.
+    """
+    if not isinstance(waiting_prompt, TextWaitingPrompt) or not waiting_prompt.is_chat or not refusals:
+        return None
+    if any(reason not in CHAT_DECLARATION_REFUSALS for _, reason in refusals):
+        return None
+    missing_declarations: set[str] = set()
+    exceeded_limits: set[str] = set()
+    for worker, reason in refusals:
+        if reason == "chat_features" and isinstance(worker, TextWorker):
+            missing_declarations |= worker.missing_chat_declarations(waiting_prompt)
+        else:
+            exceeded_limits.add(reason)
+    return ChatImpossibleReason(
+        kind=ChatImpossibleKind.DECLARATION_GAP,
+        missing_declarations=tuple(sorted(missing_declarations)),
+        exceeded_limits=tuple(sorted(exceeded_limits)),
+    )
+
+
 @dataclass(frozen=True)
 class RequestWorkerAvailability:
     """Represents current worker capacity that passes the dispatch gates.
@@ -97,11 +139,14 @@ class RequestWorkerAvailability:
         worker_count: Number of distinct eligible workers.
         thread_count: Advertised threads across those workers.
         might_stall: Cached assignment-pressure advisory for the request.
+        impossible_reason: Why no worker is eligible when the cause is the workers' chat declarations; None
+            otherwise.
     """
 
     worker_count: int
     thread_count: int
     might_stall: bool = False
+    impossible_reason: ChatImpossibleReason | None = None
 
     @property
     def is_possible(self) -> bool:
@@ -174,7 +219,7 @@ def get_highest_text_worker_max_context_length(
 
     Args:
         model_names: The models the request accepts. When empty or omitted, every online text worker
-            counts.
+            that accepts text jobs counts.
         accepts_chat_jobs: When true, the largest chat context of the workers that serve one of the models
             with chat jobs, since no other worker can serve a chat request and chat jobs run under the chat
             limits.
@@ -191,7 +236,10 @@ def get_highest_text_worker_max_context_length(
         if model_names:
             chat_query = chat_query.filter(TextWorker.chat_model_id.in_(model_names))
         return chat_query.scalar()
-    query = db.session.query(func.max(TextWorker.max_context_length)).filter(TextWorker.last_check_in > cutoff)
+    query = db.session.query(func.max(TextWorker.max_context_length)).filter(
+        TextWorker.last_check_in > cutoff,
+        TextWorker.accepts_prompt_jobs.is_(True),
+    )
     if model_names:
         query = query.filter(TextWorker.models.any(WorkerModel.model.in_(model_names)))
     return query.scalar()
@@ -535,10 +583,16 @@ def get_available_models(filter_model_name: str = None):
         # If we're doing a filter, and we've already found the model type, we don't want to look in other worker versions
         if filter_model_name and available_worker_models and len(available_worker_models) > 0:
             continue
+        counted_threads = worker_class.threads
+        if worker_class is TextWorker:
+            # A chat-only worker cannot serve a text request, so its threads are left out of the text count. Its model
+            # still gets a row, with count 0 when no other worker serves it, because the chat listing is filtered
+            # from these rows and reports the chat workers itself.
+            counted_threads = case((TextWorker.accepts_prompt_jobs.is_(True), TextWorker.threads), else_=0)
         available_worker_models = (
             db.session.query(
                 WorkerModel.model,
-                func.sum(worker_class.threads).label("total_threads"),
+                func.sum(counted_threads).label("total_threads"),
                 # worker_class.id.label('worker_id') # TODO: make the query return a list or workers serving this model?
             )
             .join(
@@ -1889,8 +1943,14 @@ def _waiting_prompt_has_inflight_generation(waiting_prompt: WaitingPrompt) -> bo
 
 def _iter_eligible_workers_for_request(
     waiting_prompt: WaitingPrompt,
+    refusals: list[tuple[ImageWorker | TextWorker, str]] | None = None,
 ) -> Iterator[ImageWorker | TextWorker]:
-    """Yield recently active workers that pass every known request gate."""
+    """Yield recently active workers that pass every known request gate.
+
+    Args:
+        waiting_prompt: The request.
+        refusals: When given, receives each worker the query found that ``can_generate`` refused, with the reason.
+    """
 
     with logfire.span(
         "horde.db.get_worker_availability_for_request",
@@ -1995,6 +2055,7 @@ def _iter_eligible_workers_for_request(
                 final_worker_list = final_worker_list.filter(TextWorker.speed >= 2)
         elif isinstance(waiting_prompt, TextWaitingPrompt):
             final_worker_list = final_worker_list.filter(
+                TextWorker.accepts_prompt_jobs.is_(True),
                 waiting_prompt.max_length <= TextWorker.max_length,
                 waiting_prompt.max_context_length <= TextWorker.max_context_length,
             )
@@ -2018,6 +2079,8 @@ def _iter_eligible_workers_for_request(
                 continue
             if can_generate[0]:
                 yield worker
+            elif refusals is not None:
+                refusals.append((worker, str(can_generate[1])))
 
 
 def _get_preceding_arrivals(
@@ -2113,6 +2176,17 @@ def _get_preceding_arrivals(
     return tuple(arrivals)
 
 
+def _parse_cached_impossible_reason(cached_reason: object) -> ChatImpossibleReason | None:
+    """Return the impossible reason a cached availability entry holds, or None for none.
+
+    Raises:
+        ValueError: When the entry is not a valid reason.
+    """
+    if cached_reason is None:
+        return None
+    return ChatImpossibleReason.model_validate(cached_reason)
+
+
 def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> RequestWorkerAvailability:
     """Return the recently active worker capacity eligible for a request.
 
@@ -2141,12 +2215,16 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
                 worker_count=int(parsed_availability["workers"]),
                 thread_count=int(parsed_availability["threads"]),
                 might_stall=might_stall,
+                impossible_reason=_parse_cached_impossible_reason(parsed_availability.get("impossible_reason")),
             )
         except (KeyError, TypeError, ValueError):
             logger.debug(f"Ignoring malformed worker availability cache for request {waiting_prompt.id}")
 
     with logfire.span("horde.db.eligible_workers", wp_id=str(waiting_prompt.id)):
-        eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt))
+        refusals: list[tuple[ImageWorker | TextWorker, str]] = []
+        eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt, refusals))
+    # Only a request no worker can take pays for naming the cause, from the refusals the same pass collected.
+    impossible_reason = None if eligible_workers else find_chat_declaration_gap(waiting_prompt, refusals)
     eligible_worker_states = tuple(
         EligibleWorkerState(
             worker_id=str(worker.id),
@@ -2204,6 +2282,7 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
         worker_count=len(eligible_workers),
         thread_count=thread_count,
         might_stall=might_stall,
+        impossible_reason=impossible_reason,
     )
     worker_found = availability.worker_count > 0
     hr.horde_r_setex(
@@ -2219,6 +2298,7 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
                 "workers": availability.worker_count,
                 "threads": availability.thread_count,
                 "might_stall": availability.might_stall,
+                "impossible_reason": impossible_reason.model_dump(mode="json") if impossible_reason is not None else None,
             },
         ),
     )

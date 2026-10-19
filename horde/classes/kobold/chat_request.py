@@ -17,15 +17,19 @@ character-based token estimate, kudos and moderation, and is never sent to a wor
 validation makes to it has to be mirrored onto the messages, which
 [`rewrite_message_texts`][horde.classes.kobold.chat_request.rewrite_message_texts] does.
 
-A worker declares which optional request features it implements as
-[`ChatFeature`][horde.classes.kobold.chat_request.ChatFeature] names on pop;
-[`required_chat_features`][horde.classes.kobold.chat_request.required_chat_features] lists the ones a
-request needs. [`build_chat_job_payload`][horde.classes.kobold.chat_request.build_chat_job_payload] fills
+A worker declares on pop which optional request features it implements and which parts of the OpenAI contract it
+follows exactly, as the SDK's ``ChatFeature`` and ``ChatGuarantee`` names (ADR 0036).
+[`required_chat_features`][horde.classes.kobold.chat_request.required_chat_features] lists the ones a request needs
+under its conformance mode. [`build_chat_job_payload`][horde.classes.kobold.chat_request.build_chat_job_payload] fills
 the sampling defaults a chat job's payload always carries.
 
 A request may offer the model tools and ask for a response format; the values the request applies are stored apart
-from the messages ([`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras]) and forwarded to the
-worker as stored. The history may carry the model's earlier tool calls and ``tool`` messages answering them.
+from the messages ([`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras]) and narrowed for the
+worker at dispatch ([`build_worker_chat_extras`][horde.classes.kobold.chat_request.build_worker_chat_extras]). The
+history may carry the model's earlier tool calls and ``tool`` messages answering them. On submit the reply is checked
+against the stored values under the request's conformance mode
+([`verify_chat_reply`][horde.classes.kobold.chat_request.verify_chat_reply]), so a worker that declares a guarantee
+it does not keep has its submit refused rather than the client receiving a reply the request ruled out.
 
 A user message may carry image parts, as a data URL or an http(s) URL. The native route stores each image in object
 storage and keeps only a reference to it in the stored messages
@@ -41,8 +45,20 @@ import hashlib
 import itertools
 import json
 from collections.abc import Callable, Mapping, Sequence
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NoReturn
 
+from horde_sdk.generation_parameters.text.chat_policy import (
+    ChatConformance,
+    ChatFeature,
+    ChatGuarantee,
+    ChatRequestTraits,
+    required_chat_guarantees,
+)
+from horde_sdk.generation_parameters.text.chat_policy import ChatResponseFormatType as PolicyResponseFormatType
+from horde_sdk.generation_parameters.text.chat_policy import ChatToolChoiceMode as PolicyToolChoiceMode
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, best_match
+from jsonschema.validators import validator_for
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -54,6 +70,7 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
+from referencing.exceptions import Unresolvable
 
 from horde import exceptions as e
 from horde.chat_contract import (
@@ -87,13 +104,15 @@ __all__ = [
     "CHAT_IMAGE_REFERENCE_PREFIX",
     "CHAT_REQUEST_CONFLICT_RC",
     "CHAT_SAMPLING_DEFAULTS",
+    "CHAT_SUBMIT_INVALID_RC",
+    "CHAT_SUBMIT_NONCONFORMANT_RC",
     "DEFAULT_CHAT_MAX_TOKENS",
+    "DEFAULT_PARALLEL_TOOL_CALLS",
     "MAX_NATIVE_FINISH_REASON_LENGTH",
     "MAX_REPORTED_TOKEN_COUNT",
     "UNSUPPORTED_CHAT_PARAMETER_RC",
     "ChargeBasis",
     "ChatCompletionRequest",
-    "ChatFeature",
     "ChatImageDetail",
     "ChatImageTransport",
     "ChatMessage",
@@ -103,12 +122,16 @@ __all__ = [
     "build_chat_extras",
     "build_chat_image_key",
     "build_chat_job_payload",
+    "build_chat_request_traits",
     "build_model_names",
     "build_operation_fingerprint",
     "build_stored_reply",
     "build_text_params",
+    "build_worker_chat_extras",
     "build_worker_targeting",
     "chat_reply_characters",
+    "chat_reply_finish_reason",
+    "chat_tools_temperature",
     "flatten_messages",
     "has_image_parts",
     "list_chat_image_keys",
@@ -121,6 +144,7 @@ __all__ = [
     "rewrite_message_texts",
     "select_image_transport",
     "serialize_messages",
+    "verify_chat_reply",
 ]
 
 UNSUPPORTED_CHAT_PARAMETER_RC = "UnsupportedChatParameter"
@@ -128,6 +152,14 @@ UNSUPPORTED_CHAT_PARAMETER_RC = "UnsupportedChatParameter"
 
 CHAT_REQUEST_CONFLICT_RC = "ChatRequestConflict"
 """Return code for two keys whose values contradict each other, such as differing token limits."""
+
+CHAT_SUBMIT_INVALID_RC = "ChatSubmitInvalid"
+"""Return code for a chat submit no client could use under any conformance mode: a malformed message, a call to a
+function the request did not offer, or two calls sharing an id."""
+
+CHAT_SUBMIT_NONCONFORMANT_RC = "ChatSubmitNonconformant"
+"""Return code for a well-formed reply a ``strict`` request's ``tool_choice`` or ``response_format`` rules out, so a
+worker can tell a reply its backend broke from one that contradicts the request contract."""
 
 DEFAULT_CHAT_MAX_TOKENS = 512
 """``max_length`` for a chat request that sets neither token limit. OpenAI clients usually omit it, and the text
@@ -288,35 +320,6 @@ class ChargeBasis(enum.StrEnum):
     """The text formula's estimate of the output: the characters returned divided by 4, rounded up, at least 20
     and at most the requested ``max_length``. Identical to a text generation's; reported token counts do not
     enter it."""
-
-
-class ChatFeature(enum.StrEnum):
-    """Optional request features a worker declares in ``chat_features`` on pop.
-
-    A request that sets one of these to a non-default value is only given to workers that declared it. The
-    vocabulary grows by adding names; a name never changes meaning.
-    """
-
-    SEED = "seed"
-    """The backend honours a sampling seed."""
-
-    PRESENCE_PENALTY = "presence_penalty"
-    """The backend applies OpenAI's presence penalty."""
-
-    FREQUENCY_PENALTY = "frequency_penalty"
-    """The backend applies OpenAI's frequency penalty."""
-
-    VISION = "vision"
-    """The loaded model reads image parts. A worker also has to declare an image transport to receive them."""
-
-    TOOLS = "tools"
-    """The worker renders tool definitions and tool turns into its template and submits the model's tool calls."""
-
-    JSON_OBJECT = "json_object"
-    """The backend constrains the reply to a JSON object."""
-
-    JSON_SCHEMA = "json_schema"
-    """The backend constrains the reply to a client JSON Schema."""
 
 
 class ChatImageTransport(enum.StrEnum):
@@ -895,11 +898,13 @@ def _dump_response_format(response_format: ChatResponseFormat | None) -> dict[st
 
 
 def build_chat_extras(chat_request: ChatCompletionRequest) -> dict[str, Any] | None:
-    """Return the tool and response format keys the request applies, as stored and forwarded to the worker.
+    """Return the tool and response format keys the request applies, as stored.
 
     A value that means the default is left out: an empty ``tools``, a ``text`` response format, and a
-    ``tool_choice`` or ``parallel_tool_calls`` without tools. ``tool_choice`` ``none`` beside tools is kept, since a
-    worker given the tools without it would apply its own default of ``auto`` and let the model call them.
+    ``tool_choice`` or ``parallel_tool_calls`` without tools. ``tool_choice`` ``none`` beside tools is kept, since
+    the request's guarantees, its dispatch narrowing
+    ([`build_worker_chat_extras`][horde.classes.kobold.chat_request.build_worker_chat_extras]) and the operation
+    fingerprint depend on it.
 
     Args:
         chat_request: The validated request.
@@ -1318,32 +1323,97 @@ def build_operation_fingerprint(chat_request: ChatCompletionRequest) -> str:
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
+DEFAULT_PARALLEL_TOOL_CALLS = True
+"""OpenAI's ``parallel_tool_calls`` when a request offers tools without setting it."""
+
+
+def _tool_choice_mode(tool_choice: str | Mapping[str, Any] | None) -> PolicyToolChoiceMode:
+    """Return the policy mode of a stored ``tool_choice``; an unset choice is OpenAI's ``auto``."""
+    if tool_choice is None:
+        return PolicyToolChoiceMode.AUTO
+    if isinstance(tool_choice, Mapping):
+        return PolicyToolChoiceMode.NAMED
+    return PolicyToolChoiceMode(tool_choice)
+
+
+def build_chat_request_traits(params: Mapping[str, Any], chat_extras: Mapping[str, Any] | None) -> ChatRequestTraits:
+    """Return the traits that decide which guarantees and limits apply to a chat request.
+
+    Args:
+        params: The request's stored text params.
+        chat_extras: The request's stored extras, from
+            [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras].
+
+    Returns:
+        The traits, with the temperature the job payload carries (the client's, or the one in
+        [`CHAT_SAMPLING_DEFAULTS`][horde.classes.kobold.chat_request.CHAT_SAMPLING_DEFAULTS]), the tool choice as
+        stored (unset is ``auto``), ``parallel_tool_calls`` defaulting to true, and the response format's type and
+        ``json_schema.strict`` flag.
+    """
+    chat_extras = chat_extras or {}
+    response_format = chat_extras.get("response_format")
+    response_format_type = None
+    strict_schema = False
+    if response_format is not None:
+        response_format_type = PolicyResponseFormatType(response_format["type"])
+        strict_schema = response_format_type is PolicyResponseFormatType.JSON_SCHEMA and bool(response_format["json_schema"].get("strict"))
+    return ChatRequestTraits(
+        offers_tools=bool(chat_extras.get("tools")),
+        tool_choice_mode=_tool_choice_mode(chat_extras.get("tool_choice")),
+        parallel_tool_calls=chat_extras.get("parallel_tool_calls", DEFAULT_PARALLEL_TOOL_CALLS),
+        response_format_type=response_format_type,
+        strict_schema=strict_schema,
+        temperature=params.get("temperature", CHAT_SAMPLING_DEFAULTS["temperature"]),
+    )
+
+
+def chat_tools_temperature(traits: ChatRequestTraits) -> float | None:
+    """Return the temperature a worker's ``tools_max_temperature`` limit is compared with.
+
+    The SDK's ``violated_chat_limit`` defines the rule for workers and clients. The server stores this projection of
+    the traits once per request and the pop query compares it with the same rule, so the queue scan never loads a
+    candidate's extras.
+
+    Args:
+        traits: The request's traits, from
+            [`build_chat_request_traits`][horde.classes.kobold.chat_request.build_chat_request_traits].
+
+    Returns:
+        The forwarded temperature when the request forwards tool definitions; None otherwise, when no tool
+        temperature limit applies.
+    """
+    return traits.temperature if traits.forwards_tools else None
+
+
 def required_chat_features(
     params: Mapping[str, Any],
     messages: Sequence[Mapping[str, Any]],
     chat_extras: Mapping[str, Any] | None,
-) -> set[ChatFeature]:
-    """Return every worker feature a chat request needs.
+    conformance: ChatConformance,
+) -> set[ChatFeature | ChatGuarantee]:
+    """Return every capability and guarantee a worker must declare to serve a chat request.
 
-    The only place a request's features are derived. The set is stored on the request when it is created, so
+    The only place a request's requirements are derived. The set is stored on the request when it is created, so
     eligibility compares a worker's declaration with it without loading the messages or extras of any candidate.
-    A value at its documented default needs nothing, so a request that sends a zero penalty is served by any chat
-    worker.
+    Capabilities and guarantees share one namespace (ADR 0036), so both are stored in one list. A value at its
+    documented default needs no capability, so a request that sends a zero penalty is served by any chat worker.
 
     Args:
         params: The request's stored text params.
         messages: The request's stored messages.
         chat_extras: The request's stored extras, from
             [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras].
+        conformance: The conformance mode the request selected.
 
     Returns:
         ``seed`` when a seed is set; each penalty whose value is not zero; ``vision`` when a message carries an image
         part; ``tools`` when the request offers tools under a ``tool_choice`` other than ``none``, or any message is a
-        ``tool`` message or carries tool calls, since the worker's template has to render those turns; and
-        ``json_object`` or ``json_schema`` by the response format's type.
+        ``tool`` message or carries tool calls, since the worker's template has to render those turns;
+        ``json_object`` or ``json_schema`` by the response format's type; and the guarantees the SDK's
+        ``required_chat_guarantees`` derives for the conformance mode, which under ``strict`` always include
+        ``prompt_overflow_refused`` and under ``best_effort`` are none.
     """
-    chat_extras = chat_extras or {}
-    needed_features: set[ChatFeature] = set()
+    needed_features: set[ChatFeature | ChatGuarantee] = set()
     if params.get("seed") is not None:
         needed_features.add(ChatFeature.SEED)
     for penalty_feature in (ChatFeature.FREQUENCY_PENALTY, ChatFeature.PRESENCE_PENALTY):
@@ -1352,15 +1422,251 @@ def required_chat_features(
             needed_features.add(penalty_feature)
     if has_image_parts(messages):
         needed_features.add(ChatFeature.VISION)
+    traits = build_chat_request_traits(params, chat_extras)
     carries_tool_turns = any(message["role"] == ChatRole.TOOL or message.get("tool_calls") for message in messages)
-    offers_tools = "tools" in chat_extras and chat_extras.get("tool_choice") != ChatToolChoiceMode.NONE.value
-    if offers_tools or carries_tool_turns:
+    if traits.forwards_tools or carries_tool_turns:
         needed_features.add(ChatFeature.TOOLS)
-    response_format = chat_extras.get("response_format")
-    if response_format is not None:
-        needed_features.add(ChatFeature(response_format["type"]))
+    if traits.response_format_type is not None:
+        needed_features.add(ChatFeature(traits.response_format_type.value))
+    needed_features.update(required_chat_guarantees(traits, conformance))
 
     return needed_features
+
+
+def build_worker_chat_extras(chat_extras: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return the extras a chat job's payload carries, narrowed to what the tool choice lets the model call.
+
+    The stored extras keep the client's values for the response and a replay; only the worker's copy is narrowed.
+    Under ``tool_choice: none`` no tool key is forwarded, so a backend that ignores ``none`` has no definition to
+    call. Under a named ``tool_choice`` only the named function is forwarded, with ``tool_choice: required``, so a
+    backend that knows only the modes still has to call that function. ``auto`` and ``required`` are forwarded as
+    stored.
+
+    Args:
+        chat_extras: The request's stored extras, from
+            [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras].
+
+    Returns:
+        The keys to add to the job payload; empty when the request applies none.
+    """
+    worker_extras = dict(chat_extras or {})
+    tool_choice = worker_extras.get("tool_choice")
+    if isinstance(tool_choice, Mapping):
+        named_function = tool_choice["function"]["name"]
+        worker_extras["tools"] = [tool for tool in worker_extras["tools"] if tool["function"]["name"] == named_function]
+        worker_extras["tool_choice"] = ChatToolChoiceMode.REQUIRED.value
+    elif _tool_choice_mode(tool_choice) is PolicyToolChoiceMode.NONE:
+        for tool_key in ("tools", "tool_choice", "parallel_tool_calls"):
+            worker_extras.pop(tool_key, None)
+    return worker_extras
+
+
+def _refuse_invalid_reply(message: str) -> NoReturn:
+    """Refuse a chat submit no client could use.
+
+    Raises:
+        horde.exceptions.BadRequest: Always, with ``ChatSubmitInvalid``.
+    """
+    raise e.BadRequest(message, rc=CHAT_SUBMIT_INVALID_RC)
+
+
+def _refuse_nonconformant_reply(message: str) -> NoReturn:
+    """Refuse a chat submit a ``strict`` request's contract rules out.
+
+    Raises:
+        horde.exceptions.BadRequest: Always, with ``ChatSubmitNonconformant``.
+    """
+    raise e.BadRequest(message, rc=CHAT_SUBMIT_NONCONFORMANT_RC)
+
+
+def _verify_tool_call_structure(tool_calls: Sequence[ChatToolCall], chat_extras: Mapping[str, Any]) -> None:
+    """Refuse calls to functions the request did not offer, and calls sharing an id.
+
+    A client dispatches a call by its function name and answers it by its id, so either fault leaves the reply
+    unusable whatever the conformance mode. The client's stored tools are the reference, not the narrowed copy the
+    worker received, so a ``best_effort`` reply calling another offered function passes.
+
+    Raises:
+        horde.exceptions.BadRequest: With ``ChatSubmitInvalid``.
+    """
+    offered_names = {tool["function"]["name"] for tool in chat_extras.get("tools") or ()}
+    for tool_call in tool_calls:
+        if not offered_names:
+            _refuse_invalid_reply(f"'message.tool_calls' calls '{tool_call.function.name}', but the request offered no tools.")
+        if tool_call.function.name not in offered_names:
+            _refuse_invalid_reply(f"'message.tool_calls' calls '{tool_call.function.name}', which is not among the request's tools.")
+    call_ids = [tool_call.id for tool_call in tool_calls]
+    if len(set(call_ids)) != len(call_ids):
+        _refuse_invalid_reply("'message.tool_calls' has two calls with the same 'id'.")
+
+
+def _verify_tool_choice(tool_calls: Sequence[ChatToolCall], chat_extras: Mapping[str, Any]) -> None:
+    """Refuse a reply whose calls the request's ``tool_choice`` rules out.
+
+    Only the calls are checked. OpenAI finishes a forced call with ``stop``, so the finish reason proves nothing.
+
+    Raises:
+        horde.exceptions.BadRequest: With ``ChatSubmitNonconformant``.
+    """
+    tool_choice = chat_extras.get("tool_choice")
+    tool_choice_mode = _tool_choice_mode(tool_choice)
+    if tool_choice_mode is PolicyToolChoiceMode.NONE and tool_calls:
+        _refuse_nonconformant_reply("The request's 'tool_choice' is 'none', so the reply may not carry 'tool_calls'.")
+    if tool_choice_mode is PolicyToolChoiceMode.REQUIRED and not tool_calls:
+        _refuse_nonconformant_reply("The request's 'tool_choice' is 'required', so the reply needs 'tool_calls'.")
+    if isinstance(tool_choice, Mapping):
+        named_function = tool_choice["function"]["name"]
+        if not tool_calls or any(tool_call.function.name != named_function for tool_call in tool_calls):
+            _refuse_nonconformant_reply(
+                f"The request's 'tool_choice' forces '{named_function}', so the reply has to call it and no other function.",
+            )
+
+
+_NOT_JSON = object()
+"""What [`_parse_reply_json`][horde.classes.kobold.chat_request._parse_reply_json] returns for content that is not
+JSON, since None is the parsed ``null``."""
+
+
+def _refuse_json_constant(constant: str) -> Any:
+    """Refuse ``NaN`` and ``Infinity``, which Python's parser accepts but JSON does not define.
+
+    Raises:
+        ValueError: Always.
+    """
+    raise ValueError(f"{constant} is not JSON")
+
+
+def _parse_reply_json(content: str) -> Any:
+    """Return the reply content parsed as JSON, or [`_NOT_JSON`][horde.classes.kobold.chat_request._NOT_JSON].
+
+    Nesting too deep for the parser counts as not JSON, so a reply cannot turn the check into a server error.
+    """
+    try:
+        return json.loads(content, parse_constant=_refuse_json_constant)
+    except (ValueError, RecursionError):
+        return _NOT_JSON
+
+
+def _verify_strict_schema(reply_value: Any, json_schema: Mapping[str, Any]) -> None:
+    """Refuse a parsed reply that does not match a ``strict`` ``json_schema`` response format.
+
+    The validator is the one the schema's ``$schema`` declares, Draft 2020-12 otherwise. References resolve only
+    inside the schema; ``jsonschema`` does not fetch a remote one, so validation makes no network call.
+
+    Raises:
+        horde.exceptions.BadRequest: With ``ChatSubmitNonconformant``, when the reply does not match, or when the
+            schema cannot be compiled or its references resolved, since the reply then cannot be shown to match.
+    """
+    schema = json_schema["schema"]
+    schema_name = json_schema["name"]
+    validator_class = validator_for(schema, default=Draft202012Validator)
+    try:
+        validator_class.check_schema(schema)
+        mismatch = best_match(validator_class(schema).iter_errors(reply_value))
+    except (SchemaError, Unresolvable):
+        _refuse_nonconformant_reply(
+            f"The request's JSON Schema '{schema_name}' cannot be compiled, so the reply cannot be verified against it."
+        )
+    except RecursionError:
+        _refuse_nonconformant_reply(f"The reply content is nested too deeply to verify against the request's JSON Schema '{schema_name}'.")
+    if mismatch is not None:
+        # The path and keyword only: the error's own message quotes the instance, which may be the whole reply.
+        _refuse_nonconformant_reply(
+            f"The reply content does not match the request's JSON Schema '{schema_name}': "
+            f"'{mismatch.validator}' fails at {mismatch.json_path}.",
+        )
+
+
+def _verify_response_format(message: ChatSubmittedMessage, chat_extras: Mapping[str, Any]) -> None:
+    """Refuse reply content the request's ``response_format`` rules out.
+
+    A ``strict`` ``json_schema`` reply has to match the schema. ``json_object``, and ``json_schema`` without
+    ``strict``, need only a JSON object, because OpenAI documents a non-strict schema as best effort. A reply with
+    tool calls and no content carries no output to check.
+
+    Raises:
+        horde.exceptions.BadRequest: With ``ChatSubmitNonconformant``.
+    """
+    response_format = chat_extras.get("response_format")
+    if response_format is None or (message.tool_calls and not message.content):
+        return
+    format_type = response_format["type"]
+    reply_value = _parse_reply_json(message.content or "")
+    if reply_value is _NOT_JSON:
+        _refuse_nonconformant_reply(f"The request's 'response_format' is '{format_type}', so the reply content has to be JSON.")
+    json_schema = response_format.get("json_schema")
+    if json_schema is not None and json_schema.get("strict"):
+        _verify_strict_schema(reply_value, json_schema)
+    elif not isinstance(reply_value, dict):
+        _refuse_nonconformant_reply(f"The request's 'response_format' is '{format_type}', so the reply content has to be a JSON object.")
+
+
+def chat_reply_finish_reason(finish_reason: str, message: ChatSubmittedMessage, chat_extras: Mapping[str, Any] | None) -> str:
+    """Return the finish reason the client receives for a verified reply.
+
+    OpenAI finishes a reply to a named ``tool_choice`` with ``stop`` and the call in ``tool_calls``, and finishes
+    ``auto`` and ``required`` replies with ``tool_calls``. A worker receives a named choice as ``required`` (see
+    [`build_worker_chat_extras`][horde.classes.kobold.chat_request.build_worker_chat_extras]), so its backend reports
+    ``tool_calls``. The reason is mapped back to OpenAI's under every conformance mode, since it is the shape of the
+    reply rather than how faithfully the backend followed the request.
+
+    Args:
+        finish_reason: The finish reason the worker submitted.
+        message: The reply, as [`verify_chat_reply`][horde.classes.kobold.chat_request.verify_chat_reply] returned it.
+        chat_extras: The request's stored extras.
+
+    Returns:
+        ``stop`` for a ``tool_calls`` finish of a reply with calls to a request with a named ``tool_choice``; the
+        submitted reason otherwise, so ``length`` and ``content_filter`` are kept.
+    """
+    if finish_reason == FinishReason.TOOL_CALLS and message.tool_calls and isinstance((chat_extras or {}).get("tool_choice"), Mapping):
+        return FinishReason.STOP.value
+    return finish_reason
+
+
+def verify_chat_reply(
+    message: ChatSubmittedMessage,
+    chat_extras: Mapping[str, Any] | None,
+    conformance: ChatConformance,
+) -> ChatSubmittedMessage:
+    """Return a worker's reply as the client receives it, after verifying what the payload can prove (ADR 0036).
+
+    Routing sends a request only to workers declaring what it needs, and dispatch narrows the tools a worker sees;
+    this check trusts neither. A refused submit costs the worker a faulted job and the request one of its faulted
+    generations, so only replies OpenAI would never return are refused.
+
+    Under both modes a call to a function the request did not offer, or two calls sharing an id, is refused. Under
+    ``strict`` the reply also has to honour the request's ``tool_choice`` and ``response_format``, and more than one
+    call under ``parallel_tool_calls: false`` is reduced to the first, since an OpenAI client would only ever see one.
+    The reduction comes first, so a call it drops is not checked. Under ``best_effort`` the reply otherwise passes
+    through as submitted.
+
+    Args:
+        message: The validated submitted message.
+        chat_extras: The request's stored extras, from
+            [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras]; the client's values, not the
+            narrowed copy the worker received.
+        conformance: The conformance mode the request selected.
+
+    Returns:
+        The message, holding only its first tool call when the reduction applied, and unchanged otherwise.
+
+    Raises:
+        horde.exceptions.BadRequest: With ``ChatSubmitInvalid`` for a call to a function the request did not offer or
+            a repeated call id; with ``ChatSubmitNonconformant`` for a reply a ``strict`` request's ``tool_choice`` or
+            ``response_format`` rules out.
+    """
+    chat_extras = chat_extras or {}
+    is_strict = conformance is ChatConformance.STRICT
+    parallel_tool_calls = chat_extras.get("parallel_tool_calls", DEFAULT_PARALLEL_TOOL_CALLS)
+    if is_strict and not parallel_tool_calls and message.tool_calls and len(message.tool_calls) > 1:
+        message = message.model_copy(update={"tool_calls": message.tool_calls[:1]})
+    tool_calls = message.tool_calls or []
+    _verify_tool_call_structure(tool_calls, chat_extras)
+    if is_strict:
+        _verify_tool_choice(tool_calls, chat_extras)
+        _verify_response_format(message, chat_extras)
+    return message
 
 
 def build_chat_job_payload(params: Mapping[str, Any], *, max_length: int, max_context_length: int) -> dict[str, Any]:

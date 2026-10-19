@@ -58,7 +58,7 @@ class ChatModelOffer:
     """The largest chat output any of them declares."""
 
     features: tuple[str, ...]
-    """Every chat feature at least one of them declares, sorted."""
+    """Every chat capability and guarantee at least one of them declares, sorted."""
 
     created: datetime | None
     """When the longest-registered of them was created; None when no row records a creation time."""
@@ -116,11 +116,22 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
             TextWaitingPrompt.max_context_length <= worker.chat_max_context_length,
             wp_names_chat_model,
         )
+        if worker.chat_tools_max_temperature is not None:
+            # The SDK's violated_chat_limit rule, applied to the stored projection of the request's traits; a NULL
+            # projection means the request forwards no tools.
+            wp_fits_chat_worker = and_(
+                wp_fits_chat_worker,
+                or_(
+                    TextWaitingPrompt.chat_tools_temperature.is_(None),
+                    TextWaitingPrompt.chat_tools_temperature <= worker.chat_tools_max_temperature,
+                ),
+            )
         if not worker.serves_chat_images():
             # Only chat rows reach this test, and only for workers that cannot take images, so a vision worker's
             # scan never reads the messages column.
             wp_fits_chat_worker = and_(wp_fits_chat_worker, ~chat_images_clause())
-        wp_fits_worker = or_(wp_fits_worker, wp_fits_chat_worker)
+        # A chat-only worker may leave its text limits at the pop defaults, which are not a capacity it serves at.
+        wp_fits_worker = or_(wp_fits_worker, wp_fits_chat_worker) if worker.accepts_prompt_jobs else wp_fits_chat_worker
     final_wp_list = (
         db.session.query(TextWaitingPrompt)
         .options(
