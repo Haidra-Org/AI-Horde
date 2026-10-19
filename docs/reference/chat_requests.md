@@ -192,6 +192,7 @@ and values:
 | `max_context_length`                            | positive integer      | none    | An explicit context length                                     |
 | `context_fit`                                   | `grow` or `reject`    | `grow`  | With `grow`, the context grows only up to the largest chat context an online chat worker serving the model declares |
 | `conformance`                                   | `strict` or `best_effort` | `strict` | With `strict`, only workers declaring every guarantee the request needs serve it; `best_effort` drops that requirement. See [Guarantees](#guarantees) |
+| `openai_guards`                                 | boolean               | `false` | Turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format without the word "json" (any case) in some message text returns `400 ChatRequestConflict` with OpenAI's message. Acts on admission only; not stored |
 | `dry_run`                                       | boolean               | `false` | Return the kudos cost without queueing                         |
 | `operation_key`                                 | UUID                  | none    | Claims the submission for its user; see [Operation key](#operation-key) |
 
@@ -271,19 +272,43 @@ The tool and response format shapes are validated by the models in `horde/chat_c
 | Key                   | Value                                                                              |
 | --------------------- | ---------------------------------------------------------------------------------- |
 | `tools`               | At most `MAX_CHAT_TOOL_COUNT` (128) `{type: "function", function: {name, description?, parameters?, strict?}}`; `name` 1 to 64 characters of `[A-Za-z0-9_-]`. An empty list or null is the same as none |
-| `tool_choice`         | `none`, `auto`, `required` or `{type: "function", function: {name}}`. Null, or `none` without tools, is the same as none |
-| `parallel_tool_calls` | Boolean; stored with tools, dropped without them                                   |
+| `tool_choice`         | `none`, `auto`, `required` or `{type: "function", function: {name}}`. Only allowed with a non-empty `tools`; null is the same as none |
+| `parallel_tool_calls` | Boolean. Only allowed with a non-empty `tools`; null is the same as none           |
 | `response_format`     | `{type: "text"}`, `{type: "json_object"}` or `{type: "json_schema", json_schema: {name, schema, description?, strict?}}`; `schema` is required. `text` or null is the same as none |
 
 The compact JSON of `tools`, `tool_choice` and `response_format` together may be at most `MAX_CHAT_TOOL_SPEC_BYTES`
-(256 KiB); more returns `400 UnsupportedChatParameter`. A `tool_choice` other than `none` without a non-empty `tools`,
-or one forcing a function `tools` does not define, returns `400 ChatRequestConflict`.
+(256 KiB); more, or more than 128 tools, returns `400 UnsupportedChatParameter`. A tool `parameters` schema and a
+`json_schema` schema may nest at most `MAX_CHAT_SCHEMA_NESTING` (10) levels below their root, OpenAI's limit for
+strict schemas, whether `strict` is set or not; deeper returns `400 UnsupportedChatParameter`. A `tool_choice` (any
+value, `none` included) or a `parallel_tool_calls` without a non-empty `tools`, or a `tool_choice` forcing a function
+`tools` does not define, returns `400 ChatRequestConflict`; the first two carry OpenAI's message, for example
+"Invalid value for 'tool_choice': 'tool_choice' is only allowed when 'tools' are specified.".
+
+A `json_schema` with `strict` `true` follows OpenAI's structural rules: every object schema, at the root and in every
+subschema (`properties`, array `items`, `$defs`, `anyOf` and the rest), sets `additionalProperties: false` and lists
+each of its properties in `required`. A schema breaking them returns `400 UnsupportedChatParameter` with OpenAI's
+message, such as "Invalid schema for response_format 'colour': In context=('properties', 'shade'),
+'additionalProperties' is required to be supplied and to be false.". Other keywords, such as `minimum`, are accepted,
+as OpenAI accepts them. A schema without `strict` `true` is not checked structurally.
 
 An `assistant` message may carry `tool_calls`, 1 to `MAX_CHAT_TOOL_CALL_COUNT` (128) `{id, type: "function",
 function: {name, arguments}}`, and then a null or absent `content`. A `tool` message carries `role`, `content` (a
-string or text parts) and `tool_call_id` (1 to 256 characters), which has to be the `id` of a tool call in an earlier
-assistant message of the same request; otherwise `400 UnsupportedChatParameter` names `messages[i].tool_call_id`. Both
-are stored and sent to the worker unchanged, with an assistant message's `content` stored as null when it was absent.
+string or text parts) and `tool_call_id` (1 to 256 characters). The history follows OpenAI's rule
+(`check_tool_history` in `horde/chat_contract.py`, shared with the front): an assistant message with `tool_calls` is
+followed at once by `tool` messages answering each of its ids exactly once, in any order among themselves, and the
+ids within one assistant message are unique. An id may recur in a later round. Each break returns
+`400 UnsupportedChatParameter`, the message prefixed with the request path:
+
+| History                                                         | Path                         | Message (OpenAI's where OpenAI has one) |
+| --------------------------------------------------------------- | ---------------------------- | --------------------------------------- |
+| A message other than `tool` while calls are unanswered          | `messages[i].role`           | "An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. The following tool_call_ids did not have response messages: ..." |
+| A `tool` message with no open calls, or a second answer to an id | `messages[i].role`           | "Invalid parameter: messages with role 'tool' must be a response to a preceding message with 'tool_calls'." |
+| A `tool` message answering an id the preceding assistant message did not issue | `messages[i].tool_call_id` | "Invalid parameter: 'tool_call_id' of '...' not found in 'tool_calls' of previous message." |
+| An id repeated within one assistant message                     | `messages[i].tool_calls`     | The repeated id                          |
+| The history ends with calls unanswered                          | `messages`                   | As for the first row                     |
+
+Both are stored and sent to the worker unchanged, with an assistant message's `content` stored as null when it was
+absent.
 
 The values a request applies are stored in `waiting_prompts.chat_extras` (`build_chat_extras`), each in the shape the
 client sent and only when it changes the answer:
@@ -315,7 +340,8 @@ Any key outside the lists above returns `400 UnsupportedChatParameter`, and the 
 - an unknown key in `horde` (for example `horde.models`);
 - an `n` other than 1 (`n=2`);
 - more than `MAX_CHAT_MESSAGE_COUNT` (1024) messages, or message text over `MAX_CHAT_TEXT_BYTES` (1 MiB of UTF-8
-  across every string content and text part), the limits the front shares from `horde/chat_contract.py`.
+  across every string content and text part and every history tool call's function name and arguments), the limits
+  the front shares from `horde/chat_contract.py`.
 
 A body over `MAX_CHAT_BODY_BYTES` returns `413 RequestTooLarge` before any of these checks.
 
@@ -336,9 +362,10 @@ it, so the adjustment cannot be recomputed at status time.
 The request's `prompt` column holds the messages flattened into one string: each message as `role: text`, with the
 parts of a message and the messages themselves joined by newlines and each image part rendered as `[image]`
 (`CHAT_IMAGE_PLACEHOLDER`). An assistant message's `tool_calls` follow its text as compact JSON, a `tool` message is
-`tool: <text>`, and the compact JSON of the stored `tools` and of a `json_schema` response format follow the messages,
-since the worker renders both into its prompt. It is an estimate only. The character-based
-token estimate, `context_fit` sizing, kudos and moderation read it; no worker receives it. `submitted_prompt` holds
+`tool: <text>`, and the compact JSON of the stored `tools` follows the messages, since the worker renders the
+definitions into its prompt. A response format schema is not part of it: the reference worker compiles the schema into
+a grammar and never renders it into the prompt. It is an estimate only. The character-based
+token estimate, `context_fit` sizing, kudos and moderation read it; workers do not receive it. `submitted_prompt` holds
 the flattened messages as submitted.
 
 Every rewrite validation makes to the flattened prompt is mirrored onto the messages. The replacement filter applied
@@ -377,8 +404,10 @@ The feature vocabulary (`ChatFeature`) grows by adding names; a name never chang
 | `tools`             | it stores `tools` with a `tool_choice` other than `none`, or any message is a `tool` message or carries `tool_calls` |
 | `json_object`       | its `response_format` type is `json_object`    |
 | `json_schema`       | its `response_format` type is `json_schema`    |
+| `tools_with_response_format` | it forwards tool definitions (a `tool_choice` other than `none`) and stores a `response_format`; the backend applies the format to the final text answer and not to tool calls, as OpenAI does |
 
-A field at its documented default needs nothing.
+A field at its documented default does not need a feature. Features are capabilities, so a request needs them under both
+conformance modes.
 
 ### Guarantees
 

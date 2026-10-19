@@ -4,13 +4,17 @@
 
 """The OpenAI chat completions request, response and error models the front accepts and returns.
 
-The request side is screened in two steps before validation.
-[`find_refused_parameter`][horde.oai.schema.find_refused_parameter] returns the first key, role, content part or
-``horde`` option the service does not serve, so the client gets a 400 naming it rather than a silently degraded
-answer. [`drop_default_no_ops`][horde.oai.schema.drop_default_no_ops] then removes the keys listed in
+The request side is screened in three steps before validation.
+[`find_refused_parameter`][horde.oai.schema.find_refused_parameter] returns the first top-level key, role, content
+part type or ``horde`` option the service does not serve, so the client gets a 400 naming it rather than a silently
+degraded answer. [`drop_default_no_ops`][horde.oai.schema.drop_default_no_ops] then removes the keys listed in
 [`DEFAULT_NO_OP_PARAMETERS`][horde.oai.schema.DEFAULT_NO_OP_PARAMETERS] when they hold their documented default,
-because stock clients send them unprompted. The table is a closed list; any other key outside
+because stock clients send them unprompted. The table is a closed list; any other top-level key outside
 [`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest] is refused.
+[`drop_unknown_nested_keys`][horde.oai.schema.drop_unknown_nested_keys] removes the keys a message and its nested
+objects, a tool definition or the ``tool_choice`` object do not serve, because OpenAI accepts and ignores unknown keys
+inside those objects and the OpenAI SDK replays its accumulated reply with keys of its own. Every other object refuses
+unknown keys, as OpenAI does.
 
 [`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest] then validates what remains with ``extra="forbid"``.
 Values outside the service contract (``n`` other than 1, a token limit outside 16 to 4096, more than four stop
@@ -26,7 +30,7 @@ The response side follows the OpenAI ``chat.completion``, ``chat.completion.chun
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated, Literal
@@ -49,10 +53,16 @@ from pydantic_core import PydanticCustomError
 
 from horde.chat_contract import (
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
+    CHAT_REQUEST_CONFLICT_RC,
     INTERNAL_HORDE_OPTION_KEYS,
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
+    UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE,
+    UNSUPPORTED_CHAT_PARAMETER_RC,
     ChatFunctionCall,
+    ChatFunctionDefinition,
     ChatHordeOptions,
+    ChatNamedFunction,
+    ChatNamedToolChoice,
     ChatResponseFormat,
     ChatTool,
     ChatToolCall,
@@ -64,6 +74,7 @@ __all__ = [
     "CHAT_REQUEST_CONFLICT_CODE",
     "DEFAULT_NO_OP_PARAMETERS",
     "SUPPORTED_MESSAGE_KEYS",
+    "TOOL_CALLS_MESSAGE_KEY",
     "UNSUPPORTED_PARAMETER_CODE",
     "UNSUPPORTED_PARAMETER_ERROR_TYPE",
     "ChatCompletionChoice",
@@ -96,20 +107,22 @@ __all__ = [
     "SubmitOutcome",
     "TextContentPart",
     "drop_default_no_ops",
+    "drop_unknown_nested_keys",
     "find_refused_parameter",
 ]
 
-UNSUPPORTED_PARAMETER_CODE: str = "UnsupportedChatParameter"
+UNSUPPORTED_PARAMETER_CODE: str = UNSUPPORTED_CHAT_PARAMETER_RC
 """The error code for a key, role, part or value the service does not serve; the native route returns the same rc."""
 
 BAD_REQUEST_CODE: str = "BadRequest"
 """The error code for a body that is not valid JSON or fails validation; the Horde's generic rc for a 400."""
 
-CHAT_REQUEST_CONFLICT_CODE: str = "ChatRequestConflict"
+CHAT_REQUEST_CONFLICT_CODE: str = CHAT_REQUEST_CONFLICT_RC
 """The error code for two keys whose values contradict each other; the native route returns the same rc."""
 
-UNSUPPORTED_PARAMETER_ERROR_TYPE: str = "unsupported_chat_parameter"
-"""The pydantic error type for a value outside the service contract, reported as ``UnsupportedChatParameter``."""
+UNSUPPORTED_PARAMETER_ERROR_TYPE: str = UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE
+"""The pydantic error type for a value outside the service contract, reported as ``UnsupportedChatParameter``; the
+shared tool and schema models raise the same type."""
 
 SUPPORTED_CHOICE_COUNT: int = 1
 """The only ``n`` served: each further choice would need its own pinned model and stored reply."""
@@ -233,15 +246,6 @@ def _is_empty_or_null(value: object, _request_body: Mapping[str, object]) -> boo
     return value is None or (isinstance(value, list) and not value)
 
 
-def _is_null_or_none_choice(value: object, request_body: Mapping[str, object]) -> bool:
-    """Return whether ``value`` is null, or the string ``none`` on a request without tools.
-
-    With tools, ``none`` is forwarded: dropping it would leave the tools under the native default, which lets the model
-    call them.
-    """
-    return value is None or (value == "none" and _is_empty_or_null(request_body.get("tools"), request_body))
-
-
 def _is_text_response_format(value: object, _request_body: Mapping[str, object]) -> bool:
     """Return whether ``value`` is exactly ``{"type": "text"}``."""
     return value == {"type": "text"}
@@ -257,12 +261,6 @@ def _is_zero_or_null(value: object, _request_body: Mapping[str, object]) -> bool
     return value is None or (type(value) is int and value == 0)
 
 
-def _is_parallel_tool_calls_without_tools(value: object, request_body: Mapping[str, object]) -> bool:
-    """Return whether ``value`` is a boolean or null and the request carries no tools."""
-    is_boolean_or_null = value is None or isinstance(value, bool)
-    return is_boolean_or_null and _is_empty_or_null(request_body.get("tools"), request_body)
-
-
 def _is_false(value: object, _request_body: Mapping[str, object]) -> bool:
     """Return whether ``value`` is false."""
     return value is False
@@ -276,11 +274,9 @@ def _is_default_service_tier(value: object, _request_body: Mapping[str, object])
 DEFAULT_NO_OP_PARAMETERS: Mapping[str, NoOpPredicate] = MappingProxyType(
     {
         "tools": _is_empty_or_null,
-        "tool_choice": _is_null_or_none_choice,
         "response_format": _is_text_response_format,
         "logprobs": _is_false_or_null,
         "top_logprobs": _is_zero_or_null,
-        "parallel_tool_calls": _is_parallel_tool_calls_without_tools,
         "store": _is_false,
         "service_tier": _is_default_service_tier,
     },
@@ -288,10 +284,15 @@ DEFAULT_NO_OP_PARAMETERS: Mapping[str, NoOpPredicate] = MappingProxyType(
 """Keys accepted and dropped when they hold their documented default, each with the test for that default.
 
 Stock clients send these unprompted. A key here that is also a field of
-[`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest] (``tools``, ``tool_choice``, ``response_format``,
-``parallel_tool_calls``) is validated and forwarded when it holds any other value. Any other value of the remaining
-keys is refused by name, as is any key that is neither here nor a field of the request model.
+[`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest] (``tools``, ``response_format``) is validated and
+forwarded when it holds any other value. Any other value of the remaining keys is refused by name, as is any key that
+is neither here nor a field of the request model. ``tool_choice`` and ``parallel_tool_calls`` are not here: OpenAI
+refuses either on a request without tools, whatever the value, and so does the front
+([`check_tool_fields_need_tools`][horde.chat_contract.check_tool_fields_need_tools]).
 """
+
+TOOL_CALLS_MESSAGE_KEY: str = "tool_calls"
+"""The message key holding an assistant's tool calls; refused on any other role."""
 
 COMMON_MESSAGE_KEYS: frozenset[str] = frozenset(
     {
@@ -307,7 +308,7 @@ SUPPORTED_MESSAGE_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
         ChatRole.SYSTEM.value: COMMON_MESSAGE_KEYS,
         ChatRole.DEVELOPER.value: COMMON_MESSAGE_KEYS,
         ChatRole.USER.value: COMMON_MESSAGE_KEYS,
-        ChatRole.ASSISTANT.value: COMMON_MESSAGE_KEYS | {"tool_calls"},
+        ChatRole.ASSISTANT.value: COMMON_MESSAGE_KEYS | {TOOL_CALLS_MESSAGE_KEY},
         ChatRole.TOOL.value: frozenset(
             {
                 "role",
@@ -317,18 +318,22 @@ SUPPORTED_MESSAGE_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
         ),
     },
 )
-"""The message keys each role may carry; any other key (``audio``, ``tool_calls`` outside an assistant message,
-``tool_call_id`` outside a tool message, ...) is refused by its path. OpenAI defines no ``name`` on a tool message."""
+"""The message keys each role may carry; any other key (``audio``, ``refusal``, ``tool_call_id`` outside a tool
+message, ...) is dropped before validation and never forwarded, except ``tool_calls`` outside an assistant message,
+which [`find_refused_parameter`][horde.oai.schema.find_refused_parameter] refuses as OpenAI does. OpenAI defines no
+``name`` on a tool message, so it is dropped there."""
 
 ACCEPTED_ROLES: frozenset[str] = frozenset(chat_role.value for chat_role in ChatRole)
 """The role strings a message may carry; ``function`` belongs to the legacy function calling, which is not served."""
 
 
 def find_refused_parameter(request_body: Mapping[str, object]) -> RefusedParameter | None:
-    """Return the first key, role, content part or ``horde`` option of a raw chat request that is not served, or None.
+    """Return the first top-level key, role, content part type or ``horde`` option of a raw request that is not served.
 
     Malformed values of served keys are left to [`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest]
-    validation; this only finds what the service does not serve at all.
+    validation; this only finds what the service does not serve at all. Unknown keys inside a message, a tool
+    definition or the ``tool_choice`` object are not refused;
+    [`drop_unknown_nested_keys`][horde.oai.schema.drop_unknown_nested_keys] removes them.
 
     Args:
         request_body: The decoded JSON request body.
@@ -365,15 +370,15 @@ def find_refused_parameter(request_body: Mapping[str, object]) -> RefusedParamet
 
 
 def _find_refused_in_message(message: Mapping[str, object], *, message_index: int) -> RefusedParameter | None:
-    """Return the first refused key, role or content part of one raw message, or None."""
+    """Return the refused ``tool_calls``, role or first refused content part type of one raw message, or None."""
     role = message.get("role")
-    role_keys = SUPPORTED_MESSAGE_KEYS.get(role, COMMON_MESSAGE_KEYS) if isinstance(role, str) else COMMON_MESSAGE_KEYS
-    for message_key in message:
-        if message_key not in role_keys:
-            return RefusedParameter(
-                parameter=f"messages[{message_index}].{message_key}",
-                message=f"The message key '{message_key}' is not supported on a '{role}' message.",
-            )
+    # OpenAI refuses tool calls on any role but assistant while it ignores other keys a role does not define, which
+    # drop_unknown_nested_keys drops.
+    if TOOL_CALLS_MESSAGE_KEY in message and role != ChatRole.ASSISTANT.value:
+        return RefusedParameter(
+            parameter=f"messages[{message_index}].{TOOL_CALLS_MESSAGE_KEY}",
+            message=f"The message key '{TOOL_CALLS_MESSAGE_KEY}' is not supported on a '{role}' message.",
+        )
     if isinstance(role, str) and role not in ACCEPTED_ROLES:
         return RefusedParameter(
             parameter=f"messages[{message_index}].role",
@@ -433,6 +438,107 @@ def _holds_no_op_default(request_key: str, value: object, request_body: Mapping[
     return no_op_predicate is not None and no_op_predicate(value, request_body)
 
 
+def drop_unknown_nested_keys(request_body: Mapping[str, object]) -> dict[str, object]:
+    """Return a copy of ``request_body`` whose messages, tool definitions and tool choice carry only served keys.
+
+    OpenAI accepts a message carrying a key it does not define (a ``name`` on a tool message, an arbitrary key), and an
+    unknown key inside a content part, a history tool call, a ``tools`` entry or its ``function``, or the
+    ``tool_choice`` object or its ``function``, and ignores the key, while it refuses an unknown top-level parameter
+    and an unknown key inside ``response_format`` or ``stream_options``; the front matches all of them. The OpenAI
+    SDK's accumulated streamed reply carries ``refusal``, ``audio``, ``annotations``, ``function_call`` and ``parsed``
+    on the message, ``index`` on each tool call and ``parsed_arguments`` on each function, and the SDK replays that
+    reply as history. ``tool_calls`` on a message other than an assistant message is refused by
+    [`find_refused_parameter`][horde.oai.schema.find_refused_parameter], as OpenAI refuses it. Other keys outside
+    the role's set in [`SUPPORTED_MESSAGE_KEYS`][horde.oai.schema.SUPPORTED_MESSAGE_KEYS] are dropped, as are keys
+    outside the fields of [`ChatToolCall`][horde.chat_contract.ChatToolCall],
+    [`ChatFunctionCall`][horde.chat_contract.ChatFunctionCall], [`TextContentPart`][horde.oai.schema.TextContentPart],
+    [`ImageContentPart`][horde.oai.schema.ImageContentPart], [`ImageUrl`][horde.oai.schema.ImageUrl],
+    [`ChatTool`][horde.chat_contract.ChatTool], [`ChatFunctionDefinition`][horde.chat_contract.ChatFunctionDefinition],
+    [`ChatNamedToolChoice`][horde.chat_contract.ChatNamedToolChoice] and
+    [`ChatNamedFunction`][horde.chat_contract.ChatNamedFunction].
+    A function's ``parameters`` schema is client data and is forwarded unchanged. Served keys keep their validation,
+    and values that are not objects are left for validation to report.
+
+    Args:
+        request_body: The decoded JSON request body.
+    """
+    served_body = dict(request_body)
+    messages = served_body.get("messages")
+    if isinstance(messages, list):
+        served_body["messages"] = [_served_message(message) if isinstance(message, dict) else message for message in messages]
+    tools = served_body.get("tools")
+    if isinstance(tools, list):
+        served_body["tools"] = [_served_tool(tool) if isinstance(tool, dict) else tool for tool in tools]
+    tool_choice = served_body.get("tool_choice")
+    if isinstance(tool_choice, dict):
+        served_body["tool_choice"] = _served_tool_choice(tool_choice)
+    return served_body
+
+
+def _served_tool_choice(tool_choice: Mapping[str, object]) -> dict[str, object]:
+    """Return a ``tool_choice`` object with only the named choice fields, and its function with only its name."""
+    served_tool_choice = _served_keys(tool_choice, ChatNamedToolChoice.model_fields)
+    function = served_tool_choice.get("function")
+    if isinstance(function, dict):
+        served_tool_choice["function"] = _served_keys(function, ChatNamedFunction.model_fields)
+    return served_tool_choice
+
+
+def _served_tool(tool: Mapping[str, object]) -> dict[str, object]:
+    """Return a ``tools`` entry with only the tool fields, and its function with only the function definition fields."""
+    served_tool = _served_keys(tool, ChatTool.model_fields)
+    function = served_tool.get("function")
+    if isinstance(function, dict):
+        served_tool["function"] = _served_keys(function, ChatFunctionDefinition.model_fields)
+    return served_tool
+
+
+def _served_message(message: Mapping[str, object]) -> dict[str, object]:
+    """Return ``message`` with only the keys of its role, its tool calls and content parts reduced the same way."""
+    role = message.get("role")
+    role_keys = SUPPORTED_MESSAGE_KEYS.get(role, COMMON_MESSAGE_KEYS) if isinstance(role, str) else COMMON_MESSAGE_KEYS
+    served_message = _served_keys(message, role_keys)
+    tool_calls = served_message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        served_message["tool_calls"] = [
+            _served_tool_call(tool_call) if isinstance(tool_call, dict) else tool_call for tool_call in tool_calls
+        ]
+    content = served_message.get("content")
+    if isinstance(content, list):
+        served_message["content"] = [
+            _served_content_part(content_part) if isinstance(content_part, dict) else content_part for content_part in content
+        ]
+    return served_message
+
+
+def _served_tool_call(tool_call: Mapping[str, object]) -> dict[str, object]:
+    """Return ``tool_call`` with only the tool call fields, and its function with only the function call fields."""
+    served_tool_call = _served_keys(tool_call, ChatToolCall.model_fields)
+    function = served_tool_call.get("function")
+    if isinstance(function, dict):
+        served_tool_call["function"] = _served_keys(function, ChatFunctionCall.model_fields)
+    return served_tool_call
+
+
+def _served_content_part(content_part: Mapping[str, object]) -> dict[str, object]:
+    """Return ``content_part`` with only the fields of its part type; a part of another type is copied unchanged."""
+    part_type = content_part.get("type")
+    if part_type == TEXT_CONTENT_PART_TYPE:
+        return _served_keys(content_part, TextContentPart.model_fields)
+    if part_type != IMAGE_URL_CONTENT_PART_TYPE:
+        return dict(content_part)
+    served_part = _served_keys(content_part, ImageContentPart.model_fields)
+    image_url = served_part.get("image_url")
+    if isinstance(image_url, dict):
+        served_part["image_url"] = _served_keys(image_url, ImageUrl.model_fields)
+    return served_part
+
+
+def _served_keys(raw_object: Mapping[str, object], served_keys: Collection[str]) -> dict[str, object]:
+    """Return the entries of ``raw_object`` whose key is in ``served_keys``."""
+    return {object_key: value for object_key, value in raw_object.items() if object_key in served_keys}
+
+
 class TextContentPart(BaseModel):
     """Represents one text part of a message's content array."""
 
@@ -476,9 +582,11 @@ ContentPart = Annotated[TextContentPart | ImageContentPart, Field(discriminator=
 class ChatMessage(BaseModel):
     """Represents one message of a chat request.
 
-    Which keys each role may carry is enforced by [`find_refused_parameter`][horde.oai.schema.find_refused_parameter]
-    before validation (see [`SUPPORTED_MESSAGE_KEYS`][horde.oai.schema.SUPPORTED_MESSAGE_KEYS]). Counts, sizes and
-    whether a ``tool_call_id`` answers an earlier call are the native route's checks.
+    Which keys each role may carry is enforced by
+    [`drop_unknown_nested_keys`][horde.oai.schema.drop_unknown_nested_keys] before validation (see
+    [`SUPPORTED_MESSAGE_KEYS`][horde.oai.schema.SUPPORTED_MESSAGE_KEYS]). Counts, sizes and whether the tool turns
+    follow OpenAI's rule ([`check_tool_history`][horde.chat_contract.check_tool_history]) are checked after
+    validation.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -612,10 +720,10 @@ class ChatCompletionRequest(BaseModel):
     """The functions the model may call, forwarded verbatim; an empty or null list is dropped before validation."""
 
     tool_choice: ChatToolChoice | None = None
-    """Whether and which tool the model calls, forwarded verbatim; null, and ``none`` without tools, are dropped."""
+    """Whether and which tool the model calls, forwarded verbatim; only allowed with tools, as under OpenAI."""
 
     parallel_tool_calls: StrictBool | None = None
-    """Whether the model may call several tools in one reply, forwarded verbatim; dropped on a request without tools."""
+    """Whether the model may call several tools in one reply, forwarded verbatim; only allowed with tools."""
 
     response_format: ChatResponseFormat | None = None
     """The output format, forwarded verbatim; ``{"type": "text"}`` is dropped before validation."""

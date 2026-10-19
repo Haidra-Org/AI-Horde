@@ -22,7 +22,7 @@ from typing import cast
 
 from horde_sdk.generation_parameters.text.chat_policy import ChatFeature, ChatGuarantee
 
-from horde.chat_contract import ChatJsonSchemaResponseFormat, ChatResponseFormat, ChatTool, ChatToolCall
+from horde.chat_contract import ChatTool, ChatToolCall
 from horde.oai.horde_client import HordeActiveModel, HordeChatGeneration, HordeChatStatus
 from horde.oai.schema import (
     ChatCompletionChoice,
@@ -145,7 +145,7 @@ COMPACT_JSON_SEPARATORS: tuple[str, str] = (
     ",",
     ":",
 )
-"""The separators of the compact JSON the prompt token estimate counts for tools, tool calls and schemas."""
+"""The separators of the compact JSON the prompt token estimate counts for tools and tool calls."""
 
 VISION_FEATURE: str = ChatFeature.VISION.value
 """The chat feature that adds the image input modality to a model list entry."""
@@ -256,23 +256,20 @@ def flatten_messages(
     messages: Sequence[ChatMessage],
     *,
     tools: Sequence[ChatTool] | None = None,
-    response_format: ChatResponseFormat | None = None,
 ) -> str:
     """Return the text the prompt token estimate counts, joined by newlines.
 
-    The worker renders tool definitions and a structured output schema into the prompt, so their compact JSON counts
-    as well as each message's role, text and tool calls.
+    The worker renders tool definitions into the prompt, so their compact JSON counts as well as each message's role,
+    text and tool calls. A response format schema does not count: the reference worker compiles it into a grammar and
+    never renders it into the prompt, as the native route's estimate assumes too.
 
     Args:
         messages: The request's messages.
         tools: The request's tools, when it carries any.
-        response_format: The request's response format, when it carries one; only a ``json_schema`` one adds text.
     """
     flattened_lines: list[str] = []
     if tools:
         flattened_lines.append(_compact_json([tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in tools]))
-    if isinstance(response_format, ChatJsonSchemaResponseFormat):
-        flattened_lines.append(_compact_json(response_format.model_dump(mode="json", by_alias=True, exclude_none=True)))
     for message in messages:
         flattened_lines.append(message.role.value)
         if isinstance(message.content, str):
@@ -363,7 +360,7 @@ def build_completion(
             prompt_tokens = generation.prompt_tokens
     if prompt_tokens is None:
         prompt_tokens = estimate_tokens(
-            flatten_messages(chat_request.messages, tools=chat_request.tools, response_format=chat_request.response_format),
+            flatten_messages(chat_request.messages, tools=chat_request.tools),
         )
         estimated_usage = True
     first_generation = status.generations[0] if status.generations else None

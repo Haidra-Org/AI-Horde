@@ -103,6 +103,38 @@ async def test_invalid_json_or_a_non_object_is_a_bad_request(start_front: StartF
     }
 
 
+@pytest.mark.parametrize(
+    ("non_finite", "constant"),
+    [
+        (float("nan"), "NaN"),
+        (float("inf"), "Infinity"),
+        (float("-inf"), "-Infinity"),
+    ],
+)
+@pytest.mark.parametrize("placement", ["temperature", "tool_schema"])
+async def test_a_non_finite_json_constant_is_a_bad_request_before_any_horde_call(
+    start_front: StartFront,
+    non_finite: float,
+    constant: str,
+    placement: str,
+) -> None:
+    if placement == "temperature":
+        body = build_chat_body(temperature=non_finite)
+    else:
+        tool = {"type": "function", "function": {"name": "f", "parameters": {"type": "number", "maximum": non_finite}}}
+        body = build_chat_body(tools=[tool])
+    # json.dumps writes the Python spellings NaN, Infinity and -Infinity, which are not JSON.
+    raw_body = json.dumps(body).encode()
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", content=raw_body, headers={"Content-Type": "application/json"})
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["message"] == f"The request body is not valid JSON: {constant} is not a JSON value."
+    assert (error["type"], error["param"], error["code"]) == ("invalid_request_error", None, "BadRequest")
+    assert front.horde.submit_route.call_count == 0
+
+
 @pytest.mark.parametrize("authorization", ["Basic dXNlcjpwYXNz", "Bearer", "Bearer ", "Bearer two words"])
 async def test_malformed_authorization_is_401_not_anonymous(start_front: StartFront, authorization: str) -> None:
     async with start_front() as front:

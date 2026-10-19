@@ -577,8 +577,12 @@ def test_a_tool_call_round_returns_the_call_and_then_answers_the_result(
     assert served_messages[-1] == {"role": "tool", "tool_call_id": WEATHER_CALL_ID, "content": WEATHER_TOOL_RESULT}
 
 
-def test_a_streamed_tool_call_accumulates_in_the_sdk(sdk_client: openai.OpenAI) -> None:
-    with sdk_client.chat.completions.stream(model=CHAT_MODEL, messages=TOOL_MESSAGES, tools=[WEATHER_TOOL]) as stream:
+def test_a_streamed_tool_call_round_accumulates_in_the_sdk_and_then_answers_the_result(
+    sdk_client: openai.OpenAI,
+    fixed_reply_worker: FixedReplyWorker,
+) -> None:
+    messages = list(TOOL_MESSAGES)
+    with sdk_client.chat.completions.stream(model=CHAT_MODEL, messages=messages, tools=[WEATHER_TOOL]) as stream:
         final_completion = stream.get_final_completion()
 
     [choice] = final_completion.choices
@@ -588,6 +592,21 @@ def test_a_streamed_tool_call_accumulates_in_the_sdk(sdk_client: openai.OpenAI) 
     assert tool_call.id == WEATHER_CALL_ID
     assert tool_call.function.name == "get_weather"
     assert tool_call.function.arguments == WEATHER_ARGUMENTS
+
+    # The accumulated message carries SDK fields (refusal, parsed, tool_calls[].index, parsed_arguments, ...) that the
+    # SDK replays as history; the front drops them, as OpenAI ignores unknown message keys.
+    messages.append(choice.message)  # type: ignore[arg-type]
+    messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": WEATHER_TOOL_RESULT})
+    answering = sdk_client.chat.completions.create(model=CHAT_MODEL, messages=messages, tools=[WEATHER_TOOL])
+
+    [answering_choice] = answering.choices
+    assert answering_choice.finish_reason == "stop"
+    assert answering_choice.message.content == TOOL_ANSWER_REPLY
+    served_messages = fixed_reply_worker.served_payloads[-1]["messages"]
+    assert served_messages[-2]["tool_calls"] == [
+        {"id": WEATHER_CALL_ID, "type": "function", "function": {"name": "get_weather", "arguments": WEATHER_ARGUMENTS}},
+    ]
+    assert served_messages[-1] == {"role": "tool", "tool_call_id": WEATHER_CALL_ID, "content": WEATHER_TOOL_RESULT}
 
 
 def test_a_json_schema_response_format_reaches_the_worker_and_returns_its_document(

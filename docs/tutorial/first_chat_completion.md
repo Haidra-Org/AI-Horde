@@ -225,7 +225,8 @@ print(answering.choices[0].message.content)
 
 The output is `stop` and a sentence that uses the result, such as `It is 18C and clear in Paris.`
 
-A `tool` message carries exactly `role`, `tool_call_id` and `content`. A `name` key on it is refused with a 400.
+A `tool` message carries `role`, `tool_call_id` and `content`. Any other key on it, such as `name`, is dropped and not
+forwarded, as OpenAI ignores it.
 
 ## 7. Ask for a JSON reply and parse it
 

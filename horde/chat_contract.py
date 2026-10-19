@@ -16,12 +16,20 @@ client sent in a shape one definition bounds.
 
 ``dry_run`` and ``operation_key`` belong to native callers: the front refuses both in a public request body (see
 [`INTERNAL_HORDE_OPTION_KEYS`][horde.chat_contract.INTERNAL_HORDE_OPTION_KEYS]) and supplies the operation key itself.
+
+The request rules both sides apply after validation live here as well, so the native route and the front refuse the
+same requests with the same wording: [`check_tool_fields_need_tools`][horde.chat_contract.check_tool_fields_need_tools],
+[`check_tool_history`][horde.chat_contract.check_tool_history],
+[`check_strict_response_schema`][horde.chat_contract.check_strict_response_schema] and
+[`check_json_word`][horde.chat_contract.check_json_word]. Each raises
+[`ChatRequestRefusal`][horde.chat_contract.ChatRequestRefusal] with OpenAI's message and ``param`` where OpenAI has one.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NoReturn, Protocol
 from uuid import UUID
 
 from horde_sdk.generation_parameters.text.chat_policy import DEFAULT_CHAT_CONFORMANCE, ChatConformance
@@ -30,22 +38,33 @@ from pydantic_core import PydanticCustomError
 
 __all__ = [
     "CHAT_REQUEST_CONFLICT_ERROR_TYPE",
+    "CHAT_REQUEST_CONFLICT_RC",
     "INTERNAL_HORDE_OPTION_KEYS",
     "MAX_CHAT_BODY_BYTES",
     "MAX_CHAT_IMAGE_BYTES",
     "MAX_CHAT_IMAGE_COUNT",
     "MAX_CHAT_IMAGE_COUNT_UNTRUSTED",
     "MAX_CHAT_MESSAGE_COUNT",
+    "MAX_CHAT_SCHEMA_NESTING",
     "MAX_CHAT_TEXT_BYTES",
     "MAX_CHAT_TOOL_CALL_COUNT",
     "MAX_CHAT_TOOL_CALL_ID_LENGTH",
     "MAX_CHAT_TOOL_COUNT",
     "MAX_CHAT_TOOL_NAME_LENGTH",
     "MAX_CHAT_TOOL_SPEC_BYTES",
+    "JSON_WORD",
+    "OBJECT_SCHEMA_TYPE",
+    "SCHEMA_KEYWORDS_HOLDING_A_SCHEMA",
+    "SCHEMA_KEYWORDS_HOLDING_SCHEMA_ARRAYS",
+    "SCHEMA_KEYWORDS_HOLDING_SCHEMA_MAPS",
     "TOOL_NAME_PATTERN",
+    "TOOL_ROLE",
+    "UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE",
+    "UNSUPPORTED_CHAT_PARAMETER_RC",
     "ChatContextFit",
     "ChatFunctionCall",
     "ChatFunctionDefinition",
+    "ChatHistoryMessage",
     "ChatHordeOptions",
     "ChatImpossibleKind",
     "ChatImpossibleReason",
@@ -54,6 +73,7 @@ __all__ = [
     "ChatJsonSchemaResponseFormat",
     "ChatNamedFunction",
     "ChatNamedToolChoice",
+    "ChatRequestRefusal",
     "ChatResponseFormat",
     "ChatResponseFormatType",
     "ChatTextResponseFormat",
@@ -61,6 +81,11 @@ __all__ = [
     "ChatToolCall",
     "ChatToolChoice",
     "ChatToolChoiceMode",
+    "chat_tool_call_bytes",
+    "check_json_word",
+    "check_strict_response_schema",
+    "check_tool_fields_need_tools",
+    "check_tool_history",
 ]
 
 MAX_CHAT_MESSAGE_COUNT: int = 1024
@@ -68,9 +93,11 @@ MAX_CHAT_MESSAGE_COUNT: int = 1024
 before it reaches the cap, so the cap only refuses bodies built to make validation and flattening expensive."""
 
 MAX_CHAT_TEXT_BYTES: int = 1024 * 1024
-"""The most UTF-8 bytes the message texts of one chat request may hold together. 1 MiB is several times the text of
-the largest context a worker serves, so no servable conversation reaches it, while the flattened estimate,
-moderation and the stored messages stay bounded."""
+"""The most UTF-8 bytes the message texts of one chat request may hold together, counting the function names and
+arguments of the tool calls in the history with them. 1 MiB is several times the text of the largest context a worker
+serves, so no servable conversation reaches it, while the flattened estimate, moderation and the stored messages stay
+bounded. Tool call arguments are copied into the flattened estimate and the worker's prompt like any text, so they
+count against the same budget."""
 
 MAX_CHAT_IMAGE_BYTES: int = 5 * 1024 * 1024
 """The largest decoded size of one image in a chat request. Matches the cap on a source image fetched from a URL."""
@@ -97,6 +124,16 @@ CHAT_REQUEST_CONFLICT_ERROR_TYPE: str = "chat_request_conflict"
 Callers map it to the ``ChatRequestConflict`` return code rather than to a generic validation failure, so a client can
 tell a contradiction from a malformed value.
 """
+
+UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE: str = "unsupported_chat_parameter"
+"""The pydantic error type raised for a value outside the service contract, such as a schema nested deeper than
+[`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING]; callers map it to ``UnsupportedChatParameter``."""
+
+UNSUPPORTED_CHAT_PARAMETER_RC: str = "UnsupportedChatParameter"
+"""Return code for a key, value or content part this horde does not serve, so a client can branch on it."""
+
+CHAT_REQUEST_CONFLICT_RC: str = "ChatRequestConflict"
+"""Return code for two values of a request that contradict each other, such as differing token limits."""
 
 INTERNAL_HORDE_OPTION_KEYS: frozenset[str] = frozenset(
     {
@@ -151,6 +188,11 @@ class ChatHordeOptions(BaseModel):
     """How closely the serving worker has to follow the OpenAI chat contract (ADR 0036). ``best_effort`` drops the
     guarantee requirements and keeps capabilities and limits."""
 
+    openai_guards: StrictBool = False
+    """Turn on the request refusals OpenAI applies and the Horde relaxes on purpose. It covers one refusal: a
+    ``json_object`` response format without the word "json" in any message (see
+    [`check_json_word`][horde.chat_contract.check_json_word]). It acts when the request is admitted and is not stored."""
+
     dry_run: StrictBool = False
     """Return the kudos cost without queueing; native callers only."""
 
@@ -197,6 +239,53 @@ amount of worker time outside the token budget."""
 TOOL_NAME_PATTERN: str = r"^[A-Za-z0-9_-]+$"
 """The characters a function name may use, OpenAI's own rule, so a name is safe to render into any chat template."""
 
+MAX_CHAT_SCHEMA_NESTING: int = 10
+"""The most levels a JSON Schema in a request may nest below its root, OpenAI's documented limit for strict schemas.
+It applies to every tool ``parameters`` schema and every ``response_format`` schema, strict or not. A schema OpenAI
+serves stays within it, and the bound keeps a small but deeply nested body from exceeding the recursion limit of the
+JSON serialisation that stores and forwards it."""
+
+
+def _json_depth_exceeds(value: object, max_depth: int) -> bool:
+    """Return whether ``value`` nests objects and arrays more than ``max_depth`` deep.
+
+    Walked with an explicit stack, so a value nested past the interpreter's recursion limit is measured too.
+    """
+    pending: list[tuple[object, int]] = [(value, 1)]
+    while pending:
+        current, depth = pending.pop()
+        if isinstance(current, dict):
+            children: Iterable[object] = current.values()
+        elif isinstance(current, list):
+            children = current
+        else:
+            continue
+        if depth > max_depth:
+            return True
+        pending.extend((child, depth + 1) for child in children)
+    return False
+
+
+def _validate_schema_nesting(schema: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Validate that a JSON Schema nests at most
+    [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING] levels below its root.
+
+    Each level adds at most two JSON containers (a keyword's object or array, then the subschema in it), and the
+    deepest subschema's own keywords one more, so the root container plus two per level plus one bounds every schema
+    within the limit.
+
+    Raises:
+        PydanticCustomError: The schema nests deeper, with the type
+            [`UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE`][horde.chat_contract.UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE].
+    """
+    if schema is not None and _json_depth_exceeds(schema, 1 + 2 * MAX_CHAT_SCHEMA_NESTING + 1):
+        raise PydanticCustomError(
+            UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE,
+            "A JSON Schema may nest at most {max_nesting} levels below its root.",
+            {"max_nesting": MAX_CHAT_SCHEMA_NESTING},
+        )
+    return schema
+
 
 class ChatToolChoiceMode(StrEnum):
     """The ``tool_choice`` values that pick a mode rather than one function."""
@@ -227,6 +316,17 @@ class ChatFunctionDefinition(BaseModel):
 
     strict: StrictBool | None = None
     """Whether the arguments have to match the schema exactly; forwarded to the worker, which decides what it honours."""
+
+    @field_validator("parameters")
+    @classmethod
+    def validate_parameters_nesting(cls, parameters: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Validate that the schema nests within
+        [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING].
+
+        Raises:
+            PydanticCustomError: The schema nests deeper.
+        """
+        return _validate_schema_nesting(parameters)
 
 
 class ChatTool(BaseModel):
@@ -301,10 +401,11 @@ class ChatJsonSchema(BaseModel):
     """Represents the ``json_schema`` object of a structured output request.
 
     The schema itself is read from the ``schema`` key and held in ``schema_``, because ``schema`` is a pydantic method
-    name; dump with ``by_alias=True`` to get the client's key back.
+    name; dump with ``by_alias=True`` to get the client's key back. Validation reads only the ``schema`` key, so
+    ``schema_`` in a request is an unknown key and refused like any other.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: StrictStr = Field(min_length=1, max_length=MAX_CHAT_TOOL_NAME_LENGTH, pattern=TOOL_NAME_PATTERN)
     """What the client calls the schema."""
@@ -317,7 +418,21 @@ class ChatJsonSchema(BaseModel):
     into a grammar, and without one the format would mean nothing."""
 
     strict: StrictBool | None = None
-    """Whether the output has to match the schema exactly; forwarded to the worker, which decides what it honours."""
+    """Whether the output has to match the schema exactly; forwarded to the worker, which decides what it honours.
+    ``true`` also subjects the schema to OpenAI's structural rules
+    ([`check_strict_response_schema`][horde.chat_contract.check_strict_response_schema])."""
+
+    @field_validator("schema_")
+    @classmethod
+    def validate_schema_nesting(cls, schema: dict[str, Any]) -> dict[str, Any]:
+        """Validate that the schema nests within
+        [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING].
+
+        Raises:
+            PydanticCustomError: The schema nests deeper.
+        """
+        _validate_schema_nesting(schema)
+        return schema
 
 
 class ChatJsonSchemaResponseFormat(BaseModel):
@@ -392,3 +507,329 @@ class ChatImpossibleReason(BaseModel):
 
     exceeded_limits: tuple[str, ...] = ()
     """The declared limits the request exceeds on a refused worker, such as ``tools_max_temperature``."""
+
+
+class ChatRequestRefusal(Exception):
+    """A request one of the shared request rules refuses, with what both routes report for it.
+
+    The native route raises it as a 400 with ``rc``; the front returns it as an OpenAI error with ``param``.
+    """
+
+    def __init__(self, message: str, *, param: str, rc: str) -> None:
+        """Initialise the refusal.
+
+        Args:
+            message: The explanation, in OpenAI's wording where OpenAI refuses the same request.
+            param: The request path at fault, such as ``messages[2].role``.
+            rc: The return code, [`UNSUPPORTED_CHAT_PARAMETER_RC`][horde.chat_contract.UNSUPPORTED_CHAT_PARAMETER_RC]
+                or [`CHAT_REQUEST_CONFLICT_RC`][horde.chat_contract.CHAT_REQUEST_CONFLICT_RC].
+        """
+        super().__init__(message)
+        self.message: str = message
+        """The explanation returned to the client."""
+
+        self.param: str = param
+        """The request path at fault."""
+
+        self.rc: str = rc
+        """The return code."""
+
+
+class NonJsonConstantError(ValueError):
+    """``NaN``, ``Infinity`` or ``-Infinity`` in text parsed as JSON.
+
+    Python's parser accepts the three constants although JSON does not define them, so without
+    [`refuse_json_constant`][horde.chat_contract.refuse_json_constant] a non-finite number would reach tool and
+    response schemas and numeric parameters.
+    """
+
+    def __init__(self, constant: str) -> None:
+        """Initialise the error.
+
+        Args:
+            constant: The constant as the text spells it.
+        """
+        super().__init__(f"{constant} is not valid JSON")
+        self.constant: str = constant
+        """The constant as the text spells it."""
+
+
+def refuse_json_constant(constant: str) -> NoReturn:
+    """Refuse ``constant``; passed as ``parse_constant`` to ``json.loads``, it limits the parse to JSON.
+
+    Raises:
+        NonJsonConstantError: Always.
+    """
+    raise NonJsonConstantError(constant)
+
+
+class ChatHistoryMessage(Protocol):
+    """The parts of a request message the tool history rule reads; both routes' message models provide them."""
+
+    @property
+    def role(self) -> str:
+        """Who wrote the message."""
+
+    @property
+    def tool_calls(self) -> Sequence[ChatToolCall] | None:
+        """The tool calls of an assistant message."""
+
+    @property
+    def tool_call_id(self) -> str | None:
+        """The id of the call a ``tool`` message answers."""
+
+
+TOOL_ROLE: str = "tool"
+"""The role of a message answering a tool call."""
+
+
+def chat_tool_call_bytes(tool_calls: Sequence[ChatToolCall] | None) -> int:
+    """Return the UTF-8 size of the function names and arguments of a message's tool calls.
+
+    Counted into [`MAX_CHAT_TEXT_BYTES`][horde.chat_contract.MAX_CHAT_TEXT_BYTES] with the message texts.
+    """
+    return sum(len(tool_call.function.name.encode()) + len(tool_call.function.arguments.encode()) for tool_call in tool_calls or ())
+
+
+def check_tool_fields_need_tools(*, offers_tools: bool, tool_choice_set: bool, parallel_tool_calls_set: bool) -> None:
+    """Refuse ``tool_choice`` or ``parallel_tool_calls`` on a request without tools, as OpenAI does for any value,
+    ``none`` included.
+
+    Args:
+        offers_tools: Whether the request carries a non-empty ``tools``.
+        tool_choice_set: Whether the request sets ``tool_choice`` to a value other than null.
+        parallel_tool_calls_set: Whether the request sets ``parallel_tool_calls`` to a value other than null.
+
+    Raises:
+        ChatRequestRefusal: With ``ChatRequestConflict`` and the key as ``param``.
+    """
+    if offers_tools:
+        return
+    for request_key, is_set in (("tool_choice", tool_choice_set), ("parallel_tool_calls", parallel_tool_calls_set)):
+        if is_set:
+            raise ChatRequestRefusal(
+                f"Invalid value for '{request_key}': '{request_key}' is only allowed when 'tools' are specified.",
+                param=request_key,
+                rc=CHAT_REQUEST_CONFLICT_RC,
+            )
+
+
+def _unanswered_calls_refusal(unanswered_ids: Sequence[str], param: str) -> ChatRequestRefusal:
+    """Create the refusal for tool calls no ``tool`` message answers before the message at ``param`` or the end."""
+    return ChatRequestRefusal(
+        "An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. "
+        f"The following tool_call_ids did not have response messages: {', '.join(unanswered_ids)}",
+        param=param,
+        rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+    )
+
+
+def check_tool_history(messages: Sequence[ChatHistoryMessage]) -> None:
+    """Refuse a history whose tool turns break OpenAI's rule.
+
+    An assistant message with ``tool_calls`` has to be followed at once by ``tool`` messages answering each of its
+    call ids exactly once, in any order among themselves. A ``tool`` message answers a call of that assistant message
+    only, and the ids within one assistant message are unique. An id may recur in a later round, since each round is
+    answered on its own.
+
+    Args:
+        messages: The request's messages, oldest first.
+
+    Raises:
+        ChatRequestRefusal: With ``UnsupportedChatParameter``: at ``messages[n].role`` for a ``tool`` message that
+            follows no open tool calls or answers an id a second time, and for a message arriving before every open
+            call was answered; at ``messages[n].tool_call_id`` for an id the preceding assistant message did not
+            issue; at ``messages[n].tool_calls`` for an id repeated within one assistant message; and at ``messages``
+            when the history ends with calls left unanswered.
+    """
+    open_call_ids: list[str] = []
+    answered_ids: set[str] = set()
+    for message_index, message in enumerate(messages):
+        if message.role == TOOL_ROLE:
+            if not open_call_ids or message.tool_call_id in answered_ids:
+                raise ChatRequestRefusal(
+                    "Invalid parameter: messages with role 'tool' must be a response to a preceding message with 'tool_calls'.",
+                    param=f"messages[{message_index}].role",
+                    rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+                )
+            if message.tool_call_id not in open_call_ids:
+                raise ChatRequestRefusal(
+                    f"Invalid parameter: 'tool_call_id' of '{message.tool_call_id}' not found in 'tool_calls' of previous message.",
+                    param=f"messages[{message_index}].tool_call_id",
+                    rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+                )
+            answered_ids.add(message.tool_call_id)
+            continue
+        unanswered_ids = [call_id for call_id in open_call_ids if call_id not in answered_ids]
+        if unanswered_ids:
+            raise _unanswered_calls_refusal(unanswered_ids, f"messages[{message_index}].role")
+        open_call_ids = [tool_call.id for tool_call in message.tool_calls or ()]
+        answered_ids = set()
+        if len(set(open_call_ids)) != len(open_call_ids):
+            repeated_id = next(call_id for call_id in open_call_ids if open_call_ids.count(call_id) > 1)
+            raise ChatRequestRefusal(
+                f"Invalid parameter: the tool call id '{repeated_id}' appears more than once in 'tool_calls'.",
+                param=f"messages[{message_index}].tool_calls",
+                rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+            )
+    unanswered_ids = [call_id for call_id in open_call_ids if call_id not in answered_ids]
+    if unanswered_ids:
+        raise _unanswered_calls_refusal(unanswered_ids, "messages")
+
+
+SCHEMA_KEYWORDS_HOLDING_A_SCHEMA: frozenset[str] = frozenset(
+    {
+        "items",
+        "additionalProperties",
+        "not",
+        "if",
+        "then",
+        "else",
+        "contains",
+        "propertyNames",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+    },
+)
+"""JSON Schema keywords whose value is one subschema; ``items`` may also hold an array of them, as in draft 7."""
+
+SCHEMA_KEYWORDS_HOLDING_SCHEMA_ARRAYS: frozenset[str] = frozenset(
+    {
+        "anyOf",
+        "allOf",
+        "oneOf",
+        "prefixItems",
+    },
+)
+"""JSON Schema keywords whose value is an array of subschemas."""
+
+SCHEMA_KEYWORDS_HOLDING_SCHEMA_MAPS: frozenset[str] = frozenset(
+    {
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+    },
+)
+"""JSON Schema keywords whose value maps names to subschemas."""
+
+OBJECT_SCHEMA_TYPE: str = "object"
+"""The JSON Schema ``type`` of an object, the schemas OpenAI's strict structural rules apply to."""
+
+
+def _is_object_schema(schema: dict[str, Any]) -> bool:
+    """Return whether a schema describes an object: its ``type`` is or lists ``object``, or it has ``properties``."""
+    schema_type = schema.get("type")
+    lists_object = isinstance(schema_type, list) and OBJECT_SCHEMA_TYPE in schema_type
+    return schema_type == OBJECT_SCHEMA_TYPE or lists_object or "properties" in schema
+
+
+def _object_schema_violation(schema: dict[str, Any], context: tuple[str | int, ...]) -> str | None:
+    """Return OpenAI's description of the strict rule an object schema breaks at ``context``, or None."""
+    if schema.get("additionalProperties") is not False:
+        return f"In context={context!r}, 'additionalProperties' is required to be supplied and to be false."
+    properties = schema.get("properties")
+    property_names = list(properties) if isinstance(properties, dict) else []
+    required = schema.get("required")
+    if not property_names:
+        return None
+    required_names = required if isinstance(required, list) else []
+    missing_names = [property_name for property_name in property_names if property_name not in required_names]
+    if isinstance(required, list) and not missing_names:
+        return None
+    # OpenAI names the first missing property only.
+    missing_suffix = f" Missing '{missing_names[0]}'." if missing_names else ""
+    return (
+        f"In context={context!r}, 'required' is required to be supplied and to be an array including every key in "
+        f"properties.{missing_suffix}"
+    )
+
+
+def _subschemas(schema: dict[str, Any], context: tuple[str | int, ...]) -> list[tuple[object, tuple[str | int, ...]]]:
+    """Return every direct subschema of ``schema`` with its context, the path of keys and indexes leading to it."""
+    subschemas: list[tuple[object, tuple[str | int, ...]]] = []
+    for keyword, value in schema.items():
+        if keyword in SCHEMA_KEYWORDS_HOLDING_SCHEMA_MAPS and isinstance(value, dict):
+            subschemas.extend((subschema, (*context, keyword, name)) for name, subschema in value.items())
+        elif keyword in SCHEMA_KEYWORDS_HOLDING_SCHEMA_ARRAYS and isinstance(value, list):
+            subschemas.extend((subschema, (*context, keyword, index)) for index, subschema in enumerate(value))
+        elif keyword in SCHEMA_KEYWORDS_HOLDING_A_SCHEMA and isinstance(value, list):
+            subschemas.extend((subschema, (*context, keyword, index)) for index, subschema in enumerate(value))
+        elif keyword in SCHEMA_KEYWORDS_HOLDING_A_SCHEMA:
+            subschemas.append((value, (*context, keyword)))
+    return subschemas
+
+
+def _strict_schema_violation(schema: object, context: tuple[str | int, ...]) -> str | None:
+    """Return OpenAI's description of the first strict structural rule ``schema`` or a subschema breaks, or None.
+
+    The context is written as OpenAI writes it, a Python tuple of the keys leading to the subschema.
+    """
+    if not isinstance(schema, dict):
+        return None
+    if _is_object_schema(schema):
+        violation = _object_schema_violation(schema, context)
+        if violation is not None:
+            return violation
+    for subschema, subschema_context in _subschemas(schema, context):
+        violation = _strict_schema_violation(subschema, subschema_context)
+        if violation is not None:
+            return violation
+    return None
+
+
+def check_strict_response_schema(response_format: ChatResponseFormat | None) -> None:
+    """Refuse a ``strict`` ``json_schema`` response format whose schema breaks OpenAI's structural rules.
+
+    Under ``strict: true`` every object schema, at the root, under ``properties``, in array ``items``, under ``$defs``
+    and in every other subschema, sets ``additionalProperties: false`` and lists each of its properties in
+    ``required``. Other keywords are not checked here; OpenAI accepts and applies ``minimum`` and the like. A schema
+    without ``strict: true`` is not checked structurally. The walk recurses once per nesting level, which validation
+    already bounded by [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING].
+
+    Args:
+        response_format: The request's validated response format.
+
+    Raises:
+        ChatRequestRefusal: With ``UnsupportedChatParameter`` and ``param`` ``response_format``.
+    """
+    if not isinstance(response_format, ChatJsonSchemaResponseFormat) or response_format.json_schema.strict is not True:
+        return
+    violation = _strict_schema_violation(response_format.json_schema.schema_, ())
+    if violation is not None:
+        raise ChatRequestRefusal(
+            f"Invalid schema for response_format '{response_format.json_schema.name}': {violation}",
+            param="response_format",
+            rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+        )
+
+
+JSON_WORD: str = "json"
+"""The word OpenAI requires in the messages of a ``json_object`` request, matched without regard to case."""
+
+
+def check_json_word(message_texts: Iterable[str], response_format: ChatResponseFormat | None, *, openai_guards: bool) -> None:
+    """Refuse a ``json_object`` request whose messages never mention JSON, when the request asks for OpenAI's guards.
+
+    OpenAI refuses such a request because a model constrained to JSON without being asked for it in the prompt may
+    generate whitespace until its token limit. The Horde serves it by default; ``horde.openai_guards`` restores
+    OpenAI's refusal for a client that relies on it.
+
+    Args:
+        message_texts: Every message text and text part of the request.
+        response_format: The request's validated response format.
+        openai_guards: The request's ``horde.openai_guards``.
+
+    Raises:
+        ChatRequestRefusal: With ``ChatRequestConflict`` and ``param`` ``messages``.
+    """
+    if not openai_guards or not isinstance(response_format, ChatJsonObjectResponseFormat):
+        return
+    if any(JSON_WORD in message_text.lower() for message_text in message_texts):
+        return
+    raise ChatRequestRefusal(
+        "'messages' must contain the word 'json' in some form, to use 'response_format' of type 'json_object'.",
+        param="messages",
+        rc=CHAT_REQUEST_CONFLICT_RC,
+    )

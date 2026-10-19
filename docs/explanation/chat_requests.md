@@ -26,7 +26,8 @@ In brief:
 - An OpenAI-compatible front, a separate process, speaks `/v1/chat/completions` to clients and the native chat routes
   to the horde, waking on a Redis signal when a reply lands.
 - A parameter the service does not implement is refused by name, never dropped, so a client always receives the
-  answer it asked for or an error.
+  answer it asked for or an error. Unknown keys inside messages, tool definitions and `tool_choice` are the
+  exception: they are dropped, as OpenAI does.
 - Replies arrive whole: streaming is emulated, and one request yields one choice.
 
 Every field is specified in the [chat requests reference](../reference/chat_requests.md) and the
@@ -157,6 +158,21 @@ field at its documented default counts as omitted, so stock clients that send de
 front drops a short list of named default no-ops. Capability fields (`tools`, `response_format`, image parts) are never
 dropped, since they change the answer. A supported value that no online worker can serve is a different case: the
 request is accepted and waits, and the front answers 503 when the native status reports `is_possible` false.
+
+Where OpenAI refuses a request shape, the horde refuses it too, with OpenAI's message and `param`: a `tool_choice` or
+`parallel_tool_calls` without tools, a tool history whose calls are not answered right after the assistant message
+that made them, and a `strict` schema that leaves an object open or a property optional. A client written against
+OpenAI then fails the same way on both services. The rules live in `horde/chat_contract.py`, so the native route and
+the front cannot drift apart. A few OpenAI refusals protect only OpenAI's backend, such as a `json_object` request
+whose messages never mention JSON; the horde serves those, and a client that depends on the refusal sets
+`horde.openai_guards`.
+
+Messages and their nested objects, the `tools` definitions and the `tool_choice` object are the exception: an
+unknown key inside them is dropped and not forwarded. Every other object, and the top level, refuses unknown keys.
+The split mirrors OpenAI. OpenAI's API ignores unknown keys inside those objects and refuses them at the top level and
+inside `response_format` and `stream_options`. It also refuses `tool_calls` on a message other than an assistant
+message, which the front refuses too. The OpenAI Python SDK also replays its accumulated streamed reply with
+SDK-specific fields, so refusing them would break the SDK's tool loop.
 
 Dropping unsupported fields by default, as OpenRouter does, was the alternative
 ([ADR 0030](../decisions/0030-route-unsupported-parameters-by-declared-support-ignoring-by-default.md)). It produces

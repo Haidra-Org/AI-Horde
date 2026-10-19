@@ -26,7 +26,12 @@ from horde.apis.v2.base import (
     assert_submitting_key,
     commit_request_cancellation,
 )
-from horde.chat_contract import MAX_CHAT_BODY_BYTES, MAX_CHAT_IMAGE_COUNT_UNTRUSTED, ChatContextFit
+from horde.chat_contract import (
+    MAX_CHAT_BODY_BYTES,
+    MAX_CHAT_IMAGE_COUNT_UNTRUSTED,
+    ChatContextFit,
+    refuse_json_constant,
+)
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base import settings
 from horde.classes.base.style_application import count_literal_text_template_fields, format_text_style_prompt
@@ -673,7 +678,7 @@ def read_chat_request_body() -> object:
     none, is read only up to one byte past the limit, so an oversized one is refused without being read whole.
 
     Returns:
-        The decoded body, or None when it is not JSON.
+        The decoded body, or None when it is not JSON or holds a non-JSON constant such as ``NaN``.
 
     Raises:
         horde.exceptions.RequestTooLarge: The body is larger than
@@ -683,19 +688,20 @@ def read_chat_request_body() -> object:
     if request.content_length is not None:
         if request.content_length > MAX_CHAT_BODY_BYTES:
             raise e.RequestTooLarge(too_large_message)
-        return request.get_json(silent=True)
-
-    body_chunks: list[bytes] = []
-    body_size = 0
-    while body_chunk := request.stream.read(MAX_CHAT_BODY_BYTES + 1 - body_size):
-        body_chunks.append(body_chunk)
-        body_size += len(body_chunk)
-        if body_size > MAX_CHAT_BODY_BYTES:
-            raise e.RequestTooLarge(too_large_message)
+        body = request.get_data()
+    else:
+        body_chunks: list[bytes] = []
+        body_size = 0
+        while body_chunk := request.stream.read(MAX_CHAT_BODY_BYTES + 1 - body_size):
+            body_chunks.append(body_chunk)
+            body_size += len(body_chunk)
+            if body_size > MAX_CHAT_BODY_BYTES:
+                raise e.RequestTooLarge(too_large_message)
+        body = b"".join(body_chunks)
     if not request.is_json:
         return None
     try:
-        return json.loads(b"".join(body_chunks))
+        return json.loads(body, parse_constant=refuse_json_constant)
     except ValueError:
         return None
 

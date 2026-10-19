@@ -65,6 +65,7 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   | `tools`             | The template renders tools and tool turns; the worker submits the model's calls     |
   | `json_object`       | The backend constrains the reply to one JSON object                                 |
   | `json_schema`       | The backend constrains the reply to the client's JSON Schema                        |
+  | `tools_with_response_format` | The backend serves tools and a response format in one request, applying the format only to the final text answer |
 
   The same list carries guarantees: a guarantee states that the backend follows one part of the OpenAI contract
   exactly, where it could otherwise deviate on purpose ([ADR 0036](../decisions/0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md)).
@@ -181,6 +182,11 @@ them to the backend unchanged.
   grammar at an object.
 - Declare `json_schema` only when the backend constrains the reply to the schema in
   `response_format.json_schema.schema`.
+- Declare `tools_with_response_format` only when the backend serves a request carrying both tool definitions and a
+  `response_format`: the model may still call a tool, and the format constrains only the final text answer, as
+  under OpenAI. A request that forwards tools beside a response format needs it under either conformance mode. A
+  backend whose output grammar for the format forbids the tool-call syntax, or whose tool grammar replaces the format,
+  does not declare it.
 
 Submit tool calls with the `id`, `type` and `function` the backend minted, and `content` null when the model only
 called tools (see [step 6](#6-submit-the-reply)).
@@ -343,7 +349,8 @@ With `--hordechat`, each pop declares:
 - `chat_jobs: true`;
 - `chat_features` `seed`, `presence_penalty`, `tools`, `json_object` and `json_schema`, plus `vision` when a
   multimodal projector is loaded. `frequency_penalty` is not declared, since koboldcpp treats it as an alias of the
-  presence penalty;
+  presence penalty. `tools_with_response_format` is not declared: koboldcpp's generic tool path replaces the response
+  format grammar with its tool grammar, so a request carrying both is served by other workers;
 - `image_transports` `url` and `base64` when `vision` is declared, and none otherwise;
 - `chat_limits.max_context_length` as the smaller of the loaded context size and `--hordemaxctx`, and
   `chat_limits.max_length` as `--hordegenlen` bounded by the room that context leaves for a reply;

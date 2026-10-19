@@ -1189,6 +1189,26 @@ def test_a_chunked_body_within_the_limit_is_parsed(client, request_headers: dict
     assert response.get_json()["kudos"] > 0
 
 
+@pytest.mark.parametrize("chunked", [False, True], ids=["content_length", "chunked"])
+def test_a_body_holding_a_non_json_constant_is_refused_like_a_non_json_body(
+    client,
+    request_headers: dict[str, str],
+    chunked: bool,
+) -> None:
+    """``NaN`` and ``Infinity`` are not JSON; a body holding one is refused the same way as a body that is not JSON."""
+    import io
+
+    body = json.dumps(_chat_body(dry_run=True, temperature=1.0)).replace("1.0", "NaN").encode()
+    post_kwargs = {"input_stream": io.BytesIO(body)} if chunked else {"data": body}
+
+    not_json = client.post("/api/v2/generate/chat/async", data=b"not json", content_type="application/json", headers=request_headers)
+    response = client.post("/api/v2/generate/chat/async", content_type="application/json", headers=request_headers, **post_kwargs)
+
+    assert not_json.status_code == 400, not_json.get_data(as_text=True)
+    assert response.status_code == 400, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == not_json.get_json()["rc"]
+
+
 def test_a_grown_context_is_reported_on_the_chat_status(client, request_headers: dict[str, str], chat_worker: FakeChatWorker) -> None:
     chat_worker.pop()
     long_messages = [{"role": "user", "content": "word " * 1700}]
@@ -1249,6 +1269,8 @@ def test_worker_nuls_are_sanitised_in_the_atomic_structured_submission(
         {"messages": [{"role": "user", "content": "Blue", "name": "name\x00"}]},
         {"stop": "stop\x00"},
         {"tools": [{"type": "function", "function": {"name": "lookup", "description": "Look\x00"}}]},
+        {"tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"properties": {"bad\x00key": {}}}}}]},
+        {"response_format": {"type": "json_schema", "json_schema": {"name": "n", "schema": {"properties": {"bad\x00key": {}}}}}},
     ],
 )
 def test_client_nuls_are_refused_before_storage_and_leave_the_session_usable(
@@ -1301,7 +1323,7 @@ TOOLS_REQUEST_EXTRAS: dict[str, Any] = {
 LONG_ARGUMENTS = '{"city":"Bergen","detail":"' + "d" * 160 + '"}'
 """Tool call arguments long enough that their characters, and not the minimum, set the output estimate."""
 
-TOOLS_FEATURES = ["tools", "json_object"]
+TOOLS_FEATURES = ["tools", "json_object", "tools_with_response_format"]
 """The features a worker declares to serve ``TOOLS_REQUEST_EXTRAS``."""
 
 
@@ -1415,9 +1437,11 @@ def test_a_json_schema_request_goes_only_to_a_worker_declaring_json_schema(
     "chat_body_overrides",
     [
         {"tool_choice": "auto"},
+        {"tool_choice": "none"},
+        {"parallel_tool_calls": False},
         {"tools": [LOOKUP_TOOL], "tool_choice": {"type": "function", "function": {"name": "send_email"}}},
     ],
-    ids=["tool-choice-without-tools", "unknown-forced-function"],
+    ids=["tool-choice-without-tools", "tool-choice-none-without-tools", "parallel-tool-calls-without-tools", "unknown-forced-function"],
 )
 def test_a_tool_choice_the_tools_do_not_allow_is_a_conflict(
     client,
@@ -1577,6 +1601,35 @@ def test_a_tool_request_hotter_than_every_worker_tool_temperature_limit_reports_
     _cancel(client, request_headers, "chat", request_id)
 
 
+@pytest.mark.parametrize("conformance", ["strict", "best_effort"])
+def test_tools_beside_a_response_format_without_a_worker_serving_the_combination_report_the_gap(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    conformance: str,
+) -> None:
+    request_id = _submit_chat_request(
+        client,
+        request_headers,
+        tools=[LOOKUP_TOOL],
+        response_format={"type": "json_object"},
+        horde={"conformance": conformance},
+    )
+
+    worker_guarantees = ["prompt_overflow_refused"]
+    assert chat_worker.pop(chat_features=["tools", "json_object"], chat_guarantees=worker_guarantees)["id"] is None
+    status = _chat_status(client, request_headers, request_id)
+
+    assert status["is_possible"] is False
+    assert status["impossible_reason"] == {
+        "kind": "declaration_gap",
+        "missing_declarations": ["tools_with_response_format"],
+        "exceeded_limits": [],
+    }
+    assert chat_worker.pop(chat_features=TOOLS_FEATURES, chat_guarantees=worker_guarantees)["id"] is not None
+    _cancel(client, request_headers, "chat", request_id)
+
+
 def test_a_request_a_worker_can_take_reports_no_impossible_reason(
     client,
     request_headers: dict[str, str],
@@ -1592,7 +1645,7 @@ def test_a_request_a_worker_can_take_reports_no_impossible_reason(
     _cancel(client, request_headers, "chat", request_id)
 
 
-VERIFIED_FEATURES = ["tools", "json_object", "json_schema"]
+VERIFIED_FEATURES = ["tools", "json_object", "json_schema", "tools_with_response_format"]
 """The features a worker declares to pop every request the reply verification tests make."""
 
 COLOUR_SCHEMA: dict[str, Any] = {

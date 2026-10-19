@@ -44,7 +44,7 @@ import enum
 import hashlib
 import itertools
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Annotated, Any, Literal, NoReturn
 
 from horde_sdk.generation_parameters.text.chat_policy import (
@@ -68,13 +68,16 @@ from pydantic import (
     StrictInt,
     StrictStr,
     ValidationError,
+    field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 from referencing.exceptions import Unresolvable
 
 from horde import exceptions as e
 from horde.chat_contract import (
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
+    CHAT_REQUEST_CONFLICT_RC,
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
@@ -83,14 +86,23 @@ from horde.chat_contract import (
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
     MAX_CHAT_TOOL_COUNT,
     MAX_CHAT_TOOL_SPEC_BYTES,
+    UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE,
+    UNSUPPORTED_CHAT_PARAMETER_RC,
     ChatHordeOptions,
     ChatNamedToolChoice,
+    ChatRequestRefusal,
     ChatResponseFormat,
     ChatResponseFormatType,
     ChatTool,
     ChatToolCall,
     ChatToolChoice,
     ChatToolChoiceMode,
+    chat_tool_call_bytes,
+    check_json_word,
+    check_strict_response_schema,
+    check_tool_fields_need_tools,
+    check_tool_history,
+    refuse_json_constant,
 )
 from horde.classes.kobold.request_fit import (
     MAX_CONTEXT_LENGTH_PARAMETER,
@@ -146,12 +158,6 @@ __all__ = [
     "serialize_messages",
     "verify_chat_reply",
 ]
-
-UNSUPPORTED_CHAT_PARAMETER_RC = "UnsupportedChatParameter"
-"""Return code for a key, value or content part this horde does not serve, so a client can branch on it."""
-
-CHAT_REQUEST_CONFLICT_RC = "ChatRequestConflict"
-"""Return code for two keys whose values contradict each other, such as differing token limits."""
 
 CHAT_SUBMIT_INVALID_RC = "ChatSubmitInvalid"
 """Return code for a chat submit no client could use under any conformance mode: a malformed message, a call to a
@@ -489,20 +495,41 @@ class ChatCompletionRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     """Accepted for client compatibility and not applied."""
 
-    tools: list[ChatTool] | None = Field(default=None, max_length=MAX_CHAT_TOOL_COUNT)
-    """The functions the model may call. An empty list is the same as none."""
+    tools: list[ChatTool] | None = None
+    """The functions the model may call, at most
+    [`MAX_CHAT_TOOL_COUNT`][horde.chat_contract.MAX_CHAT_TOOL_COUNT]. An empty list is the same as none."""
 
     tool_choice: ChatToolChoice | None = None
-    """Whether and which tool the model has to call. ``none`` is the same as sending no tools."""
+    """Whether and which tool the model has to call. Only allowed with tools; ``none`` forwards no tool definitions."""
 
     parallel_tool_calls: StrictBool | None = None
-    """Whether the model may call several tools in one reply; forwarded only with tools."""
+    """Whether the model may call several tools in one reply. Only allowed with tools."""
 
     response_format: ChatResponseFormat | None = None
     """The shape the reply has to take. ``text`` is the same as none."""
 
     horde: ChatHordeOptions = Field(default_factory=ChatHordeOptions)
     """Request options OpenAI has no key for, validated by the model the front shares."""
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def validate_tool_count(cls, tools: object) -> object:
+        """Validate that at most [`MAX_CHAT_TOOL_COUNT`][horde.chat_contract.MAX_CHAT_TOOL_COUNT] tools are sent.
+
+        Checked before the tools are validated, so an oversized list costs no per-tool validation, and reported as a
+        value outside the service contract rather than as a malformed one.
+
+        Raises:
+            PydanticCustomError: More tools are sent, with the type
+                [`UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE`][horde.chat_contract.UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE].
+        """
+        if isinstance(tools, list) and len(tools) > MAX_CHAT_TOOL_COUNT:
+            raise PydanticCustomError(
+                UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE,
+                "A chat request may define at most {max_tools} tools.",
+                {"max_tools": MAX_CHAT_TOOL_COUNT},
+            )
+        return tools
 
 
 class ChatSubmittedMessage(BaseModel):
@@ -619,9 +646,11 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
 
     Raises:
         horde.exceptions.BadRequest: With ``UnsupportedChatParameter`` for an ``n`` other than 1, messages or a
-            tool spec over the shared size limits, or a ``tool`` message answering no earlier tool call;
-            ``ChatRequestConflict`` for differing token limits or a ``tool_choice`` the tools do not allow; or an
-            image validation failure for too many, malformed or oversized image URLs.
+            tool spec over the shared size limits, a tool history breaking OpenAI's rule, or a ``strict`` schema
+            breaking OpenAI's structural rules; ``ChatRequestConflict`` for differing token limits, a
+            ``tool_choice`` or ``parallel_tool_calls`` the tools do not allow, or, under ``horde.openai_guards``, a
+            ``json_object`` request whose messages never mention JSON; or an image validation failure for too many,
+            malformed or oversized image URLs.
     """
     if chat_request.n is not None and chat_request.n != SUPPORTED_CHOICE_COUNT:
         _raise_unsupported(f"n={chat_request.n}")
@@ -640,11 +669,21 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
         )
     if _message_text_bytes(chat_request) > MAX_CHAT_TEXT_BYTES:
         raise e.BadRequest(
-            f"The message text of a chat request may be at most {MAX_CHAT_TEXT_BYTES} bytes.",
+            f"The message text of a chat request, tool call names and arguments included, may be at most {MAX_CHAT_TEXT_BYTES} bytes.",
             rc=UNSUPPORTED_CHAT_PARAMETER_RC,
         )
     _validate_image_urls(_submitted_image_urls(chat_request))
     _reject_conflicting_tool_values(chat_request)
+    try:
+        check_strict_response_schema(chat_request.response_format)
+        check_json_word(_message_texts(chat_request), chat_request.response_format, openai_guards=chat_request.horde.openai_guards)
+    except ChatRequestRefusal as refusal:
+        raise _refusal_error(refusal) from None
+
+
+def _refusal_error(refusal: ChatRequestRefusal) -> e.BadRequest:
+    """Return the 400 for a shared request rule's refusal, with the request path it names in the message."""
+    return e.BadRequest(f"'{refusal.param}': {refusal.message}", rc=refusal.rc)
 
 
 def _tool_spec_bytes(chat_request: ChatCompletionRequest) -> int:
@@ -665,16 +704,17 @@ def _tool_spec_bytes(chat_request: ChatCompletionRequest) -> int:
 
 
 def _reject_conflicting_tool_values(chat_request: ChatCompletionRequest) -> None:
-    """Refuse a tool spec over its size bound, a ``tool_choice`` the tools do not allow, and an unanswerable tool turn.
+    """Refuse a tool spec over its size bound, tool keys the tools do not allow, and a tool history OpenAI refuses.
 
     Args:
         chat_request: The validated request.
 
     Raises:
         horde.exceptions.BadRequest: With ``UnsupportedChatParameter`` for a tool spec over
-            [`MAX_CHAT_TOOL_SPEC_BYTES`][horde.chat_contract.MAX_CHAT_TOOL_SPEC_BYTES] or a ``tool`` message whose
-            ``tool_call_id`` no earlier assistant message's tool call has; ``ChatRequestConflict`` for a
-            ``tool_choice`` other than ``none`` without tools, or one forcing a function the tools do not define.
+            [`MAX_CHAT_TOOL_SPEC_BYTES`][horde.chat_contract.MAX_CHAT_TOOL_SPEC_BYTES] or a history
+            [`check_tool_history`][horde.chat_contract.check_tool_history] refuses; ``ChatRequestConflict`` for a
+            ``tool_choice`` (``none`` included) or ``parallel_tool_calls`` without tools, or a ``tool_choice``
+            forcing a function the tools do not define.
     """
     if _tool_spec_bytes(chat_request) > MAX_CHAT_TOOL_SPEC_BYTES:
         raise e.BadRequest(
@@ -684,22 +724,20 @@ def _reject_conflicting_tool_values(chat_request: ChatCompletionRequest) -> None
 
     tool_choice = chat_request.tool_choice
     tool_names = {tool.function.name for tool in chat_request.tools or ()}
-    if tool_choice is not None and tool_choice != ChatToolChoiceMode.NONE and not tool_names:
-        raise e.BadRequest("'tool_choice' needs a non-empty 'tools'.", rc=CHAT_REQUEST_CONFLICT_RC)
+    try:
+        check_tool_fields_need_tools(
+            offers_tools=bool(tool_names),
+            tool_choice_set=tool_choice is not None,
+            parallel_tool_calls_set=chat_request.parallel_tool_calls is not None,
+        )
+        check_tool_history(chat_request.messages)
+    except ChatRequestRefusal as refusal:
+        raise _refusal_error(refusal) from None
     if isinstance(tool_choice, ChatNamedToolChoice) and tool_choice.function.name not in tool_names:
         raise e.BadRequest(
             f"'tool_choice' forces the function '{tool_choice.function.name}', which 'tools' does not define.",
             rc=CHAT_REQUEST_CONFLICT_RC,
         )
-
-    earlier_tool_call_ids: set[str] = set()
-    for message_index, message in enumerate(chat_request.messages):
-        if message.role == ChatRole.TOOL and message.tool_call_id not in earlier_tool_call_ids:
-            raise e.BadRequest(
-                f"'messages[{message_index}].tool_call_id' does not match a tool call of an earlier assistant message.",
-                rc=UNSUPPORTED_CHAT_PARAMETER_RC,
-            )
-        earlier_tool_call_ids.update(tool_call.id for tool_call in message.tool_calls or ())
 
 
 def _submitted_image_urls(chat_request: ChatCompletionRequest) -> list[str]:
@@ -719,22 +757,27 @@ def _submitted_image_urls(chat_request: ChatCompletionRequest) -> list[str]:
     return image_urls
 
 
+def _message_texts(chat_request: ChatCompletionRequest) -> Iterator[str]:
+    """Yield every string content and text part of the request's messages, in order."""
+    for message in chat_request.messages:
+        if isinstance(message.content, str):
+            yield message.content
+        elif message.content is not None:
+            yield from (content_part.text for content_part in message.content if isinstance(content_part, ChatTextPart))
+
+
 def _message_text_bytes(chat_request: ChatCompletionRequest) -> int:
-    """Return the UTF-8 size of every message text, measured as the front measures it.
+    """Return the UTF-8 size of every message text and history tool call, measured as the front measures it.
 
     Args:
         chat_request: The validated request.
 
     Returns:
-        The bytes of every string content and text part, together.
+        The bytes of every string content and text part, and of every tool call's function name and arguments,
+        together.
     """
-    text_bytes = 0
-    for message in chat_request.messages:
-        if isinstance(message.content, str):
-            text_bytes += len(message.content.encode())
-        elif message.content is not None:
-            text_bytes += sum(len(content_part.text.encode()) for content_part in message.content if isinstance(content_part, ChatTextPart))
-    return text_bytes
+    text_bytes = sum(len(message_text.encode()) for message_text in _message_texts(chat_request))
+    return text_bytes + sum(chat_tool_call_bytes(message.tool_calls) for message in chat_request.messages)
 
 
 def _validation_reasons(error: ValidationError) -> str:
@@ -826,6 +869,12 @@ def parse_chat_request(request_body: object) -> ChatCompletionRequest:
                 "'horde.only' and 'horde.ignore' cannot be combined.",
                 rc=CHAT_REQUEST_CONFLICT_RC,
             ) from None
+        # A value outside the service contract, such as too many tools or a schema nested too deeply, keeps its code.
+        if any(detail["type"] == UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE for detail in validation_error.errors()):
+            raise e.BadRequest(
+                f"The chat request is not valid. {_validation_reasons(validation_error)}.",
+                rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+            ) from None
         raise e.BadRequest(f"The chat request is not valid. {_validation_reasons(validation_error)}.") from None
 
     _reject_conflicting_values(chat_request)
@@ -850,6 +899,9 @@ def _reject_stored_nuls(chat_request: ChatCompletionRequest) -> None:
         if isinstance(value, str) and "\x00" in value:
             raise e.BadRequest("Request payload may not contain NUL (0x00) bytes.", rc="NulByteInPayload")
         if isinstance(value, Mapping):
+            # Tool parameters and response schemas carry client keys into persisted JSONB, which refuses NUL in a
+            # key as well as in a value.
+            pending.extend(value.keys())
             pending.extend(value.values())
         elif isinstance(value, (list, tuple)):
             pending.extend(value)
@@ -1121,8 +1173,10 @@ def flatten_messages(messages: Sequence[Mapping[str, Any]], chat_extras: Mapping
     """Return the messages joined into the single string stored as the request's prompt.
 
     The string is an estimate only: the token estimate, kudos and moderation read it, and no worker
-    ever receives it. A worker renders the tool definitions and a JSON Schema response format into its prompt too,
-    so both follow the messages as compact JSON, and an assistant message's tool calls follow its text.
+    ever receives it. A worker renders the tool definitions into its prompt too, so they follow the messages as
+    compact JSON, and an assistant message's tool calls follow its text. A response format schema is left out: the
+    reference worker compiles it into a grammar and never renders it into the prompt, so counting it would reserve
+    context the worker does not use.
 
     Args:
         messages: The stored ``messages`` array.
@@ -1131,15 +1185,12 @@ def flatten_messages(messages: Sequence[Mapping[str, Any]], chat_extras: Mapping
 
     Returns:
         Each message as ``role: text``, a ``tool`` message as ``tool: <text>``, joined with newlines, followed by
-        the ``tools`` JSON and the ``json_schema`` response format JSON when the request carries them.
+        the ``tools`` JSON when the request carries tools.
     """
     flattened_parts = [_flattened_message(message) for message in messages]
     chat_extras = chat_extras or {}
     if "tools" in chat_extras:
         flattened_parts.append(_compact_json(chat_extras["tools"]))
-    response_format = chat_extras.get("response_format")
-    if response_format is not None and response_format["type"] == ChatResponseFormatType.JSON_SCHEMA:
-        flattened_parts.append(_compact_json(response_format))
     return FLATTENED_MESSAGE_SEPARATOR.join(flattened_parts)
 
 
@@ -1409,7 +1460,9 @@ def required_chat_features(
         ``seed`` when a seed is set; each penalty whose value is not zero; ``vision`` when a message carries an image
         part; ``tools`` when the request offers tools under a ``tool_choice`` other than ``none``, or any message is a
         ``tool`` message or carries tool calls, since the worker's template has to render those turns;
-        ``json_object`` or ``json_schema`` by the response format's type; and the guarantees the SDK's
+        ``json_object`` or ``json_schema`` by the response format's type; ``tools_with_response_format`` when the
+        request forwards tool definitions and sets a response format, since the backend then has to apply the format
+        to the final answer and not to the tool calls; and the guarantees the SDK's
         ``required_chat_guarantees`` derives for the conformance mode, which under ``strict`` always include
         ``prompt_overflow_refused`` and under ``best_effort`` are none.
     """
@@ -1428,6 +1481,8 @@ def required_chat_features(
         needed_features.add(ChatFeature.TOOLS)
     if traits.response_format_type is not None:
         needed_features.add(ChatFeature(traits.response_format_type.value))
+        if traits.forwards_tools:
+            needed_features.add(ChatFeature.TOOLS_WITH_RESPONSE_FORMAT)
     needed_features.update(required_chat_guarantees(traits, conformance))
 
     return needed_features
@@ -1527,22 +1582,13 @@ _NOT_JSON = object()
 JSON, since None is the parsed ``null``."""
 
 
-def _refuse_json_constant(constant: str) -> Any:
-    """Refuse ``NaN`` and ``Infinity``, which Python's parser accepts but JSON does not define.
-
-    Raises:
-        ValueError: Always.
-    """
-    raise ValueError(f"{constant} is not JSON")
-
-
 def _parse_reply_json(content: str) -> Any:
     """Return the reply content parsed as JSON, or [`_NOT_JSON`][horde.classes.kobold.chat_request._NOT_JSON].
 
     Nesting too deep for the parser counts as not JSON, so a reply cannot turn the check into a server error.
     """
     try:
-        return json.loads(content, parse_constant=_refuse_json_constant)
+        return json.loads(content, parse_constant=refuse_json_constant)
     except (ValueError, RecursionError):
         return _NOT_JSON
 

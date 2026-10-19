@@ -29,6 +29,7 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
+    MAX_CHAT_SCHEMA_NESTING,
     MAX_CHAT_TEXT_BYTES,
     MAX_CHAT_TOOL_COUNT,
     MAX_CHAT_TOOL_SPEC_BYTES,
@@ -319,6 +320,32 @@ class TestSizeLimits:
         assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
         assert str(MAX_CHAT_TEXT_BYTES) in rejection.specific
 
+    @staticmethod
+    def _tool_history_with_text_bytes(total_bytes: int) -> list[dict[str, Any]]:
+        """Return a one-round tool history whose texts, function name and arguments hold ``total_bytes`` together."""
+        fixed_bytes = len(b"Q") + len(b"lookup_weather") + len(b"A")
+        tool_call = {
+            "id": "call_big",
+            "type": "function",
+            "function": {"name": "lookup_weather", "arguments": "x" * (total_bytes - fixed_bytes)},
+        }
+        return [
+            {"role": "user", "content": "Q"},
+            {"role": "assistant", "content": None, "tool_calls": [tool_call]},
+            {"role": "tool", "content": "A", "tool_call_id": "call_big"},
+        ]
+
+    def test_tool_call_names_and_arguments_count_towards_the_text_byte_cap(self) -> None:
+        rejection = _rejection(_body(messages=self._tool_history_with_text_bytes(MAX_CHAT_TEXT_BYTES + 1)))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert str(MAX_CHAT_TEXT_BYTES) in rejection.specific
+
+    def test_a_tool_history_at_the_text_byte_cap_is_accepted(self) -> None:
+        chat_request = parse_chat_request(_body(messages=self._tool_history_with_text_bytes(MAX_CHAT_TEXT_BYTES)))
+
+        assert len(chat_request.messages) == 3
+
 
 class TestParameterMapping:
     def test_max_length_defaults_for_chat_when_no_token_limit_is_set(self) -> None:
@@ -427,7 +454,7 @@ JSON_SCHEMA_FORMAT: dict[str, Any] = {
     "type": "json_schema",
     "json_schema": {
         "name": "colour",
-        "schema": {"type": "object", "properties": {"name": {"type": "string"}}},
+        "schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"], "additionalProperties": False},
         "strict": True,
     },
 }
@@ -532,7 +559,7 @@ class TestRequiredGuarantees:
     def test_best_effort_needs_no_guarantee(self) -> None:
         assert _required_features(
             _body(tools=[LOOKUP_TOOL], tool_choice="required", parallel_tool_calls=False, response_format=JSON_SCHEMA_FORMAT),
-        ) == {ChatFeature.TOOLS, ChatFeature.JSON_SCHEMA}
+        ) == {ChatFeature.TOOLS, ChatFeature.JSON_SCHEMA, ChatFeature.TOOLS_WITH_RESPONSE_FORMAT}
 
     def test_tools_under_auto_need_no_tool_guarantee(self) -> None:
         assert _required_features(_body(tools=[LOOKUP_TOOL]), ChatConformance.STRICT) == {
@@ -659,6 +686,34 @@ class TestRequiredFeatures:
         assert _required_features(_body(messages=TOOL_HISTORY)) == {ChatFeature.TOOLS}
 
     @pytest.mark.parametrize(
+        ("response_format", "format_feature"),
+        [
+            ({"type": "json_object"}, ChatFeature.JSON_OBJECT),
+            (JSON_SCHEMA_FORMAT, ChatFeature.JSON_SCHEMA),
+        ],
+    )
+    @pytest.mark.parametrize("conformance", list(ChatConformance))
+    def test_forwarded_tools_beside_a_response_format_need_the_combination_feature_under_every_mode(
+        self,
+        response_format: dict[str, Any],
+        format_feature: ChatFeature,
+        conformance: ChatConformance,
+    ) -> None:
+        needed = _required_features(_body(tools=[LOOKUP_TOOL], response_format=response_format), conformance)
+
+        assert {ChatFeature.TOOLS, format_feature, ChatFeature.TOOLS_WITH_RESPONSE_FORMAT} <= needed
+
+    def test_tools_under_tool_choice_none_beside_a_response_format_need_no_combination_feature(self) -> None:
+        needed = _required_features(_body(tools=[LOOKUP_TOOL], tool_choice="none", response_format={"type": "json_object"}))
+
+        assert needed == {ChatFeature.JSON_OBJECT}
+
+    def test_a_tool_history_beside_a_response_format_needs_no_combination_feature(self) -> None:
+        needed = _required_features(_body(messages=TOOL_HISTORY, response_format={"type": "json_object"}))
+
+        assert needed == {ChatFeature.TOOLS, ChatFeature.JSON_OBJECT}
+
+    @pytest.mark.parametrize(
         ("response_format", "expected"),
         [
             ({"type": "text"}, set()),
@@ -699,8 +754,6 @@ class TestTools:
             {},
             {"tools": [], "tool_choice": None, "response_format": None, "parallel_tool_calls": None},
             {"response_format": {"type": "text"}},
-            {"tool_choice": "none"},
-            {"parallel_tool_calls": True},
         ],
     )
     def test_values_meaning_the_default_store_nothing(self, default_values: dict[str, Any]) -> None:
@@ -712,13 +765,14 @@ class TestTools:
         assert build_chat_extras(chat_request) == {"tools": [LOOKUP_TOOL], "tool_choice": "none", "parallel_tool_calls": True}
 
     def test_a_json_object_format_is_stored_without_tools(self) -> None:
-        chat_request = parse_chat_request(_body(response_format={"type": "json_object"}, parallel_tool_calls=True))
+        chat_request = parse_chat_request(_body(response_format={"type": "json_object"}))
 
         assert build_chat_extras(chat_request) == {"response_format": {"type": "json_object"}}
 
     @pytest.mark.parametrize(
         "tool_choice",
         [
+            "none",
             "auto",
             "required",
             {"type": "function", "function": {"name": "lookup_weather"}},
@@ -729,6 +783,17 @@ class TestTools:
             rejection = _rejection(_body(tools=tools, tool_choice=tool_choice))
 
             assert rejection.rc == CHAT_REQUEST_CONFLICT_RC
+            assert "'tool_choice' is only allowed when 'tools' are specified." in rejection.specific
+
+    @pytest.mark.parametrize("parallel_tool_calls", [True, False])
+    def test_parallel_tool_calls_without_tools_is_a_conflict(self, parallel_tool_calls: bool) -> None:
+        rejection = _rejection(_body(parallel_tool_calls=parallel_tool_calls))
+
+        assert rejection.rc == CHAT_REQUEST_CONFLICT_RC
+        assert "'parallel_tool_calls' is only allowed when 'tools' are specified." in rejection.specific
+
+    def test_null_tool_choice_and_parallel_tool_calls_without_tools_are_accepted(self) -> None:
+        assert build_chat_extras(parse_chat_request(_body(tool_choice=None, parallel_tool_calls=None))) is None
 
     def test_forcing_a_function_the_tools_do_not_define_is_a_conflict(self) -> None:
         rejection = _rejection(_body(tools=[LOOKUP_TOOL], tool_choice={"type": "function", "function": {"name": "send_email"}}))
@@ -741,7 +806,8 @@ class TestTools:
 
         rejection = _rejection(_body(tools=tools))
 
-        assert "tools" in rejection.specific
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert str(MAX_CHAT_TOOL_COUNT) in rejection.specific
 
     def test_the_tool_cap_itself_is_accepted(self) -> None:
         tools = [{"type": "function", "function": {"name": f"tool_{index}"}} for index in range(MAX_CHAT_TOOL_COUNT)]
@@ -784,13 +850,24 @@ class TestTools:
     def test_a_malformed_response_format_is_refused(self, malformed_format: dict[str, Any]) -> None:
         assert "response_format" in _rejection(_body(response_format=malformed_format)).specific
 
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"properties": {"bad\x00key": {}}}}}]},
+            {"response_format": {"type": "json_schema", "json_schema": {"name": "n", "schema": {"properties": {"bad\x00key": {}}}}}},
+        ],
+        ids=["tool-parameters", "response-schema"],
+    )
+    def test_a_nul_in_a_schema_key_is_refused(self, overrides: dict[str, Any]) -> None:
+        assert _rejection(_body(**overrides)).rc == "NulByteInPayload"
+
 
 class TestToolMessages:
     def test_a_tool_history_is_stored_unchanged(self) -> None:
         assert serialize_messages(parse_chat_request(_body(messages=TOOL_HISTORY))) == TOOL_HISTORY
 
     def test_an_assistant_message_omitting_content_with_tool_calls_is_stored_with_null_content(self) -> None:
-        messages = [TOOL_HISTORY[0], {"role": "assistant", "tool_calls": [LOOKUP_CALL]}]
+        messages = [TOOL_HISTORY[0], {"role": "assistant", "tool_calls": [LOOKUP_CALL]}, TOOL_HISTORY[2]]
 
         assert serialize_messages(parse_chat_request(_body(messages=messages)))[1] == {
             "role": "assistant",
@@ -805,11 +882,12 @@ class TestToolMessages:
 
         assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
         assert "'messages[3].tool_call_id'" in rejection.specific
+        assert "'tool_call_id' of 'call_unknown' not found in 'tool_calls' of previous message." in rejection.specific
 
     def test_a_tool_message_answering_a_later_call_is_refused(self) -> None:
         messages = [TOOL_HISTORY[0], TOOL_HISTORY[2], TOOL_HISTORY[1]]
 
-        assert "'messages[1].tool_call_id'" in _rejection(_body(messages=messages)).specific
+        assert "'messages[1].role'" in _rejection(_body(messages=messages)).specific
 
     def test_a_tool_message_needs_its_tool_call_id(self) -> None:
         rejection = _rejection(_body(messages=[*TOOL_HISTORY[:2], {"role": "tool", "content": "Rain"}]))
@@ -827,7 +905,7 @@ class TestToolMessages:
 
         assert "tool_calls" in rejection.specific
 
-    def test_flattening_renders_tool_calls_tool_results_and_the_tool_spec(self) -> None:
+    def test_flattening_renders_tool_calls_tool_results_and_the_tools_but_not_the_response_schema(self) -> None:
         chat_request = parse_chat_request(_body(messages=TOOL_HISTORY, tools=[LOOKUP_TOOL], response_format=JSON_SCHEMA_FORMAT))
 
         flattened = flatten_messages(serialize_messages(chat_request), build_chat_extras(chat_request))
@@ -839,8 +917,6 @@ class TestToolMessages:
             "tool: Rain, 7C",
             '[{"type":"function","function":{"name":"lookup_weather","description":"Look up the weather.",'
             '"parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}]',
-            '{"type":"json_schema","json_schema":{"name":"colour","schema":{"type":"object","properties":{"name":'
-            '{"type":"string"}}},"strict":true}}',
         ]
 
     def test_flattening_leaves_a_json_object_format_out(self) -> None:
@@ -854,6 +930,220 @@ class TestToolMessages:
             TOOL_HISTORY[1],
             {"role": "tool", "content": "RAIN, 7C", "tool_call_id": "call_abc"},
         ]
+
+
+def _assistant_calls(*call_ids: str) -> dict[str, Any]:
+    return {"role": "assistant", "content": None, "tool_calls": [{**LOOKUP_CALL, "id": call_id} for call_id in call_ids]}
+
+
+def _tool_result(call_id: str) -> dict[str, Any]:
+    return {"role": "tool", "content": "Rain, 7C", "tool_call_id": call_id}
+
+
+QUESTION: dict[str, Any] = {"role": "user", "content": "Weather in Oslo and Bergen?"}
+"""The user turn that opens each tool history below."""
+
+
+class TestToolHistoryRule:
+    """An assistant message's tool calls are answered right after it, each exactly once, as OpenAI requires."""
+
+    def test_results_answering_every_call_in_any_order_are_accepted(self) -> None:
+        messages = [QUESTION, _assistant_calls("call_a", "call_b"), _tool_result("call_b"), _tool_result("call_a")]
+
+        assert len(parse_chat_request(_body(messages=messages)).messages) == 4
+
+    def test_an_id_may_recur_in_a_later_round(self) -> None:
+        messages = [QUESTION, _assistant_calls("call_a"), _tool_result("call_a"), _assistant_calls("call_a"), _tool_result("call_a")]
+
+        assert len(parse_chat_request(_body(messages=messages)).messages) == 5
+
+    def test_an_unanswered_call_followed_by_another_message_is_refused(self) -> None:
+        messages = [QUESTION, _assistant_calls("call_a", "call_b"), _tool_result("call_a"), {"role": "user", "content": "Well?"}]
+
+        rejection = _rejection(_body(messages=messages))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert rejection.specific == (
+            "'messages[3].role': An assistant message with 'tool_calls' must be followed by tool messages responding to "
+            "each 'tool_call_id'. The following tool_call_ids did not have response messages: call_b"
+        )
+
+    def test_a_history_ending_with_unanswered_calls_is_refused(self) -> None:
+        rejection = _rejection(_body(messages=[QUESTION, _assistant_calls("call_a")]))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert rejection.specific.startswith("'messages': An assistant message with 'tool_calls' must be followed")
+
+    def test_a_second_answer_to_one_call_is_refused(self) -> None:
+        messages = [QUESTION, _assistant_calls("call_a"), _tool_result("call_a"), _tool_result("call_a")]
+
+        rejection = _rejection(_body(messages=messages))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert rejection.specific == (
+            "'messages[3].role': Invalid parameter: messages with role 'tool' must be a response to a preceding message with 'tool_calls'."
+        )
+
+    def test_an_answer_to_a_call_of_an_earlier_round_is_refused(self) -> None:
+        messages = [
+            QUESTION,
+            _assistant_calls("call_a"),
+            _tool_result("call_a"),
+            {"role": "user", "content": "And?"},
+            _tool_result("call_a"),
+        ]
+
+        assert "'messages[4].role'" in _rejection(_body(messages=messages)).specific
+
+    def test_ids_repeated_within_one_assistant_message_are_refused(self) -> None:
+        messages = [QUESTION, _assistant_calls("call_a", "call_a"), _tool_result("call_a")]
+
+        rejection = _rejection(_body(messages=messages))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert rejection.specific.startswith("'messages[1].tool_calls': ")
+        assert "'call_a'" in rejection.specific
+
+
+def _strict_format(schema: dict[str, Any], *, strict: bool | None = True) -> dict[str, Any]:
+    json_schema: dict[str, Any] = {"name": "n", "schema": schema}
+    if strict is not None:
+        json_schema["strict"] = strict
+    return {"type": "json_schema", "json_schema": json_schema}
+
+
+def _closed_object(**properties: Any) -> dict[str, Any]:
+    return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
+
+
+class TestStrictSchemaRules:
+    """Under ``strict: true`` every object schema is closed and requires every property, as OpenAI requires."""
+
+    def test_a_closed_schema_with_every_keyword_openai_applies_is_accepted(self) -> None:
+        schema = _closed_object(
+            x={"type": "number", "minimum": 2},
+            tags={"type": "array", "items": _closed_object(label={"type": "string"})},
+            ref={"$ref": "#/$defs/point"},
+        )
+        schema["$defs"] = {"point": _closed_object(x={"type": "number"})}
+
+        assert parse_chat_request(_body(response_format=_strict_format(schema))).response_format is not None
+
+    def test_a_root_object_without_closed_additional_properties_is_refused_with_openais_message(self) -> None:
+        schema = {"type": "object", "properties": {"x": {"type": "number"}}, "required": ["x"]}
+
+        rejection = _rejection(_body(response_format=_strict_format(schema)))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert rejection.specific == (
+            "'response_format': Invalid schema for response_format 'n': In context=(), 'additionalProperties' is "
+            "required to be supplied and to be false."
+        )
+
+    def test_a_property_missing_from_required_is_refused_with_openais_message(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
+            "required": ["x"],
+            "additionalProperties": False,
+        }
+
+        rejection = _rejection(_body(response_format=_strict_format(schema)))
+
+        assert rejection.specific == (
+            "'response_format': Invalid schema for response_format 'n': In context=(), 'required' is required to be "
+            "supplied and to be an array including every key in properties. Missing 'y'."
+        )
+
+    @pytest.mark.parametrize(
+        ("schema", "context"),
+        [
+            (
+                _closed_object(inner={"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]}),
+                "('properties', 'inner')",
+            ),
+            (_closed_object(items={"type": "array", "items": {"type": "object", "properties": {}}}), "('properties', 'items', 'items')"),
+            (
+                {**_closed_object(), "$defs": {"point": {"type": "object", "properties": {"x": {}}, "additionalProperties": False}}},
+                "('$defs', 'point')",
+            ),
+            (
+                _closed_object(choice={"anyOf": [{"type": "string"}, {"type": "object", "properties": {}}]}),
+                "('properties', 'choice', 'anyOf', 1)",
+            ),
+        ],
+        ids=["nested-property", "array-items", "defs", "any-of"],
+    )
+    def test_the_rules_apply_to_every_subschema(self, schema: dict[str, Any], context: str) -> None:
+        rejection = _rejection(_body(response_format=_strict_format(schema)))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert f"In context={context}, " in rejection.specific
+
+    @pytest.mark.parametrize("strict", [False, None], ids=["strict-false", "strict-unset"])
+    def test_a_non_strict_schema_is_not_checked_structurally(self, strict: bool | None) -> None:
+        open_schema = {"type": "object", "properties": {"x": {"type": "number"}}}
+
+        assert parse_chat_request(_body(response_format=_strict_format(open_schema, strict=strict))).response_format is not None
+
+
+def _nested_schema(levels: int) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": "string"}
+    for _ in range(levels):
+        schema = {"type": "object", "properties": {"x": schema}, "required": ["x"], "additionalProperties": False}
+    return schema
+
+
+class TestSchemaNesting:
+    """Tool parameters and response schemas nest at most ``MAX_CHAT_SCHEMA_NESTING`` levels below their root."""
+
+    def test_a_strict_schema_at_the_nesting_limit_is_accepted(self) -> None:
+        response_format = _strict_format(_nested_schema(MAX_CHAT_SCHEMA_NESTING))
+        tool = {"type": "function", "function": {"name": "deep", "parameters": _nested_schema(MAX_CHAT_SCHEMA_NESTING)}}
+
+        chat_request = parse_chat_request(_body(tools=[tool], response_format=response_format))
+
+        assert build_chat_extras(chat_request) is not None
+
+    @pytest.mark.parametrize("levels", [MAX_CHAT_SCHEMA_NESTING + 1, 300])
+    def test_a_response_schema_nested_deeper_is_refused_as_unsupported(self, levels: int) -> None:
+        rejection = _rejection(_body(response_format=_strict_format(_nested_schema(levels), strict=None)))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert f"at most {MAX_CHAT_SCHEMA_NESTING} levels" in rejection.specific
+
+    def test_tool_parameters_nested_deeper_are_refused_as_unsupported(self) -> None:
+        tool = {"type": "function", "function": {"name": "deep", "parameters": _nested_schema(300)}}
+
+        rejection = _rejection(_body(tools=[tool]))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert f"at most {MAX_CHAT_SCHEMA_NESTING} levels" in rejection.specific
+
+
+class TestOpenAIGuards:
+    """``horde.openai_guards`` restores the refusals OpenAI applies and the Horde relaxes."""
+
+    def test_a_json_object_request_without_the_word_json_is_served_by_default(self) -> None:
+        assert parse_chat_request(_body(response_format={"type": "json_object"})).horde.openai_guards is False
+
+    def test_the_guard_refuses_a_json_object_request_without_the_word_json(self) -> None:
+        rejection = _rejection(_body(response_format={"type": "json_object"}, horde={"openai_guards": True}))
+
+        assert rejection.rc == CHAT_REQUEST_CONFLICT_RC
+        assert rejection.specific == (
+            "'messages': 'messages' must contain the word 'json' in some form, to use 'response_format' of type 'json_object'."
+        )
+
+    def test_the_guard_accepts_the_word_in_any_case_in_a_text_part(self) -> None:
+        messages = [{"role": "user", "content": [{"type": "text", "text": "Answer as JSON."}]}]
+
+        chat_request = parse_chat_request(_body(messages=messages, response_format={"type": "json_object"}, horde={"openai_guards": True}))
+
+        assert chat_request.horde.openai_guards is True
+
+    def test_the_guard_leaves_a_json_schema_request_alone(self) -> None:
+        assert parse_chat_request(_body(response_format=JSON_SCHEMA_FORMAT, horde={"openai_guards": True})).response_format is not None
 
 
 class TestSubmittedReply:

@@ -25,7 +25,8 @@ End state: the client sends `POST /v1/chat/completions` to the Horde, streamed o
 structured output where a served model supports them, and it handles the Horde's refusals and retry headers without
 creating duplicate charged jobs.
 
-The front refuses with a 400 any key it does not serve, so a reply never silently differs from what was asked. The
+The front refuses with a 400 any top-level key it does not serve, so a reply never silently differs from what was
+asked. Unknown keys inside messages, `tools` definitions and a `tool_choice` object are dropped, as OpenAI does. The
 reasons are in the [chat requests explanation](../explanation/chat_requests.md) and
 [ADR 0029](../decisions/0029-route-unsupported-parameters-by-declared-support-refusing-by-default.md). The
 [tutorial](../tutorial/first_chat_completion.md) walks the same features with the Python SDK from scratch.
@@ -115,10 +116,13 @@ Message roles are `system`, `developer`, `user`, `assistant` and `tool`, with th
 A `developer` message is sent to the worker as `system`. Content is a string or an array of `text` parts; a `user`
 message may also carry `image_url` parts.
 
+Any other key on a message, and any unknown key inside a tool call, its `function` object or a content part, is
+dropped and not forwarded, as OpenAI ignores it. A `name` on a `tool` message is dropped. `tool_calls` on a message
+other than an assistant message is refused, as OpenAI refuses it.
+
 Stock clients send some keys at their defaults. The front accepts these and drops them before the Horde sees them:
-empty or null `tools`, null `tool_choice`, `tool_choice: "none"` without tools, `parallel_tool_calls` without tools,
-`response_format: {"type": "text"}`, `logprobs: false`, `top_logprobs: 0`, `store: false`, and `service_tier`
-`"auto"` or `"default"`.
+empty or null `tools`, null `tool_choice`, null `parallel_tool_calls`, `response_format: {"type": "text"}`,
+`logprobs: false`, `top_logprobs: 0`, `store: false`, and `service_tier` `"auto"` or `"default"`.
 
 Verification: a request carrying only `model`, `messages` and the keys above returns 200 with a `chat.completion`
 body.
@@ -128,15 +132,16 @@ body.
 Any other key, and any of the dropped keys at another value, is 400 `UnsupportedChatParameter`, with `param` holding
 the key's path. Examples: `logit_bias`, `logprobs: true`, `functions`, `function_call`, `audio`, `modalities`,
 `prediction`, `web_search_options`, `models`, `reasoning_effort`, and sampler extras such as `rep_pen`, `top_k` and
-`min_p`. Message keys outside the role's set are refused by path, such as `messages[2].name` on a `tool` message or
-`messages[0].tool_calls` on a `user` message. A refused content part is reported with its type, such as
+`min_p`. An unknown key inside `stream_options` or `response_format` is refused at its path, as OpenAI refuses it.
+`tool_calls` on a message other than an assistant message is refused at `messages[<i>].tool_calls`, and a role other
+than the five above at `messages[<i>].role`. A refused content part is reported with its type, such as
 `messages[0].content[0].type=input_audio`.
 
 Other 400 codes:
 
 | `code` | Cause |
 | --- | --- |
-| `ChatRequestConflict` | `max_tokens` and `max_completion_tokens` differ; `horde.only` and `horde.ignore` are both set; a `tool_choice` other than `none` without tools; a forced function the tools do not define. |
+| `ChatRequestConflict` | `max_tokens` and `max_completion_tokens` differ; `horde.only` and `horde.ignore` are both set; a `tool_choice` (`none` included) or `parallel_tool_calls` without tools, as OpenAI refuses them; a forced function the tools do not define; under `horde.openai_guards`, a `json_object` request without the word "json" in its messages. |
 | `BadRequest` | The body is not a JSON object, a value has the wrong type or range, `messages` is empty, or a `json_schema` response format has no `schema`. |
 
 Each refusal happens before the request is queued, so it is not charged and is safe to correct and resend.
@@ -170,6 +175,7 @@ The `horde` object carries the Horde options OpenAI does not have a key for:
 | `max_context_length` | none | An explicit context length; a worker serves the request only when its declared chat context is at least this. |
 | `context_fit` | `grow` | `grow` raises the context to fit the messages, up to the largest chat context an online worker for the model declares. `reject` refuses messages that do not fit the context. |
 | `conformance` | `strict` | `strict` sends the request only to workers that follow every part of the OpenAI contract it relies on. `best_effort` also accepts workers that may deviate; see [Conformance](#conformance). |
+| `openai_guards` | `false` | `true` turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format whose messages never mention "json" is 400 `ChatRequestConflict`. |
 
 Any other key in `horde`, including `dry_run` and `operation_key`, is 400 `UnsupportedChatParameter`. Restrictions
 narrow the eligible workers, so a combination no online worker satisfies ends with `no_eligible_worker`.
@@ -204,9 +210,12 @@ Verification: the reply describes the image, and `x_horde.kudos` is higher than 
 ## Tools and tool_choice
 
 `tools` holds up to 128 functions, `{"type": "function", "function": {"name", "description", "parameters",
-"strict"}}`, each `name` 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. `tool_choice` is `none`, `auto`,
-`required`, or `{"type": "function", "function": {"name": "<name>"}}` to force one function. `parallel_tool_calls` is
-a boolean forwarded to the worker with the tools. A model's card lists `tools` when a worker serves them.
+"strict"}}`, each `name` 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. Other keys on an entry or its
+`function` are dropped; the `parameters` schema is forwarded unchanged. `tool_choice` is `none`, `auto`,
+`required`, or `{"type": "function", "function": {"name": "<name>"}}` to force one function; other keys in that
+object are dropped. `parallel_tool_calls` is a boolean forwarded to the worker with the tools. `tool_choice` and
+`parallel_tool_calls` without `tools` are 400 `ChatRequestConflict`, as under OpenAI. A `parameters` schema may nest
+at most 10 levels below its root. A model's card lists `tools` when a worker serves them.
 
 A tool round:
 
@@ -217,9 +226,13 @@ A tool round:
 3. Send the history again with the assistant message replayed as `{"role": "assistant", "content": null,
    "tool_calls": [...]}`, then one `{"role": "tool", "tool_call_id": "<id>", "content": "<result>"}` per call.
 
-A `tool_call_id` that no earlier assistant call carries is 400 `UnsupportedChatParameter` with `param`
-`messages[<i>].tool_call_id`. A `name` key on a `tool` message is refused the same way. With the Python SDK, appending
-the returned `message` object to the history replays it correctly.
+The history follows OpenAI's rule: the `tool` messages come right after the assistant message and answer each of its
+call ids exactly once, in any order. A message arriving before every call is answered, a second answer to one id, or
+a `tool` message with no open calls is 400 `UnsupportedChatParameter` with `param` `messages[<i>].role`; an id the
+preceding assistant message did not issue has `param` `messages[<i>].tool_call_id`. The messages are OpenAI's. With
+the Python SDK, appending the returned `message` object to the history replays it correctly, including the message
+`get_final_completion()` returns from a stream: the front drops the fields the SDK adds to it (`refusal`, `parsed`,
+`tool_calls[].index`, `function.parsed_arguments` and similar).
 
 Verification: the first reply's `message.tool_calls[0].function.name` is the function asked for, and the follow-up
 reply has `finish_reason` `stop` with text and no `tool_calls`.
@@ -252,6 +265,19 @@ Verification: a request with a forced `tool_choice` that waited under `strict` o
 "description", "strict"}}`, with `schema` required. A model's card lists `response_format` when one of its workers
 serves either type; it does not say which, so a `json_schema` request can lack an eligible worker on a model whose
 workers serve only `json_object`.
+
+With `"strict": true` the schema follows OpenAI's structural rules: every object schema, nested ones included, sets
+`"additionalProperties": false` and lists all its properties in `required`. A schema breaking them is 400
+`UnsupportedChatParameter` with `param` `response_format` and OpenAI's message. A schema may nest at most 10 levels
+below its root, strict or not.
+
+A request may offer `tools` and set a `response_format` together; the format applies only to the final text answer,
+as under OpenAI. Only a worker declaring `tools_with_response_format` serves such a request,
+under either conformance mode. When none of the model's online workers declares it, the request ends at once with
+404 `no_worker_supports_features`.
+
+OpenAI refuses a `json_object` request whose messages never mention JSON; the Horde serves it. To get OpenAI's
+refusal, send `{"horde": {"openai_guards": true}}`.
 
 The compact JSON of `tools`, `tool_choice` and `response_format` together may be at most 256 KiB.
 
@@ -337,9 +363,9 @@ curl -s -i "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API
 | --- | --- | --- |
 | Request body | 36 MiB by default; the deployment sets it | 413 `RequestTooLarge` |
 | Messages per request | 1024 | 400 `UnsupportedChatParameter` |
-| Message text | 1 MiB of UTF-8 across all text, image data URLs excluded | 400 `UnsupportedChatParameter` |
+| Message text | 1 MiB of UTF-8 across all text and the function names and arguments of replayed tool calls, image data URLs excluded | 400 `UnsupportedChatParameter` |
 | Images | 5 per request (1 for untrusted users), 5 MiB and 3072 by 3072 pixels each | See [Images](#images) |
-| Tools, tool choice and response format | 256 KiB of compact JSON together; 128 tools | 400 `UnsupportedChatParameter` |
+| Tools, tool choice and response format | 256 KiB of compact JSON together; 128 tools; schemas nested at most 10 levels | 400 `UnsupportedChatParameter` |
 | Tool calls replayed in one assistant message | 128 | 400 |
 | `max_tokens` | 16 to 4096 | 400 `UnsupportedChatParameter` |
 | `max_tokens` against workers | At most a worker's declared length; the card's `max_completion_tokens` is the largest | 503 `no_eligible_worker` after the grace period |

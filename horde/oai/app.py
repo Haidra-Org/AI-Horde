@@ -33,7 +33,7 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from enum import StrEnum
 from http import HTTPStatus
 
@@ -56,6 +56,14 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     ChatImpossibleReason,
+    ChatRequestRefusal,
+    NonJsonConstantError,
+    chat_tool_call_bytes,
+    check_json_word,
+    check_strict_response_schema,
+    check_tool_fields_need_tools,
+    check_tool_history,
+    refuse_json_constant,
 )
 from horde.consts import ANONYMOUS_API_KEY, HORDE_VERSION
 from horde.oai.attribution import build_client_agent
@@ -86,6 +94,7 @@ from horde.oai.schema import (
     SubmitOutcome,
     TextContentPart,
     drop_default_no_ops,
+    drop_unknown_nested_keys,
     find_refused_parameter,
 )
 from horde.oai.settings import FrontSettings
@@ -761,17 +770,41 @@ def _validation_error(error: ValidationError, request_body: object) -> ChatFront
     )
 
 
-def _message_text_bytes(chat_request: ChatCompletionRequest) -> int:
-    """Return the UTF-8 size of every message text of ``chat_request``."""
-    text_bytes = 0
+def _message_texts(chat_request: ChatCompletionRequest) -> Iterator[str]:
+    """Yield every string content and text part of the messages of ``chat_request``, in order."""
     for message in chat_request.messages:
         if isinstance(message.content, str):
-            text_bytes += len(message.content.encode())
+            yield message.content
         elif message.content is not None:
-            text_bytes += sum(
-                len(content_part.text.encode()) for content_part in message.content if isinstance(content_part, TextContentPart)
-            )
-    return text_bytes
+            yield from (content_part.text for content_part in message.content if isinstance(content_part, TextContentPart))
+
+
+def _message_text_bytes(chat_request: ChatCompletionRequest) -> int:
+    """Return the UTF-8 size of every message text of ``chat_request`` and of the function names and arguments of
+    its history tool calls, as the native route counts them."""
+    text_bytes = sum(len(message_text.encode()) for message_text in _message_texts(chat_request))
+    return text_bytes + sum(chat_tool_call_bytes(message.tool_calls) for message in chat_request.messages)
+
+
+def _find_contract_refusal(chat_request: ChatCompletionRequest) -> ChatFrontError | None:
+    """Return the 400 for a request one of the request rules shared with the native route refuses, or None.
+
+    Refusing here gives the client OpenAI's message and ``param``, where the native route's refusal would arrive
+    without a ``param`` for keys outside the messages.
+    """
+    try:
+        check_tool_fields_need_tools(
+            offers_tools=bool(chat_request.tools),
+            tool_choice_set=chat_request.tool_choice is not None,
+            parallel_tool_calls_set=chat_request.parallel_tool_calls is not None,
+        )
+        check_tool_history(chat_request.messages)
+        check_strict_response_schema(chat_request.response_format)
+        openai_guards = chat_request.horde is not None and chat_request.horde.openai_guards
+        check_json_word(_message_texts(chat_request), chat_request.response_format, openai_guards=openai_guards)
+    except ChatRequestRefusal as refusal:
+        return ChatFrontError(status_code=HTTPStatus.BAD_REQUEST, message=refusal.message, code=refusal.rc, param=refusal.param)
+    return None
 
 
 def _find_image_limit_error(chat_request: ChatCompletionRequest) -> ChatFrontError | None:
@@ -821,7 +854,13 @@ async def _read_chat_request(request: Request, front_state: FrontState) -> ChatC
     request_body = await _read_body(request, settings)
     front_state.front_metrics.record_body_bytes(len(request_body))
     try:
-        decoded_body = json.loads(request_body)
+        decoded_body = json.loads(request_body, parse_constant=refuse_json_constant)
+    except NonJsonConstantError as error:
+        raise ChatFrontError(
+            status_code=HTTPStatus.BAD_REQUEST,
+            message=f"The request body is not valid JSON: {error.constant} is not a JSON value.",
+            code=BAD_REQUEST_CODE,
+        ) from error
     except ValueError as error:
         raise ChatFrontError(
             status_code=HTTPStatus.BAD_REQUEST, message="The request body is not valid JSON.", code=BAD_REQUEST_CODE
@@ -836,7 +875,7 @@ async def _read_chat_request(request: Request, front_state: FrontState) -> ChatC
             code=UNSUPPORTED_PARAMETER_CODE,
             param=refused_parameter.parameter,
         )
-    validated_body = drop_default_no_ops(decoded_body)
+    validated_body = drop_unknown_nested_keys(drop_default_no_ops(decoded_body))
     try:
         chat_request = ChatCompletionRequest.model_validate(validated_body)
     except ValidationError as error:
@@ -851,10 +890,16 @@ async def _read_chat_request(request: Request, front_state: FrontState) -> ChatC
     if _message_text_bytes(chat_request) > settings.max_text_bytes:
         raise ChatFrontError(
             status_code=HTTPStatus.BAD_REQUEST,
-            message=f"The message text of a chat request may be at most {settings.max_text_bytes} bytes.",
+            message=(
+                "The message text of a chat request, tool call names and arguments included, may be at most "
+                f"{settings.max_text_bytes} bytes."
+            ),
             code=UNSUPPORTED_PARAMETER_CODE,
             param="messages",
         )
+    contract_refusal = _find_contract_refusal(chat_request)
+    if contract_refusal is not None:
+        raise contract_refusal
     image_limit_error = _find_image_limit_error(chat_request)
     if image_limit_error is not None:
         raise image_limit_error

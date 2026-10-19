@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Behavior of the chat front's request screening: the default no-op table, refusals by name, and contract limits."""
+"""Behavior of the chat front's request screening: the default no-op table, refusals by name, dropped message keys, and
+contract limits."""
 
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from horde.chat_contract import MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT
+from horde.chat_contract import MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT, MAX_CHAT_SCHEMA_NESTING
 from tests.unit.oai.conftest import FAST_TEST_SETTINGS, StartFront, build_chat_body, done_status
 
 pytestmark = pytest.mark.asyncio
@@ -55,15 +56,11 @@ WEATHER_CALL: dict[str, Any] = {
 NO_OP_ROWS: list[tuple[str, object]] = [
     ("tools", []),
     ("tools", None),
-    ("tool_choice", None),
-    ("tool_choice", "none"),
     ("response_format", {"type": "text"}),
     ("logprobs", False),
     ("logprobs", None),
     ("top_logprobs", 0),
     ("top_logprobs", None),
-    ("parallel_tool_calls", True),
-    ("parallel_tool_calls", False),
     ("store", False),
     ("service_tier", "auto"),
     ("service_tier", "default"),
@@ -100,15 +97,12 @@ async def test_default_no_op_is_accepted_and_not_forwarded(start_front: StartFro
         ({"prompt_cache_key": "k"}, "prompt_cache_key"),
         ({"session_id": "s"}, "session_id"),
         ({"some_future_key": 1}, "some_future_key"),
-        ({"messages": [{"role": "user", "content": "x", "tool_call_id": "call_1"}]}, "messages[0].tool_call_id"),
-        ({"messages": [{"role": "assistant", "content": "x", "tool_call_id": "call_1"}]}, "messages[0].tool_call_id"),
         ({"messages": [{"role": "user", "content": "x", "tool_calls": [WEATHER_CALL]}]}, "messages[0].tool_calls"),
         ({"messages": [{"role": "system", "content": "x", "tool_calls": [WEATHER_CALL]}]}, "messages[0].tool_calls"),
         (
             {"messages": [{"role": "tool", "content": "x", "tool_call_id": "call_1", "tool_calls": [WEATHER_CALL]}]},
             "messages[0].tool_calls",
         ),
-        ({"messages": [{"role": "tool", "content": "x", "tool_call_id": "call_1", "name": "f"}]}, "messages[0].name"),
         ({"messages": [{"role": "function", "content": "x", "name": "f"}]}, "messages[0].role"),
         (
             {
@@ -199,6 +193,21 @@ async def test_agreeing_token_limits_and_n_of_one_are_accepted(start_front: Star
         ({"messages": [{"role": "user", "content": None}]}, "messages[0].content"),
         ({"messages": [{"role": "assistant", "content": "", "tool_calls": []}]}, "messages[0].tool_calls"),
         ({"messages": [{"role": "tool", "content": "72F"}]}, "messages[0].tool_call_id"),
+        ({"messages": [{"role": "tool", "content": "72F", "name": "get_weather"}]}, "messages[0].tool_call_id"),
+        ({"messages": [{"role": "user", "content": 7, "x_client_note": "n"}]}, "messages[0].content"),
+        (
+            {
+                "messages": [
+                    {"role": "user", "content": "Weather in Paris?"},
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{**WEATHER_CALL, "index": 0, "function": {"name": "get_weather", "arguments": {"city": "Paris"}}}],
+                    },
+                ],
+            },
+            "messages[1].tool_calls[0].function.arguments",
+        ),
         ({"tools": [{"type": "function"}]}, "tools[0].function"),
         ({"tools": [{"type": "retrieval", "function": {"name": "f"}}]}, "tools[0].type"),
         ({"tool_choice": "sometimes"}, "tool_choice"),
@@ -339,7 +348,12 @@ STRUCTURED_OUTPUT_FORMAT: dict[str, Any] = {
     "json_schema": {
         "name": "colour",
         "strict": True,
-        "schema": {"type": "object", "properties": {"colour": {"type": "string", "default": None}}, "required": ["colour"]},
+        "schema": {
+            "type": "object",
+            "properties": {"colour": {"type": "string", "default": None}},
+            "required": ["colour"],
+            "additionalProperties": False,
+        },
     },
 }
 """A structured output format as the OpenAI SDK sends it, with a null inside the schema the worker has to receive."""
@@ -371,14 +385,210 @@ async def test_a_tool_choice_mode_is_forwarded_with_tools(start_front: StartFron
     assert front.horde.submitted_body()["tool_choice"] == tool_choice
 
 
-async def test_a_tool_choice_without_tools_is_forwarded_for_the_native_route_to_judge(start_front: StartFront) -> None:
+@pytest.mark.parametrize(
+    ("body_overrides", "refused_key"),
+    [
+        ({"tool_choice": "none"}, "tool_choice"),
+        ({"tool_choice": "auto"}, "tool_choice"),
+        ({"tools": [], "tool_choice": "none"}, "tool_choice"),
+        ({"parallel_tool_calls": True}, "parallel_tool_calls"),
+        ({"parallel_tool_calls": False}, "parallel_tool_calls"),
+    ],
+)
+async def test_a_tool_key_without_tools_is_refused_as_openai_refuses_it(
+    start_front: StartFront,
+    body_overrides: dict[str, Any],
+    refused_key: str,
+) -> None:
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(**body_overrides))
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "message": f"Invalid value for '{refused_key}': '{refused_key}' is only allowed when 'tools' are specified.",
+        "type": "invalid_request_error",
+        "param": refused_key,
+        "code": "ChatRequestConflict",
+        "metadata": {},
+    }
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_null_tool_keys_without_tools_are_accepted_and_not_forwarded(start_front: StartFront) -> None:
     async with start_front() as front:
         front.horde.status_payload = done_status()
-        response = await front.client.post("/v1/chat/completions", json=build_chat_body(tool_choice="auto"))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(tool_choice=None, parallel_tool_calls=None))
 
     assert response.status_code == 200
-    assert front.horde.submitted_body()["tool_choice"] == "auto"
-    assert "tools" not in front.horde.submitted_body()
+    assert not {"tool_choice", "parallel_tool_calls"} & set(front.horde.submitted_body())
+
+
+def _weather_call(call_id: str) -> dict[str, Any]:
+    return {**WEATHER_CALL, "id": call_id}
+
+
+def _tool_result(call_id: str) -> dict[str, Any]:
+    return {"role": "tool", "content": "18C", "tool_call_id": call_id}
+
+
+QUESTION: dict[str, Any] = {"role": "user", "content": "Weather in Paris and Rome?"}
+"""The user turn that opens each tool history below."""
+
+
+@pytest.mark.parametrize(
+    ("messages", "expected_param", "expected_message"),
+    [
+        (
+            [QUESTION, {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]}, {"role": "user", "content": "Well?"}],
+            "messages[2].role",
+            "An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. "
+            "The following tool_call_ids did not have response messages: call_1",
+        ),
+        (
+            [
+                QUESTION,
+                {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]},
+                _tool_result("call_1"),
+                _tool_result("call_1"),
+            ],
+            "messages[3].role",
+            "Invalid parameter: messages with role 'tool' must be a response to a preceding message with 'tool_calls'.",
+        ),
+        (
+            [QUESTION, {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]}, _tool_result("call_nope")],
+            "messages[2].tool_call_id",
+            "Invalid parameter: 'tool_call_id' of 'call_nope' not found in 'tool_calls' of previous message.",
+        ),
+    ],
+    ids=["unanswered-call", "second-answer", "unknown-id"],
+)
+async def test_a_tool_history_openai_refuses_is_refused_with_its_message_and_param(
+    start_front: StartFront,
+    messages: list[dict[str, Any]],
+    expected_param: str,
+    expected_message: str,
+) -> None:
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages, tools=[WEATHER_TOOL]))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert (error["message"], error["param"], error["code"]) == (expected_message, expected_param, "UnsupportedChatParameter")
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_answers_to_every_call_in_any_order_are_forwarded(start_front: StartFront) -> None:
+    messages = [
+        QUESTION,
+        {"role": "assistant", "content": None, "tool_calls": [_weather_call("call_1"), _weather_call("call_2")]},
+        _tool_result("call_2"),
+        _tool_result("call_1"),
+    ]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages, tools=[WEATHER_TOOL]))
+
+    assert response.status_code == 200
+    assert len(front.horde.submitted_body()["messages"]) == 4
+
+
+async def test_a_strict_schema_breaking_openais_structural_rules_is_refused(start_front: StartFront) -> None:
+    open_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "n",
+            "strict": True,
+            "schema": {"type": "object", "properties": {"x": {"type": "number"}}, "required": ["x"]},
+        },
+    }
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(response_format=open_format))
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == (
+        "Invalid schema for response_format 'n': In context=(), 'additionalProperties' is required to be supplied and to be false."
+    )
+    assert response.json()["error"]["param"] == "response_format"
+    assert front.horde.submit_route.call_count == 0
+
+
+def _nested_schema(levels: int) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": "string"}
+    for _ in range(levels):
+        schema = {"type": "object", "properties": {"x": schema}}
+    return schema
+
+
+@pytest.mark.parametrize(
+    ("body_overrides", "expected_param"),
+    [
+        (
+            {"tools": [{"type": "function", "function": {"name": "deep", "parameters": _nested_schema(300)}}]},
+            "tools[0].function.parameters",
+        ),
+        (
+            {"response_format": {"type": "json_schema", "json_schema": {"name": "deep", "schema": _nested_schema(300)}}},
+            "response_format.json_schema.schema",
+        ),
+    ],
+    ids=["tool-parameters", "response-schema"],
+)
+async def test_a_schema_nested_past_the_limit_is_a_400_naming_it(
+    start_front: StartFront,
+    body_overrides: dict[str, Any],
+    expected_param: str,
+) -> None:
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(**body_overrides))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "UnsupportedChatParameter"
+    assert error["param"] == expected_param
+    assert f"at most {MAX_CHAT_SCHEMA_NESTING} levels" in error["message"]
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_openai_guards_refuse_a_json_object_request_without_the_word_json(start_front: StartFront) -> None:
+    async with start_front() as front:
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(response_format={"type": "json_object"}, horde={"openai_guards": True}),
+        )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["message"] == "'messages' must contain the word 'json' in some form, to use 'response_format' of type 'json_object'."
+    assert (error["param"], error["code"]) == ("messages", "ChatRequestConflict")
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_openai_guards_are_forwarded_with_the_horde_options(start_front: StartFront) -> None:
+    messages = [{"role": "user", "content": "Reply in JSON."}]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(messages=messages, response_format={"type": "json_object"}, horde={"openai_guards": True}),
+        )
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["horde"]["openai_guards"] is True
+
+
+async def test_tool_call_arguments_count_toward_the_text_byte_limit(start_front: StartFront) -> None:
+    messages = [QUESTION, {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]}, _tool_result("call_1")]
+    text_bytes = len(QUESTION["content"].encode()) + len(b"18C")
+    call_bytes = len(WEATHER_CALL["function"]["name"].encode()) + len(WEATHER_CALL["function"]["arguments"].encode())
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"max_text_bytes": text_bytes + call_bytes - 1})) as front:
+        refused = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages, tools=[WEATHER_TOOL]))
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"max_text_bytes": text_bytes + call_bytes})) as front:
+        front.horde.status_payload = done_status()
+        accepted = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages, tools=[WEATHER_TOOL]))
+
+    assert refused.status_code == 400
+    assert refused.json()["error"]["code"] == "UnsupportedChatParameter"
+    assert accepted.status_code == 200
 
 
 @pytest.mark.parametrize("response_format", [{"type": "json_object"}, STRUCTURED_OUTPUT_FORMAT])
@@ -389,6 +599,34 @@ async def test_a_response_format_is_forwarded_under_the_clients_keys(start_front
 
     assert response.status_code == 200
     assert front.horde.submitted_body()["response_format"] == response_format
+
+
+@pytest.mark.parametrize(
+    ("keeps_schema", "refused_param"),
+    [
+        (False, "response_format.json_schema.schema"),
+        (True, "response_format.json_schema.schema_"),
+    ],
+    ids=["schema_-alone", "schema_-beside-schema"],
+)
+async def test_a_json_schema_under_the_python_field_name_is_refused(
+    start_front: StartFront,
+    keeps_schema: bool,
+    refused_param: str,
+) -> None:
+    json_schema = STRUCTURED_OUTPUT_FORMAT["json_schema"]
+    sent_json_schema = {key: value for key, value in json_schema.items() if keeps_schema or key != "schema"}
+    sent_json_schema["schema_"] = json_schema["schema"]
+    async with start_front() as front:
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(response_format={"type": "json_schema", "json_schema": sent_json_schema}),
+        )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert (error["param"], error["code"]) == (refused_param, "BadRequest")
+    assert front.horde.submit_route.call_count == 0
 
 
 async def test_a_tool_round_in_the_history_is_forwarded_verbatim(start_front: StartFront) -> None:
@@ -421,7 +659,7 @@ async def test_an_omitted_assistant_content_beside_tool_calls_is_forwarded_as_nu
     assert front.horde.submitted_body()["messages"][1] == {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]}
 
 
-async def test_tools_and_a_schema_count_toward_the_estimated_prompt_tokens(start_front: StartFront) -> None:
+async def test_tools_count_toward_the_estimated_prompt_tokens_and_a_response_schema_does_not(start_front: StartFront) -> None:
     async with start_front() as front:
         front.horde.status_payload = done_status(prompt_tokens=None)
         plain = await front.client.post("/v1/chat/completions", json=build_chat_body())
@@ -430,5 +668,186 @@ async def test_tools_and_a_schema_count_toward_the_estimated_prompt_tokens(start
 
     plain_prompt_tokens = plain.json()["usage"]["prompt_tokens"]
     assert with_tools.json()["usage"]["prompt_tokens"] > plain_prompt_tokens
-    assert with_schema.json()["usage"]["prompt_tokens"] > plain_prompt_tokens
+    assert with_schema.json()["usage"]["prompt_tokens"] == plain_prompt_tokens
     assert with_tools.json()["x_horde"]["estimated_usage"] is True
+
+
+@pytest.mark.parametrize(
+    ("sent_message", "forwarded_message"),
+    [
+        (
+            {"role": "tool", "content": "18C", "tool_call_id": "call_1", "name": "get_weather"},
+            {"role": "tool", "content": "18C", "tool_call_id": "call_1"},
+        ),
+        (
+            {"role": "tool", "content": "18C", "tool_call_id": "call_1", "x_client_note": {"any": "value"}},
+            {"role": "tool", "content": "18C", "tool_call_id": "call_1"},
+        ),
+        (
+            {"role": "assistant", "content": "Checking.", "tool_call_id": "call_1", "audio": None, "refusal": None},
+            {"role": "assistant", "content": "Checking."},
+        ),
+    ],
+)
+async def test_a_message_key_outside_its_role_is_dropped_and_not_forwarded(
+    start_front: StartFront,
+    sent_message: dict[str, Any],
+    forwarded_message: dict[str, Any],
+) -> None:
+    messages = [
+        {"role": "user", "content": "Weather in Paris?"},
+        {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]},
+    ]
+    # An assistant message has to wait for the answer to the open call, as OpenAI requires.
+    if sent_message["role"] != "tool":
+        messages.append({"role": "tool", "content": "18C", "tool_call_id": "call_1"})
+    messages.append(sent_message)
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages, tools=[WEATHER_TOOL]))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["messages"][-1] == forwarded_message
+
+
+@pytest.mark.parametrize("role", ["system", "user"])
+async def test_a_tool_call_id_on_another_role_is_dropped_and_not_forwarded(start_front: StartFront, role: str) -> None:
+    messages = [{"role": role, "content": "x", "tool_call_id": "call_1"}]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["messages"] == [{"role": role, "content": "x"}]
+
+
+@pytest.mark.parametrize("role", ["system", "user", "assistant"])
+async def test_a_participant_name_is_forwarded_on_the_roles_that_define_it(start_front: StartFront, role: str) -> None:
+    messages = [{"role": "system", "content": "You are terse."}, {"role": role, "content": "Say hello.", "name": "alice"}]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["messages"][1] == {"role": role, "content": "Say hello.", "name": "alice"}
+
+
+async def test_unknown_keys_inside_tool_calls_and_content_parts_are_dropped_and_not_forwarded(start_front: StartFront) -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is this?", "cache_control": {"type": "ephemeral"}},
+                {"type": "image_url", "image_url": {"url": TINY_PNG_DATA_URL, "detail": "low", "x_hint": 1}, "x_part": True},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    **WEATHER_CALL,
+                    "index": 0,
+                    "function": {**WEATHER_CALL["function"], "parsed_arguments": {"city": "Paris"}},
+                },
+            ],
+        },
+        {"role": "tool", "content": [{"type": "text", "text": "18C", "annotations": []}], "tool_call_id": "call_1"},
+    ]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages, tools=[WEATHER_TOOL]))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is this?"},
+                {"type": "image_url", "image_url": {"url": TINY_PNG_DATA_URL, "detail": "low"}},
+            ],
+        },
+        {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]},
+        {"role": "tool", "content": [{"type": "text", "text": "18C"}], "tool_call_id": "call_1"},
+    ]
+
+
+SDK_ACCUMULATED_TOOL_CALL_REPLY: dict[str, Any] = {
+    "role": "assistant",
+    "content": None,
+    "refusal": None,
+    "audio": None,
+    "annotations": None,
+    "function_call": None,
+    "parsed": None,
+    "tool_calls": [
+        {
+            "id": "call_1",
+            "type": "function",
+            "index": 0,
+            "function": {"name": "get_weather", "arguments": '{"city":"Paris"}', "parsed_arguments": None},
+        },
+    ],
+}
+"""An assistant tool call reply as the OpenAI SDK accumulates it from a stream and replays it as history."""
+
+
+async def test_the_sdk_accumulated_streamed_reply_is_accepted_as_history_without_its_extra_keys(start_front: StartFront) -> None:
+    messages = [
+        {"role": "user", "content": "Weather in Paris?"},
+        SDK_ACCUMULATED_TOOL_CALL_REPLY,
+        {"role": "tool", "content": "18C and clear", "tool_call_id": "call_1"},
+    ]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages, tools=[WEATHER_TOOL]))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["messages"] == [
+        {"role": "user", "content": "Weather in Paris?"},
+        {"role": "assistant", "content": None, "tool_calls": [WEATHER_CALL]},
+        {"role": "tool", "content": "18C and clear", "tool_call_id": "call_1"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "sent_tool",
+    [
+        {**WEATHER_TOOL, "x_tool_note": "n"},
+        {**WEATHER_TOOL, "function": {**WEATHER_TOOL["function"], "x_function_note": {"any": "value"}}},
+    ],
+)
+async def test_unknown_keys_on_a_tool_definition_are_dropped_and_the_definition_forwarded(
+    start_front: StartFront,
+    sent_tool: dict[str, Any],
+) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(tools=[sent_tool]))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["tools"] == [WEATHER_TOOL]
+
+
+async def test_unknown_keys_inside_a_tool_parameters_schema_are_forwarded_unchanged(start_front: StartFront) -> None:
+    parameters = {"type": "object", "properties": {"city": {"type": "string", "x-unit": "name"}}, "x-extension": True}
+    tool = {"type": "function", "function": {"name": "get_weather", "parameters": parameters}}
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(tools=[tool]))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["tools"] == [tool]
+
+
+async def test_unknown_keys_on_a_tool_choice_object_are_dropped_and_the_choice_forwarded(start_front: StartFront) -> None:
+    tool_choice = {"type": "function", "function": {"name": "get_weather", "x_function_note": 1}, "x_choice_note": "n"}
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(tools=[WEATHER_TOOL], tool_choice=tool_choice),
+        )
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["tool_choice"] == {"type": "function", "function": {"name": "get_weather"}}

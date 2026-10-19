@@ -49,20 +49,34 @@ model list routes over the horde's native `/v2/generate/chat` routes (see
 
 ## Request keys
 
-The front validates a request against `ChatCompletionRequest` after two screening steps in `horde/oai/schema.py`.
-`find_refused_parameter` refuses, by path, any key that is neither a request field nor in `DEFAULT_NO_OP_PARAMETERS`,
-and any key of that table holding a value other than its default. `drop_default_no_ops` then drops the table's keys
-that hold their default.
+The front validates a request against `ChatCompletionRequest` after three screening steps in `horde/oai/schema.py`.
+A body that is not JSON, or that holds `NaN`, `Infinity` or `-Infinity` (which Python's parser otherwise accepts), is
+400 `BadRequest` before screening.
+`find_refused_parameter` refuses, by path, any top-level key that is neither a request field nor in
+`DEFAULT_NO_OP_PARAMETERS`, any key of that table holding a value other than its default, an unserved role and an
+unserved content part type. `drop_default_no_ops` then drops the table's keys that hold their default, and
+`drop_unknown_nested_keys` drops the unserved keys inside messages (see [Message roles](#message-roles)), the
+`tools` definitions and the `tool_choice` object: a `tools` entry keeps `type` and `function`, and its function keeps
+`name`, `description`, `parameters` and `strict`, with the `parameters` schema forwarded unchanged; a `tool_choice`
+object keeps `type` and `function`, and its function keeps `name`. Every other object, and the top level, refuses
+unknown keys, as OpenAI does: an unknown key inside `stream_options` or `response_format` is 400 at its path.
+`response_format.json_schema` reads its schema only from `schema`; `schema_`, the Python field name, is an unknown key.
 
 | Keys | Handling |
 | --- | --- |
 | `model`, `messages`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `n`, `horde` | Validated and forwarded; null counts as omitted. |
-| `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Validated against the `horde/chat_contract.py` shapes and forwarded verbatim; a `json_schema` response format is forwarded with its `schema` key and needs one. Dropped at their default: empty or null `tools`, null `tool_choice` and `"none"` without tools, `parallel_tool_calls` without tools, `{"type": "text"}`. |
+| `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Validated against the `horde/chat_contract.py` shapes and forwarded verbatim; a `json_schema` response format is forwarded with its `schema` key and needs one. Dropped at their default: empty or null `tools`, `{"type": "text"}`; a null `tool_choice` or `parallel_tool_calls` is not forwarded. |
 | `stream`, `stream_options`, `user`, `metadata` | Applied or accepted by the front and not forwarded. |
 | `logprobs`, `top_logprobs`, `store`, `service_tier` | Dropped at their default (`false`, `0`, `false`, `auto` or `default`); any other value is 400. |
 
-The native route checks the conflicts (a `tool_choice` without tools, a forced function the tools do not define, a
-`tool_call_id` no earlier call carries) and the sizes in `MAX_CHAT_TOOL_*`.
+After validation the front applies the request rules it shares with the native route from `horde/chat_contract.py`,
+so the client receives OpenAI's message and `param`: a `tool_choice` or `parallel_tool_calls` without tools
+(`ChatRequestConflict`), a tool history breaking OpenAI's rule and a `strict` `json_schema` breaking OpenAI's
+structural rules (`UnsupportedChatParameter`), and, under `horde.openai_guards`, a `json_object` request without the
+word "json" in its messages (`ChatRequestConflict`, `param` `messages`). A tool `parameters` or response schema nested
+deeper than `MAX_CHAT_SCHEMA_NESTING` fails validation as `UnsupportedChatParameter` at its path. The native route
+repeats these checks and also checks a forced function the tools do not define and the sizes in `MAX_CHAT_TOOL_*`.
+The message text limit counts the function names and arguments of history tool calls with the texts.
 
 ## Message roles
 
@@ -73,8 +87,15 @@ The native route checks the conflicts (a `tool_choice` without tools, a forced f
 | `assistant` | `role`, `content`, `name`, `tool_calls` | A string or `text` parts; null or omitted only with `tool_calls`, and then forwarded as null. |
 | `tool` | `role`, `content`, `tool_call_id` (required) | A string or `text` parts. |
 
-A key outside its role's set (`SUPPORTED_MESSAGE_KEYS`) is 400 `UnsupportedChatParameter` with `param` at its path,
-such as `messages[1].tool_call_id`.
+A key outside its role's set (`SUPPORTED_MESSAGE_KEYS`) is dropped and not forwarded, as OpenAI ignores it; a `name`
+on a `tool` message is dropped. `tool_calls` on a message other than an assistant message is 400
+`UnsupportedChatParameter` at `messages[<i>].tool_calls`, as OpenAI refuses it. The same applies inside a message: a tool call keeps `id`, `type` and `function`, its
+function keeps `name` and `arguments`, a `text` part keeps `type` and `text`, an `image_url` part keeps `type` and
+`image_url`, and the `image_url` object keeps `url` and `detail`. Served keys keep their validation. This covers the
+fields the OpenAI Python SDK adds to an accumulated streamed reply (`refusal`, `audio`, `annotations`,
+`function_call`, `parsed`, `tool_calls[].index`, `function.parsed_arguments`) when it replays that reply as history.
+An unserved role (such as `function`) or content part type (such as `input_audio`) is still 400
+`UnsupportedChatParameter`, with `param` such as `messages[0].role` or `messages[0].content[0].type=input_audio`.
 
 ## Response shape
 
