@@ -18,9 +18,11 @@ unknown keys, as OpenAI does.
 
 [`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest] then validates what remains with ``extra="forbid"``.
 Values outside the service contract (``n`` other than 1, a token limit outside 16 to 4096, more than four stop
-sequences) raise the error type [`UNSUPPORTED_PARAMETER_ERROR_TYPE`][horde.oai.schema.UNSUPPORTED_PARAMETER_ERROR_TYPE]
-so the front reports them as ``UnsupportedChatParameter``; contradictory values raise
-[`CHAT_REQUEST_CONFLICT_ERROR_TYPE`][horde.chat_contract.CHAT_REQUEST_CONFLICT_ERROR_TYPE]. A request that sets no
+sequences, a sampling parameter outside OpenAI's range) raise the error type
+[`UNSUPPORTED_PARAMETER_ERROR_TYPE`][horde.oai.schema.UNSUPPORTED_PARAMETER_ERROR_TYPE] so the front reports them as
+``UnsupportedChatParameter``; contradictory values raise
+[`CHAT_REQUEST_CONFLICT_ERROR_TYPE`][horde.chat_contract.CHAT_REQUEST_CONFLICT_ERROR_TYPE]. A value OpenAI refuses as
+well is refused with OpenAI's message, which names the parameter itself. A request that sets no
 token limit is forwarded without one and the native route applies its default of 512.
 
 The response side follows the OpenAI ``chat.completion``, ``chat.completion.chunk``, error and ``model`` shapes;
@@ -73,6 +75,7 @@ __all__ = [
     "BAD_REQUEST_CODE",
     "CHAT_REQUEST_CONFLICT_CODE",
     "DEFAULT_NO_OP_PARAMETERS",
+    "PARAMETER_CONTEXT_KEY",
     "SUPPORTED_MESSAGE_KEYS",
     "TOOL_CALLS_MESSAGE_KEY",
     "UNSUPPORTED_PARAMETER_CODE",
@@ -124,11 +127,34 @@ UNSUPPORTED_PARAMETER_ERROR_TYPE: str = UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE
 """The pydantic error type for a value outside the service contract, reported as ``UnsupportedChatParameter``; the
 shared tool and schema models raise the same type."""
 
+EMPTY_ARRAY_ERROR_TYPE: str = "empty_array"
+"""The pydantic error type for an empty ``messages``, OpenAI's code for it; reported as ``BadRequest``, as any
+malformed body is."""
+
 SUPPORTED_CHOICE_COUNT: int = 1
 """The only ``n`` served: each further choice would need its own pinned model and stored reply."""
 
+PARAMETER_CONTEXT_KEY: str = "parameter"
+"""The validation error context key holding the parameter a message already names in OpenAI's ``Invalid '<key>'``
+form; the front reports such a message without prefixing the request path."""
+
+OPENAI_SAMPLING_RANGES: Mapping[str, tuple[int, int]] = MappingProxyType(
+    {
+        "temperature": (0, 2),
+        "top_p": (0, 1),
+        "frequency_penalty": (-2, 2),
+        "presence_penalty": (-2, 2),
+    },
+)
+"""The inclusive range OpenAI accepts for each sampling parameter; the native route accepts wider ranges for some, so
+the front refuses a value OpenAI would refuse before forwarding it."""
+
+OPENAI_MIN_MAX_TOKENS: int = 1
+"""The smallest token limit OpenAI accepts; a value below it is refused in OpenAI's wording."""
+
 MIN_MAX_TOKENS: int = 16
-"""The smallest token limit served; the native minimum for ``max_length``."""
+"""The smallest token limit served; the native minimum for ``max_length``. A smaller limit OpenAI would accept is
+refused rather than raised, since raising it would generate more tokens than the client asked for."""
 
 MAX_MAX_TOKENS: int = 4096
 """The largest token limit served; the native cap for ``max_length``."""
@@ -663,6 +689,32 @@ def _unsupported_value_error(message: str) -> PydanticCustomError:
     return PydanticCustomError(UNSUPPORTED_PARAMETER_ERROR_TYPE, message)
 
 
+def _openai_value_error(
+    parameter: str,
+    problem_template: str,
+    *,
+    error_type: str = UNSUPPORTED_PARAMETER_ERROR_TYPE,
+    **template_values: object,
+) -> PydanticCustomError:
+    """Create the validation error for a value OpenAI refuses, worded as OpenAI words it.
+
+    Args:
+        parameter: The request key at fault, written into the message and the context under
+            [`PARAMETER_CONTEXT_KEY`][horde.oai.schema.PARAMETER_CONTEXT_KEY].
+        problem_template: The message after ``Invalid '<parameter>': ``, with ``{name}`` placeholders.
+        error_type: The pydantic error type, which selects the front's error code.
+        template_values: The values of the placeholders.
+    """
+    return PydanticCustomError(
+        error_type,
+        "Invalid '{" + PARAMETER_CONTEXT_KEY + "}': " + problem_template,
+        {
+            PARAMETER_CONTEXT_KEY: parameter,
+            **template_values,
+        },
+    )
+
+
 class ChatCompletionRequest(BaseModel):
     """Represents an OpenAI chat completions request in the subset the service serves.
 
@@ -674,8 +726,8 @@ class ChatCompletionRequest(BaseModel):
     model: StrictStr = Field(min_length=1)
     """The Horde text model name."""
 
-    messages: list[ChatMessage] = Field(min_length=1)
-    """The conversation so far, in order."""
+    messages: list[ChatMessage]
+    """The conversation so far, in order; at least one message."""
 
     stream: StrictBool | None = None
     """Answer as server-sent events; the whole text arrives in one content chunk."""
@@ -684,22 +736,22 @@ class ChatCompletionRequest(BaseModel):
     """Options for a streamed answer; only allowed with ``stream: true``."""
 
     max_tokens: StrictInt | None = None
-    """The most tokens to generate, 16 to 4096."""
+    """The most tokens to generate, 16 to 4096; OpenAI accepts any value from 1."""
 
     max_completion_tokens: StrictInt | None = None
     """The newer name for ``max_tokens``; both must agree when both are set."""
 
     temperature: StrictFloat | StrictInt | None = None
-    """The sampling temperature."""
+    """The sampling temperature, 0 to 2."""
 
     top_p: StrictFloat | StrictInt | None = None
-    """The nucleus sampling probability."""
+    """The nucleus sampling probability, 0 to 1."""
 
     frequency_penalty: StrictFloat | StrictInt | None = None
-    """The frequency penalty; a non-default value needs a worker that declares it."""
+    """The frequency penalty, -2 to 2; a non-default value needs a worker that declares it."""
 
     presence_penalty: StrictFloat | StrictInt | None = None
-    """The presence penalty; a non-default value needs a worker that declares it."""
+    """The presence penalty, -2 to 2; a non-default value needs a worker that declares it."""
 
     stop: StrictStr | list[StrictStr] | None = None
     """One stop sequence or up to four."""
@@ -731,6 +783,50 @@ class ChatCompletionRequest(BaseModel):
     horde: ChatHordeOptions | None = None
     """The Horde extension object."""
 
+    @field_validator("messages")
+    @classmethod
+    def validate_messages_not_empty(cls, messages: list[ChatMessage]) -> list[ChatMessage]:
+        """Validate that at least one message is sent.
+
+        Raises:
+            PydanticCustomError: ``messages`` is empty; reported as ``BadRequest``.
+        """
+        if not messages:
+            raise _openai_value_error(
+                "messages",
+                "empty array. Expected an array with minimum length 1, but got an empty array instead.",
+                error_type=EMPTY_ARRAY_ERROR_TYPE,
+            )
+        return messages
+
+    @field_validator(*OPENAI_SAMPLING_RANGES)
+    @classmethod
+    def validate_sampling_range(cls, sampling_value: float | None, info: ValidationInfo) -> float | None:
+        """Validate that a sampling parameter is within the range OpenAI accepts; it is never clamped.
+
+        Raises:
+            PydanticCustomError: The value is outside its range in
+                [`OPENAI_SAMPLING_RANGES`][horde.oai.schema.OPENAI_SAMPLING_RANGES].
+        """
+        if sampling_value is None or info.field_name is None:
+            return sampling_value
+        minimum, maximum = OPENAI_SAMPLING_RANGES[info.field_name]
+        if sampling_value < minimum:
+            raise _openai_value_error(
+                info.field_name,
+                "decimal below minimum value. Expected a value >= {limit}, but got {value} instead.",
+                limit=minimum,
+                value=sampling_value,
+            )
+        if sampling_value > maximum:
+            raise _openai_value_error(
+                info.field_name,
+                "decimal above maximum value. Expected a value <= {limit}, but got {value} instead.",
+                limit=maximum,
+                value=sampling_value,
+            )
+        return sampling_value
+
     @field_validator("stream_options")
     @classmethod
     def validate_stream_options_need_stream(cls, stream_options: StreamOptions | None, info: ValidationInfo) -> StreamOptions | None:
@@ -745,13 +841,33 @@ class ChatCompletionRequest(BaseModel):
 
     @field_validator("max_tokens", "max_completion_tokens")
     @classmethod
-    def validate_token_limit_range(cls, token_limit: int | None) -> int | None:
+    def validate_token_limit_range(cls, token_limit: int | None, info: ValidationInfo) -> int | None:
         """Validate that a token limit is within the served range; it is never clamped.
+
+        A limit below OpenAI's minimum of 1 is refused in OpenAI's wording; one from 1 to 15 is refused with the
+        Horde floor, which OpenAI does not have.
 
         Raises:
             PydanticCustomError: The limit is outside 16 to 4096.
         """
-        if token_limit is not None and not MIN_MAX_TOKENS <= token_limit <= MAX_MAX_TOKENS:
+        if token_limit is None or info.field_name is None:
+            return token_limit
+        if token_limit < OPENAI_MIN_MAX_TOKENS:
+            raise _openai_value_error(
+                info.field_name,
+                "integer below minimum value. Expected a value >= {limit}, but got {value} instead.",
+                limit=OPENAI_MIN_MAX_TOKENS,
+                value=token_limit,
+            )
+        if token_limit < MIN_MAX_TOKENS:
+            raise _openai_value_error(
+                info.field_name,
+                "the AI Horde refuses a token limit below {limit}, the minimum generation length of its native text "
+                "API, rather than raising it, but got {value} instead.",
+                limit=MIN_MAX_TOKENS,
+                value=token_limit,
+            )
+        if token_limit > MAX_MAX_TOKENS:
             raise _unsupported_value_error(f"The token limit must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}.")
         return token_limit
 
@@ -780,7 +896,12 @@ class ChatCompletionRequest(BaseModel):
             PydanticCustomError: More than four sequences are sent.
         """
         if isinstance(stop, list) and len(stop) > MAX_STOP_SEQUENCES:
-            raise _unsupported_value_error(f"At most {MAX_STOP_SEQUENCES} stop sequences are served.")
+            raise _openai_value_error(
+                "stop",
+                "array too long. Expected an array with maximum length {limit}, but got an array with length {length} instead.",
+                limit=MAX_STOP_SEQUENCES,
+                length=len(stop),
+            )
         return stop
 
     @field_validator("n")
@@ -789,8 +910,15 @@ class ChatCompletionRequest(BaseModel):
         """Validate that one choice is asked for.
 
         Raises:
-            PydanticCustomError: ``n`` is set to anything but 1.
+            PydanticCustomError: ``n`` is set to anything but 1; below 1 in OpenAI's wording.
         """
+        if choice_count is not None and choice_count < SUPPORTED_CHOICE_COUNT:
+            raise _openai_value_error(
+                "n",
+                "integer below minimum value. Expected a value >= {limit}, but got {value} instead.",
+                limit=SUPPORTED_CHOICE_COUNT,
+                value=choice_count,
+            )
         if choice_count is not None and choice_count != SUPPORTED_CHOICE_COUNT:
             raise _unsupported_value_error(f"Only {SUPPORTED_CHOICE_COUNT} choice is served; 'n' must be 1 or omitted.")
         return choice_count
@@ -924,6 +1052,9 @@ class ChatCompletionResponse(BaseModel):
 
     usage: ChatCompletionUsage
     """The token counts."""
+
+    system_fingerprint: str | None = None
+    """The serving worker and model the first choice came from, as a short hash; null when no worker is known."""
 
     x_horde: HordeResponseDetails
     """The Horde-specific details."""
@@ -1158,6 +1289,9 @@ class ChatCompletionChunk(BaseModel):
 
     usage: ChatCompletionUsage | None = None
     """The token counts, in the usage chunk only."""
+
+    system_fingerprint: str | None = None
+    """The completion's ``system_fingerprint``; the same in every chunk of a stream."""
 
     x_horde: HordeResponseDetails | None = None
     """The Horde-specific details, in the finish chunk only."""

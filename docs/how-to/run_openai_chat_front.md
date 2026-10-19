@@ -257,7 +257,8 @@ retry into a second charged job. Errors before the submit do not carry the heade
 | 408 | `ChatRequestTimeout` | `false` | The request was still waiting after `HORDE_OAI_NONSTREAM_TIMEOUT_SECONDS` and one final status read; it is cancelled. An outcome reached by the deadline is returned instead. |
 | 408 | `RequestBodyTimeout` | | The body took longer than `HORDE_OAI_BODY_READ_TIMEOUT_SECONDS` to arrive. Nothing was submitted. |
 | 413 | `RequestTooLarge` | | The body exceeds `HORDE_OAI_MAX_BODY_BYTES`. |
-| 502 | `ChatRequestFaulted` | `false` | The horde reports the request as faulted, or it expired on the horde. |
+| 502 | `ChatRequestFaulted` | `false` | The horde reports the request as faulted, or it expired on the horde. When the fault followed a refused worker reply, the message states the refusal and `metadata.rc` carries its return code. |
+| 502 | `ChatRequestNoGeneration` | `false` | The horde reported the request done without a generation and not faulted, after a short recheck or a `cancelled` signal, for example after a maintenance cancel; it is cancelled. |
 | 502 | `HordeUnavailable` | | No horde root in `HORDE_OAI_HORDE_URLS` accepted the connection. |
 | 502 | `HordeUnavailable` | `false` | The submit was sent, no answer came, and no recovery attempt was answered; the request may exist. `metadata` holds `submit_outcome: "unknown"` and `operation_key`. |
 | 502 | `OperationKeyConflict` | `false` | A recovery attempt was refused because the operation key holds a different request. The front re-sends the identical body, so this is a front defect; `metadata` holds the `rc` and `operation_key`. |

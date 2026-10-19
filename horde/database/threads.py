@@ -216,8 +216,9 @@ def store_worker_list():
 #             logger.error(f"Failed serializing workers with error: {err}")
 
 
-def collect_chat_faults(request_ids: list[object]) -> list[tuple[str, int]]:
-    """Return the chat requests among ``request_ids`` with the number of generations each has stored.
+def collect_chat_faults(request_ids: list[object]) -> list[tuple[str, int, str | None, str | None]]:
+    """Return the chat requests among ``request_ids`` with the number of generations each has stored and why the
+    last refused reply to each was refused.
 
     Read before the rows are deleted, so a fault can be published once the deletion has committed.
 
@@ -225,7 +226,8 @@ def collect_chat_faults(request_ids: list[object]) -> list[tuple[str, int]]:
         request_ids: Text request ids that just faulted or expired. The rows must still exist.
 
     Returns:
-        One ``(request id, stored generation count)`` pair per chat request; text requests are left out.
+        One ``(request id, stored generation count, fault reason, fault return code)`` tuple per chat request, the
+        last two None when no reply was refused; text requests are left out.
     """
     if not request_ids:
         return []
@@ -233,6 +235,8 @@ def collect_chat_faults(request_ids: list[object]) -> list[tuple[str, int]]:
         db.session.query(
             TextWaitingPrompt.id,
             func.count(TextProcessingGeneration.id),
+            TextWaitingPrompt.chat_fault_reason,
+            TextWaitingPrompt.chat_fault_rc,
         )
         .outerjoin(
             TextProcessingGeneration,
@@ -244,20 +248,29 @@ def collect_chat_faults(request_ids: list[object]) -> list[tuple[str, int]]:
             TextWaitingPrompt.id.in_(request_ids),
             TextWaitingPrompt.is_chat.is_(True),
         )
-        .group_by(TextWaitingPrompt.id)
+        # Grouped by the selected columns as well as the key, so the query does not rely on the dialect
+        # inferring them from the primary key.
+        .group_by(
+            TextWaitingPrompt.id,
+            TextWaitingPrompt.chat_fault_reason,
+            TextWaitingPrompt.chat_fault_rc,
+        )
         .all()
     )
-    return [(str(chat_request_id), generation_count) for chat_request_id, generation_count in chat_request_rows]
+    return [
+        (str(chat_request_id), generation_count, fault_reason, fault_rc)
+        for chat_request_id, generation_count, fault_reason, fault_rc in chat_request_rows
+    ]
 
 
-def publish_chat_faults(chat_faults: list[tuple[str, int]]) -> None:
-    """Signal the waiting client of each chat request that it faulted or expired.
+def publish_chat_faults(chat_faults: list[tuple[str, int, str | None, str | None]]) -> None:
+    """Signal the waiting client of each chat request that it faulted or expired, and why when a reply was refused.
 
     Args:
-        chat_faults: The pairs [`collect_chat_faults`][horde.database.threads.collect_chat_faults] returned.
+        chat_faults: The tuples [`collect_chat_faults`][horde.database.threads.collect_chat_faults] returned.
     """
-    for chat_request_id, generation_count in chat_faults:
-        publish_chat_event(chat_request_id, ChatEvent.FAULTED, generation_count)
+    for chat_request_id, generation_count, fault_reason, fault_rc in chat_faults:
+        publish_chat_event(chat_request_id, ChatEvent.FAULTED, generation_count, fault_reason=fault_reason, fault_rc=fault_rc)
 
 
 def collect_expired_chat_image_keys(cutoff_time: datetime) -> list[str]:

@@ -128,6 +128,7 @@ def build_completion_events(completion: ChatCompletionResponse, *, include_usage
             model=completion.model,
             choices=[],
             usage=completion.usage,
+            system_fingerprint=completion.system_fingerprint,
         )
         events.append(_chunk_event(usage_chunk, include_usage=True))
     events.append(ServerSentEvent(data=DONE_MARKER))
@@ -170,6 +171,7 @@ def _build_chunk(
         created=completion.created,
         model=completion.model,
         choices=choices,
+        system_fingerprint=completion.system_fingerprint,
         x_horde=completion.x_horde if x_horde else None,
     )
 

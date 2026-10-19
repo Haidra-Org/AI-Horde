@@ -218,6 +218,7 @@ KNOWN_RC = [
     "ChatDeclarationInvalid",
     "ChatSubmitInvalid",
     "ChatSubmitNonconformant",
+    "ChatWorkerFault",
     "ChatModelMismatch",
     "UnknownChatModel",
     "ChatImageStorageUnavailable",

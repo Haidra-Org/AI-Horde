@@ -132,6 +132,9 @@ class PausedWorkerReview(TypedDict):
     """The number of jobs the worker fulfilled."""
     aborted_jobs: int
     """The number of jobs the worker aborted."""
+    nonconformant_replies: int
+    """The number of chat replies refused for breaking a strict request's contract, which ``aborted_jobs`` does not
+    count."""
     bridge_agent: str
     """The worker's reported bridge agent."""
     models: list[str]
@@ -338,6 +341,7 @@ def _paused_worker_details(
         "owner_flagged": worker.user.flagged,
         "requests_fulfilled": worker.fulfilments,
         "aborted_jobs": worker.aborted_jobs,
+        "nonconformant_replies": worker.nonconformant_replies,
         "bridge_agent": worker.bridge_agent,
         "models": models,
         "contact": worker.user.contact,

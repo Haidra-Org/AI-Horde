@@ -13,6 +13,7 @@ of one token per [`CHARACTERS_PER_ESTIMATED_TOKEN`][horde.oai.mapping.CHARACTERS
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import uuid
@@ -48,8 +49,10 @@ __all__ = [
     "CHARACTERS_PER_ESTIMATED_TOKEN",
     "COMPLETION_ID_PREFIX",
     "EMPTY_RETURN_NOTICE",
+    "CompletionWithoutGenerationError",
     "build_completion",
     "build_completion_id",
+    "build_system_fingerprint",
     "build_error",
     "build_error_envelope",
     "build_model_card",
@@ -68,6 +71,12 @@ A rough ratio for English text; the estimate only fills the usage object, which 
 
 COMPLETION_ID_PREFIX: str = "chatcmpl-"
 """The prefix OpenAI clients expect on a completion id; the Horde request id follows it."""
+
+SYSTEM_FINGERPRINT_PREFIX: str = "fp_"
+"""The prefix of a ``system_fingerprint``, as OpenAI writes it."""
+
+SYSTEM_FINGERPRINT_HEX_CHARACTERS: int = 10
+"""The hex characters of the hash kept in a ``system_fingerprint``, as many as OpenAI's carry."""
 
 FILTERED_GENERATION_STATES: frozenset[str] = frozenset(
     {
@@ -173,6 +182,19 @@ ERROR_TYPE_BY_STATUS: dict[int, OpenAIErrorType] = {
 def build_completion_id(request_id: str) -> str:
     """Return the OpenAI completion id for a Horde request id."""
     return f"{COMPLETION_ID_PREFIX}{request_id}"
+
+
+def build_system_fingerprint(worker_id: str | None, model: str) -> str | None:
+    """Return the ``system_fingerprint`` of a reply from ``worker_id`` serving ``model``, or None without a worker.
+
+    OpenAI's fingerprint changes with the backend configuration that served a request, so a client can tell which
+    replies a changed backend produced. The worker and model pair is the closest such configuration the Horde
+    reports.
+    """
+    if worker_id is None:
+        return None
+    serving_digest = hashlib.sha256(f"{worker_id}\n{model}".encode()).hexdigest()
+    return f"{SYSTEM_FINGERPRINT_PREFIX}{serving_digest[:SYSTEM_FINGERPRINT_HEX_CHARACTERS]}"
 
 
 def build_native_chat_body(chat_request: ChatCompletionRequest, *, operation_key: uuid.UUID) -> dict[str, object]:
@@ -313,6 +335,10 @@ def generation_tool_calls(generation: HordeChatGeneration) -> list[ChatToolCall]
     return generation.message.tool_calls
 
 
+class CompletionWithoutGenerationError(Exception):
+    """The status a completion was to be built from has no finished generation, so it would carry no reply."""
+
+
 def build_completion(
     *,
     request_id: str,
@@ -329,9 +355,15 @@ def build_completion(
         status: The Horde's terminal status of the request.
 
     Returns:
-        One choice per generation, in the Horde's order; ``model`` and the ``x_horde`` worker details are the first
-        generation's.
+        One choice per generation, in the Horde's order; ``model``, ``system_fingerprint`` and the ``x_horde`` worker
+        details are the first generation's.
+
+    Raises:
+        CompletionWithoutGenerationError: ``status`` has no finished generation. A completion built from it would be a
+            reply with no choice and estimated usage, delivered as a success.
     """
+    if not status.generations:
+        raise CompletionWithoutGenerationError(f"Chat request {request_id} has no finished generation to build a completion from.")
     choices: list[ChatCompletionChoice] = []
     completion_tokens = 0
     estimated_usage = False
@@ -363,25 +395,27 @@ def build_completion(
             flatten_messages(chat_request.messages, tools=chat_request.tools),
         )
         estimated_usage = True
-    first_generation = status.generations[0] if status.generations else None
+    first_generation = status.generations[0]
+    model = first_generation.model or chat_request.model
     return ChatCompletionResponse(
         completion_id=build_completion_id(request_id),
         created=created,
-        model=first_generation.model if first_generation is not None and first_generation.model else chat_request.model,
+        model=model,
         choices=choices,
         usage=ChatCompletionUsage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
         ),
+        system_fingerprint=build_system_fingerprint(first_generation.worker_id, model),
         x_horde=HordeResponseDetails(
             request_id=request_id,
-            worker_id=first_generation.worker_id if first_generation is not None else None,
-            worker_name=first_generation.worker_name if first_generation is not None else None,
+            worker_id=first_generation.worker_id,
+            worker_name=first_generation.worker_name,
             kudos=status.kudos,
-            charge_basis=first_generation.charge_basis if first_generation is not None else None,
+            charge_basis=first_generation.charge_basis,
             estimated_usage=estimated_usage,
-            queue_wait_seconds=first_generation.queue_wait_seconds if first_generation is not None else None,
+            queue_wait_seconds=first_generation.queue_wait_seconds,
             context_adjustments=status.context_adjustments,
             notice=EMPTY_RETURN_NOTICE.format(request_id=request_id) if has_empty_return else None,
         ),

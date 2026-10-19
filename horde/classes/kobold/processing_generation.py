@@ -13,7 +13,12 @@ from horde.bridge_reference import (
 )
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.processing_generation import ProcessingGeneration, json_column_type
-from horde.classes.kobold.chat_request import ChargeBasis, chat_reply_characters
+from horde.classes.kobold.chat_request import (
+    CHAT_SUBMIT_NONCONFORMANT_RC,
+    MAX_CHAT_REFUSAL_RC_LENGTH,
+    ChargeBasis,
+    chat_reply_characters,
+)
 from horde.classes.kobold.genstats import record_text_statistic
 from horde.flask import db
 from horde.logger import logger
@@ -113,6 +118,10 @@ class TextProcessingGeneration(ProcessingGeneration):
     image_transport = db.Column(db.String(16), nullable=True)
     """How the generation's worker receives the request's images, a ``ChatImageTransport`` value chosen from its
     declaration at assignment. NULL when the request carries no images and on text generations."""
+    chat_refusal_rc = db.Column(db.String(MAX_CHAT_REFUSAL_RC_LENGTH), nullable=True)
+    """The return code the Horde last refused this generation's reply with, written at the refusal. The worker's
+    fault submit that follows is counted by it, so a worker cannot claim the exemption a nonconformant reply has from
+    dropped jobs. NULL while no reply was refused and on text generations."""
 
     def _censorship_state(self) -> str:
         """Determine the state string for this procgen based on its censorship flags."""
@@ -207,6 +216,17 @@ class TextProcessingGeneration(ProcessingGeneration):
         if not is_backed_validated(self.worker.bridge_agent):
             kudos *= 0.3
         return round(kudos * context_multiplier, 2)
+
+    def log_worker_abort(self) -> None:
+        """Count the abort on the worker, as a nonconformant reply when the Horde refused the reply as one.
+
+        The worker generated a well-formed reply that broke a ``strict`` request's contract, which the model failed
+        rather than the worker, so it does not count toward the dropped jobs that put a worker into maintenance.
+        """
+        if self.chat_refusal_rc == CHAT_SUBMIT_NONCONFORMANT_RC:
+            self.worker.log_nonconformant_reply()
+            return
+        super().log_worker_abort()
 
     def log_aborted_generation(self):
         record_text_statistic(self)

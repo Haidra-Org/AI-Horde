@@ -72,6 +72,7 @@ FINISHED_FIELDS: frozenset[str] = frozenset(
         "code",
         "wake_count",
         "estimated_usage",
+        "done_without_generation_reads",
     },
 )
 """The structured fields of the finished-request line."""

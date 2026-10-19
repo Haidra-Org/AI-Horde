@@ -69,6 +69,16 @@ unknown keys, as OpenAI does: an unknown key inside `stream_options` or `respons
 | `stream`, `stream_options`, `user`, `metadata` | Applied or accepted by the front and not forwarded. |
 | `logprobs`, `top_logprobs`, `store`, `service_tier` | Dropped at their default (`false`, `0`, `false`, `auto` or `default`); any other value is 400. |
 
+`ChatCompletionRequest` bounds the sampling values to OpenAI's ranges (`OPENAI_SAMPLING_RANGES`): `temperature` 0 to
+2, `top_p` 0 to 1, `frequency_penalty` and `presence_penalty` -2 to 2. A value outside its range, `n` or a token limit
+below 1, and more than four stop sequences are 400 `UnsupportedChatParameter` with OpenAI's message and `param`; an
+empty `messages` is 400 `BadRequest` with OpenAI's message. Such a message names the parameter itself, so the front
+does not prefix it with the path. A token limit from 1 to 15 is refused with the Horde floor (`MIN_MAX_TOKENS`).
+
+A native payload validation failure reaching the front has no `rc` and a generic message; the front returns 400
+`BadRequest` with the first failing field as `param`, translated from the native text param name where it differs
+(`NATIVE_FIELD_PARAMETERS` in `horde/oai/app.py`: `max_length` is `max_tokens`, `stop_sequence` is `stop`).
+
 After validation the front applies the request rules it shares with the native route from `horde/chat_contract.py`,
 so the client receives OpenAI's message and `param`: a `tool_choice` or `parallel_tool_calls` without tools
 (`ChatRequestConflict`), a tool history breaking OpenAI's rule and a `strict` `json_schema` breaking OpenAI's
@@ -103,7 +113,9 @@ An unserved role (such as `function`) or content part type (such as `input_audio
 is null only when the worker returned tool calls without text; `tool_calls` is written only when the worker returned
 calls, each `{"id", "type": "function", "function": {"name", "arguments"}}` as the worker sent it. `finish_reason` is
 `stop`, `length`, `content_filter` or `tool_calls`. `x_horde.notice` marks a reply with neither visible text nor tool
-calls.
+calls. `system_fingerprint` is `fp_` and the first 10 hex characters of the SHA-256 of the first generation's worker
+id and model (`build_system_fingerprint` in `horde/oai/mapping.py`), null when the generation has no worker id; every
+chunk of a stream carries the same value.
 
 A stream sends, after its keepalive comments, these `chat.completion.chunk` events:
 
@@ -117,6 +129,23 @@ A stream sends, after its keepalive comments, these `chat.completion.chunk` even
 
 The front answers browser preflights and allows any origin on every response (`Access-Control-Allow-Origin: *`),
 exposing `Retry-After` and `x-should-retry`, so a web client such as KoboldAI Lite can call it with a bearer key.
+
+The wait treats a native status that is `done`, not `faulted` and without a finished generation as unfinished while
+it still reports a job waiting or processing. Otherwise the wait reads it again after `signal_recheck_seconds`, and
+when that recheck still shows it, or a `cancelled` signal came for the request, the front cancels the request and
+returns 502 `ChatRequestNoGeneration`. The front does not return a completion without a generation.
+
+## Deliberate deviations
+
+| Point | Front | OpenAI |
+| --- | --- | --- |
+| Token limit floor | `max_tokens` and `max_completion_tokens` from 16, the minimum generation length of the native text API; the front refuses a smaller value and does not raise it | From 1 |
+| `param` path into messages | `messages[2].role` | `messages.[2].role`; tool paths match, such as `tools[0].function.parameters` |
+| Error `code` | The front's codes (`UnsupportedChatParameter`, `ChatRequestConflict`, `BadRequest`) | Per failure, such as `decimal_above_max_value` |
+| `system_fingerprint` | Hash of the serving worker id and model | The backend configuration |
+| Streamed tool calls | Each call whole in one chunk | Arguments in fragments |
+| First streamed chunk | `delta` holds only `role` | `delta` also holds `content` |
+| `json_object` without "json" in the messages | Served, unless `horde.openai_guards` is set | Refused |
 
 ## No eligible worker
 
@@ -161,7 +190,7 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | --- | --- | --- | --- |
 | `horde.oai.requests.admitted` | counter | `streamed` | Chat requests that took an in-flight slot. |
 | `horde.oai.requests.refused` | counter | `status_code`, `code` | Chat requests refused before an in-flight slot: body size (413), body read timeout (408 `RequestBodyTimeout`), validation (400, 404), authorization (401), `FrontAtCapacity` (503). |
-| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed` | Admitted requests answered with an error status before any header: horde refusals at submit, 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 503 `no_eligible_worker`, 502 `ChatRequestFaulted` and `HordeUnavailable`. |
+| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed` | Admitted requests answered with an error status before any header: horde refusals at submit, 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 503 `no_eligible_worker`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. |
 | `horde.oai.stream.failures` | counter | `code` | Streamed requests whose 200 headers were sent and which ended in an SSE error event. |
 | `horde.oai.inflight` | observable gauge | none | Requests holding an in-flight slot. |
 | `horde.oai.inflight.sources` | observable gauge | none | Distinct client addresses holding at least one slot. |
@@ -171,7 +200,7 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | `horde.oai.queue_wait` | histogram, seconds | `model` | The horde's `queue_wait_seconds` of each delivered generation: request creation to assignment. |
 | `horde.oai.first_content.duration` | histogram, seconds | `streamed` | From the submit acknowledgement, when a stream's headers go out, to the first content sent: the first completion chunk, or the non-streamed body. |
 | `horde.oai.request.duration` | histogram, seconds | `streamed`, `status_code`, `code` | From an admitted request's arrival to its end. A stream records 200 whatever its outcome; `code` is the error code, `ok` for a delivered completion or `client_closed` for a client that disconnected before delivery. |
-| `horde.oai.wakes` | counter | `wake_source`, `found_finished` | Each status read of a waiting request, by what caused it: `immediate` (the read after the submit), `signal`, `recheck`, `poll`, `deadline`; and `disconnect`, recorded without a read when the client disconnects. |
+| `horde.oai.wakes` | counter | `wake_source`, `found_finished`, `found_done_without_generation` | Each status read of a waiting request, by what caused it: `immediate` (the read after the submit), `signal`, `recheck`, `poll`, `deadline`; and `disconnect`, recorded without a read when the client disconnects. `found_done_without_generation` marks a read showing the request done, not faulted and without a generation. |
 | `horde.oai.submit.outcome_unknown` | counter | none | Requests answered with `submit_outcome: "unknown"`. |
 | `horde.oai.submit.recoveries` | counter | `existing_claim` | Lost submits recovered by re-sending; `existing_claim` true is a claim match (horde answered 200). |
 | `horde.oai.client_retry_hints` | counter | none | Chat requests carrying `x-stainless-retry-count` above zero. |
@@ -191,7 +220,7 @@ duration use `BUCKETS_REQUEST_LIFECYCLE_SECONDS` (both in `horde/metrics.py`); b
 Every admitted request logs one Loguru `INFO` record when it ends. The message is
 
 ```text
-Chat request <id> finished: streamed=<bool> submitted_at=<unix> woke_at=<unix|none> woke_by=<source|None> waited=<seconds|none>s status=<status> code=<code> wakes=<count> estimated_usage=<bool|None>
+Chat request <id> finished: streamed=<bool> submitted_at=<unix> woke_at=<unix|none> woke_by=<source|None> waited=<seconds|none>s status=<status> code=<code> wakes=<count> estimated_usage=<bool|None> done_without_generation_reads=<count>
 ```
 
 and the same values are bound to the record's `extra`, which the OpenTelemetry log bridge exports as attributes. A
@@ -210,5 +239,6 @@ request refused at submit has no id; its message starts `Unsubmitted chat reques
 | `code` | The error code, `ok` or `client_closed`. |
 | `wake_count` | How many status reads the wait made. |
 | `estimated_usage` | Whether the delivered completion's usage was estimated; null when none was delivered. |
+| `done_without_generation_reads` | How many status reads showed the request done, not faulted and without a generation. |
 
 The line does not carry the API key, the messages, the client's title or address, or the operation key.

@@ -14,13 +14,20 @@ subscription that receives nothing is pinged, and one whose PONG does not arrive
 [`ChatRequestWatcher`][horde.oai.waiter.ChatRequestWatcher] is the one wait implementation both response modes use.
 After the submit it reads the status once (the request may have finished before the registration), then sleeps until
 a signal, the jittered fallback poll, the fail-fast check or the deadline, and reads the status once on each wake.
-A terminal signal whose outcome the next read does not yet show earns one short recheck. The poll covers a lost
-message and a Redis outage; its interval stretches with the request's reported wait (see
+A terminal signal whose outcome the next read does not yet show earns one short recheck. A status that is done, not
+faulted and without a finished generation is not terminal at first: a Horde in the middle of a fault and its restart
+can show it. When it still reports a job waiting or processing it is waited on as any unfinished request; otherwise
+it earns one short recheck too, and ends the wait with
+[`ChatDoneWithoutGenerationError`][horde.oai.waiter.ChatDoneWithoutGenerationError] once that recheck still shows it,
+or at once after a ``cancelled`` signal, since a request cancelled with no generation stays in that state. The poll
+covers a lost message and a Redis outage; its interval stretches with the request's reported wait (see
 [`compute_fallback_poll_seconds`][horde.oai.waiter.compute_fallback_poll_seconds]).
 
 The deadline bounds the wait, not the outcome: a status read that returns a terminal outcome is returned even when it
 completes after the deadline. At the deadline one final read runs under its own allowance; only a request still
-waiting after it raises [`ChatWaitTimeoutError`][horde.oai.waiter.ChatWaitTimeoutError].
+waiting after it raises [`ChatWaitTimeoutError`][horde.oai.waiter.ChatWaitTimeoutError], or
+[`ChatDoneWithoutGenerationError`][horde.oai.waiter.ChatDoneWithoutGenerationError] when that read shows it done
+without a generation.
 
 A request no worker is eligible for, with nothing processing, ends the wait after the fail-fast grace, which covers a
 worker restart or model load. A status that reports the cause as a declaration gap ends it at once with
@@ -54,6 +61,7 @@ from horde.oai.metrics import FrontMetrics
 __all__ = [
     "CHAT_SIGNAL_CHANNEL_PREFIX",
     "MAX_STRETCHED_POLL_SECONDS",
+    "ChatDoneWithoutGenerationError",
     "ChatRequestWatcher",
     "ChatWaitTimeoutError",
     "CompletionEvent",
@@ -147,9 +155,22 @@ class CompletionEvent(BaseModel):
     event: CompletionEventKind
     """What happened to the request."""
 
+    fault_reason: str | None = None
+    """For a ``faulted`` event, the message the Horde refused the request's last refused reply with; None otherwise."""
+
+    fault_rc: str | None = None
+    """The return code of that refusal; None when ``fault_reason`` is."""
+
 
 class ChatWaitTimeoutError(Exception):
     """The request was still waiting after its deadline and the final status read."""
+
+
+class ChatDoneWithoutGenerationError(Exception):
+    """The request settled done, not faulted and without a finished generation, so no completion can be built.
+
+    Raised when a recheck still shows that state, after a ``cancelled`` signal, or at the deadline's final read.
+    """
 
 
 class NoEligibleWorkerError(Exception):
@@ -434,18 +455,23 @@ class ChatRequestWatcher:
         """The wall-clock time the request was found finished, in Unix seconds."""
         self.wake_count: int = 0
         """How many status reads the wait made, the read that found the request finished included."""
+        self.done_without_generation_reads: int = 0
+        """How many status reads showed the request done, not faulted and without a finished generation."""
         self._front_metrics = front_metrics
         self._horde_client = horde_client
         self._credentials = credentials
         self._subscription = subscription
         self._budget = budget
         self._impossible_since: float | None = None
-        self._faulted_signal_seen = False
+        self._fault_signal: CompletionEvent | None = None
         self._clock = clock
         self._random_fraction = random_fraction
         self._next_poll_at: float = clock()
         self._recheck_at: float | None = None
         self._recheck_earned = False
+        self._recheck_for_done_without_generation = False
+        self._cancel_signal_seen = False
+        self._done_without_generation_settled = False
         self._last_read_at: float | None = None
         self._fail_fast_retry_at: float = -math.inf
 
@@ -457,6 +483,7 @@ class ChatRequestWatcher:
 
         Raises:
             ChatWaitTimeoutError: The request was still waiting after the deadline and the final status read.
+            ChatDoneWithoutGenerationError: The request settled done, not faulted and without a finished generation.
             NoEligibleWorkerError: No eligible worker, with nothing processing, for longer than the grace, or at once
                 as its subclass ``DeclarationGapError`` when the status reports a declaration gap.
             HordeAPIError: A status read before the deadline failed in a way waiting cannot fix, such as 404.
@@ -465,6 +492,10 @@ class ChatRequestWatcher:
         while True:
             if status is not None and _is_finished(status):
                 return status
+            if self._done_without_generation_settled:
+                raise ChatDoneWithoutGenerationError(
+                    f"Chat request {self.request_id} is done without a generation and not faulted.",
+                )
             if status is not None:
                 self._check_fail_fast(status)
             now = self._clock()
@@ -475,7 +506,9 @@ class ChatRequestWatcher:
                 if event.event in FINISHING_EVENT_KINDS:
                     self._recheck_earned = True
                 if event.event == CompletionEventKind.FAULTED:
-                    self._faulted_signal_seen = True
+                    self._fault_signal = event
+                if event.event == CompletionEventKind.CANCELLED:
+                    self._cancel_signal_seen = True
                 status = await self._read_before_deadline(WakeSource.SIGNAL)
                 continue
             now = self._clock()
@@ -575,6 +608,10 @@ class ChatRequestWatcher:
             logger.warning(f"The final status read of chat request {self.request_id} failed: {error}")
         if status is not None and _is_finished(status):
             return status
+        if status is not None and _is_settled_without_generation(status):
+            raise ChatDoneWithoutGenerationError(
+                f"Chat request {self.request_id} was still reported done without a generation at its deadline.",
+            )
         raise ChatWaitTimeoutError(f"Chat request {self.request_id} was still waiting at its deadline.")
 
     async def _refresh(self, wake_source: WakeSource) -> HordeChatStatus | None:
@@ -585,12 +622,18 @@ class ChatRequestWatcher:
         """
         self.wake_count += 1
         found_finished = False
+        found_done_without_generation = False
         try:
             status = await self._read_status(wake_source)
             found_finished = status is not None and _is_finished(status)
+            found_done_without_generation = status is not None and _is_done_without_generation(status)
             return status
         finally:
-            self._front_metrics.record_wake(wake_source=wake_source, found_finished=found_finished)
+            self._front_metrics.record_wake(
+                wake_source=wake_source,
+                found_finished=found_finished,
+                found_done_without_generation=found_done_without_generation,
+            )
 
     async def _read_status(self, wake_source: WakeSource) -> HordeChatStatus | None:
         """Return a freshly read status, or None when the read failed in a way the next poll may fix.
@@ -603,12 +646,16 @@ class ChatRequestWatcher:
         try:
             status = await self._horde_client.get_chat_status(request_id=self.request_id, credentials=self._credentials)
         except HordeAPIError as error:
-            if error.status_code == HTTPStatus.NOT_FOUND and self.latest_status is not None and not self._faulted_signal_seen:
+            if error.status_code == HTTPStatus.NOT_FOUND and self.latest_status is not None and self._fault_signal is None:
                 await self._reconcile_missing_status()
-            if error.status_code == HTTPStatus.NOT_FOUND and self._faulted_signal_seen:
+            if error.status_code == HTTPStatus.NOT_FOUND and self._fault_signal is not None:
                 # The cleanup thread deletes an expired request and then publishes faulted, so the read finds no row.
                 logger.info(f"Chat request {self.request_id} expired: faulted signal and no status row")
-                status = HordeChatStatus(faulted=True)
+                status = HordeChatStatus(
+                    faulted=True,
+                    fault_reason=self._fault_signal.fault_reason,
+                    fault_rc=self._fault_signal.fault_rc,
+                )
                 self.latest_status = status
                 self.woke_by = wake_source
                 self.woke_at = time.time()
@@ -622,15 +669,42 @@ class ChatRequestWatcher:
             return None
         self._last_read_at = read_started_at
         self.latest_status = status
+        is_recheck_of_done_without_generation = wake_source == WakeSource.RECHECK and self._recheck_for_done_without_generation
+        if wake_source == WakeSource.RECHECK:
+            self._recheck_for_done_without_generation = False
         stretched_poll_seconds = compute_fallback_poll_seconds(base_seconds=self._budget.fallback_poll_seconds, wait_time=status.wait_time)
         self._next_poll_at = read_started_at + jitter_poll_seconds(stretched_poll_seconds, self._random_fraction)
+        if _is_done_without_generation(status):
+            self.done_without_generation_reads += 1
         if _is_finished(status):
             self.woke_by = wake_source
             self.woke_at = time.time()
+        elif _is_settled_without_generation(status):
+            self._note_done_without_generation(wake_source, is_recheck_of_this_state=is_recheck_of_done_without_generation)
         elif self._recheck_earned:
             self._recheck_earned = False
             self._recheck_at = self._clock() + self._budget.signal_recheck_seconds
         return status
+
+    def _note_done_without_generation(self, wake_source: WakeSource, *, is_recheck_of_this_state: bool) -> None:
+        """Mutate the wait for a read showing the request done without a generation, not faulted and with no job left.
+
+        A Horde in the middle of a fault and its restart can show this for a moment, so the first sighting earns a
+        short recheck. The state is settled when the recheck still shows it, or when a ``cancelled`` signal came: a
+        request cancelled with no generation stays done without one.
+
+        Args:
+            wake_source: What caused the read.
+            is_recheck_of_this_state: Whether the read is the recheck an earlier sighting of this state scheduled.
+        """
+        self._recheck_earned = False
+        if self._cancel_signal_seen or is_recheck_of_this_state:
+            self._done_without_generation_settled = True
+            self.woke_by = wake_source
+            self.woke_at = time.time()
+            return
+        self._recheck_for_done_without_generation = True
+        self._recheck_at = self._clock() + self._budget.signal_recheck_seconds
 
     async def _reconcile_missing_status(self) -> None:
         """Wait once for expiry's post-commit signal after a previously visible row disappears.
@@ -643,7 +717,7 @@ class ChatRequestWatcher:
         reconcile_until = self._clock() + self._budget.signal_recheck_seconds
         other_events: list[CompletionEvent] = []
         try:
-            while not self._faulted_signal_seen:
+            while self._fault_signal is None:
                 remaining = reconcile_until - self._clock()
                 if remaining <= 0:
                     return
@@ -651,7 +725,7 @@ class ChatRequestWatcher:
                 if event is None:
                     return
                 if event.event == CompletionEventKind.FAULTED:
-                    self._faulted_signal_seen = True
+                    self._fault_signal = event
                 else:
                     other_events.append(event)
         finally:
@@ -689,5 +763,26 @@ def _decode_text(text: object) -> str:
 
 
 def _is_finished(status: HordeChatStatus) -> bool:
-    """Return whether ``status`` is terminal."""
-    return status.done or status.faulted
+    """Return whether ``status`` is terminal: faulted, or done with a finished generation to deliver."""
+    has_generation = len(status.generations) > 0
+    return status.faulted or (status.done and has_generation)
+
+
+def _is_done_without_generation(status: HordeChatStatus) -> bool:
+    """Return whether ``status`` is done, not faulted and without a finished generation, which is not terminal.
+
+    A request whose every job faulted has nothing to deliver until the Horde restarts the job or faults the request.
+    """
+    has_generation = len(status.generations) > 0
+    return status.done and not status.faulted and not has_generation
+
+
+def _is_settled_without_generation(status: HordeChatStatus) -> bool:
+    """Return whether ``status`` is done without a generation, not faulted, and has no job waiting or processing.
+
+    Only such a status can settle the wait. One that still reports a job waiting or processing contradicts its own
+    ``done``, as a Horde counting faulted generations as finished reported during a third attempt, so the wait goes
+    on as for any unfinished request.
+    """
+    has_outstanding_job = status.processing > 0 or status.waiting > 0
+    return _is_done_without_generation(status) and not has_outstanding_job

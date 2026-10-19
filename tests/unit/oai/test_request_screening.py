@@ -180,6 +180,154 @@ async def test_agreeing_token_limits_and_n_of_one_are_accepted(start_front: Star
 
 
 @pytest.mark.parametrize(
+    ("body_overrides", "expected_param", "expected_code", "expected_message"),
+    [
+        (
+            {"temperature": 2.5},
+            "temperature",
+            "UnsupportedChatParameter",
+            "Invalid 'temperature': decimal above maximum value. Expected a value <= 2, but got 2.5 instead.",
+        ),
+        (
+            {"temperature": -0.5},
+            "temperature",
+            "UnsupportedChatParameter",
+            "Invalid 'temperature': decimal below minimum value. Expected a value >= 0, but got -0.5 instead.",
+        ),
+        (
+            {"top_p": 1.5},
+            "top_p",
+            "UnsupportedChatParameter",
+            "Invalid 'top_p': decimal above maximum value. Expected a value <= 1, but got 1.5 instead.",
+        ),
+        (
+            {"top_p": -0.1},
+            "top_p",
+            "UnsupportedChatParameter",
+            "Invalid 'top_p': decimal below minimum value. Expected a value >= 0, but got -0.1 instead.",
+        ),
+        (
+            {"presence_penalty": 2.5},
+            "presence_penalty",
+            "UnsupportedChatParameter",
+            "Invalid 'presence_penalty': decimal above maximum value. Expected a value <= 2, but got 2.5 instead.",
+        ),
+        (
+            {"presence_penalty": -2.5},
+            "presence_penalty",
+            "UnsupportedChatParameter",
+            "Invalid 'presence_penalty': decimal below minimum value. Expected a value >= -2, but got -2.5 instead.",
+        ),
+        (
+            {"frequency_penalty": 2.5},
+            "frequency_penalty",
+            "UnsupportedChatParameter",
+            "Invalid 'frequency_penalty': decimal above maximum value. Expected a value <= 2, but got 2.5 instead.",
+        ),
+        (
+            {"frequency_penalty": -2.5},
+            "frequency_penalty",
+            "UnsupportedChatParameter",
+            "Invalid 'frequency_penalty': decimal below minimum value. Expected a value >= -2, but got -2.5 instead.",
+        ),
+        (
+            {"n": 0},
+            "n",
+            "UnsupportedChatParameter",
+            "Invalid 'n': integer below minimum value. Expected a value >= 1, but got 0 instead.",
+        ),
+        (
+            {"stop": ["a", "b", "c", "d", "e"]},
+            "stop",
+            "UnsupportedChatParameter",
+            "Invalid 'stop': array too long. Expected an array with maximum length 4, but got an array with length 5 instead.",
+        ),
+        (
+            {"max_tokens": 0},
+            "max_tokens",
+            "UnsupportedChatParameter",
+            "Invalid 'max_tokens': integer below minimum value. Expected a value >= 1, but got 0 instead.",
+        ),
+        (
+            {"messages": []},
+            "messages",
+            "BadRequest",
+            "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead.",
+        ),
+    ],
+)
+async def test_value_outside_openai_range_is_refused_with_openai_message_before_submitting(
+    start_front: StartFront,
+    body_overrides: dict[str, Any],
+    expected_param: str,
+    expected_code: str,
+    expected_message: str,
+) -> None:
+    """A value OpenAI refuses is refused with OpenAI's message and ``param``, without a path prefix, and is not
+    forwarded."""
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(**body_overrides))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["message"] == expected_message
+    assert error["param"] == expected_param
+    assert error["code"] == expected_code
+    assert error["type"] == "invalid_request_error"
+    assert front.horde.submit_route.call_count == 0
+
+
+@pytest.mark.parametrize(
+    "body_overrides",
+    [
+        {"temperature": 0},
+        {"temperature": 2},
+        {"top_p": 0},
+        {"top_p": 1},
+        {"presence_penalty": -2},
+        {"presence_penalty": 2},
+        {"frequency_penalty": -2},
+        {"frequency_penalty": 2},
+        {"n": 1},
+        {"stop": ["a", "b", "c", "d"]},
+        {"max_tokens": 16},
+        {"messages": [{"role": "user", "content": "Say hello."}]},
+    ],
+)
+async def test_value_at_the_edge_of_its_range_is_forwarded(start_front: StartFront, body_overrides: dict[str, Any]) -> None:
+    """A value on the boundary of its accepted range is accepted and submitted."""
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(**body_overrides))
+
+    assert response.status_code == 200
+    assert front.horde.submit_route.call_count == 1
+
+
+@pytest.mark.parametrize("token_field", ["max_tokens", "max_completion_tokens"])
+@pytest.mark.parametrize("token_limit", [1, 15])
+async def test_token_limit_openai_accepts_below_the_horde_floor_is_refused_with_the_floor(
+    start_front: StartFront,
+    token_field: str,
+    token_limit: int,
+) -> None:
+    """A token limit from 1 to 15 is refused, not raised, with a message stating the floor of 16 and its reason."""
+    body_overrides: dict[str, Any] = {"max_tokens": None, token_field: token_limit}
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(**body_overrides))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["param"] == token_field
+    assert error["code"] == "UnsupportedChatParameter"
+    assert error["message"] == (
+        f"Invalid '{token_field}': the AI Horde refuses a token limit below 16, the minimum generation length of its "
+        f"native text API, rather than raising it, but got {token_limit} instead."
+    )
+    assert front.horde.submit_route.call_count == 0
+
+
+@pytest.mark.parametrize(
     ("body_overrides", "expected_param"),
     [
         ({"messages": []}, "messages"),
@@ -510,6 +658,77 @@ async def test_a_strict_schema_breaking_openais_structural_rules_is_refused(star
     )
     assert response.json()["error"]["param"] == "response_format"
     assert front.horde.submit_route.call_count == 0
+
+
+def _weather_tool(parameters: dict[str, Any], *, strict: bool | None = True) -> dict[str, Any]:
+    function: dict[str, Any] = {"name": "get_weather", "parameters": parameters}
+    if strict is not None:
+        function["strict"] = strict
+    return {"type": "function", "function": function}
+
+
+@pytest.mark.parametrize(
+    ("parameters", "expected_message"),
+    [
+        (
+            {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]},
+            "Invalid schema for function 'get_weather': In context=(), 'additionalProperties' is required to be supplied and to be false.",
+        ),
+        (
+            {
+                "type": "object",
+                "properties": {"location": {"type": "string"}, "unit": {"type": "string"}},
+                "required": ["location"],
+                "additionalProperties": False,
+            },
+            "Invalid schema for function 'get_weather': In context=(), 'required' is required to be supplied and to be an array "
+            "including every key in properties. Missing 'unit'.",
+        ),
+    ],
+    ids=["open-object", "optional-property"],
+)
+async def test_a_strict_tool_breaking_openais_structural_rules_is_refused_with_its_message_and_param(
+    start_front: StartFront,
+    parameters: dict[str, Any],
+    expected_message: str,
+) -> None:
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(tools=[_weather_tool(parameters)]))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert (error["message"], error["param"], error["code"]) == (
+        expected_message,
+        "tools[0].function.parameters",
+        "UnsupportedChatParameter",
+    )
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_a_closed_strict_tool_is_forwarded_with_its_strict_flag(start_front: StartFront) -> None:
+    parameters = {
+        "type": "object",
+        "properties": {"location": {"type": "string"}, "unit": {"type": "string"}},
+        "required": ["location", "unit"],
+        "additionalProperties": False,
+    }
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(tools=[_weather_tool(parameters)]))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["tools"][0]["function"]["strict"] is True
+
+
+@pytest.mark.parametrize("strict", [False, None], ids=["strict-false", "strict-unset"])
+async def test_a_non_strict_tool_with_an_optional_property_is_forwarded(start_front: StartFront, strict: bool | None) -> None:
+    parameters = {"type": "object", "properties": {"location": {"type": "string"}, "unit": {"type": "string"}}}
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(tools=[_weather_tool(parameters, strict=strict)]))
+
+    assert response.status_code == 200
+    assert front.horde.submit_route.call_count == 1
 
 
 def _nested_schema(levels: int) -> dict[str, Any]:

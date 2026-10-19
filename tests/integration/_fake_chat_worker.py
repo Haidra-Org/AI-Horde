@@ -142,17 +142,21 @@ def build_chat_submit_body(
     return submit_body
 
 
-def build_faulted_chat_submit_body(*, generation_id: str, model_id: str) -> dict[str, Any]:
+def build_faulted_chat_submit_body(*, generation_id: str, model_id: str, fault_reason: str | None = None) -> dict[str, Any]:
     """Return the submit body of a chat job that failed, with neither ``generation`` nor ``message``.
 
     Args:
         generation_id: The popped generation id.
         model_id: The model the job was assigned.
+        fault_reason: The ``fault_reason`` to send; left out of the body when None.
 
     Returns:
         The JSON body for ``POST /v2/generate/text/submit``.
     """
-    return {"id": generation_id, "state": "faulted", "model_id": model_id}
+    submit_body: dict[str, Any] = {"id": generation_id, "state": "faulted", "model_id": model_id}
+    if fault_reason is not None:
+        submit_body["fault_reason"] = fault_reason
+    return submit_body
 
 
 @dataclass

@@ -20,7 +20,8 @@ client sent in a shape one definition bounds.
 The request rules both sides apply after validation live here as well, so the native route and the front refuse the
 same requests with the same wording: [`check_tool_fields_need_tools`][horde.chat_contract.check_tool_fields_need_tools],
 [`check_tool_history`][horde.chat_contract.check_tool_history],
-[`check_strict_response_schema`][horde.chat_contract.check_strict_response_schema] and
+[`check_strict_response_schema`][horde.chat_contract.check_strict_response_schema],
+[`check_strict_tool_schemas`][horde.chat_contract.check_strict_tool_schemas] and
 [`check_json_word`][horde.chat_contract.check_json_word]. Each raises
 [`ChatRequestRefusal`][horde.chat_contract.ChatRequestRefusal] with OpenAI's message and ``param`` where OpenAI has one.
 """
@@ -84,6 +85,7 @@ __all__ = [
     "chat_tool_call_bytes",
     "check_json_word",
     "check_strict_response_schema",
+    "check_strict_tool_schemas",
     "check_tool_fields_need_tools",
     "check_tool_history",
 ]
@@ -779,14 +781,37 @@ def _strict_schema_violation(schema: object, context: tuple[str | int, ...]) -> 
     return None
 
 
-def check_strict_response_schema(response_format: ChatResponseFormat | None) -> None:
-    """Refuse a ``strict`` ``json_schema`` response format whose schema breaks OpenAI's structural rules.
+def _check_strict_schema(schema: object, *, subject: str, param: str) -> None:
+    """Refuse a ``strict`` schema that breaks OpenAI's structural rules.
 
     Under ``strict: true`` every object schema, at the root, under ``properties``, in array ``items``, under ``$defs``
     and in every other subschema, sets ``additionalProperties: false`` and lists each of its properties in
-    ``required``. Other keywords are not checked here; OpenAI accepts and applies ``minimum`` and the like. A schema
-    without ``strict: true`` is not checked structurally. The walk recurses once per nesting level, which validation
-    already bounded by [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING].
+    ``required``. Other keywords are not checked here; OpenAI accepts and applies ``minimum`` and the like. The walk
+    recurses once per nesting level, which validation already bounded by
+    [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING].
+
+    Args:
+        schema: The schema to check.
+        subject: What OpenAI's message calls the schema's owner, such as ``response_format 'answer'``.
+        param: The request path of the schema, reported as the refusal's ``param``.
+
+    Raises:
+        ChatRequestRefusal: With ``UnsupportedChatParameter``.
+    """
+    violation = _strict_schema_violation(schema, ())
+    if violation is not None:
+        raise ChatRequestRefusal(
+            f"Invalid schema for {subject}: {violation}",
+            param=param,
+            rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+        )
+
+
+def check_strict_response_schema(response_format: ChatResponseFormat | None) -> None:
+    """Refuse a ``strict`` ``json_schema`` response format whose schema breaks OpenAI's structural rules.
+
+    The rules are those [`check_strict_tool_schemas`][horde.chat_contract.check_strict_tool_schemas] applies to a
+    ``strict`` tool definition. A schema without ``strict: true`` is not checked structurally.
 
     Args:
         response_format: The request's validated response format.
@@ -796,12 +821,34 @@ def check_strict_response_schema(response_format: ChatResponseFormat | None) -> 
     """
     if not isinstance(response_format, ChatJsonSchemaResponseFormat) or response_format.json_schema.strict is not True:
         return
-    violation = _strict_schema_violation(response_format.json_schema.schema_, ())
-    if violation is not None:
-        raise ChatRequestRefusal(
-            f"Invalid schema for response_format '{response_format.json_schema.name}': {violation}",
-            param="response_format",
-            rc=UNSUPPORTED_CHAT_PARAMETER_RC,
+    _check_strict_schema(
+        response_format.json_schema.schema_,
+        subject=f"response_format '{response_format.json_schema.name}'",
+        param="response_format",
+    )
+
+
+def check_strict_tool_schemas(tools: Sequence[ChatTool] | None) -> None:
+    """Refuse a tool definition with ``strict: true`` whose ``parameters`` schema breaks OpenAI's structural rules.
+
+    The rules are those [`check_strict_response_schema`][horde.chat_contract.check_strict_response_schema] applies
+    to a ``strict`` response format. A definition without ``strict: true`` is not checked structurally, as OpenAI
+    does not check one.
+
+    Args:
+        tools: The request's validated tools.
+
+    Raises:
+        ChatRequestRefusal: With ``UnsupportedChatParameter`` and ``param`` ``tools[i].function.parameters`` for the
+            first offending tool.
+    """
+    for tool_index, tool in enumerate(tools or ()):
+        if tool.function.strict is not True:
+            continue
+        _check_strict_schema(
+            tool.function.parameters,
+            subject=f"function '{tool.function.name}'",
+            param=f"tools[{tool_index}].function.parameters",
         )
 
 

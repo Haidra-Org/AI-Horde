@@ -77,6 +77,7 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 ("processing_gens", "assigned_max_length", "integer", None, "YES"),
                 ("processing_gens", "assigned_model", "character varying", None, "YES"),
                 ("processing_gens", "charge_basis", "character varying", 16, "YES"),
+                ("processing_gens", "chat_refusal_rc", "character varying", 32, "YES"),
                 ("processing_gens", "completion_tokens", "integer", None, "YES"),
                 ("processing_gens", "finish_reason", "character varying", 32, "YES"),
                 ("processing_gens", "image_transport", "character varying", 16, "YES"),
@@ -85,6 +86,8 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 ("processing_gens", "prompt_tokens", "integer", None, "YES"),
                 ("waiting_prompts", "chat_conformance", "character varying", None, "NO"),
                 ("waiting_prompts", "chat_extras", "jsonb", None, "YES"),
+                ("waiting_prompts", "chat_fault_rc", "character varying", 32, "YES"),
+                ("waiting_prompts", "chat_fault_reason", "character varying", 1000, "YES"),
                 ("waiting_prompts", "chat_required_features", "ARRAY", None, "YES"),
                 ("waiting_prompts", "chat_tools_temperature", "double precision", None, "YES"),
                 ("waiting_prompts", "context_adjustments", "jsonb", None, "YES"),
@@ -100,6 +103,7 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 ("workers", "chat_model_id", "character varying", None, "YES"),
                 ("workers", "chat_tools_max_temperature", "double precision", None, "YES"),
                 ("workers", "image_transports", "ARRAY", None, "YES"),
+                ("workers", "nonconformant_replies", "integer", None, "NO"),
             ]
 
             existing_worker_opt_in = connection.execute(

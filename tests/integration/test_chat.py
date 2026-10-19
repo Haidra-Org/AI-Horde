@@ -690,6 +690,11 @@ def test_cancelling_a_chat_request_publishes_a_cancelled_event(client, request_h
     assert _received_events(chat_events) == [
         (chat_signal_channel(request_id), {"id": request_id, "event": "cancelled", "generations": 0}),
     ]
+    status = _chat_status(client, request_headers, request_id)
+    assert status["done"] is True
+    assert status["faulted"] is False
+    assert status["processing"] == status["waiting"] == 0
+    assert status["generations"] == []
 
 
 def test_faulted_chat_requests_publish_a_faulted_event_and_text_requests_publish_none(
@@ -728,7 +733,7 @@ def test_an_expired_chat_request_is_signalled_after_its_row_is_gone(
         db.session.commit()
     published: list[tuple[str, str, bool]] = []
 
-    def record_publish(published_request_id: str, event: Any, generation_count: int) -> None:
+    def record_publish(published_request_id: str, event: Any, generation_count: int, **_fault_details: Any) -> None:
         row_still_exists = db.session.query(TextWaitingPrompt.id).filter_by(id=uuid.UUID(published_request_id)).first() is not None
         published.append((published_request_id, event.value, row_still_exists))
 
@@ -1838,3 +1843,382 @@ def test_a_non_strict_schema_accepts_any_json_object(
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
     assert _chat_status(client, request_headers, request_id)["done"] is True
+
+
+def _refuse_then_fault(
+    chat_worker: FakeChatWorker,
+    *,
+    content: str | None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    fault_reason: str | None = None,
+) -> Any:
+    """Pop one job, submit a reply to it, then submit the fault a worker sends after a refusal; return the reply's response."""
+    pop_result = chat_worker.pop(chat_features=VERIFIED_FEATURES)
+    assert pop_result["id"] is not None, pop_result
+    reply_response = chat_worker.submit(
+        build_chat_submit_body(
+            generation_id=pop_result["id"],
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason="tool_calls" if tool_calls else "stop",
+            model_id=CHAT_MODEL,
+        ),
+    )
+    fault_response = chat_worker.submit(
+        build_faulted_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL, fault_reason=fault_reason),
+    )
+    assert fault_response.status_code == 200, fault_response.get_data(as_text=True)
+    return reply_response
+
+
+def _worker_counters(app, worker_name: str) -> tuple[int, int, int]:
+    """Return the worker's stored ``aborted_jobs``, ``uncompleted_jobs`` and ``nonconformant_replies``."""
+    from horde.classes.kobold.worker import TextWorker
+    from horde.flask import db
+
+    with app.app_context():
+        aborted_jobs, uncompleted_jobs, nonconformant_replies = (
+            db.session.query(TextWorker.aborted_jobs, TextWorker.uncompleted_jobs, TextWorker.nonconformant_replies)
+            .filter_by(name=worker_name)
+            .one()
+        )
+        return aborted_jobs, uncompleted_jobs, nonconformant_replies
+
+
+def test_a_request_faulted_after_refused_replies_reports_the_last_refusal(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    chat_events: Any,
+) -> None:
+    from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
+
+    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    replies = ["Blue."] * FAULTED_GENERATIONS_LIMIT + ["[1]"]
+    refusals = [_refuse_then_fault(chat_worker, content=reply) for reply in replies]
+
+    assert [refusal.status_code for refusal in refusals] == [400] * len(replies)
+    last_refusal = refusals[-1].get_json()
+    assert refusals[0].get_json()["message"] != last_refusal["message"]
+    status = _chat_status(client, request_headers, request_id)
+    assert status["faulted"] is True
+    assert status["fault_reason"] == last_refusal["message"]
+    assert status["fault_rc"] == "ChatSubmitNonconformant"
+    faulted_event = {
+        "id": request_id,
+        "event": "faulted",
+        "generations": 0,
+        "fault_reason": last_refusal["message"],
+        "fault_rc": "ChatSubmitNonconformant",
+    }
+    assert (chat_signal_channel(request_id), faulted_event) in _received_events(chat_events)
+
+
+def test_an_unfaulted_request_reports_no_fault_reason_after_a_refused_reply(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+
+    assert _refuse_then_fault(chat_worker, content="Blue.").status_code == 400
+
+    status = _chat_status(client, request_headers, request_id)
+    assert status["faulted"] is False
+    assert status["fault_reason"] is None
+    assert status["fault_rc"] is None
+    _cancel(client, request_headers, "chat", request_id)
+
+
+@pytest.mark.parametrize(
+    ("request_overrides", "content", "tool_calls", "refusal_rc", "dropped_jobs", "nonconformant_replies"),
+    [
+        pytest.param({"response_format": {"type": "json_object"}}, "Blue.", None, "ChatSubmitNonconformant", 0, 1, id="nonconformant"),
+        pytest.param({"tools": [LOOKUP_TOOL]}, None, [_tool_call("send_email")], "ChatSubmitInvalid", 1, 0, id="invalid"),
+    ],
+)
+def test_a_fault_after_a_refused_reply_counts_as_a_dropped_job_unless_the_reply_was_nonconformant(
+    app,
+    client,
+    request_headers: dict[str, str],
+    request_overrides: dict[str, Any],
+    content: str | None,
+    tool_calls: list[dict[str, Any]] | None,
+    refusal_rc: str,
+    dropped_jobs: int,
+    nonconformant_replies: int,
+) -> None:
+    worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Refusals {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
+    request_id = _submit_chat_request(client, request_headers, **request_overrides)
+
+    refusal = _refuse_then_fault(worker, content=content, tool_calls=tool_calls)
+
+    assert refusal.get_json()["rc"] == refusal_rc
+    assert _worker_counters(app, worker.name) == (dropped_jobs, dropped_jobs, nonconformant_replies)
+    details = client.get(f"/api/v2/workers/name/{worker.name}", headers=request_headers)
+    assert details.status_code == 200, details.get_data(as_text=True)
+    assert details.get_json()["nonconformant_replies"] == nonconformant_replies
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def _fault_past_the_limit(chat_worker: FakeChatWorker, fault_reason: str) -> None:
+    """Pop and fault the queued request's job with ``fault_reason`` until the request faults."""
+    from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
+
+    for _ in range(FAULTED_GENERATIONS_LIMIT + 1):
+        pop_result = chat_worker.pop()
+        assert pop_result["id"] is not None, pop_result
+        response = chat_worker.submit(
+            build_faulted_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL, fault_reason=fault_reason),
+        )
+        assert response.status_code == 200, response.get_data(as_text=True)
+
+
+def test_a_request_faulted_with_a_worker_fault_reason_reports_the_horde_message_for_it(
+    app,
+    client,
+    request_headers: dict[str, str],
+    chat_events: Any,
+) -> None:
+    """The status and the faulted signal carry the Horde's sentence for the reason, and each fault is a dropped job."""
+    from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
+    from horde.classes.kobold.chat_request import CHAT_WORKER_FAULT_MESSAGES, ChatWorkerFaultReason
+
+    worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Faults {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
+    request_id = _submit_chat_request(client, request_headers)
+
+    _fault_past_the_limit(worker, "prompt_overflow")
+
+    expected_message = CHAT_WORKER_FAULT_MESSAGES[ChatWorkerFaultReason.PROMPT_OVERFLOW]
+    status = _chat_status(client, request_headers, request_id)
+    assert status["faulted"] is True
+    assert status["fault_reason"] == expected_message
+    assert status["fault_rc"] == "ChatWorkerFault"
+    faulted_event = {
+        "id": request_id,
+        "event": "faulted",
+        "generations": 0,
+        "fault_reason": expected_message,
+        "fault_rc": "ChatWorkerFault",
+    }
+    assert (chat_signal_channel(request_id), faulted_event) in _received_events(chat_events)
+    dropped_jobs = FAULTED_GENERATIONS_LIMIT + 1
+    assert _worker_counters(app, worker.name) == (dropped_jobs, dropped_jobs, 0)
+
+
+def test_an_unknown_worker_fault_reason_is_ignored(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers)
+
+    _fault_past_the_limit(chat_worker, "reactor_meltdown")
+
+    status = _chat_status(client, request_headers, request_id)
+    assert status["faulted"] is True
+    assert status["fault_reason"] is None
+    assert status["fault_rc"] is None
+
+
+def test_a_reply_refused_fault_keeps_the_message_of_the_refusal_it_follows(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
+
+    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    refusals = [
+        _refuse_then_fault(chat_worker, content="Blue.", fault_reason="reply_refused") for _ in range(FAULTED_GENERATIONS_LIMIT + 1)
+    ]
+
+    assert [refusal.status_code for refusal in refusals] == [400] * len(refusals)
+    status = _chat_status(client, request_headers, request_id)
+    assert status["faulted"] is True
+    assert status["fault_reason"] == refusals[-1].get_json()["message"]
+    assert status["fault_rc"] == "ChatSubmitNonconformant"
+
+
+def _status_of_loaded_request(app, loaded_request: Any) -> dict[str, Any]:
+    """Return the full status the status route would build from ``loaded_request``, an instance loaded earlier."""
+    with app.app_context():
+        return loaded_request.get_status(
+            request_avg=0,
+            active_worker_count=(0, 0),
+            has_valid_workers=True,
+            wp_queue_stats=(0, 0, 0),
+        )
+
+
+@pytest.mark.parametrize("in_flight_result", [None, "success", "fault"])
+def test_cancelled_chat_status_settles_only_after_in_flight_work(
+    client,
+    request_headers,
+    chat_worker,
+    in_flight_result,
+):
+    request_id = _submit_chat_request(client, request_headers)
+    popped = chat_worker.pop() if in_flight_result else None
+    _cancel(client, request_headers, "chat", request_id)
+    status = _chat_status(client, request_headers, request_id)
+    assert status["waiting"] == 0
+    assert status["done"] is (in_flight_result is None)
+    if popped:
+        assert status["processing"] == 1
+        if in_flight_result == "success":
+            response = chat_worker.submit(
+                build_chat_submit_body(
+                    generation_id=popped["id"],
+                    content="Finished after cancellation.",
+                    model_id=CHAT_MODEL,
+                )
+            )
+        else:
+            response = chat_worker.submit(build_faulted_chat_submit_body(generation_id=popped["id"], model_id=CHAT_MODEL))
+        assert response.status_code == 200, response.get_data(as_text=True)
+        status = _chat_status(client, request_headers, request_id)
+        assert status["done"] is True
+        assert status["processing"] == status["waiting"] == 0
+        assert len(status["generations"]) == int(in_flight_result == "success")
+
+
+def test_a_status_built_from_a_request_loaded_before_a_refused_reply_is_not_done_without_a_generation(
+    app,
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """The status route loads the request, then spends time on worker availability and the queue before it reads the
+    generations. A worker's fault committed in between must not make the status done with no generation and no fault:
+    the job is restarted in the fault's commit and the status reads the request's state in one statement."""
+    from sqlalchemy.orm import Session
+
+    from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+    from horde.flask import db
+
+    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    pop_result = chat_worker.pop(chat_features=VERIFIED_FEATURES)
+    assert pop_result["id"] is not None, pop_result
+    with app.app_context():
+        status_reader_session = Session(db.engine)
+    try:
+        loaded_request = status_reader_session.get(TextWaitingPrompt, uuid.UUID(request_id))
+        assert loaded_request is not None
+        assert loaded_request.n == 0
+
+        refusal = chat_worker.submit(
+            build_chat_submit_body(generation_id=pop_result["id"], content="Blue.", finish_reason="stop", model_id=CHAT_MODEL),
+        )
+        assert refusal.get_json()["rc"] == "ChatSubmitNonconformant"
+        fault = chat_worker.submit(build_faulted_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL))
+        assert fault.status_code == 200, fault.get_data(as_text=True)
+
+        status = _status_of_loaded_request(app, loaded_request)
+    finally:
+        status_reader_session.close()
+    assert (status["done"], status["faulted"], status["restarted"], status["waiting"]) == (False, False, 1, 1)
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_restarted_request_is_not_completed_while_a_worker_takes_its_job_again(
+    app,
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After a refused reply's fault, the pop that takes the restarted job commits the taken job with its generation, so
+    another session never sees the request with no job waiting, none processing and only the faulted one finished."""
+    from sqlalchemy.orm import Session
+
+    from horde.classes.base.waiting_prompt import RequestCompletionSnapshot, WaitingPrompt
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+    from horde.flask import db
+
+    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    assert _refuse_then_fault(chat_worker, content="Blue.").get_json()["rc"] == "ChatSubmitNonconformant"
+    completed_while_taken: list[bool] = []
+    select_model = WaitingPrompt._select_model
+
+    def read_completion_then_select_model(waiting_prompt: Any, worker: Any, declared_models: list[str] | None = None) -> str:
+        # Runs inside the pop, between taking the job and creating its generation.
+        with Session(db.engine) as other_session:
+            stored_request = other_session.get(TextWaitingPrompt, uuid.UUID(request_id))
+            stored_generations = other_session.query(TextProcessingGeneration).filter_by(wp_id=stored_request.id, fake=False).all()
+            snapshot = RequestCompletionSnapshot(
+                n=stored_request.n,
+                faulted=stored_request.faulted,
+                completed_jobs=sum(1 for generation in stored_generations if not generation.faulted and generation.generation is not None),
+                processing_jobs=sum(1 for generation in stored_generations if not generation.faulted and generation.generation is None),
+                fault_reason=None,
+                fault_rc=None,
+            )
+            completed_while_taken.append(snapshot.is_completed(stored_request.jobs))
+        return select_model(waiting_prompt, worker, declared_models)
+
+    monkeypatch.setattr(WaitingPrompt, "_select_model", read_completion_then_select_model)
+    reissued = chat_worker.pop(chat_features=VERIFIED_FEATURES)
+
+    assert reissued["id"] is not None, reissued
+    assert completed_while_taken == [False]
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_repeated_faulted_submit_restarts_the_job_once(
+    app,
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """Only the submit that moves the generation from pending to faulted restarts its job: a repeated faulted submit,
+    and a fault from an instance loaded before the first fault committed, leave the restarted count alone."""
+    from sqlalchemy.orm import Session
+
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+    from horde.flask import db
+
+    request_id = _submit_chat_request(client, request_headers)
+    pop_result = chat_worker.pop()
+    assert pop_result["id"] is not None, pop_result
+    with app.app_context():
+        stale_session = Session(db.engine)
+    try:
+        stale_generation = stale_session.get(TextProcessingGeneration, uuid.UUID(pop_result["id"]))
+        assert stale_generation is not None
+        assert stale_generation.faulted is False
+
+        for _ in range(2):
+            response = chat_worker.submit(build_faulted_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL))
+            assert response.status_code == 200, response.get_data(as_text=True)
+        with app.app_context():
+            stale_generation.fault_and_restart()
+            stored_n = db.session.query(TextWaitingPrompt.n).filter(TextWaitingPrompt.id == uuid.UUID(request_id)).scalar()
+    finally:
+        stale_session.close()
+
+    assert stored_n == 1
+    status = _chat_status(client, request_headers, request_id)
+    assert (status["restarted"], status["waiting"], status["done"], status["faulted"]) == (1, 1, False, False)
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_request_on_its_third_attempt_is_not_done_while_the_job_is_processing(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """Faulted generations do not count toward completion: two faulted attempts and a third one processing leave the
+    request open, not done without a generation for the whole third attempt."""
+    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    for _ in range(2):
+        assert _refuse_then_fault(chat_worker, content="Blue.").get_json()["rc"] == "ChatSubmitNonconformant"
+    third_attempt = chat_worker.pop(chat_features=VERIFIED_FEATURES)
+    assert third_attempt["id"] is not None, third_attempt
+
+    status = _chat_status(client, request_headers, request_id)
+
+    assert (status["done"], status["faulted"], status["processing"], status["restarted"]) == (False, False, 1, 2)
+    _cancel(client, request_headers, "chat", request_id)

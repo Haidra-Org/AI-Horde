@@ -100,6 +100,7 @@ from horde.chat_contract import (
     chat_tool_call_bytes,
     check_json_word,
     check_strict_response_schema,
+    check_strict_tool_schemas,
     check_tool_fields_need_tools,
     check_tool_history,
     refuse_json_constant,
@@ -118,8 +119,12 @@ __all__ = [
     "CHAT_SAMPLING_DEFAULTS",
     "CHAT_SUBMIT_INVALID_RC",
     "CHAT_SUBMIT_NONCONFORMANT_RC",
+    "CHAT_WORKER_FAULT_MESSAGES",
+    "CHAT_WORKER_FAULT_RC",
     "DEFAULT_CHAT_MAX_TOKENS",
     "DEFAULT_PARALLEL_TOOL_CALLS",
+    "MAX_CHAT_FAULT_REASON_LENGTH",
+    "MAX_CHAT_REFUSAL_RC_LENGTH",
     "MAX_NATIVE_FINISH_REASON_LENGTH",
     "MAX_REPORTED_TOKEN_COUNT",
     "UNSUPPORTED_CHAT_PARAMETER_RC",
@@ -130,6 +135,7 @@ __all__ = [
     "ChatMessage",
     "ChatRole",
     "ChatSubmittedMessage",
+    "ChatWorkerFaultReason",
     "FinishReason",
     "build_chat_extras",
     "build_chat_image_key",
@@ -144,6 +150,7 @@ __all__ = [
     "chat_reply_characters",
     "chat_reply_finish_reason",
     "chat_tools_temperature",
+    "chat_worker_fault_message",
     "flatten_messages",
     "has_image_parts",
     "list_chat_image_keys",
@@ -166,6 +173,19 @@ function the request did not offer, or two calls sharing an id."""
 CHAT_SUBMIT_NONCONFORMANT_RC = "ChatSubmitNonconformant"
 """Return code for a well-formed reply a ``strict`` request's ``tool_choice`` or ``response_format`` rules out, so a
 worker can tell a reply its backend broke from one that contradicts the request contract."""
+
+CHAT_WORKER_FAULT_RC = "ChatWorkerFault"
+"""Return code stored on a chat request whose worker reported why it faulted a generation, so a client can tell a
+worker-side failure from a reply the Horde refused."""
+
+MAX_CHAT_REFUSAL_RC_LENGTH = 32
+"""The width of the columns holding the return code of a refused chat submit. The longest code a chat submit is
+refused with, ``ChatSubmitNonconformant``, has 23 characters."""
+
+MAX_CHAT_FAULT_REASON_LENGTH = 1000
+"""The width of the column holding the message of the last refused reply to a chat request. A refusal message is one
+sentence, and a schema mismatch adds only the schema name, a keyword and a JSON path, so only a deeply nested path
+reaches this width; a longer message is stored cut to it."""
 
 DEFAULT_CHAT_MAX_TOKENS = 512
 """``max_length`` for a chat request that sets neither token limit. OpenAI clients usually omit it, and the text
@@ -317,6 +337,53 @@ class FinishReason(enum.StrEnum):
 
     TOOL_CALLS = "tool_calls"
     """The model called one or more tools; the submitted message carries them."""
+
+
+class ChatWorkerFaultReason(enum.StrEnum):
+    """Why a worker faulted a chat job, sent as ``fault_reason`` with its ``faulted`` submit."""
+
+    PROMPT_OVERFLOW = "prompt_overflow"
+    """The rendered messages did not fit the worker's context."""
+
+    UNBUILDABLE_GRAMMAR = "unbuildable_grammar"
+    """The worker could not build the grammar that enforces the request's ``tool_choice`` or ``response_format``."""
+
+    TOOL_VIOLATION = "tool_violation"
+    """The model's reply broke the request's tool controls, and the worker discarded it rather than submit it."""
+
+    REPLY_REFUSED = "reply_refused"
+    """The Horde refused the worker's reply. The refusal's own message is kept when the Horde recorded one."""
+
+    GENERATION_ERROR = "generation_error"
+    """The backend failed while generating."""
+
+
+CHAT_WORKER_FAULT_MESSAGES: Mapping[str, str] = {
+    ChatWorkerFaultReason.PROMPT_OVERFLOW: "The worker could not fit the prompt into its context.",
+    ChatWorkerFaultReason.UNBUILDABLE_GRAMMAR: "The worker could not build the grammar the request's tool choice or response format needs.",
+    ChatWorkerFaultReason.TOOL_VIOLATION: "The model's reply broke the request's tool controls.",
+    ChatWorkerFaultReason.REPLY_REFUSED: "The AI Horde refused the worker's reply.",
+    ChatWorkerFaultReason.GENERATION_ERROR: "The worker's backend failed while generating.",
+}
+"""The message the Horde stores for each fault reason a worker reports. The Horde writes its own sentence rather than
+any worker text, so a client reads a fixed vocabulary."""
+
+
+def chat_worker_fault_message(fault_reason: object) -> str | None:
+    """Return the stored message for a fault reason a worker sent, or None when the value is not a known reason.
+
+    An unknown value is ignored rather than refused, so a worker sending a reason this Horde does not know still has
+    its fault accepted.
+
+    Args:
+        fault_reason: The ``fault_reason`` of a faulted chat submit, as parsed.
+
+    Returns:
+        The message for the reason, or None.
+    """
+    if not isinstance(fault_reason, str):
+        return None
+    return CHAT_WORKER_FAULT_MESSAGES.get(fault_reason)
 
 
 class ChargeBasis(enum.StrEnum):
@@ -675,6 +742,7 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
     _validate_image_urls(_submitted_image_urls(chat_request))
     _reject_conflicting_tool_values(chat_request)
     try:
+        check_strict_tool_schemas(chat_request.tools)
         check_strict_response_schema(chat_request.response_format)
         check_json_word(_message_texts(chat_request), chat_request.response_format, openai_guards=chat_request.horde.openai_guards)
     except ChatRequestRefusal as refusal:

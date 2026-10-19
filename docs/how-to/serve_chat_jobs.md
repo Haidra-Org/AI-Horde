@@ -305,10 +305,34 @@ whenever the worker cannot serve a job it popped: the conversation does not fit,
 template cannot render it, or the backend fails. `model_id` marks the body as a chat submit, which does not require
 `generation`.
 
+Add `fault_reason` when the cause is one of these, so the requester learns why its request faulted:
+
+| `fault_reason`        | Send it when                                                                       |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `prompt_overflow`     | The rendered messages plus `max_length` do not fit `chat_limits.max_context_length` |
+| `unbuildable_grammar` | The backend cannot build the grammar that enforces `tool_choice` or `response_format` |
+| `tool_violation`      | The model's reply broke the request's tool controls and you discard it              |
+| `reply_refused`       | The horde answered your reply's submit with a `400`                                  |
+| `generation_error`    | The backend failed while generating                                                 |
+
+The horde stores a fixed sentence for each value, and the worker does not supply the text. It reports the sentence
+with return code `ChatWorkerFault` in the requester's status and the client's `502` once the request faults. After a
+refused reply the horde keeps the refusal's message, which is more specific than `reply_refused`. Any other value is
+ignored and the fault is accepted as without it. A reason does not change how the fault is counted.
+
 A faulted submit is handled as a faulted text submit. The reward is 0 and the generation is not charged. The request
 gets the job back for another worker, and its status counts the attempt under `restarted`. The worker's aborted job
 count rises, and a worker that aborts more than 20 jobs in an hour is put into maintenance, so a worker that faults
 every chat job should withdraw its chat declaration instead.
+
+A fault that follows a `400 ChatSubmitNonconformant` refusal of the same job is counted apart. The horde stored the
+refusal's return code on the job when it refused the reply, and the fault increments the worker's
+`nonconformant_replies` and leaves its aborted and uncompleted job counts unchanged, so these faults do not lead to
+maintenance.
+The job is still not rewarded, and the requester's status and the client's `502` report the refusal message. A fault
+after `400 ChatSubmitInvalid` or `400 ChatModelMismatch` counts as an aborted job. `GET
+<HORDE_URL>/api/v2/workers/name/<worker-name>` shows `nonconformant_replies`; a count that keeps rising means the
+backend does not keep a guarantee the worker declares.
 
 A job the requester cancels while the worker holds it is settled at the cancellation, as a text job is: the worker is
 rewarded and the requester charged for dispatched work
@@ -316,7 +340,11 @@ rewarded and the requester charged for dispatched work
 or for one whose TTL ran out, returns `400 AbortedGen`.
 
 Verification: the faulted submit returns `{"reward": 0}`, and the next pop by any eligible worker receives a new job
-for the same request. Covered by `test_a_faulted_chat_submit_needs_neither_generation_nor_message`.
+for the same request. Covered by `test_a_faulted_chat_submit_needs_neither_generation_nor_message` and
+`test_a_fault_after_a_refused_reply_counts_as_a_dropped_job_unless_the_reply_was_nonconformant`; the fault reasons by
+`test_a_request_faulted_with_a_worker_fault_reason_reports_the_horde_message_for_it`,
+`test_an_unknown_worker_fault_reason_is_ignored` and
+`test_a_reply_refused_fault_keeps_the_message_of_the_refusal_it_follows`.
 
 ## 8. Keep serving text jobs
 

@@ -1087,6 +1087,59 @@ class TestStrictSchemaRules:
         assert parse_chat_request(_body(response_format=_strict_format(open_schema, strict=strict))).response_format is not None
 
 
+def _weather_tool(parameters: dict[str, Any], *, strict: bool | None = True) -> dict[str, Any]:
+    function: dict[str, Any] = {"name": "get_weather", "parameters": parameters}
+    if strict is not None:
+        function["strict"] = strict
+    return {"type": "function", "function": function}
+
+
+class TestStrictToolSchemaRules:
+    """A tool definition with ``strict: true`` follows the strict schema rules a ``strict`` response format follows."""
+
+    def test_a_closed_strict_tool_is_accepted_and_forwarded_with_its_strict_flag(self) -> None:
+        tool = _weather_tool(_closed_object(location={"type": "string"}, unit={"type": "string"}))
+
+        chat_extras = build_chat_extras(parse_chat_request(_body(tools=[tool])))
+
+        assert chat_extras is not None
+        assert chat_extras["tools"][0]["function"]["strict"] is True
+
+    def test_a_strict_tool_without_closed_additional_properties_is_refused_with_openais_message(self) -> None:
+        parameters = {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}
+
+        rejection = _rejection(_body(tools=[_weather_tool(parameters)]))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert rejection.specific == (
+            "'tools[0].function.parameters': Invalid schema for function 'get_weather': In context=(), "
+            "'additionalProperties' is required to be supplied and to be false."
+        )
+
+    def test_a_strict_tool_property_missing_from_required_is_refused_with_openais_message(self) -> None:
+        parameters = {
+            "type": "object",
+            "properties": {"location": {"type": "string"}, "unit": {"type": "string"}},
+            "required": ["location"],
+            "additionalProperties": False,
+        }
+        other_tool = {"type": "function", "function": {"name": "other"}}
+
+        rejection = _rejection(_body(tools=[other_tool, _weather_tool(parameters)]))
+
+        assert rejection.rc == UNSUPPORTED_CHAT_PARAMETER_RC
+        assert rejection.specific == (
+            "'tools[1].function.parameters': Invalid schema for function 'get_weather': In context=(), 'required' is "
+            "required to be supplied and to be an array including every key in properties. Missing 'unit'."
+        )
+
+    @pytest.mark.parametrize("strict", [False, None], ids=["strict-false", "strict-unset"])
+    def test_a_non_strict_tool_with_an_optional_property_is_accepted(self, strict: bool | None) -> None:
+        parameters = {"type": "object", "properties": {"location": {"type": "string"}, "unit": {"type": "string"}}}
+
+        assert parse_chat_request(_body(tools=[_weather_tool(parameters, strict=strict)])).tools is not None
+
+
 def _nested_schema(levels: int) -> dict[str, Any]:
     schema: dict[str, Any] = {"type": "string"}
     for _ in range(levels):

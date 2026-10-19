@@ -36,6 +36,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator, Mapping
 from enum import StrEnum
 from http import HTTPStatus
+from types import MappingProxyType
 
 import anyio
 import httpx
@@ -61,6 +62,7 @@ from horde.chat_contract import (
     chat_tool_call_bytes,
     check_json_word,
     check_strict_response_schema,
+    check_strict_tool_schemas,
     check_tool_fields_need_tools,
     check_tool_history,
     refuse_json_constant,
@@ -77,11 +79,18 @@ from horde.oai.horde_client import (
     HordeUnavailableError,
     create_http_client,
 )
-from horde.oai.mapping import build_completion, build_error_envelope, build_model_card, build_native_chat_body
+from horde.oai.mapping import (
+    CompletionWithoutGenerationError,
+    build_completion,
+    build_error_envelope,
+    build_model_card,
+    build_native_chat_body,
+)
 from horde.oai.metrics import CancelOutcome, FrontMetrics, get_front_meter
 from horde.oai.schema import (
     BAD_REQUEST_CODE,
     CHAT_REQUEST_CONFLICT_CODE,
+    PARAMETER_CONTEXT_KEY,
     UNSUPPORTED_PARAMETER_CODE,
     UNSUPPORTED_PARAMETER_ERROR_TYPE,
     ChatCompletionRequest,
@@ -101,6 +110,7 @@ from horde.oai.settings import FrontSettings
 from horde.oai.sse import build_completion_events, build_error_events, build_keepalive_event
 from horde.oai.waiter import (
     TRANSIENT_STATUS_CODES,
+    ChatDoneWithoutGenerationError,
     ChatRequestWatcher,
     ChatWaitTimeoutError,
     CompletionSignalListener,
@@ -178,6 +188,14 @@ TIMEOUT_CODE: str = "ChatRequestTimeout"
 FAULTED_CODE: str = "ChatRequestFaulted"
 """The error code of a request the Horde reports as faulted."""
 
+NO_GENERATION_CODE: str = "ChatRequestNoGeneration"
+"""The error code of a request the Horde settled done, not faulted and without a finished generation, such as one
+cancelled before any generation, which leaves no reply to deliver."""
+
+WORKER_FAULT_RC: str = "ChatWorkerFault"
+"""The return code the Horde stores with a faulted request's reason when a worker reported why it faulted a job,
+rather than the Horde refusing its reply."""
+
 FRONT_FULL_CODE: str = "FrontAtCapacity"
 """The error code of a request refused because the process or the request's source holds its maximum of requests."""
 
@@ -225,6 +243,16 @@ DATA_URL_PAYLOAD_SEPARATOR: str = ","
 NATIVE_REQUEST_PATH_PATTERN: re.Pattern[str] = re.compile(r"'(?P<request_path>messages\[\d+\][^']*)'")
 """A quoted message path in a native error message, such as ``'messages[0].content[1].type=image_url'``; the
 native route writes the offending path this way when it refuses a part."""
+
+NATIVE_FIELD_PARAMETERS: Mapping[str, str] = MappingProxyType(
+    {
+        "max_length": "max_tokens",
+        "max_context_length": "horde.max_context_length",
+        "stop_sequence": "stop",
+    },
+)
+"""The request key of each native text param whose name differs from it. The native route checks a chat request's
+sampling values against the text params model, so a failure there names the text param."""
 
 MAX_FAILED_CANCELS: int = 10_000
 """The most finished requests with a failed cancel held for the shutdown drain; the oldest is dropped past it.
@@ -622,7 +650,11 @@ def _request_source(request: Request) -> str:
 
 
 def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist: bool) -> ChatFrontError:
-    """Create the front error for a Horde error, keeping its status, ``rc`` and forwarded headers."""
+    """Create the front error for a Horde error, keeping its status, ``rc`` and forwarded headers.
+
+    A native payload validation failure, which has no ``rc``, is reported as ``BadRequest`` with its first failing
+    field as ``param``.
+    """
     retry_after_header = next(
         (
             header_value
@@ -632,11 +664,21 @@ def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist:
         None,
     )
     request_path_match = NATIVE_REQUEST_PATH_PATTERN.search(error.message)
+    message = error.message
+    code = error.return_code
+    param = request_path_match.group("request_path") if request_path_match is not None else None
+    if param is None and error.field_errors:
+        # A native payload validation failure carries only a generic message; the first failing field and its
+        # reason tell the client which parameter to change.
+        native_path, field_message = next(iter(error.field_errors.items()))
+        param = _request_path_of_native_field(native_path) or None
+        message = f"{param}: {field_message}" if param is not None else field_message
+        code = code if code is not None else BAD_REQUEST_CODE
     return ChatFrontError(
         status_code=error.status_code,
-        message=error.message,
-        code=error.return_code,
-        param=request_path_match.group("request_path") if request_path_match is not None else None,
+        message=message,
+        code=code,
+        param=param,
         metadata=ErrorMetadata(
             request_id=request_id,
             rc=error.return_code,
@@ -645,6 +687,20 @@ def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist:
         headers=error.forwarded_headers,
         job_may_exist=job_may_exist,
     )
+
+
+def _request_path_of_native_field(native_path: str) -> str:
+    """Return the request path of a dotted native field path, such as ``messages[0].content`` for
+    ``messages.0.content`` or ``max_tokens`` for ``max_length``."""
+    request_path = ""
+    for path_part in native_path.split("."):
+        if path_part.isdigit():
+            request_path += f"[{path_part}]"
+        elif request_path:
+            request_path += f".{path_part}"
+        else:
+            request_path = NATIVE_FIELD_PARAMETERS.get(path_part, path_part)
+    return request_path
 
 
 def _build_credentials(request: Request) -> HordeCredentials:
@@ -751,6 +807,8 @@ def _format_location(location: tuple[int | str, ...], request_body: object) -> s
 def _validation_error(error: ValidationError, request_body: object) -> ChatFrontError:
     """Create the 400 for the first validation failure of a request body.
 
+    The message is prefixed with the request path unless it already names the parameter in OpenAI's wording.
+
     Args:
         error: The pydantic failure.
         request_body: The decoded body the model was validated against, which anchors the error path.
@@ -762,9 +820,10 @@ def _validation_error(error: ValidationError, request_body: object) -> ChatFront
         code = UNSUPPORTED_PARAMETER_CODE
     elif first_error["type"] == CHAT_REQUEST_CONFLICT_ERROR_TYPE:
         code = CHAT_REQUEST_CONFLICT_CODE
+    names_parameter = PARAMETER_CONTEXT_KEY in first_error.get("ctx", {})
     return ChatFrontError(
         status_code=HTTPStatus.BAD_REQUEST,
-        message=f"{error_location}: {first_error['msg']}" if error_location else first_error["msg"],
+        message=f"{error_location}: {first_error['msg']}" if error_location and not names_parameter else first_error["msg"],
         code=code,
         param=error_location or None,
     )
@@ -799,6 +858,7 @@ def _find_contract_refusal(chat_request: ChatCompletionRequest) -> ChatFrontErro
             parallel_tool_calls_set=chat_request.parallel_tool_calls is not None,
         )
         check_tool_history(chat_request.messages)
+        check_strict_tool_schemas(chat_request.tools)
         check_strict_response_schema(chat_request.response_format)
         openai_guards = chat_request.horde is not None and chat_request.horde.openai_guards
         check_json_word(_message_texts(chat_request), chat_request.response_format, openai_guards=openai_guards)
@@ -1163,7 +1223,8 @@ class RequestTrace:
     """Time one admitted chat request and record how it ended, once.
 
     The line logged at the end carries the request id, the submit and wake times, what woke the request, the wait,
-    the status and code, the wake count and whether usage was estimated. It does not carry the API key, the messages
+    the status and code, the wake count, whether usage was estimated and how many reads showed the request done
+    without a generation. It does not carry the API key, the messages
     or the client's attribution.
     """
 
@@ -1241,7 +1302,7 @@ class RequestTrace:
         """
         if self._finished:
             return
-        self._front_metrics.record_wake(wake_source=WakeSource.DISCONNECT, found_finished=False)
+        self._front_metrics.record_wake(wake_source=WakeSource.DISCONNECT, found_finished=False, found_done_without_generation=False)
         self.finish(status_code=status_code, code=CLIENT_CLOSED_CODE, watcher=watcher, woke_by=WakeSource.DISCONNECT)
 
     def finish(
@@ -1289,6 +1350,7 @@ class RequestTrace:
             "code": code,
             "wake_count": watcher.wake_count if watcher is not None else 0,
             "estimated_usage": estimated_usage,
+            "done_without_generation_reads": watcher.done_without_generation_reads if watcher is not None else 0,
         }
         request_label = f"Chat request {self.request_id}" if self.request_id is not None else "Unsubmitted chat request"
         # tests/stress/chat_scale_demo.py parses the leading fields in this order and format.
@@ -1296,7 +1358,8 @@ class RequestTrace:
             f"{request_label} finished: streamed={self.streamed} submitted_at={_format_seconds(self.submitted_at)} "
             f"woke_at={_format_seconds(woke_at)} woke_by={finished_fields['woke_by']} "
             f"waited={_format_seconds(waited_seconds)}s status={int(status_code)} code={code} "
-            f"wakes={finished_fields['wake_count']} estimated_usage={estimated_usage}",
+            f"wakes={finished_fields['wake_count']} estimated_usage={estimated_usage} "
+            f"done_without_generation_reads={finished_fields['done_without_generation_reads']}",
         )
 
 
@@ -1337,8 +1400,14 @@ def _create_watcher(
     )
 
 
-def _wait_error(error: ChatWaitTimeoutError | NoEligibleWorkerError | HordeAPIError, *, request_id: str) -> ChatFrontError:
+def _wait_error(
+    error: ChatWaitTimeoutError | ChatDoneWithoutGenerationError | NoEligibleWorkerError | HordeAPIError,
+    *,
+    request_id: str,
+) -> ChatFrontError:
     """Create the front error for a wait that ended without a terminal outcome."""
+    if isinstance(error, ChatDoneWithoutGenerationError):
+        return _no_generation_error(request_id)
     if isinstance(error, ChatWaitTimeoutError):
         return ChatFrontError(
             status_code=HTTPStatus.REQUEST_TIMEOUT,
@@ -1398,13 +1467,40 @@ def _status_error_needs_cancel(error: HordeAPIError) -> bool:
     return error.status_code != HTTPStatus.NOT_FOUND and error.status_code not in TRANSIENT_STATUS_CODES
 
 
-def _faulted_error(request_id: str) -> ChatFrontError:
-    """Create the front error for a request the Horde reports as faulted."""
+def _no_generation_error(request_id: str) -> ChatFrontError:
+    """Create the 502 for a request that ended with no generation to deliver and no fault reported."""
     return ChatFrontError(
         status_code=HTTPStatus.BAD_GATEWAY,
-        message=f"The AI Horde reports request {request_id} as faulted: the worker failed to generate it.",
-        code=FAULTED_CODE,
+        message=f"The AI Horde reports request {request_id} as done without a generation; there is no reply to deliver.",
+        code=NO_GENERATION_CODE,
         metadata=ErrorMetadata(request_id=request_id),
+        job_may_exist=True,
+    )
+
+
+def _faulted_error(request_id: str, status: HordeChatStatus) -> ChatFrontError:
+    """Create the front error for a request the Horde reports as faulted.
+
+    When the Horde refused a reply to the request, or a worker reported why it faulted a job, the message carries
+    that reason and ``metadata.rc`` its return code, so a client can tell a model that broke the request's contract
+    from a worker that failed.
+    """
+    message = f"The AI Horde reports request {request_id} as faulted: the worker failed to generate it."
+    if status.fault_reason is not None and status.fault_rc == WORKER_FAULT_RC:
+        message = (
+            f"The AI Horde reports request {request_id} as faulted after its worker reported a fault ({WORKER_FAULT_RC}): "
+            f"{status.fault_reason}"
+        )
+    elif status.fault_reason is not None:
+        refusal_code = f" ({status.fault_rc})" if status.fault_rc is not None else ""
+        message = (
+            f"The AI Horde reports request {request_id} as faulted after refusing a worker's reply{refusal_code}: {status.fault_reason}"
+        )
+    return ChatFrontError(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        message=message,
+        code=FAULTED_CODE,
+        metadata=ErrorMetadata(request_id=request_id, rc=status.fault_rc),
         job_may_exist=True,
     )
 
@@ -1552,7 +1648,7 @@ async def _wait_for_completion(
             return Response(status_code=CLIENT_CLOSED_REQUEST_STATUS)
         try:
             status = wait_task.result()
-        except (ChatWaitTimeoutError, NoEligibleWorkerError) as error:
+        except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError) as error:
             inflight_slot.release()
             await _cancel_shielded(front_state, open_request)
             return request_trace.error_response(_wait_error(error, request_id=request_id), watcher=watcher)
@@ -1562,13 +1658,20 @@ async def _wait_for_completion(
                 await _cancel_shielded(front_state, open_request)
             return request_trace.error_response(_wait_error(error, request_id=request_id), watcher=watcher)
     if status.faulted:
-        return request_trace.error_response(_faulted_error(request_id), watcher=watcher)
-    completion = build_completion(
-        request_id=request_id,
-        created=int(submitted_at),
-        chat_request=chat_request,
-        status=status,
-    )
+        return request_trace.error_response(_faulted_error(request_id, status), watcher=watcher)
+    try:
+        completion = build_completion(
+            request_id=request_id,
+            created=int(submitted_at),
+            chat_request=chat_request,
+            status=status,
+        )
+    except CompletionWithoutGenerationError:
+        # A guard: the watcher returns no status without a generation unless it is faulted. Should one get through,
+        # it ends as the settled state does, cancelled, rather than as an empty completion.
+        inflight_slot.release()
+        await _cancel_shielded(front_state, open_request)
+        return request_trace.error_response(_no_generation_error(request_id), watcher=watcher)
     request_trace.record_completion(completion, status)
     request_trace.finish(
         status_code=HTTPStatus.OK,
@@ -1619,7 +1722,7 @@ def _stream_completion(
                 )
                 try:
                     status = await latest_watcher.wait_until_finished()
-                except (ChatWaitTimeoutError, NoEligibleWorkerError) as error:
+                except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError) as error:
                     inflight_slot.release()
                     await _cancel_shielded(front_state, open_request)
                     for error_event in request_trace.error_events(_wait_error(error, request_id=request_id), watcher=latest_watcher):
@@ -1635,15 +1738,24 @@ def _stream_completion(
                     return
             outcome_settled = True
             if status.faulted:
-                for error_event in request_trace.error_events(_faulted_error(request_id), watcher=latest_watcher):
+                for error_event in request_trace.error_events(_faulted_error(request_id, status), watcher=latest_watcher):
                     yield error_event
                 return
-            completion = build_completion(
-                request_id=request_id,
-                created=int(submitted_at),
-                chat_request=chat_request,
-                status=status,
-            )
+            try:
+                completion = build_completion(
+                    request_id=request_id,
+                    created=int(submitted_at),
+                    chat_request=chat_request,
+                    status=status,
+                )
+            except CompletionWithoutGenerationError:
+                # A guard: the watcher returns no status without a generation unless it is faulted. Should one get
+                # through, it ends as the settled state does, cancelled, rather than as an empty completion.
+                inflight_slot.release()
+                await _cancel_shielded(front_state, open_request)
+                for error_event in request_trace.error_events(_no_generation_error(request_id), watcher=latest_watcher):
+                    yield error_event
+                return
             request_trace.record_completion(completion, status)
             include_usage = bool(chat_request.stream_options and chat_request.stream_options.include_usage)
             for completion_event in build_completion_events(completion, include_usage=include_usage):

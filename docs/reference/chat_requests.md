@@ -290,6 +290,9 @@ each of its properties in `required`. A schema breaking them returns `400 Unsupp
 message, such as "Invalid schema for response_format 'colour': In context=('properties', 'shade'),
 'additionalProperties' is required to be supplied and to be false.". Other keywords, such as `minimum`, are accepted,
 as OpenAI accepts them. A schema without `strict` `true` is not checked structurally.
+A tool definition with `function.strict` `true` follows the same rules for its `parameters`, refused with `param`
+`tools[i].function.parameters` and a message such as "Invalid schema for function 'get_weather': In context=(),
+'additionalProperties' is required to be supplied and to be false."; a tool without it is not checked structurally.
 
 An `assistant` message may carry `tool_calls`, 1 to `MAX_CHAT_TOOL_CALL_COUNT` (128) `{id, type: "function",
 function: {name, arguments}}`, and then a null or absent `content`. A `tool` message carries `role`, `content` (a
@@ -510,19 +513,32 @@ defaults never apply to a chat job.
 | `prompt_tokens`, `completion_tokens` | integer, 0 to 10,000,000    | no       | Omit a count the backend did not report; stored as null     |
 | `model_id`             | string                                    | yes      | Has to be the generation's `assigned_model`                 |
 | `state`                | `ok`, `censored`, `csam`, `faulted`       | no       | As for text jobs                                           |
+| `fault_reason`         | string                                    | no       | With `state` `faulted` only: why the worker faulted the job; see [Worker fault reasons](#worker-fault-reasons) |
 
-A body carrying `message`, `model_id` or `finish_reason` is parsed as a chat submit, which does not require
-`generation`; any other body is parsed exactly as before, so a text submit without `generation` is still refused by the
-parser. A chat submit without a valid `message` or `finish_reason`, or with `generation` as well as `message`, returns
+A body carrying `message`, `model_id`, `finish_reason` or `fault_reason` is parsed as a chat submit, which does not require
+`generation`; any other body is parsed as a text submit, so the parser refuses a text submit without `generation`.
+A chat submit without a valid `message` or `finish_reason`, or with `generation` as well as `message`, returns
 `400 ChatSubmitInvalid`, as does a text job's submit carrying `message`. A `model_id` other than the assigned model
-returns `400 ChatModelMismatch`. A faulted chat job submits `{id, state: "faulted", model_id}` with neither `generation`
-nor `message`; it is handled as any faulted text submission.
+returns `400 ChatModelMismatch`. A faulted chat job submits `{id, state: "faulted", model_id}` without `generation`
+or `message`, and optionally `fault_reason`; it is handled as any faulted text submission.
 
 A request whose faulted jobs exceed `FAULTED_GENERATIONS_LIMIT` (2) is faulted on the submit that crosses it, for
 text and image requests alike, and a chat request publishes its `faulted` signal at once. Without this, a request
 that fails on every attempt is handed out again after each fault until the stale-generation thread faults it, and
 each fault counts toward the worker's aborted-job threshold. The thread applies the same limit to requests whose
 jobs timed out.
+
+A request is `done` when it is `faulted`, or when no job is waiting or processing and either all requested results
+are stored or the remaining jobs were cancelled. Cancellation retains partial results and lets in-flight jobs finish,
+but faults after cancellation do not restart jobs. A cancelled request can therefore be `done` without a generation;
+the front reports `ChatRequestNoGeneration` when it has no reply to deliver.
+
+Faulted generations do not count as results. A job's fault and its restart are committed together, as are a pop's
+taken job and its first generation. A worker-reported image fault that is not restarted and leaves nothing waiting
+or processing with results missing faults the request in the same commit; image timeouts retain their retry policy.
+The status reads completion, cancellation, the fault flag and fault details in one statement before loading the
+generations. That statement adds one query to every status read and every completion check of a waiting request,
+image `/check` included.
 
 The submit goes through the text path's compare-and-set: one update claims the pending generation and writes
 `generation` (the message content), `message`, `finish_reason`, `native_finish_reason`, the counts and `charge_basis`
@@ -563,6 +579,58 @@ null and that carries tool calls is exempt from the response format. JSON is par
 references do not resolve, refuses the reply with `ChatSubmitNonconformant` and a message saying the schema cannot
 be compiled, since the reply cannot be shown to match it. The request's schema is not checked when it is created.
 
+### Refusal record and worker counters
+
+A refusal from the submit route (`ChatSubmitInvalid`, `ChatSubmitNonconformant` or `ChatModelMismatch`) of a reply to
+a pending generation is stored before the `400` is sent, in its own commit (`TextJobSubmit.record_chat_refusal`,
+`TextWaitingPrompt.record_chat_refusal`). The request's `chat_fault_reason` takes the message, cut to
+`MAX_CHAT_FAULT_REASON_LENGTH` (1000) characters, and `chat_fault_rc` the return code; a later refusal overwrites
+both, and they are not cleared. The generation's `chat_refusal_rc` takes the return code. A failed write is logged and
+the refusal is still sent.
+
+Once the request is faulted, the chat status reports `fault_reason` and `fault_rc` from those columns; both are null
+while it is not faulted, or when the Horde did not refuse a reply to it and no worker sent a known
+[fault reason](#worker-fault-reasons). The `faulted` signal carries them too (see
+[Completion signal](#completion-signal)).
+
+When the worker's fault submit for a generation arrives, `TextProcessingGeneration.log_worker_abort` reads the stored
+`chat_refusal_rc`, so a worker cannot claim the exemption itself:
+
+| Stored `chat_refusal_rc`        | Worker counter                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `ChatSubmitNonconformant`       | `nonconformant_replies` is incremented; `aborted_jobs` and `uncompleted_jobs` are not             |
+| any other, or none              | `aborted_jobs` and `uncompleted_jobs` are incremented, as for any dropped job (`log_aborted_job`) |
+
+A nonconformant reply is a well-formed reply that broke a `strict` request's contract: the worker generated and the
+model failed the contract, so it does not count toward the hourly aborted-job threshold that puts a worker into
+maintenance. The job still does not earn kudos. The same rule applies when the stale-generation thread aborts a generation
+whose reply was refused as nonconformant. Worker details (`GET /v2/workers`, `/v2/workers/{id}`,
+`/v2/workers/name/{name}`) and the moderation worker report expose `nonconformant_replies`.
+
+### Worker fault reasons
+
+A faulted chat submit may carry `fault_reason`, one of the `ChatWorkerFaultReason` values in
+`horde/classes/kobold/chat_request.py`. The horde stores its own message for the value from
+`CHAT_WORKER_FAULT_MESSAGES`, never text from the worker:
+
+| `fault_reason`        | When the worker sends it                                                | Stored `chat_fault_reason`                                                             |
+| --------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `prompt_overflow`     | The rendered messages do not fit the worker's context                   | The worker could not fit the prompt into its context.                                  |
+| `unbuildable_grammar` | The backend cannot build the grammar for `tool_choice` or `response_format` | The worker could not build the grammar the request's tool choice or response format needs. |
+| `tool_violation`      | The model's reply broke the request's tool controls and was not submitted | The model's reply broke the request's tool controls.                                   |
+| `reply_refused`       | The horde refused the worker's reply with a `400`                       | The AI Horde refused the worker's reply.                                               |
+| `generation_error`    | The backend failed while generating                                     | The worker's backend failed while generating.                                          |
+
+`TextJobSubmit.record_chat_worker_fault` writes the message to `chat_fault_reason` and `ChatWorkerFault` to
+`chat_fault_rc` before the fault is applied, in its own commit (`TextWaitingPrompt.record_chat_worker_fault`), so the
+status and the `faulted` signal of a fault that crosses `FAULTED_GENERATIONS_LIMIT` carry it. The route does not write
+anything when the generation is not pending, or when the horde refused a reply of the same generation: that refusal's message
+is more specific, and is what a worker's `reply_refused` follows. A missing or unknown value is not stored and the
+fault is accepted as one without a reason, so a worker sending a reason this horde does not know is unaffected. The value is ignored
+on every submit other than a chat job's fault. A failed write is logged and the fault is still applied. The fault
+counts toward the worker's counters as the table in [Refusal record and worker counters](#refusal-record-and-worker-counters)
+states; a reason does not exempt it.
+
 ### Pricing
 
 A chat generation is charged and rewarded exactly as a text generation with the same reply, through the text kudos
@@ -602,7 +670,9 @@ changes when the earliest of those workers goes offline; the Horde does not keep
 Chat requests publish to Redis channel `horde:chat:<request id>`, on the host the cache uses. The publishing client
 uses logical database `chat_signal_db` (7); Redis delivers a pub/sub message to subscribers on any logical database,
 so a subscriber only needs the host. Each message is `{"id": "<request id>", "event": "<event>", "generations": <n>}`,
-where `generations` counts the generations with a stored result. A message never carries text.
+where `generations` counts the generations with a stored result. A `faulted` message adds `fault_reason` and
+`fault_rc` when a reply to the request was refused or a worker sent a known fault reason, so a client that finds the expired row gone still learns why. A
+message never carries generated text.
 
 | Event        | Published when                                                                    |
 | ------------ | --------------------------------------------------------------------------------- |
@@ -631,7 +701,9 @@ false), `accepts_prompt_jobs` (boolean, not null, default true), `chat_features`
 `waiting_prompts.operation_key` (UUID), `operation_fingerprint` (char 64),
 `context_adjustments` (JSONB), `chat_extras` (JSONB, deferred in the ORM), `chat_required_features` (text array),
 `chat_conformance` (varchar, not null, default `strict`) and `chat_tools_temperature` (double precision); and
-`workers.chat_tools_max_temperature` (double precision). Every column is nullable or has a constant default, so no table is rewritten. The
+`workers.chat_tools_max_temperature` (double precision); and `waiting_prompts.chat_fault_reason` (varchar 1000) and
+`chat_fault_rc` (varchar 32), `processing_gens.chat_refusal_rc` (varchar 32) and `workers.nonconformant_replies`
+(integer, not null, default 0). Every column is nullable or has a constant default, so no table is rewritten. The
 unique partial index `ix_waiting_prompts_user_operation_key` on `(user_id, operation_key) WHERE operation_key IS NOT
 NULL` is built with `CREATE UNIQUE INDEX CONCURRENTLY`, which cannot run inside a transaction block; a failed
 build leaves an invalid index. `db.create_all()` does not add columns to existing tables.

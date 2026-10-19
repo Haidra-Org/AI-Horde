@@ -172,6 +172,7 @@ class HordeAPIError(Exception):
         return_code: str | None,
         message: str,
         forwarded_headers: Mapping[str, str],
+        field_errors: Mapping[str, str] | None = None,
     ) -> None:
         """Create the error.
 
@@ -180,6 +181,8 @@ class HordeAPIError(Exception):
             return_code: The Horde ``rc``, or None when the body had none.
             message: The Horde's message, or the start of the body when it was not JSON.
             forwarded_headers: The ``Retry-After`` and rate-limit headers to pass back to the client.
+            field_errors: The native payload validation failures by dotted field path, such as
+                ``{"temperature": "5.5 is greater than the maximum of 5.0"}``; empty when the body listed none.
         """
         super().__init__(f"{status_code} {return_code}: {message}")
         self.status_code: int = status_code
@@ -190,6 +193,8 @@ class HordeAPIError(Exception):
         """The Horde's message."""
         self.forwarded_headers: dict[str, str] = dict(forwarded_headers)
         """The headers to pass back to the client."""
+        self.field_errors: dict[str, str] = dict(field_errors) if field_errors is not None else {}
+        """The native payload validation failures by dotted field path, in the Horde's order."""
 
 
 class HordeUnavailableError(Exception):
@@ -327,6 +332,14 @@ class HordeChatStatus(BaseModel):
 
     impossible_reason: ChatImpossibleReason | None = None
     """Why no worker can take the request when waiting does not help, such as a declaration gap; None otherwise."""
+
+    fault_reason: str | None = None
+    """For a faulted request, the message the Horde refused its last refused reply with, or its message for the reason
+    a worker gave for faulting a job; None otherwise."""
+
+    fault_rc: str | None = None
+    """The return code of that reason, such as ``ChatSubmitNonconformant`` or ``ChatWorkerFault``; None when
+    ``fault_reason`` is."""
 
     @field_validator("impossible_reason", mode="wrap")
     @classmethod
@@ -694,6 +707,7 @@ def _api_error_from_response(response: httpx.Response) -> HordeAPIError:
     }
     return_code: str | None = None
     message = response.text[:MAX_ERROR_BODY_CHARACTERS]
+    field_errors: dict[str, str] = {}
     try:
         error_body = response.json()
     except ValueError:
@@ -704,9 +718,14 @@ def _api_error_from_response(response: httpx.Response) -> HordeAPIError:
         return_code = body_return_code if isinstance(body_return_code, str) else None
         if isinstance(body_message, str):
             message = body_message
+        # A native payload validation failure lists the failing fields under "errors" and carries no rc.
+        body_field_errors = error_body.get("errors")
+        if isinstance(body_field_errors, dict):
+            field_errors = {str(field_path): str(field_message) for field_path, field_message in body_field_errors.items()}
     return HordeAPIError(
         status_code=response.status_code,
         return_code=return_code,
         message=message,
         forwarded_headers=forwarded_headers,
+        field_errors=field_errors,
     )

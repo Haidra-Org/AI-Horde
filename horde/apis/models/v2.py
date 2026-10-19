@@ -991,6 +991,13 @@ class Models:
                     example=0,
                     description="How many jobs this worker has left uncompleted after it started them.",
                 ),
+                "nonconformant_replies": fields.Integer(
+                    example=0,
+                    description=(
+                        "How many chat replies the horde refused because they broke a strict request's tool_choice or "
+                        "response_format. These faulted jobs earn no kudos and do not count as uncompleted jobs."
+                    ),
+                ),
                 "models": fields.List(fields.String(description="Which models this worker if offering.")),
                 "forms": fields.List(fields.String(description="Which forms this worker if offering.")),
                 "annotation_types": fields.List(
@@ -2204,6 +2211,9 @@ class Models:
                 "owner_flagged": self.response_model_user_details["flagged"],
                 "requests_fulfilled": self.response_model_worker_details["requests_fulfilled"],
                 "aborted_jobs": fields.Integer(description="The number of jobs the worker aborted."),
+                "nonconformant_replies": fields.Integer(
+                    description="The number of chat replies refused for breaking a strict request's contract.",
+                ),
                 "bridge_agent": self.response_model_worker_details["bridge_agent"],
                 "models": self.response_model_worker_details["models"],
                 "contact": self.response_model_worker_details["contact"],

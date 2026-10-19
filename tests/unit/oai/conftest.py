@@ -253,11 +253,12 @@ class FakeHorde:
         submitted: dict[str, Any] = json.loads(self.submit_route.calls.last.request.content)
         return submitted
 
-    async def publish(self, event: str) -> None:
-        """Publish a completion signal for the request, in the native body shape."""
+    async def publish(self, event: str, **fault_details: str) -> None:
+        """Publish a completion signal for the request, in the native body shape, with any ``fault_reason`` and
+        ``fault_rc`` a faulted event carries."""
         await self._redis_client.publish(
             f"{CHAT_SIGNAL_CHANNEL_PREFIX}{REQUEST_ID}",
-            json.dumps({"id": REQUEST_ID, "event": event, "generations": 1}),
+            json.dumps({"id": REQUEST_ID, "event": event, "generations": 1, **fault_details}),
         )
 
     async def finish_later(self, delay_seconds: float, *, signal: bool = True, **generation_overrides: Any) -> None:

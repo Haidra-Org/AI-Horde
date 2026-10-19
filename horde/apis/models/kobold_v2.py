@@ -30,6 +30,7 @@ from horde.classes.kobold.chat_request import (
     ChargeBasis,
     ChatImageTransport,
     ChatRole,
+    ChatWorkerFaultReason,
     FinishReason,
 )
 from horde.classes.kobold.request_fit import (
@@ -199,6 +200,13 @@ class TextParsers(v2.Parsers):
             type=str,
             required=False,
             help="The model a chat job ran on, which has to be the model it was assigned.",
+            location="json",
+        )
+        self.job_submit_parser.add_argument(
+            "fault_reason",
+            type=str,
+            required=False,
+            help="Why the worker faulted a chat job, sent with state faulted. An unknown value is ignored.",
             location="json",
         )
         # A chat job's submit carries message rather than generation; a text job's submit keeps requiring it.
@@ -879,6 +887,15 @@ class TextModels(v2.Models):
                 "model_id": fields.String(
                     description="Chat jobs only, required: the model the job ran on, which has to be the model it was assigned.",
                 ),
+                # No enum, so the model validation does not refuse a reason this Horde does not know.
+                "fault_reason": fields.String(
+                    description=(
+                        "Chat jobs only, optional, with state 'faulted': why the worker faulted the job, one of "
+                        f"{', '.join(repr(reason.value) for reason in ChatWorkerFaultReason)}. The Horde stores its "
+                        "own message for the reason as the request's fault_reason with fault_rc 'ChatWorkerFault'. An "
+                        "unknown value is ignored, and the value is ignored on every other submit."
+                    ),
+                ),
             },
         )
         self._define_chat_models(api)
@@ -1291,6 +1308,19 @@ class TextModels(v2.Models):
                         "Why no worker can take the request when the cause is the workers' declarations, which waiting "
                         "does not change while the online workers stay the same; null when is_possible is true or no "
                         "worker serves the model at all."
+                    ),
+                ),
+                "fault_reason": fields.String(
+                    description=(
+                        "Why the request faulted, reported once it faulted: the message the horde refused the last "
+                        "refused reply with, or the horde's message for the reason a worker gave for faulting a job, "
+                        "whichever was stored last; null while it has not faulted or when neither was stored."
+                    ),
+                ),
+                "fault_rc": fields.String(
+                    description=(
+                        "The return code of what fault_reason holds, such as 'ChatSubmitNonconformant' for a refusal "
+                        "or 'ChatWorkerFault' for a worker's reason; null when fault_reason is."
                     ),
                 ),
             },

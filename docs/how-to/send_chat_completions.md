@@ -96,8 +96,8 @@ parameter your client sends listed in `supported_parameters`.
 | Keys | Handling |
 | --- | --- |
 | `model`, `messages` | Required; `messages` holds at least one message. |
-| `max_tokens`, `max_completion_tokens` | 16 to 4096; equal when both are sent. Default 512 when neither is. |
-| `temperature`, `top_p`, `stop` | Forwarded; `stop` is a string or up to four strings. |
+| `max_tokens`, `max_completion_tokens` | 16 to 4096 (see [Deliberate deviations](#deliberate-deviations)); equal when both are sent. Default 512 when neither is. |
+| `temperature`, `top_p`, `stop` | Forwarded; `temperature` ranges 0 to 2, `top_p` 0 to 1, and `stop` is a string or up to four strings. |
 | `seed`, `frequency_penalty`, `presence_penalty` | Forwarded; a worker has to declare the feature for `seed` (any value) or a non-zero penalty. Penalties range -2 to 2. |
 | `n` | Only `1`. |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Forwarded unchanged to a worker that declares the feature; see [Tools](#tools-and-tool_choice) and [Structured output](#structured-output). |
@@ -136,6 +136,12 @@ the key's path. Examples: `logit_bias`, `logprobs: true`, `functions`, `function
 `tool_calls` on a message other than an assistant message is refused at `messages[<i>].tool_calls`, and a role other
 than the five above at `messages[<i>].role`. A refused content part is reported with its type, such as
 `messages[0].content[0].type=input_audio`.
+
+A value OpenAI refuses by range is 400 with OpenAI's message and `param`: `temperature` outside 0 to 2, `top_p`
+outside 0 to 1, a penalty outside -2 to 2, `n` or a token limit below 1, and more than four stop sequences are
+`UnsupportedChatParameter`, such as `Invalid 'temperature': decimal above maximum value. Expected a value <= 2, but got
+2.5 instead.` An empty `messages` is `BadRequest` with OpenAI's message. A token limit from 1 to 15 is refused with
+the Horde floor of 16.
 
 Other 400 codes:
 
@@ -268,8 +274,9 @@ workers serve only `json_object`.
 
 With `"strict": true` the schema follows OpenAI's structural rules: every object schema, nested ones included, sets
 `"additionalProperties": false` and lists all its properties in `required`. A schema breaking them is 400
-`UnsupportedChatParameter` with `param` `response_format` and OpenAI's message. A schema may nest at most 10 levels
-below its root, strict or not.
+`UnsupportedChatParameter` with `param` `response_format` and OpenAI's message. A tool with `"strict": true` in its
+`function` follows the same rules for its `parameters`, refused with `param` `tools[i].function.parameters`. A schema
+may nest at most 10 levels below its root, strict or not.
 
 A request may offer `tools` and set a `response_format` together; the format applies only to the final text answer,
 as under OpenAI. Only a worker declaring `tools_with_response_format` serves such a request,
@@ -299,7 +306,7 @@ With `"stream": true` the response is server-sent events in this order:
 7. `data: [DONE]`.
 
 The worker generates the whole reply before the Horde reports it, so content arrives in one chunk. Every chunk
-carries the same `id` and the served `model`. An SDK that accumulates tool-call deltas by `index` rebuilds the calls from the single tool-call chunk; in the Python SDK, `client.chat.completions.stream(...)` with
+carries the same `id`, `system_fingerprint` and the served `model`. An SDK that accumulates tool-call deltas by `index` rebuilds the calls from the single tool-call chunk; in the Python SDK, `client.chat.completions.stream(...)` with
 `get_final_completion()` returns the assembled message.
 
 A stream's headers go out once the Horde holds the request, so its status is 200 whatever the outcome. A failure after
@@ -315,7 +322,8 @@ Every error is `{"error": {"message", "type", "param", "code", "metadata"}}`, wi
 do not apply and `metadata` carrying the Horde's `request_id` and return code where known
 ([ADR 0034](../decisions/0034-map-chat-errors-to-the-openai-envelope-with-openrouter-status-vocabulary.md)). A refusal
 from the Horde keeps its status and has its return code (see `README_return_codes.md` at the repository root) as
-`code`; a Horde 429 keeps `Retry-After` and the `X-RateLimit-*` headers.
+`code`; a Horde 429 keeps `Retry-After` and the `X-RateLimit-*` headers. A native payload validation failure, which
+has no return code, is 400 `BadRequest` with the failing key as `param`, such as `temperature` or `max_tokens`.
 
 The front's own codes:
 
@@ -328,11 +336,40 @@ The front's own codes:
 | 408 | `RequestBodyTimeout` | | The body arrived too slowly; the request was not submitted. |
 | 408 | `ChatRequestTimeout` | `false` | The request was still waiting at the front's deadline and was cancelled. |
 | 413 | `RequestTooLarge` | | The body exceeds the front's byte limit. |
-| 502 | `ChatRequestFaulted` | `false` | The Horde reports the request faulted or expired. |
+| 502 | `ChatRequestFaulted` | `false` | The Horde reports the request faulted or expired. When the Horde refused a worker's reply, the message ends with the refusal and its return code, and `metadata.rc` holds that code, such as `ChatSubmitNonconformant` for a reply that broke the request's `tool_choice` or `response_format`. When a worker reported why it faulted the job, the message ends with the Horde's sentence for that reason and `metadata.rc` is `ChatWorkerFault`. |
+| 502 | `ChatRequestNoGeneration` | `false` | The Horde ended the request without a reply and without a fault, such as a cancel by the Horde before any worker finished; it was cancelled. |
 | 502 | `HordeUnavailable` | | No Horde root accepted the connection; the request was not submitted. |
 | 502 | `HordeUnavailable` | `false` | The submit was sent and no answer came; `metadata.submit_outcome` is `"unknown"`. |
 | 503 | `FrontAtCapacity` | | The front or your address holds its maximum of open requests. `Retry-After: 5`. |
 | 503 | `no_eligible_worker` | `false` | No online worker could serve the request for the front's grace period; it is cancelled. `Retry-After: 30`. |
+
+A request that faulted after the Horde refused its workers' replies reports the last refusal:
+
+```json
+{
+  "error": {
+    "message": "The AI Horde reports request <request-id> as faulted after refusing a worker's reply (ChatSubmitNonconformant): The request's 'response_format' is 'json_object', so the reply content has to be JSON.",
+    "type": "api_error",
+    "param": null,
+    "code": "ChatRequestFaulted",
+    "metadata": {"request_id": "<request-id>", "rc": "ChatSubmitNonconformant"}
+  }
+}
+```
+
+A request whose worker reported why it faulted the job reports that reason:
+
+```json
+{
+  "error": {
+    "message": "The AI Horde reports request <request-id> as faulted after its worker reported a fault (ChatWorkerFault): The worker could not fit the prompt into its context.",
+    "type": "api_error",
+    "param": null,
+    "code": "ChatRequestFaulted",
+    "metadata": {"request_id": "<request-id>", "rc": "ChatWorkerFault"}
+  }
+}
+```
 
 Retry rules:
 
@@ -376,6 +413,25 @@ makes the request ineligible. Omitting `max_tokens` sends 512, which is also ine
 declare less, so send an explicit value at or below the card's `max_completion_tokens`.
 
 Verification: a request at the card's `max_completion_tokens` is served; one above it ends with `no_eligible_worker`.
+
+## Deliberate deviations
+
+The front differs from OpenAI on purpose in these points:
+
+- `max_tokens` and `max_completion_tokens` below 16 are refused, where OpenAI accepts any value from 1. 16 is the
+  minimum generation length of the Horde's native text API, and raising a smaller limit would generate more tokens
+  than the client asked for. The message states the floor.
+- `param` paths into messages are written `messages[2].role`, where OpenAI writes `messages.[2].role`. Paths into
+  tools match OpenAI's form, such as `tools[0].function.parameters`.
+- Refusals use the front's codes (`UnsupportedChatParameter`, `ChatRequestConflict`, `BadRequest`) in place of
+  OpenAI's per-failure codes such as `decimal_above_max_value`; message and `param` follow OpenAI's.
+- `system_fingerprint` is a short hash of the serving worker id and model, null when no worker reported the reply.
+  It changes when another worker serves the model; it does not change when a worker changes its backend under the
+  same id.
+- A stream carries each reply's tool calls whole in one chunk, where OpenAI streams the arguments in fragments.
+- The first streamed chunk carries only `role` in its `delta`, with no `content` key.
+- A `json_object` request whose messages never mention JSON is served, where OpenAI refuses it, unless
+  `horde.openai_guards` is set.
 
 ## Reversal
 

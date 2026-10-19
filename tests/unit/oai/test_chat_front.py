@@ -14,6 +14,7 @@ import uuid
 import pytest
 
 from horde.consts import ANONYMOUS_API_KEY
+from horde.oai.mapping import build_system_fingerprint
 from tests.unit.oai.conftest import (
     CHARGE_BASIS,
     FAST_TEST_SETTINGS,
@@ -74,6 +75,7 @@ async def test_non_streamed_request_returns_the_completion_when_the_signal_arriv
             },
         ],
         "usage": {"prompt_tokens": 21, "completion_tokens": 6, "total_tokens": 27},
+        "system_fingerprint": build_system_fingerprint("worker-1", MODEL_NAME),
         "x_horde": {
             "request_id": REQUEST_ID,
             "worker_id": "worker-1",
@@ -231,6 +233,33 @@ async def test_non_empty_return_carries_no_notice(start_front: StartFront) -> No
         response = await front.client.post("/v1/chat/completions", json=build_chat_body())
 
     assert "notice" not in response.json()["x_horde"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_system_fingerprint_follows_the_serving_worker_and_model(start_front: StartFront, stream: bool) -> None:
+    """Every response and chunk carries one ``fp_`` fingerprint, stable for a worker and model and different for
+    another worker."""
+    fingerprints: list[set[str]] = []
+    for worker_id in ("worker-1", "worker-1", "worker-2"):
+        async with start_front() as front:
+            front.horde.status_payload = done_status()
+            front.horde.status_payload["generations"][0]["worker_id"] = worker_id
+            response = await front.client.post(
+                "/v1/chat/completions",
+                json=build_chat_body(stream=stream, **({"stream_options": {"include_usage": True}} if stream else {})),
+            )
+        assert response.status_code == 200
+        if stream:
+            chunks = [json.loads(payload) for payload in data_payloads(parse_sse_events(response.text))[:-1]]
+            fingerprints.append({chunk["system_fingerprint"] for chunk in chunks})
+        else:
+            fingerprints.append({response.json()["system_fingerprint"]})
+
+    assert all(len(response_fingerprints) == 1 for response_fingerprints in fingerprints)
+    first, repeated, other_worker = (response_fingerprints.pop() for response_fingerprints in fingerprints)
+    assert first.startswith("fp_")
+    assert first == repeated
+    assert first != other_worker
 
 
 @pytest.mark.parametrize("include_usage", [True, False])

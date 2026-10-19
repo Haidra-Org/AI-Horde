@@ -12,7 +12,7 @@ from flask_restx import Resource, marshal_with, reqparse
 from flask_restx.reqparse import ParseResult
 from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, ChatLimitName
 from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 import horde.apis.limiter_api as lim
 from horde import exceptions as e
@@ -42,6 +42,7 @@ from horde.classes.base.style_contract import (
 )
 from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX
 from horde.classes.kobold.chat_request import (
+    CHAT_WORKER_FAULT_RC,
     MAX_NATIVE_FINISH_REASON_LENGTH,
     ChatSubmittedMessage,
     FinishReason,
@@ -53,6 +54,7 @@ from horde.classes.kobold.chat_request import (
     build_text_params,
     build_worker_targeting,
     chat_reply_finish_reason,
+    chat_worker_fault_message,
     flatten_messages,
     list_image_urls,
     parse_chat_request,
@@ -1228,6 +1230,7 @@ CHAT_SUBMIT_KEYS = (
     "message",
     "model_id",
     "finish_reason",
+    "fault_reason",
 )
 """Keys only a chat job's submit carries. A body with any of them is parsed without requiring ``generation``."""
 
@@ -1286,11 +1289,10 @@ class TextJobSubmit(JobSubmitTemplate):
     def prepare_chat_submission(self):
         """Validate a chat job's submission and store its message content as the generation.
 
-        A faulted submission needs no message; it is handled as any faulted text submission. The reply is verified
-        against the request it answers by
-        [`verify_chat_reply`][horde.classes.kobold.chat_request.verify_chat_reply], and the reply it returns is the
-        one stored, with the finish reason from
-        [`chat_reply_finish_reason`][horde.classes.kobold.chat_request.chat_reply_finish_reason].
+        A faulted submission needs no message; it is handled as any faulted text submission, after
+        [`record_chat_worker_fault`][horde.apis.v2.kobold.TextJobSubmit.record_chat_worker_fault] stores the reason it
+        carries. A refused reply's message and return code are stored by
+        [`record_chat_refusal`][horde.apis.v2.kobold.TextJobSubmit.record_chat_refusal] before the refusal is sent.
 
         Raises:
             horde.exceptions.BadRequest: With ``ChatSubmitInvalid``, ``ChatSubmitNonconformant`` or
@@ -1299,7 +1301,57 @@ class TextJobSubmit(JobSubmitTemplate):
         if self.args.state == "faulted":
             self.chat_message = None
             self.args["generation"] = self.args.generation or ""
+            self.record_chat_worker_fault()
             return
+        try:
+            self.verify_chat_submission()
+        except e.BadRequest as refusal:
+            self.record_chat_refusal(refusal)
+            raise
+
+    def record_chat_refusal(self, refusal: e.BadRequest) -> None:
+        """Store a refused chat reply's message and return code on its request and generation.
+
+        A failed write is logged and the refusal is still sent, since the worker needs the refusal more than the
+        client needs the reason.
+
+        Args:
+            refusal: The refusal the submit is answered with.
+        """
+        try:
+            self.procgen.wp.record_chat_refusal(self.procgen, refusal.specific, refusal.rc)
+        except SQLAlchemyError as write_error:
+            db.session.rollback()
+            logger.warning(f"Unable to store the refusal of chat generation {self.procgen.id}: {write_error}")
+
+    def record_chat_worker_fault(self) -> None:
+        """Store the Horde's message for the ``fault_reason`` of a faulted chat submit on its request.
+
+        A missing or unknown reason stores nothing, so a worker that sends no reason or one this Horde does not know
+        is handled as before. It is stored before the fault is applied, so the request status and the client signal
+        of a fault past the limit carry it. A failed write is logged and the fault is still applied.
+        """
+        fault_message = chat_worker_fault_message(self.args.fault_reason)
+        if fault_message is None:
+            return
+        try:
+            self.procgen.wp.record_chat_worker_fault(self.procgen, fault_message, CHAT_WORKER_FAULT_RC)
+        except SQLAlchemyError as write_error:
+            db.session.rollback()
+            logger.warning(f"Unable to store the fault reason of chat generation {self.procgen.id}: {write_error}")
+
+    def verify_chat_submission(self):
+        """Verify a chat job's reply and store its message content as the generation.
+
+        The reply is verified against the request it answers by
+        [`verify_chat_reply`][horde.classes.kobold.chat_request.verify_chat_reply], and the reply it returns is the
+        one stored, with the finish reason from
+        [`chat_reply_finish_reason`][horde.classes.kobold.chat_request.chat_reply_finish_reason].
+
+        Raises:
+            horde.exceptions.BadRequest: With ``ChatSubmitInvalid``, ``ChatSubmitNonconformant`` or
+                ``ChatModelMismatch``.
+        """
         if self.args.message is None or self.args.generation is not None:
             raise e.BadRequest("A chat job is submitted with 'message' in place of 'generation'.", rc="ChatSubmitInvalid")
         try:

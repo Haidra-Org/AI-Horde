@@ -207,6 +207,10 @@ class WorkerTemplate(db.Model):
     fulfilments = db.Column(db.Integer, default=0, nullable=False)
     aborted_jobs = db.Column(db.Integer, default=0, nullable=False)
     uncompleted_jobs = db.Column(db.Integer, default=0, nullable=False)
+    nonconformant_replies = db.Column(db.Integer, default=0, nullable=False)
+    """Replies the Horde refused because they broke a ``strict`` chat request's contract. Kept apart from dropped jobs
+    because the worker did generate and the model, not the worker, failed the contract; a worker declaring guarantees
+    it cannot keep earns nothing for these jobs."""
     uptime = db.Column(db.BigInteger, default=0, nullable=False)
     threads = db.Column(db.Integer, default=1, nullable=False)
     bridge_agent = db.Column(db.Text, default="unknown:0:unknown", nullable=False, index=True)
@@ -638,6 +642,14 @@ class WorkerTemplate(db.Model):
         self.uncompleted_jobs += 1
         db.session.commit()
 
+    def log_nonconformant_reply(self) -> None:
+        """Count a faulted job whose reply the Horde refused as breaking a ``strict`` chat request's contract.
+
+        Neither ``aborted_jobs`` nor ``uncompleted_jobs`` moves, so these faults do not lead to maintenance.
+        """
+        self.nonconformant_replies += 1
+        db.session.commit()
+
     # def is_slow(self):
 
     def get_performance(self):
@@ -719,6 +731,7 @@ class WorkerTemplate(db.Model):
             "type": self.wtype,
             "requests_fulfilled": self.fulfilments,
             "uncompleted_jobs": self.uncompleted_jobs,
+            "nonconformant_replies": self.nonconformant_replies,
             "kudos_rewards": self.kudos,
             "kudos_details": self.get_kudos_details(),
             "performance": self.get_performance(),

@@ -98,7 +98,8 @@ REQUEST_DURATION_NAME: str = "horde.oai.request.duration"
 """Histogram: seconds from an admitted request's arrival to its end."""
 
 WAKES_NAME: str = "horde.oai.wakes"
-"""Counter: wakes of waiting requests, by source and whether the wake found the request finished."""
+"""Counter: wakes of waiting requests, by source, whether the wake found the request finished, and whether it found
+the request done without a generation."""
 
 SUBMIT_OUTCOME_UNKNOWN_NAME: str = "horde.oai.submit.outcome_unknown"
 """Counter: requests answered with ``submit_outcome: unknown``."""
@@ -138,6 +139,7 @@ class MetricAttribute(StrEnum):
     STREAMED = "horde.streamed"
     WAKE_SOURCE = "horde.wake_source"
     FOUND_FINISHED = "horde.found_finished"
+    FOUND_DONE_WITHOUT_GENERATION = "horde.found_done_without_generation"
     MODEL = "horde.model"
     ESTIMATED_USAGE = "horde.estimated_usage"
     EXISTING_CLAIM = "horde.existing_claim"
@@ -382,9 +384,23 @@ class FrontMetrics:
             },
         )
 
-    def record_wake(self, *, wake_source: str, found_finished: bool) -> None:
-        """Record one wake of a waiting request."""
-        self._wakes.add(1, {MetricAttribute.WAKE_SOURCE: str(wake_source), MetricAttribute.FOUND_FINISHED: found_finished})
+    def record_wake(self, *, wake_source: str, found_finished: bool, found_done_without_generation: bool) -> None:
+        """Record one wake of a waiting request.
+
+        Args:
+            wake_source: What caused the wake.
+            found_finished: Whether the read found the request finished.
+            found_done_without_generation: Whether the read found the request done, not faulted and without a finished
+                generation, which the wait does not treat as finished.
+        """
+        self._wakes.add(
+            1,
+            {
+                MetricAttribute.WAKE_SOURCE: str(wake_source),
+                MetricAttribute.FOUND_FINISHED: found_finished,
+                MetricAttribute.FOUND_DONE_WITHOUT_GENERATION: found_done_without_generation,
+            },
+        )
 
     def record_submit_outcome_unknown(self) -> None:
         """Record a request answered with ``submit_outcome: unknown``."""

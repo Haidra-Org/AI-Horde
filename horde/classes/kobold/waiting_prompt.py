@@ -17,9 +17,11 @@ from sqlalchemy.sql import ColumnElement, expression
 from horde import vars as hv
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.kudos import StyleReward
-from horde.classes.base.waiting_prompt import WaitingPrompt, json_column_type, uuid_column_type
+from horde.classes.base.waiting_prompt import RequestCompletionSnapshot, WaitingPrompt, json_column_type, uuid_column_type
 from horde.classes.kobold.chat_request import (
     CHAT_IMAGE_DATA_URL_PREFIX,
+    MAX_CHAT_FAULT_REASON_LENGTH,
+    MAX_CHAT_REFUSAL_RC_LENGTH,
     ChatImageTransport,
     build_chat_job_payload,
     build_chat_request_traits,
@@ -123,6 +125,15 @@ class TextWaitingPrompt(WaitingPrompt):
     """How the horde changed a chat request's context length to fit its messages, as ``{from, to, reason}`` entries
     for the chat status; NULL when nothing changed and on every text request. Not deferred, since every status read
     reports it."""
+    chat_fault_reason = db.Column(db.String(MAX_CHAT_FAULT_REASON_LENGTH), nullable=True)
+    """Why a generation of this chat request last failed, kept so a client learns why its request faulted: the message
+    of the last submit refusal of a reply, written when the submit is refused, before the worker's fault submit
+    arrives, or the Horde's message for the ``fault_reason`` a worker's fault submit carries, which a refusal of the
+    same generation takes precedence over. Overwritten by a later one and never cleared; NULL while neither was
+    stored and on every text request."""
+    chat_fault_rc = db.Column(db.String(MAX_CHAT_REFUSAL_RC_LENGTH), nullable=True)
+    """The return code of what ``chat_fault_reason`` holds, written and overwritten with it: the refusal's code, or
+    ``ChatWorkerFault`` for a worker's reason."""
     operation_claim = None
     """The ``(operation_key, operation_fingerprint)`` pair activation claims, or None. A plain attribute rather than
     a column, so it survives the rollback a deadlock retry of activation makes and is written again in the retried
@@ -375,11 +386,88 @@ class TextWaitingPrompt(WaitingPrompt):
 
             publish_chat_faults(collect_chat_faults([self.id]))
 
+    def record_chat_refusal(self, procgen: TextProcessingGeneration, message: str, rc: str) -> None:
+        """Store why a reply to this chat request was refused, then commit.
+
+        The generation keeps the return code, so its worker's fault submit is counted by the kind of refusal it
+        follows; the request keeps the message and code for its status. Nothing is written when the generation is
+        no longer pending, since a refusal then leads to no fault.
+
+        Args:
+            procgen: The generation whose reply was refused.
+            message: The refusal message, cut to ``MAX_CHAT_FAULT_REASON_LENGTH``.
+            rc: The refusal's return code.
+        """
+        # A refusal message can quote a function name from the reply, and PostgreSQL text rejects NUL.
+        stored_message = message.replace("\x00", "\ufffd")[:MAX_CHAT_FAULT_REASON_LENGTH]
+        marked_generations = (
+            db.session.query(TextProcessingGeneration)
+            .filter(
+                TextProcessingGeneration.id == procgen.id,
+                TextProcessingGeneration.generation.is_(None),
+                TextProcessingGeneration.faulted.is_(False),
+            )
+            .update({TextProcessingGeneration.chat_refusal_rc: rc})
+        )
+        if marked_generations:
+            db.session.query(TextWaitingPrompt).filter(TextWaitingPrompt.id == self.id).update(
+                {
+                    TextWaitingPrompt.chat_fault_reason: stored_message,
+                    TextWaitingPrompt.chat_fault_rc: rc,
+                },
+            )
+        db.session.commit()
+
+    def record_chat_worker_fault(self, procgen: TextProcessingGeneration, message: str, rc: str) -> None:
+        """Store why a worker faulted a generation of this chat request, then commit.
+
+        Nothing is written when the generation is no longer pending, or when the Horde refused a reply of this
+        generation, since that refusal's message is more specific than the reason the worker sends after it. The
+        generation's ``chat_refusal_rc`` is left as it is, so the fault is counted as the worker's own.
+
+        Args:
+            procgen: The generation the worker faulted.
+            message: The Horde's message for the worker's reason.
+            rc: The return code stored with the message.
+        """
+        pending_unrefused_generation = (
+            db.session.query(TextProcessingGeneration.id)
+            .filter(
+                TextProcessingGeneration.id == procgen.id,
+                TextProcessingGeneration.generation.is_(None),
+                TextProcessingGeneration.faulted.is_(False),
+                TextProcessingGeneration.chat_refusal_rc.is_(None),
+            )
+            .exists()
+        )
+        db.session.query(TextWaitingPrompt).filter(TextWaitingPrompt.id == self.id, pending_unrefused_generation).update(
+            {
+                TextWaitingPrompt.chat_fault_reason: message[:MAX_CHAT_FAULT_REASON_LENGTH],
+                TextWaitingPrompt.chat_fault_rc: rc,
+            },
+            synchronize_session=False,
+        )
+        db.session.commit()
+
     def get_status(self, **kwargs):
         ret_dict = super().get_status(**kwargs)
         if self.is_chat and self.context_adjustments:
             ret_dict["context_adjustments"] = self.context_adjustments
         return ret_dict
+
+    def fault_detail_columns(self) -> tuple[ColumnElement[str | None], ColumnElement[str | None]]:
+        """Return the chat fault message and return code columns, read in the completion snapshot with the fault flag.
+
+        Read together, a fault committed while the status is built is reported with its own reason, never with the
+        previous refusal's or none.
+        """
+        return TextWaitingPrompt.chat_fault_reason, TextWaitingPrompt.chat_fault_rc
+
+    def status_fault_details(self, completion: RequestCompletionSnapshot) -> dict[str, Any]:
+        """Return a faulted chat request's ``fault_reason`` and ``fault_rc`` from ``completion``; none otherwise."""
+        if not self.is_chat or not completion.faulted:
+            return {}
+        return {"fault_reason": completion.fault_reason, "fault_rc": completion.fault_rc}
 
     def record_usage(
         self,

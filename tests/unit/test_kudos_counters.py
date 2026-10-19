@@ -288,6 +288,19 @@ class TestWorkerAbortCounters:
         assert worker.aborted_jobs == 1
         assert worker.uncompleted_jobs == 6
 
+    def test_a_nonconformant_reply_moves_neither_abort_counter(self, db_session, make_user):
+        worker = _make_worker(db_session, make_user(kudos=0))
+        worker.aborted_jobs = 3
+        worker.uncompleted_jobs = 4
+        worker.nonconformant_replies = 0
+        db_session.flush()
+
+        worker.log_nonconformant_reply()
+
+        assert worker.nonconformant_replies == 1
+        assert worker.aborted_jobs == 3
+        assert worker.uncompleted_jobs == 4
+
 
 class TestTeamAggregates:
     """Team uptime accrues inline; the contribution aggregates are applier-maintained.

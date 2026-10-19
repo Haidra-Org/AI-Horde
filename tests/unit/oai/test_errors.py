@@ -292,6 +292,66 @@ async def test_faulted_request_is_502_without_retry(start_front: StartFront) -> 
     assert front.horde.cancel_route.call_count == 0
 
 
+async def test_a_request_faulted_after_a_refused_reply_names_the_refusal_in_the_502(start_front: StartFront) -> None:
+    refusal = "The request's 'response_format' is 'json_object', so the reply content has to be JSON."
+    async with start_front() as front:
+        front.horde.status_payload = {
+            **waiting_status(),
+            "faulted": True,
+            "fault_reason": refusal,
+            "fault_rc": "ChatSubmitNonconformant",
+        }
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 502
+    error = response.json()["error"]
+    assert error["code"] == "ChatRequestFaulted"
+    assert error["message"] == (
+        f"The AI Horde reports request {REQUEST_ID} as faulted after refusing a worker's reply (ChatSubmitNonconformant): {refusal}"
+    )
+    assert error["metadata"] == {"request_id": REQUEST_ID, "rc": "ChatSubmitNonconformant"}
+
+
+async def test_a_request_faulted_with_a_worker_fault_reason_names_it_in_the_502(start_front: StartFront) -> None:
+    reason = "The worker could not fit the prompt into its context."
+    async with start_front() as front:
+        front.horde.status_payload = {
+            **waiting_status(),
+            "faulted": True,
+            "fault_reason": reason,
+            "fault_rc": "ChatWorkerFault",
+        }
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 502
+    error = response.json()["error"]
+    assert error["code"] == "ChatRequestFaulted"
+    assert error["message"] == (
+        f"The AI Horde reports request {REQUEST_ID} as faulted after its worker reported a fault (ChatWorkerFault): {reason}"
+    )
+    assert error["metadata"] == {"request_id": REQUEST_ID, "rc": "ChatWorkerFault"}
+
+
+async def test_a_faulted_signal_carries_the_refusal_to_a_request_whose_row_is_gone(start_front: StartFront) -> None:
+    refusal = "'message.tool_calls' has two calls with the same 'id'."
+
+    async def expire() -> None:
+        await asyncio.sleep(0.1)
+        front.horde.status_code = 404
+        front.horde.status_payload = {"message": "Request not found.", "rc": "RequestNotFound"}
+        await front.horde.publish("faulted", fault_reason=refusal, fault_rc="ChatSubmitInvalid")
+
+    async with start_front() as front:
+        expirer = asyncio.create_task(expire())
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        await expirer
+
+    assert response.status_code == 502
+    error = response.json()["error"]
+    assert error["message"].endswith(f"(ChatSubmitInvalid): {refusal}")
+    assert error["metadata"]["rc"] == "ChatSubmitInvalid"
+
+
 async def test_faulted_signal_then_missing_status_is_an_expired_faulted_request(start_front: StartFront) -> None:
     async def expire() -> None:
         await asyncio.sleep(0.1)
@@ -489,6 +549,38 @@ async def test_horde_image_refusal_passes_through_with_its_rc_and_path(
     assert error["code"] == horde_rc
     assert error["param"] == expected_param
     assert error["message"] == horde_message
+    assert front.inflight == 0
+
+
+@pytest.mark.parametrize(
+    ("native_field", "expected_param"),
+    [
+        ("temperature", "temperature"),
+        ("max_length", "max_tokens"),
+        ("stop_sequence.0", "stop[0]"),
+        ("max_context_length", "horde.max_context_length"),
+        ("messages.0.content", "messages[0].content"),
+    ],
+)
+async def test_native_payload_validation_failure_is_a_bad_request_with_the_failing_param(
+    start_front: StartFront,
+    native_field: str,
+    expected_param: str,
+) -> None:
+    """A native validation failure, which carries no rc and a generic message, is a 400 ``BadRequest`` whose
+    ``param`` and message give the failing request key."""
+    async with start_front() as front:
+        front.horde.submit_route.respond(
+            400,
+            json={"errors": {native_field: "5.5 is greater than the maximum of 5.0"}, "message": "Input payload validation failed"},
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["param"] == expected_param
+    assert error["code"] == "BadRequest"
+    assert error["message"] == f"{expected_param}: 5.5 is greater than the maximum of 5.0"
     assert front.inflight == 0
 
 
