@@ -99,7 +99,7 @@ class TextProcessingGeneration(ProcessingGeneration):
     tools. NULL on text generations. ``generation`` holds the same content, or an empty string when the content is
     null, so every predicate that reads ``generation`` treats chat and text alike."""
     finish_reason = db.Column(db.String(32), nullable=True)
-    """Why a chat worker stopped generating, a ``FinishReason`` value. NULL on text generations."""
+    """Why a chat worker stopped generating, a ``ChatFinishReason`` value. NULL on text generations."""
     native_finish_reason = db.Column(db.String(32), nullable=True)
     """The backend's own name for why it stopped, as a chat worker reported it. NULL when not reported."""
     prompt_tokens = db.Column(db.Integer, nullable=True)

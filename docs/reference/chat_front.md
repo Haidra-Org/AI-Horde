@@ -69,14 +69,14 @@ unknown keys, as OpenAI does: an unknown key inside `stream_options` or `respons
 | `stream`, `stream_options`, `user`, `metadata` | Applied or accepted by the front and not forwarded. |
 | `logprobs`, `top_logprobs`, `store`, `service_tier` | Dropped at their default (`false`, `0`, `false`, `auto` or `default`); any other value is 400. |
 
-`ChatCompletionRequest` bounds the sampling values to OpenAI's ranges (`OPENAI_SAMPLING_RANGES`): `temperature` 0 to
+`ChatCompletionRequest` bounds the sampling values to OpenAI's ranges (the SDK's `OPENAI_SAMPLING_RANGES`): `temperature` 0 to
 2, `top_p` 0 to 1, `frequency_penalty` and `presence_penalty` -2 to 2. A value outside its range, `n` or a token limit
 below 1, and more than four stop sequences are 400 `UnsupportedChatParameter` with OpenAI's message and `param`; an
-empty `messages` is 400 `BadRequest` with OpenAI's message. Such a message names the parameter itself, so the front
-does not prefix it with the path. A token limit from 1 to 15 is refused with the Horde floor (`MIN_MAX_TOKENS`).
+empty `messages` is 400 `BadRequest` with OpenAI's message. Such a message holds the parameter itself, so the front
+does not prefix it with the path. A token limit from 1 to 15 is refused with the Horde floor (the SDK's `MIN_CHAT_MAX_TOKENS`).
 
-A native payload validation failure reaching the front has no `rc` and a generic message; the front returns 400
-`BadRequest` with the first failing field as `param`, translated from the native text param name where it differs
+A native payload validation failure reaching the front carries a generic message and does not carry an `rc`; the front returns 400
+`BadRequest` with the first failing field as `param`, translated from the native text param key where it differs
 (`NATIVE_FIELD_PARAMETERS` in `horde/oai/app.py`: `max_length` is `max_tokens`, `stop_sequence` is `stop`).
 
 After validation the front applies the request rules it shares with the native route from `horde/chat_contract.py`,
@@ -84,8 +84,9 @@ so the client receives OpenAI's message and `param`: a `tool_choice` or `paralle
 (`ChatRequestConflict`), a tool history breaking OpenAI's rule and a `strict` `json_schema` breaking OpenAI's
 structural rules (`UnsupportedChatParameter`), and, under `horde.openai_guards`, a `json_object` request without the
 word "json" in its messages (`ChatRequestConflict`, `param` `messages`). A tool `parameters` or response schema nested
-deeper than `MAX_CHAT_SCHEMA_NESTING` fails validation as `UnsupportedChatParameter` at its path. The native route
-repeats these checks and also checks a forced function the tools do not define and the sizes in `MAX_CHAT_TOOL_*`.
+deeper than the SDK's `MAX_CHAT_SCHEMA_NESTING` fails validation as `UnsupportedChatParameter` at its path. The native route
+repeats these checks and also checks a forced function the tools do not define, the tool count and tool spec size (the SDK's
+`MAX_CHAT_TOOL_COUNT` and `MAX_CHAT_TOOL_SPEC_BYTES`) and the tool call bounds in `MAX_CHAT_TOOL_CALL_*`.
 The message text limit counts the function names and arguments of history tool calls with the texts.
 
 ## Message roles
@@ -154,7 +155,7 @@ for a worker to appear, then cancels the request and returns 503 `no_eligible_wo
 the status carries an `impossible_reason` of kind `declaration_gap` (see
 [Impossible reason](chat_requests.md#impossible-reason)), it cancels at once and returns 404
 `no_worker_supports_features`, OpenRouter's status for no endpoint supporting the requested features, with no
-`Retry-After`. The message names the missing declarations or the exceeded limit, and adds that guarantees are not
+`Retry-After`. The message lists the missing declarations or the exceeded limit, and adds that guarantees are not
 required under `best_effort` when a guarantee is missing. After stream headers the same error is the SSE error event.
 An `impossible_reason` of a kind the front does not know is ignored, so the grace applies.
 
@@ -163,7 +164,7 @@ An `impossible_reason` of a kind the front does not know is ignored, so the grac
 `GET /v1/models` lists each text model with at least one online chat worker. `context_length` and
 `top_provider.max_completion_tokens` are the largest the workers declare; `architecture.input_modalities` adds `image`
 for `vision`. `supported_parameters` is `max_tokens`, `temperature`, `top_p` and `stop`, then `seed`,
-`frequency_penalty` and `presence_penalty` for the features of the same names, `tools` for `tools`, with
+`frequency_penalty` and `presence_penalty` for the features with the same values, `tools` for `tools`, with
 `tool_choice` added under the `tool_choice_enforced` guarantee and `parallel_tool_calls` under
 `single_tool_call_enforced`, and `response_format` for `json_object` or `json_schema`. `x_horde` carries the
 worker count and the queued work.

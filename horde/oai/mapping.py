@@ -121,7 +121,7 @@ FEATURE_SUPPORTED_PARAMETERS: tuple[str, ...] = (
     "frequency_penalty",
     "presence_penalty",
 )
-"""The OpenAI request fields a model lists only when an online chat worker declares the chat feature of that name."""
+"""The OpenAI request fields a model lists only when an online chat worker declares the chat feature with that value."""
 
 TOOLS_FEATURE: str = ChatFeature.TOOLS.value
 """The chat feature of a worker that serves function calling."""
@@ -202,7 +202,7 @@ def build_native_chat_body(chat_request: ChatCompletionRequest, *, operation_key
 
     Omitted and null keys stay omitted, so the native route fills its defaults; ``developer`` messages, message
     names, ``tool`` messages, tool calls, ``tools``, ``tool_choice``, ``parallel_tool_calls`` and ``response_format``
-    are forwarded unchanged, under the client's key names (``json_schema.schema`` included). The one null written is
+    are forwarded unchanged, under the client's keys (``json_schema.schema`` included). The one null written is
     the ``content`` of an assistant message that carries only tool calls, which OpenAI writes as null. The public
     request model refuses ``horde.operation_key``, so the key set here is always the front's.
 

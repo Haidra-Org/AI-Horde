@@ -9,9 +9,9 @@ The Horde stores the ``Client-Agent`` on every request and its generation statis
 ``<application>:<version>:<user agent>``:
 
 - the application is the first usable of ``X-Title``, ``X-OpenRouter-Title``, the host of ``HTTP-Referer`` (the
-  headers OpenRouter-style clients send to name themselves) and the host of the standard ``Referer``; without one it
+  headers OpenRouter-style clients send to identify themselves) and the host of the standard ``Referer``; without one it
   is [`CLIENT_AGENT_NAME`][horde.oai.attribution.CLIENT_AGENT_NAME];
-- the version is ``0`` for a named application, since those headers carry no version, and the front's
+- the version is ``0`` for an application the headers identify, since those headers carry no version, and the front's
   ``HORDE_VERSION`` when the application is the front;
 - the contact is the client's ``User-Agent``, or ``unknown`` without one, followed by
   [`FRONT_MARKER`][horde.oai.attribution.FRONT_MARKER].
@@ -50,7 +50,7 @@ FRONT_MARKER: str = f" via {CLIENT_AGENT_NAME}"
 """The suffix of every contact part, marking the request as sent through the front."""
 
 UNVERSIONED_APPLICATION_VERSION: str = "0"
-"""The version of an application named by its attribution headers, which carry no version."""
+"""The version of an application its attribution headers identify, which carry no version."""
 
 UNKNOWN_CONTACT: str = "unknown"
 """The contact part of a request that sends no usable ``User-Agent``; the Horde's own default uses the same word."""

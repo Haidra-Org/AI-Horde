@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import logfire
-from horde_sdk.generation_parameters.text.chat_policy import ChatLimitName
+from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField, ChatServiceGapKind
 from sqlalchemy import Boolean, and_, case, func, not_, or_, select
 from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload
 
@@ -22,7 +22,7 @@ from horde.bridge_reference import (
     check_bridge_capability,
     get_supported_samplers,
 )
-from horde.chat_contract import ChatImpossibleKind, ChatImpossibleReason
+from horde.chat_contract import ChatImpossibleReason
 from horde.classes.base.detection import Filter
 from horde.classes.base.kudos import KudosLedger, kudos_event
 from horde.classes.base.processing_generation import ProcessingGeneration
@@ -91,7 +91,7 @@ def _text_worker_softprompt_names(worker: TextWorker) -> list[str]:
     return [softprompt.softprompt for softprompt in worker.softprompts]
 
 
-CHAT_DECLARATION_REFUSALS = frozenset({"chat_features", ChatLimitName.TOOLS_MAX_TEMPERATURE.value})
+CHAT_DECLARATION_REFUSALS = frozenset({"chat_features", ChatLimitField.TOOLS_MAX_TEMPERATURE.value})
 """The `TextWorker.can_generate` refusal reasons that come from the worker's chat declaration rather than from its
 current state or the request's other options."""
 
@@ -125,7 +125,7 @@ def find_chat_declaration_gap(
         else:
             exceeded_limits.add(reason)
     return ChatImpossibleReason(
-        kind=ChatImpossibleKind.DECLARATION_GAP,
+        kind=ChatServiceGapKind.DECLARATION_GAP,
         missing_declarations=tuple(sorted(missing_declarations)),
         exceeded_limits=tuple(sorted(exceeded_limits)),
     )

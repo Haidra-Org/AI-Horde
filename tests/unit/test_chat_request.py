@@ -12,6 +12,12 @@ from io import BytesIO
 from typing import Any
 
 import pytest
+from horde_sdk.generation_parameters.text.chat_limits import (
+    MAX_CHAT_SCHEMA_NESTING,
+    MAX_CHAT_TEXT_BYTES,
+    MAX_CHAT_TOOL_COUNT,
+    MAX_CHAT_TOOL_SPEC_BYTES,
+)
 from horde_sdk.generation_parameters.text.chat_policy import (
     ChatConformance,
     ChatFeature,
@@ -19,7 +25,9 @@ from horde_sdk.generation_parameters.text.chat_policy import (
     ChatRequestTraits,
     ChatResponseFormatType,
     ChatToolChoiceMode,
+    chat_request_requirements,
 )
+from horde_sdk.worker.chat_declaration import ChatImageTransport
 from PIL import Image
 from pydantic import ValidationError
 
@@ -29,10 +37,6 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
-    MAX_CHAT_SCHEMA_NESTING,
-    MAX_CHAT_TEXT_BYTES,
-    MAX_CHAT_TOOL_COUNT,
-    MAX_CHAT_TOOL_SPEC_BYTES,
     ChatHordeOptions,
 )
 from horde.classes.kobold.chat_request import (
@@ -43,7 +47,6 @@ from horde.classes.kobold.chat_request import (
     CHAT_SUBMIT_NONCONFORMANT_RC,
     DEFAULT_CHAT_MAX_TOKENS,
     UNSUPPORTED_CHAT_PARAMETER_RC,
-    ChatImageTransport,
     ChatSubmittedMessage,
     build_chat_extras,
     build_chat_image_key,
@@ -511,7 +514,7 @@ class TestRequestTraits:
             ),
         ) == ChatRequestTraits(
             offers_tools=True,
-            tool_choice_mode=ChatToolChoiceMode.NAMED,
+            tool_choice_mode=ChatToolChoiceMode.FUNCTION,
             parallel_tool_calls=False,
             response_format_type=ChatResponseFormatType.JSON_SCHEMA,
             strict_schema=True,
@@ -727,6 +730,59 @@ class TestRequiredFeatures:
         expected: set[ChatFeature],
     ) -> None:
         assert _required_features(_body(response_format=response_format)) == expected
+
+
+REQUIREMENT_PARITY_BODIES: dict[str, dict[str, Any]] = {
+    "plain": _body(),
+    "default_values": _body(frequency_penalty=0, presence_penalty=0.0, response_format={"type": "text"}),
+    "sampling": _body(seed=0, frequency_penalty=0.2, presence_penalty=-0.3, temperature=0.4, top_p=0.9),
+    "image": _body(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this."},
+                    {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+                ],
+            },
+        ],
+    ),
+    "tools_auto": _body(tools=[LOOKUP_TOOL]),
+    "tools_required_serial": _body(tools=[LOOKUP_TOOL, OTHER_TOOL], tool_choice="required", parallel_tool_calls=False),
+    "tools_named": _body(tools=[LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE, temperature=1.5),
+    "tools_none_with_history": _body(messages=TOOL_HISTORY, tools=[LOOKUP_TOOL], tool_choice="none"),
+    "history_without_tools": _body(messages=TOOL_HISTORY),
+    "json_object": _body(response_format={"type": "json_object"}),
+    "strict_schema_with_tools": _body(tools=[LOOKUP_TOOL], response_format=JSON_SCHEMA_FORMAT),
+    "best_effort": _body(
+        tools=[LOOKUP_TOOL], tool_choice="required", response_format=JSON_SCHEMA_FORMAT, horde={"conformance": "best_effort"}
+    ),
+    "explicit_strict": _body(seed=3, horde={"conformance": "strict"}),
+}
+"""Request bodies covering every requirement rule, for comparing the server's derivation with the SDK's."""
+
+
+class TestRequirementParity:
+    """The server derives requirements from the stored shapes and the SDK from the request body; both agree, so a
+    client's local check and the server's routing cannot drift apart."""
+
+    @pytest.mark.parametrize("body", list(REQUIREMENT_PARITY_BODIES.values()), ids=list(REQUIREMENT_PARITY_BODIES))
+    def test_server_and_sdk_derive_the_same_requirements(self, body: dict[str, Any]) -> None:
+        chat_request = parse_chat_request(body)
+        text_params = build_text_params(chat_request)
+        chat_extras = build_chat_extras(chat_request)
+        sdk_requirements = chat_request_requirements(body)
+
+        server_requirements = required_chat_features(
+            text_params,
+            serialize_messages(chat_request),
+            chat_extras,
+            chat_request.horde.conformance,
+        )
+
+        assert server_requirements == set(sdk_requirements.features | sdk_requirements.guarantees)
+        assert build_chat_request_traits(text_params, chat_extras) == sdk_requirements.traits
+        assert chat_request.horde.conformance is sdk_requirements.conformance
 
 
 class TestTools:

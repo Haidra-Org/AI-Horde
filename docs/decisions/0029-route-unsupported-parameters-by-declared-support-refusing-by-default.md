@@ -38,12 +38,13 @@ sampling field is refused unless the client opts into dropping it".
 
 Capability fields are hard requirements: the request is routed only to workers declaring them, and when none is
 online the answer is 503 with `Retry-After`. Sampling fields at their documented default are omitted for routing.
-A field/value outside the implemented service contract is 400 naming the field. A supported non-default value with
-no currently eligible worker is 503, decided by the front from the native `is_possible` answer after submission, so a
-temporary worker outage is not described as invalid input. The native submit path does not change for this.
+A field/value outside the implemented service contract is a 400 that lists the field. A supported non-default value
+without an eligible worker at the time is 503, decided by the front from the native `is_possible` answer after
+submission, so a temporary worker outage is not described as invalid input. The native submit path does not
+change for this.
 
 The first release uses strict behaviour only. A future opt-in `horde.require_parameters: false` mode may drop unsupported sampling
-fields with explicit reporting; it is not required for the first release. Capability fields are never dropped. Accept only named
+fields with explicit reporting; it is not required for the first release. Capability fields are never dropped. Accept only listed
 default no-ops such as empty tools or false logprobs; this is not permission to ignore arbitrary unknown fields.
 
 ### Consequences

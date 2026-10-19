@@ -62,7 +62,7 @@ the gap as `impossible_reason` and the chat front refuses the request at once wi
 `no_worker_supports_features`, without the grace it gives a model without an online worker.
 
 The server narrows a job before dispatch where the contract allows: tool definitions are never forwarded under
-`tool_choice: none`, and a named `tool_choice` forwards only that function under `required`. On submit the server
+`tool_choice: none`, and a `tool_choice` that specifies a function forwards only that function under `required`. On submit the server
 verifies what the payload can prove: a call under `none`, a missing or wrong call under a forced choice, and
 duplicate call ids are refused; more than one call under `parallel_tool_calls: false` is reduced to the first; a
 `strict` `json_schema` reply is validated against the schema. These checks do not trust anything the worker says.

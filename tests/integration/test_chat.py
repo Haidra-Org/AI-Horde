@@ -1981,15 +1981,17 @@ def test_a_request_faulted_with_a_worker_fault_reason_reports_the_horde_message_
     chat_events: Any,
 ) -> None:
     """The status and the faulted signal carry the Horde's sentence for the reason, and each fault is a dropped job."""
+    from horde_sdk.worker.chat_declaration import ChatFaultReason
+
     from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
-    from horde.classes.kobold.chat_request import CHAT_WORKER_FAULT_MESSAGES, ChatWorkerFaultReason
+    from horde.classes.kobold.chat_request import CHAT_WORKER_FAULT_MESSAGES
 
     worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Faults {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
     request_id = _submit_chat_request(client, request_headers)
 
     _fault_past_the_limit(worker, "prompt_overflow")
 
-    expected_message = CHAT_WORKER_FAULT_MESSAGES[ChatWorkerFaultReason.PROMPT_OVERFLOW]
+    expected_message = CHAT_WORKER_FAULT_MESSAGES[ChatFaultReason.PROMPT_OVERFLOW]
     status = _chat_status(client, request_headers, request_id)
     assert status["faulted"] is True
     assert status["fault_reason"] == expected_message

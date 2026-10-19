@@ -7,17 +7,18 @@
 [`FrontSettings`][horde.oai.settings.FrontSettings] is a ``pydantic-settings`` model reading every ``HORDE_OAI_*``
 variable, and a ``.env`` file in the working directory when one exists.
 [`load_settings`][horde.oai.settings.load_settings] is the entry point ``python -m horde.oai`` uses. A variable that
-is set but invalid fails the start with a validation error naming it.
+is set but invalid fails the start with a validation error that lists it.
 """
 
 from __future__ import annotations
 
 from typing import Annotated
 
+from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_TEXT_BYTES
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from horde.chat_contract import MAX_CHAT_BODY_BYTES, MAX_CHAT_MESSAGE_COUNT, MAX_CHAT_TEXT_BYTES
+from horde.chat_contract import MAX_CHAT_BODY_BYTES, MAX_CHAT_MESSAGE_COUNT
 
 __all__ = [
     "DEFAULT_HORDE_URL",

@@ -5,21 +5,21 @@
 from typing import Any
 
 from flask_restx import fields, reqparse
+from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_TOOL_COUNT, MAX_CHAT_TOOL_SPEC_BYTES
 from horde_sdk.generation_parameters.text.chat_policy import (
     DEFAULT_CHAT_CONFORMANCE,
     ChatConformance,
     ChatFeature,
     ChatGuarantee,
+    ChatServiceGapKind,
 )
+from horde_sdk.worker.chat_declaration import ChatFaultReason, ChatFinishReason, ChatImageTransport
 
 from horde.apis.models import v2
 from horde.chat_contract import (
     MAX_CHAT_TOOL_CALL_COUNT,
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
-    MAX_CHAT_TOOL_COUNT,
-    MAX_CHAT_TOOL_SPEC_BYTES,
     ChatContextFit,
-    ChatImpossibleKind,
 )
 from horde.classes.base.style_application import MAX_TEMPLATE_FIELD_WORDS
 from horde.classes.base.style_contract import MAX_TEMPLATE_FIELDS
@@ -28,10 +28,7 @@ from horde.classes.kobold.chat_request import (
     MAX_NATIVE_FINISH_REASON_LENGTH,
     MAX_REPORTED_TOKEN_COUNT,
     ChargeBasis,
-    ChatImageTransport,
     ChatRole,
-    ChatWorkerFaultReason,
-    FinishReason,
 )
 from horde.classes.kobold.request_fit import (
     DEFAULT_MAX_CONTEXT_LENGTH,
@@ -170,7 +167,7 @@ class TextParsers(v2.Parsers):
             "finish_reason",
             type=str,
             required=False,
-            choices=[finish_reason.value for finish_reason in FinishReason],
+            choices=[finish_reason.value for finish_reason in ChatFinishReason],
             help="Why the worker stopped generating a chat job.",
             location="json",
         )
@@ -857,7 +854,7 @@ class TextModels(v2.Models):
                     description="Chat jobs only, in place of generation: the assistant message.",
                 ),
                 "finish_reason": fields.String(
-                    enum=[finish_reason.value for finish_reason in FinishReason],
+                    enum=[finish_reason.value for finish_reason in ChatFinishReason],
                     description=(
                         "Chat jobs only, required: why the worker stopped generating. 'stop' for an end of reply or "
                         "stop sequence, 'length' at max_length, 'content_filter' when the backend withheld output, "
@@ -891,7 +888,7 @@ class TextModels(v2.Models):
                 "fault_reason": fields.String(
                     description=(
                         "Chat jobs only, optional, with state 'faulted': why the worker faulted the job, one of "
-                        f"{', '.join(repr(reason.value) for reason in ChatWorkerFaultReason)}. The Horde stores its "
+                        f"{', '.join(repr(reason.value) for reason in ChatFaultReason)}. The Horde stores its "
                         "own message for the reason as the request's fault_reason with fault_rc 'ChatWorkerFault'. An "
                         "unknown value is ignored, and the value is ignored on every other submit."
                     ),
@@ -1241,7 +1238,7 @@ class TextModels(v2.Models):
                     ),
                 ),
                 "finish_reason": fields.String(
-                    enum=[finish_reason.value for finish_reason in FinishReason],
+                    enum=[finish_reason.value for finish_reason in ChatFinishReason],
                     description="Why the worker stopped generating.",
                 ),
                 "native_finish_reason": fields.String(
@@ -1273,7 +1270,7 @@ class TextModels(v2.Models):
             "ChatImpossibleReason",
             {
                 "kind": fields.String(
-                    enum=[impossible_kind.value for impossible_kind in ChatImpossibleKind],
+                    enum=[impossible_kind.value for impossible_kind in ChatServiceGapKind],
                     description=(
                         "'declaration_gap': online chat workers serve the model, but none declares every capability "
                         "and guarantee the request needs, or each applies a limit the request exceeds."

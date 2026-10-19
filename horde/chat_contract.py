@@ -7,7 +7,9 @@
 Both the native ``POST /v2/generate/chat/async`` route and the ``horde.oai`` front validate a request's ``horde``
 object against [`ChatHordeOptions`][horde.chat_contract.ChatHordeOptions], so the two cannot disagree on which keys
 exist or what values they take. The module imports only pydantic, the standard library and the SDK's chat policy
-vocabulary, so the front can import it without the Flask application, its database or its configuration.
+vocabulary, so the front can import it without the Flask application, its database or its configuration. The
+request limits a client can check before sending (the tool count, the tool spec and text sizes, the schema nesting)
+are the SDK's ``chat_limits`` constants, so the server, workers and clients apply one set of values.
 
 The module also holds the shapes both sides validate a request's tools, tool calls and response format against
 ([`ChatTool`][horde.chat_contract.ChatTool], [`ChatToolCall`][horde.chat_contract.ChatToolCall],
@@ -33,7 +35,11 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal, NoReturn, Protocol
 from uuid import UUID
 
-from horde_sdk.generation_parameters.text.chat_policy import DEFAULT_CHAT_CONFORMANCE, ChatConformance
+from horde_sdk.generation_parameters.text.chat_limits import (
+    MAX_CHAT_SCHEMA_NESTING,
+    chat_schema_exceeds_nesting,
+)
+from horde_sdk.generation_parameters.text.chat_policy import DEFAULT_CHAT_CONFORMANCE, ChatConformance, ChatServiceGapKind
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationInfo, field_validator
 from pydantic_core import PydanticCustomError
 
@@ -46,13 +52,9 @@ __all__ = [
     "MAX_CHAT_IMAGE_COUNT",
     "MAX_CHAT_IMAGE_COUNT_UNTRUSTED",
     "MAX_CHAT_MESSAGE_COUNT",
-    "MAX_CHAT_SCHEMA_NESTING",
-    "MAX_CHAT_TEXT_BYTES",
     "MAX_CHAT_TOOL_CALL_COUNT",
     "MAX_CHAT_TOOL_CALL_ID_LENGTH",
-    "MAX_CHAT_TOOL_COUNT",
     "MAX_CHAT_TOOL_NAME_LENGTH",
-    "MAX_CHAT_TOOL_SPEC_BYTES",
     "JSON_WORD",
     "OBJECT_SCHEMA_TYPE",
     "SCHEMA_KEYWORDS_HOLDING_A_SCHEMA",
@@ -67,7 +69,6 @@ __all__ = [
     "ChatFunctionDefinition",
     "ChatHistoryMessage",
     "ChatHordeOptions",
-    "ChatImpossibleKind",
     "ChatImpossibleReason",
     "ChatJsonObjectResponseFormat",
     "ChatJsonSchema",
@@ -94,13 +95,6 @@ MAX_CHAT_MESSAGE_COUNT: int = 1024
 """The most messages one chat request may carry. A conversation longer than this outgrows any served context long
 before it reaches the cap, so the cap only refuses bodies built to make validation and flattening expensive."""
 
-MAX_CHAT_TEXT_BYTES: int = 1024 * 1024
-"""The most UTF-8 bytes the message texts of one chat request may hold together, counting the function names and
-arguments of the tool calls in the history with them. 1 MiB is several times the text of the largest context a worker
-serves, so no servable conversation reaches it, while the flattened estimate, moderation and the stored messages stay
-bounded. Tool call arguments are copied into the flattened estimate and the worker's prompt like any text, so they
-count against the same budget."""
-
 MAX_CHAT_IMAGE_BYTES: int = 5 * 1024 * 1024
 """The largest decoded size of one image in a chat request. Matches the cap on a source image fetched from a URL."""
 
@@ -117,7 +111,7 @@ MAX_CHAT_BODY_BYTES: int = 36 * 1024 * 1024
 
 A request at every cap carries [`MAX_CHAT_IMAGE_COUNT`][horde.chat_contract.MAX_CHAT_IMAGE_COUNT] data URLs of
 [`MAX_CHAT_IMAGE_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_BYTES] each, which base64 grows by 4/3 to about 33.3 MiB,
-plus [`MAX_CHAT_TEXT_BYTES`][horde.chat_contract.MAX_CHAT_TEXT_BYTES] of text: about 34.3 MiB. 36 MiB leaves room
+plus the SDK's ``MAX_CHAT_TEXT_BYTES`` of text: about 34.3 MiB. 36 MiB leaves room
 for JSON structure and escaping on top of that."""
 
 CHAT_REQUEST_CONFLICT_ERROR_TYPE: str = "chat_request_conflict"
@@ -129,7 +123,7 @@ tell a contradiction from a malformed value.
 
 UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE: str = "unsupported_chat_parameter"
 """The pydantic error type raised for a value outside the service contract, such as a schema nested deeper than
-[`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING]; callers map it to ``UnsupportedChatParameter``."""
+the SDK's ``MAX_CHAT_SCHEMA_NESTING``; callers map it to ``UnsupportedChatParameter``."""
 
 UNSUPPORTED_CHAT_PARAMETER_RC: str = "UnsupportedChatParameter"
 """Return code for a key, value or content part this horde does not serve, so a client can branch on it."""
@@ -143,7 +137,7 @@ INTERNAL_HORDE_OPTION_KEYS: frozenset[str] = frozenset(
         "operation_key",
     },
 )
-"""The ``horde`` keys only native callers may send; the public front refuses them by name."""
+"""The ``horde`` keys only native callers may send; the public front refuses each, with its key in the message."""
 
 
 class ChatContextFit(StrEnum):
@@ -218,13 +212,9 @@ class ChatHordeOptions(BaseModel):
         return ignore
 
 
-MAX_CHAT_TOOL_COUNT: int = 128
-"""The most tools one request may define, OpenAI's own bound. Each definition is rendered into the worker's prompt,
-so the count also bounds how much prompt a request can add outside its messages."""
-
 MAX_CHAT_TOOL_CALL_COUNT: int = 128
 """The most tool calls one assistant message may carry, in the request history and in a worker's submission;
-mirrors [`MAX_CHAT_TOOL_COUNT`][horde.chat_contract.MAX_CHAT_TOOL_COUNT]."""
+mirrors the SDK's ``MAX_CHAT_TOOL_COUNT``."""
 
 MAX_CHAT_TOOL_NAME_LENGTH: int = 64
 """The longest function name, OpenAI's own bound."""
@@ -233,54 +223,19 @@ MAX_CHAT_TOOL_CALL_ID_LENGTH: int = 256
 """The longest tool call id. Clients echo the id a model minted back in ``tool`` messages, so the bound only has to
 leave room for any backend's format."""
 
-MAX_CHAT_TOOL_SPEC_BYTES: int = 256 * 1024
-"""The most bytes the compact JSON of ``tools``, ``tool_choice`` and ``response_format`` together may take. The
-worker renders these into the prompt or compiles them into a grammar, so an unbounded definition is an unbounded
-amount of worker time outside the token budget."""
-
 TOOL_NAME_PATTERN: str = r"^[A-Za-z0-9_-]+$"
 """The characters a function name may use, OpenAI's own rule, so a name is safe to render into any chat template."""
 
-MAX_CHAT_SCHEMA_NESTING: int = 10
-"""The most levels a JSON Schema in a request may nest below its root, OpenAI's documented limit for strict schemas.
-It applies to every tool ``parameters`` schema and every ``response_format`` schema, strict or not. A schema OpenAI
-serves stays within it, and the bound keeps a small but deeply nested body from exceeding the recursion limit of the
-JSON serialisation that stores and forwards it."""
-
-
-def _json_depth_exceeds(value: object, max_depth: int) -> bool:
-    """Return whether ``value`` nests objects and arrays more than ``max_depth`` deep.
-
-    Walked with an explicit stack, so a value nested past the interpreter's recursion limit is measured too.
-    """
-    pending: list[tuple[object, int]] = [(value, 1)]
-    while pending:
-        current, depth = pending.pop()
-        if isinstance(current, dict):
-            children: Iterable[object] = current.values()
-        elif isinstance(current, list):
-            children = current
-        else:
-            continue
-        if depth > max_depth:
-            return True
-        pending.extend((child, depth + 1) for child in children)
-    return False
-
 
 def _validate_schema_nesting(schema: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Validate that a JSON Schema nests at most
-    [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING] levels below its root.
-
-    Each level adds at most two JSON containers (a keyword's object or array, then the subschema in it), and the
-    deepest subschema's own keywords one more, so the root container plus two per level plus one bounds every schema
-    within the limit.
+    """Validate that a JSON Schema nests at most the SDK's ``MAX_CHAT_SCHEMA_NESTING`` levels below its root, by the
+    SDK's ``chat_schema_exceeds_nesting``.
 
     Raises:
         PydanticCustomError: The schema nests deeper, with the type
             [`UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE`][horde.chat_contract.UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE].
     """
-    if schema is not None and _json_depth_exceeds(schema, 1 + 2 * MAX_CHAT_SCHEMA_NESTING + 1):
+    if chat_schema_exceeds_nesting(schema):
         raise PydanticCustomError(
             UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE,
             "A JSON Schema may nest at most {max_nesting} levels below its root.",
@@ -322,8 +277,7 @@ class ChatFunctionDefinition(BaseModel):
     @field_validator("parameters")
     @classmethod
     def validate_parameters_nesting(cls, parameters: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Validate that the schema nests within
-        [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING].
+        """Validate that the schema nests within the SDK's ``MAX_CHAT_SCHEMA_NESTING``.
 
         Raises:
             PydanticCustomError: The schema nests deeper.
@@ -365,7 +319,7 @@ class ChatNamedToolChoice(BaseModel):
 
 
 ChatToolChoice = ChatToolChoiceMode | ChatNamedToolChoice
-"""A ``tool_choice`` value: a mode name or one forced function."""
+"""A ``tool_choice`` value: a mode value or one forced function."""
 
 
 class ChatResponseFormatType(StrEnum):
@@ -427,8 +381,7 @@ class ChatJsonSchema(BaseModel):
     @field_validator("schema_")
     @classmethod
     def validate_schema_nesting(cls, schema: dict[str, Any]) -> dict[str, Any]:
-        """Validate that the schema nests within
-        [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING].
+        """Validate that the schema nests within the SDK's ``MAX_CHAT_SCHEMA_NESTING``.
 
         Raises:
             PydanticCustomError: The schema nests deeper.
@@ -483,24 +436,18 @@ class ChatToolCall(BaseModel):
     """The function called."""
 
 
-class ChatImpossibleKind(StrEnum):
-    """Identify why no worker can take a chat request, as the chat status's ``impossible_reason`` reports it."""
-
-    DECLARATION_GAP = "declaration_gap"
-    """Online chat workers serve the request's model, but each lacks a capability or guarantee the request needs, or
-    applies a declared limit the request exceeds."""
-
-
 class ChatImpossibleReason(BaseModel):
     """Represents why no worker can take a chat request, when waiting does not help while the online workers stay
     the same.
 
-    The native chat status reports it and the front refuses the request on it without waiting.
+    The native chat status reports it and the front refuses the request on it without waiting. The fields match the
+    SDK's ``ChatServiceGap``, which a client computes locally; this model stays separate because the server
+    validates it from cached and HTTP payloads.
     """
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    kind: ChatImpossibleKind = ChatImpossibleKind.DECLARATION_GAP
+    kind: ChatServiceGapKind = ChatServiceGapKind.DECLARATION_GAP
     """The cause."""
 
     missing_declarations: tuple[str, ...] = ()
@@ -588,7 +535,7 @@ TOOL_ROLE: str = "tool"
 def chat_tool_call_bytes(tool_calls: Sequence[ChatToolCall] | None) -> int:
     """Return the UTF-8 size of the function names and arguments of a message's tool calls.
 
-    Counted into [`MAX_CHAT_TEXT_BYTES`][horde.chat_contract.MAX_CHAT_TEXT_BYTES] with the message texts.
+    Counted into the SDK's ``MAX_CHAT_TEXT_BYTES`` with the message texts.
     """
     return sum(len(tool_call.function.name.encode()) + len(tool_call.function.arguments.encode()) for tool_call in tool_calls or ())
 
@@ -740,7 +687,7 @@ def _object_schema_violation(schema: dict[str, Any], context: tuple[str | int, .
     missing_names = [property_name for property_name in property_names if property_name not in required_names]
     if isinstance(required, list) and not missing_names:
         return None
-    # OpenAI names the first missing property only.
+    # OpenAI lists the first missing property only.
     missing_suffix = f" Missing '{missing_names[0]}'." if missing_names else ""
     return (
         f"In context={context!r}, 'required' is required to be supplied and to be an array including every key in "
@@ -787,8 +734,7 @@ def _check_strict_schema(schema: object, *, subject: str, param: str) -> None:
     Under ``strict: true`` every object schema, at the root, under ``properties``, in array ``items``, under ``$defs``
     and in every other subschema, sets ``additionalProperties: false`` and lists each of its properties in
     ``required``. Other keywords are not checked here; OpenAI accepts and applies ``minimum`` and the like. The walk
-    recurses once per nesting level, which validation already bounded by
-    [`MAX_CHAT_SCHEMA_NESTING`][horde.chat_contract.MAX_CHAT_SCHEMA_NESTING].
+    recurses once per nesting level, which validation already bounded by the SDK's ``MAX_CHAT_SCHEMA_NESTING``.
 
     Args:
         schema: The schema to check.

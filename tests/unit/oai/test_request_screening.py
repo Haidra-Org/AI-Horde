@@ -11,8 +11,9 @@ import base64
 from typing import Any
 
 import pytest
+from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_SCHEMA_NESTING
 
-from horde.chat_contract import MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT, MAX_CHAT_SCHEMA_NESTING
+from horde.chat_contract import MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT
 from tests.unit.oai.conftest import FAST_TEST_SETTINGS, StartFront, build_chat_body, done_status
 
 pytestmark = pytest.mark.asyncio

@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import Any
 
 from horde_sdk.generation_parameters.text.chat_policy import DEFAULT_CHAT_CONFORMANCE, ChatConformance
+from horde_sdk.worker.chat_declaration import ChatImageTransport
 from sqlalchemy import Text, cast
 from sqlalchemy.orm import Mapped, query_expression
 from sqlalchemy.sql import ColumnElement, expression
@@ -22,7 +23,6 @@ from horde.classes.kobold.chat_request import (
     CHAT_IMAGE_DATA_URL_PREFIX,
     MAX_CHAT_FAULT_REASON_LENGTH,
     MAX_CHAT_REFUSAL_RC_LENGTH,
-    ChatImageTransport,
     build_chat_job_payload,
     build_chat_request_traits,
     build_worker_chat_extras,

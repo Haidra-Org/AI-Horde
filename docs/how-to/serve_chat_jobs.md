@@ -20,7 +20,10 @@ Topics: [chat](../topics.md#chat), [workers](../topics.md#workers)
 A chat job is a text job whose payload carries an OpenAI `messages` array in place of a prompt. A text worker opts in
 by adding a chat declaration to `POST /api/v2/generate/text/pop`, renders each chat job with the chat template of the
 model it has loaded, and submits a structured assistant message to `POST /api/v2/generate/text/submit`. Every field
-named here is specified in the [chat requests reference](../reference/chat_requests.md); this page is the procedure.
+this page mentions is specified in the [chat requests reference](../reference/chat_requests.md); this page is the
+procedure. A Python worker can build the pop fields, read the job and build the submit body with the SDK's
+`horde_sdk.worker.chat_declaration` (`declare_from_backend`, `ChatJobPayload`, `build_chat_reply_submit`,
+`build_chat_fault_submit`).
 
 Preconditions: a text worker that pops `/api/v2/generate/text/pop` and submits `/api/v2/generate/text/submit` with a
 registered API key; a backend that can render a conversation with the loaded model's chat template and count the
@@ -50,11 +53,11 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
 ```
 
 - `chat_jobs: true` opts in. The horde stores the declaration from every pop, so a pop without `chat_jobs` withdraws
-  it, and the worker receives no chat job from that pop.
-- `chat_features` lists the optional features the backend honours. Declare a name only when the backend does what it
+  it, and the worker does not receive a chat job from that pop.
+- `chat_features` lists the optional features the backend honours. Declare a value only when the backend does what it
   promises; a declaration is a claim the horde does not test ([ADR 0022](../decisions/0022-declare-chat-capabilities-by-pop-fields.md)).
   A request that needs a feature waits for a worker that declares it, so an undeclared feature costs only the
-  requests that need it. Unknown names are ignored.
+  requests that need it. Unknown values are ignored.
 
   | Feature             | The worker promises                                                                 |
   | ------------------- | ----------------------------------------------------------------------------------- |
@@ -75,7 +78,7 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
 
   | Guarantee                    | The worker promises                                                              |
   | ---------------------------- | -------------------------------------------------------------------------------- |
-  | `tool_choice_enforced`       | Under `required` or a named function the reply calls a tool (that function), never prose alone; under `none` it calls none |
+  | `tool_choice_enforced`       | Under `required` or a function choice the reply calls a tool (that function), never prose alone; under `none` it does not call a tool |
   | `single_tool_call_enforced`  | Under `parallel_tool_calls: false` the reply carries at most one call            |
   | `structured_output_enforced` | A `json_schema` reply satisfies the schema, or the job is faulted; the backend does not fall back to free text |
   | `prompt_overflow_refused`    | A prompt that does not fit `chat_limits.max_context_length` faults the job and is not trimmed |
@@ -91,7 +94,7 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   then not sent to the worker, under either conformance mode, since a clamped value changes the request. Leave it out
   when the backend applies every temperature as sent.
 - `model_id` is the model the worker serves chat jobs with, and it has to be one of `models`. The native route treats
-  it as an opaque name. The OpenAI-compatible front reserves `:` for model variants and answers 404 for any model id
+  it as an opaque string. The OpenAI-compatible front reserves `:` for model variants and answers 404 for any model id
   that contains one, so a model name with a colon can be served natively and cannot be reached through the front
   ([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). Choose a name without a
   colon.
@@ -169,9 +172,9 @@ Verification: send a conversation longer than `chat_limits.max_context_length` a
 ## 4. Serve tools and structured output
 
 `tools`, `tool_choice`, `parallel_tool_calls` and `response_format` arrive as the client sent them, and only when they
-change the answer ([Tools](../reference/chat_requests.md#tools)), with two narrowings: under `tool_choice: none` no
-tool key arrives, and under a named `tool_choice` only that function arrives, with `tool_choice: "required"`. Pass
-them to the backend unchanged.
+change the answer ([Tools](../reference/chat_requests.md#tools)), with two narrowings: under `tool_choice: none` the
+payload does not carry a tool key, and under a `tool_choice` that specifies a function only that function arrives,
+with `tool_choice: "required"`. Pass them to the backend unchanged.
 
 - Declare `tools` only when the template renders tool definitions, assistant tool calls and tool results, and the
   worker returns the model's calls as `tool_calls`. A request needs `tools` when it offers tools under a `tool_choice`
@@ -244,7 +247,7 @@ Send `message`, `finish_reason` and `model_id` in place of `generation`
   `length` when generation reached `max_length`, `tool_calls` when the reply carries calls, `content_filter` when the
   backend withheld or cut the reply on a content rule, and `stop` otherwise. `tool_calls` needs a non-empty
   `message.tool_calls`; a forced `tool_choice` may finish with `stop` and calls. Report `tool_calls` as the backend
-  does: the horde stores `stop` for a reply to a named `tool_choice`, which is what OpenAI returns.
+  does: the horde stores `stop` for a reply to a `tool_choice` that specifies a function, which is what OpenAI returns.
 - `native_finish_reason` is the backend's reason, at most 32 characters. It is optional and shown to the client
   beside `finish_reason`.
 - `prompt_tokens` and `completion_tokens` are sent only when the backend reported them. Leave a count out rather
@@ -262,7 +265,8 @@ The horde refuses a submit it cannot store as a reply:
 - `400 ChatSubmitInvalid` for `message` on a text job's submit, whose reply is `generation`.
 - `400 ChatSubmitInvalid` for a call to a function the request's `tools` do not define, or two calls with the same
   `id`, under either conformance mode. The client dispatches a call by its name and answers it by its id. A request
-  with a named `tool_choice` reaches the worker with one tool, but the check uses every tool the client offered.
+  whose `tool_choice` specifies a function reaches the worker with one tool, but the check uses every tool the client
+  offered.
 - `400 ChatModelMismatch` for a `model_id` other than the assigned model. The generation records the model it was
   assigned to, and the client is told which model answered.
 - `400` for a token count outside 0 to 10,000,000.
@@ -271,9 +275,9 @@ A `strict` request's reply also has to honour the request
 ([Reply verification](../reference/chat_requests.md#reply-verification)). The horde checks what the reply proves,
 whatever the worker declared, so a backend that declares a guarantee it does not keep has its submits refused:
 
-- `400 ChatSubmitNonconformant` for a call under `tool_choice: none` (the worker received no tools then), for no call
-  under `tool_choice: "required"`, which is also what a named choice arrives as, or for a call to another function
-  than the named one.
+- `400 ChatSubmitNonconformant` for a call under `tool_choice: none` (the worker did not receive tools then), for a
+  reply without a call under `tool_choice: "required"`, which is also what a choice of one function arrives as, or
+  for a call to another function than the chosen one.
 - `400 ChatSubmitNonconformant` for content that is not a JSON object under `response_format` `json_object` or a
   `json_schema` without `strict`, or content that does not match a `strict` `json_schema`. A reply that only calls
   tools, with empty or null content, is not checked against the format.

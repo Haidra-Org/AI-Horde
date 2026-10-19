@@ -25,7 +25,7 @@ In brief:
   jobs, the model, limits that fit, and every optional feature the request uses.
 - An OpenAI-compatible front, a separate process, speaks `/v1/chat/completions` to clients and the native chat routes
   to the horde, waking on a Redis signal when a reply lands.
-- A parameter the service does not implement is refused by name, never dropped, so a client always receives the
+- A parameter the service does not implement is refused with its key in the message, never dropped, so a client always receives the
   answer it asked for or an error. Unknown keys inside messages, tool definitions and `tool_choice` are the
   exception: they are dropped, as OpenAI does.
 - Replies arrive whole: streaming is emulated, and one request yields one choice.
@@ -137,7 +137,7 @@ only how faithfully the reply follows the request.
 
 The contract is held in three layers, each independent of the others. Routing sends a request only to a worker
 whose declaration covers it. Dispatch narrows what a job carries where the contract allows: under `tool_choice: none`
-the worker receives no tool definitions, so `none` needs no guarantee, and a named `tool_choice` reaches the worker as
+the worker receives no tool definitions, so `none` needs no guarantee, and a `tool_choice` that specifies a function reaches the worker as
 that one function under `required`. The stored request keeps the client's values, and the submit checks the reply
 against them.
 
@@ -155,7 +155,7 @@ does not show in the reply and is not verified.
 A key or value the service does not implement is refused with `400 UnsupportedChatParameter`, and the message states
 the key ([ADR 0029](../decisions/0029-route-unsupported-parameters-by-declared-support-refusing-by-default.md)). A
 field at its documented default counts as omitted, so stock clients that send defaults unprompted still work, and the
-front drops a short list of named default no-ops. Capability fields (`tools`, `response_format`, image parts) are never
+front drops a short, fixed list of default no-ops. Capability fields (`tools`, `response_format`, image parts) are never
 dropped, since they change the answer. A supported value that no online worker can serve is a different case: the
 request is accepted and waits, and the front answers 503 when the native status reports `is_possible` false.
 
@@ -178,9 +178,9 @@ Dropping unsupported fields by default, as OpenRouter does, was the alternative
 ([ADR 0030](../decisions/0030-route-unsupported-parameters-by-declared-support-ignoring-by-default.md)). It produces
 fewer errors and hides a changed answer in a field most clients never read.
 
-The operational consequence is where quirks get fixed. When a client always sends a field the service does not
-serve, the client stops sending it; the service does not learn to ignore it. A value that is a no-op at its default
-can be added to the front's default table, named, as a deliberate change.
+The consequence is that quirks get fixed in the client: a client that always sends a field the service does not
+serve stops sending it. A value that is a no-op at its default can be added to the front's default table, by key,
+as a deliberate change.
 
 ### Pricing by the text output estimate
 

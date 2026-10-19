@@ -9,9 +9,10 @@ from __future__ import annotations
 import os
 
 import pytest
+from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_TEXT_BYTES
 from pydantic import ValidationError
 
-from horde.chat_contract import MAX_CHAT_BODY_BYTES, MAX_CHAT_MESSAGE_COUNT, MAX_CHAT_TEXT_BYTES
+from horde.chat_contract import MAX_CHAT_BODY_BYTES, MAX_CHAT_MESSAGE_COUNT
 from horde.oai.settings import DEFAULT_HORDE_URL, FrontSettings, load_settings
 
 

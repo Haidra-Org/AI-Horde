@@ -247,9 +247,9 @@ reply has `finish_reason` `stop` with text and no `tool_calls`.
 
 By default (`"conformance": "strict"`) a request goes only to workers that declare the guarantees it relies on: an
 enforced `tool_choice` for `required` or a forced function, at most one call under `parallel_tool_calls: false`, schema
-adherence for a `json_schema` format with `strict: true`, and refusal rather than trimming of a prompt that does not
-fit. A request that needs a guarantee no online worker serving the model declares ends at once with 404
-`no_worker_supports_features`, and the message names the guarantee.
+adherence for a `json_schema` format with `strict: true`, and refusal of a prompt that does not fit (the worker does
+not trim it). A request that needs a guarantee no online worker serving the model declares ends at once with 404
+`no_worker_supports_features`, and the message lists the guarantee.
 
 To accept workers that may deviate, for example a backend that renders the same prompt for every `tool_choice`, send:
 
@@ -381,8 +381,8 @@ Retry rules:
 - `no_eligible_worker` means the request as sent has no worker online: check the model card for the model's workers,
   `supported_parameters` and `max_completion_tokens`, and change the request or wait for workers; the same request
   fails the same way.
-- `no_worker_supports_features` names what is missing. Drop or change the feature, lower the temperature, or send
-  `horde.conformance: "best_effort"` when the missing names are guarantees; the same request fails the same way
+- `no_worker_supports_features` lists what is missing. Drop or change the feature, lower the temperature, or send
+  `horde.conformance: "best_effort"` when the missing values are guarantees; the same request fails the same way
   until a worker declaring them comes online.
 - A stream always carries `x-should-retry: false`.
 

@@ -6,7 +6,7 @@
 
 The request side is screened in three steps before validation.
 [`find_refused_parameter`][horde.oai.schema.find_refused_parameter] returns the first top-level key, role, content
-part type or ``horde`` option the service does not serve, so the client gets a 400 naming it rather than a silently
+part type or ``horde`` option the service does not serve, so the client gets a 400 that reports it rather than a silently
 degraded answer. [`drop_default_no_ops`][horde.oai.schema.drop_default_no_ops] then removes the keys listed in
 [`DEFAULT_NO_OP_PARAMETERS`][horde.oai.schema.DEFAULT_NO_OP_PARAMETERS] when they hold their documented default,
 because stock clients send them unprompted. The table is a closed list; any other top-level key outside
@@ -22,7 +22,7 @@ sequences, a sampling parameter outside OpenAI's range) raise the error type
 [`UNSUPPORTED_PARAMETER_ERROR_TYPE`][horde.oai.schema.UNSUPPORTED_PARAMETER_ERROR_TYPE] so the front reports them as
 ``UnsupportedChatParameter``; contradictory values raise
 [`CHAT_REQUEST_CONFLICT_ERROR_TYPE`][horde.chat_contract.CHAT_REQUEST_CONFLICT_ERROR_TYPE]. A value OpenAI refuses as
-well is refused with OpenAI's message, which names the parameter itself. A request that sets no
+well is refused with OpenAI's message, which holds the parameter itself. A request that sets no
 token limit is forwarded without one and the native route applies its default of 512.
 
 The response side follows the OpenAI ``chat.completion``, ``chat.completion.chunk``, error and ``model`` shapes;
@@ -37,6 +37,14 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated, Literal
 
+from horde_sdk.generation_parameters.text.chat_limits import (
+    MAX_CHAT_MAX_TOKENS,
+    MAX_CHAT_STOP_SEQUENCES,
+    MIN_CHAT_MAX_TOKENS,
+    OPENAI_MIN_MAX_TOKENS,
+    OPENAI_SAMPLING_RANGES,
+    SUPPORTED_CHAT_CHOICE_COUNT,
+)
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -131,36 +139,9 @@ EMPTY_ARRAY_ERROR_TYPE: str = "empty_array"
 """The pydantic error type for an empty ``messages``, OpenAI's code for it; reported as ``BadRequest``, as any
 malformed body is."""
 
-SUPPORTED_CHOICE_COUNT: int = 1
-"""The only ``n`` served: each further choice would need its own pinned model and stored reply."""
-
 PARAMETER_CONTEXT_KEY: str = "parameter"
-"""The validation error context key holding the parameter a message already names in OpenAI's ``Invalid '<key>'``
+"""The validation error context key holding the parameter a message already holds in OpenAI's ``Invalid '<key>'``
 form; the front reports such a message without prefixing the request path."""
-
-OPENAI_SAMPLING_RANGES: Mapping[str, tuple[int, int]] = MappingProxyType(
-    {
-        "temperature": (0, 2),
-        "top_p": (0, 1),
-        "frequency_penalty": (-2, 2),
-        "presence_penalty": (-2, 2),
-    },
-)
-"""The inclusive range OpenAI accepts for each sampling parameter; the native route accepts wider ranges for some, so
-the front refuses a value OpenAI would refuse before forwarding it."""
-
-OPENAI_MIN_MAX_TOKENS: int = 1
-"""The smallest token limit OpenAI accepts; a value below it is refused in OpenAI's wording."""
-
-MIN_MAX_TOKENS: int = 16
-"""The smallest token limit served; the native minimum for ``max_length``. A smaller limit OpenAI would accept is
-refused rather than raised, since raising it would generate more tokens than the client asked for."""
-
-MAX_MAX_TOKENS: int = 4096
-"""The largest token limit served; the native cap for ``max_length``."""
-
-MAX_STOP_SEQUENCES: int = 4
-"""The most stop sequences a request may carry, as OpenAI documents."""
 
 MAX_USER_CHARACTERS: int = 256
 """The longest ``user`` annotation accepted; it is unused and only bounded so it cannot carry bulk data."""
@@ -257,7 +238,7 @@ class RefusedParameter(BaseModel):
 
     parameter: str
     """The request path of the part, such as ``tools`` or ``messages[1].content[0].type=input_audio``; a refused content
-    part's path names its type the way the native route does."""
+    part's path holds its type the way the native route does."""
 
     message: str
     """The explanation returned to the client."""
@@ -311,7 +292,7 @@ DEFAULT_NO_OP_PARAMETERS: Mapping[str, NoOpPredicate] = MappingProxyType(
 
 Stock clients send these unprompted. A key here that is also a field of
 [`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest] (``tools``, ``response_format``) is validated and
-forwarded when it holds any other value. Any other value of the remaining keys is refused by name, as is any key that
+forwarded when it holds any other value. Any other value of the remaining keys is refused with its key in the message, as is any key that
 is neither here nor a field of the request model. ``tool_choice`` and ``parallel_tool_calls`` are not here: OpenAI
 refuses either on a request without tools, whatever the value, and so does the front
 ([`check_tool_fields_need_tools`][horde.chat_contract.check_tool_fields_need_tools]).
@@ -502,7 +483,7 @@ def drop_unknown_nested_keys(request_body: Mapping[str, object]) -> dict[str, ob
 
 
 def _served_tool_choice(tool_choice: Mapping[str, object]) -> dict[str, object]:
-    """Return a ``tool_choice`` object with only the named choice fields, and its function with only its name."""
+    """Return a ``tool_choice`` object with only the served choice fields, and its function with only its name."""
     served_tool_choice = _served_keys(tool_choice, ChatNamedToolChoice.model_fields)
     function = served_tool_choice.get("function")
     if isinstance(function, dict):
@@ -739,7 +720,7 @@ class ChatCompletionRequest(BaseModel):
     """The most tokens to generate, 16 to 4096; OpenAI accepts any value from 1."""
 
     max_completion_tokens: StrictInt | None = None
-    """The newer name for ``max_tokens``; both must agree when both are set."""
+    """The newer key for ``max_tokens``; both must agree when both are set."""
 
     temperature: StrictFloat | StrictInt | None = None
     """The sampling temperature, 0 to 2."""
@@ -806,7 +787,7 @@ class ChatCompletionRequest(BaseModel):
 
         Raises:
             PydanticCustomError: The value is outside its range in
-                [`OPENAI_SAMPLING_RANGES`][horde.oai.schema.OPENAI_SAMPLING_RANGES].
+                the SDK's ``OPENAI_SAMPLING_RANGES``.
         """
         if sampling_value is None or info.field_name is None:
             return sampling_value
@@ -859,16 +840,16 @@ class ChatCompletionRequest(BaseModel):
                 limit=OPENAI_MIN_MAX_TOKENS,
                 value=token_limit,
             )
-        if token_limit < MIN_MAX_TOKENS:
+        if token_limit < MIN_CHAT_MAX_TOKENS:
             raise _openai_value_error(
                 info.field_name,
                 "the AI Horde refuses a token limit below {limit}, the minimum generation length of its native text "
                 "API, rather than raising it, but got {value} instead.",
-                limit=MIN_MAX_TOKENS,
+                limit=MIN_CHAT_MAX_TOKENS,
                 value=token_limit,
             )
-        if token_limit > MAX_MAX_TOKENS:
-            raise _unsupported_value_error(f"The token limit must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}.")
+        if token_limit > MAX_CHAT_MAX_TOKENS:
+            raise _unsupported_value_error(f"The token limit must be between {MIN_CHAT_MAX_TOKENS} and {MAX_CHAT_MAX_TOKENS}.")
         return token_limit
 
     @field_validator("max_completion_tokens")
@@ -895,11 +876,11 @@ class ChatCompletionRequest(BaseModel):
         Raises:
             PydanticCustomError: More than four sequences are sent.
         """
-        if isinstance(stop, list) and len(stop) > MAX_STOP_SEQUENCES:
+        if isinstance(stop, list) and len(stop) > MAX_CHAT_STOP_SEQUENCES:
             raise _openai_value_error(
                 "stop",
                 "array too long. Expected an array with maximum length {limit}, but got an array with length {length} instead.",
-                limit=MAX_STOP_SEQUENCES,
+                limit=MAX_CHAT_STOP_SEQUENCES,
                 length=len(stop),
             )
         return stop
@@ -912,15 +893,15 @@ class ChatCompletionRequest(BaseModel):
         Raises:
             PydanticCustomError: ``n`` is set to anything but 1; below 1 in OpenAI's wording.
         """
-        if choice_count is not None and choice_count < SUPPORTED_CHOICE_COUNT:
+        if choice_count is not None and choice_count < SUPPORTED_CHAT_CHOICE_COUNT:
             raise _openai_value_error(
                 "n",
                 "integer below minimum value. Expected a value >= {limit}, but got {value} instead.",
-                limit=SUPPORTED_CHOICE_COUNT,
+                limit=SUPPORTED_CHAT_CHOICE_COUNT,
                 value=choice_count,
             )
-        if choice_count is not None and choice_count != SUPPORTED_CHOICE_COUNT:
-            raise _unsupported_value_error(f"Only {SUPPORTED_CHOICE_COUNT} choice is served; 'n' must be 1 or omitted.")
+        if choice_count is not None and choice_count != SUPPORTED_CHAT_CHOICE_COUNT:
+            raise _unsupported_value_error(f"Only {SUPPORTED_CHAT_CHOICE_COUNT} choice is served; 'n' must be 1 or omitted.")
         return choice_count
 
 

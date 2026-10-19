@@ -9,7 +9,8 @@ from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
-from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATION_NAMES, ChatFeature, ChatLimitName
+from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATIONS, ChatFeature, ChatLimitField
+from horde_sdk.worker.chat_declaration import ChatImageTransport
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, relationship
@@ -20,7 +21,6 @@ from horde.bridge_reference import (
     is_backed_validated,
 )
 from horde.classes.base.worker import Worker
-from horde.classes.kobold.chat_request import ChatImageTransport
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -93,8 +93,8 @@ class TextWorker(Worker):
     """The model the worker serves chat jobs with, from its last pop. A chat request is only given to a worker whose
     ``chat_model_id`` is the request's model."""
     image_transports = db.Column(text_array_column_type, nullable=True)
-    """The ``ChatImageTransport`` names the worker's last pop declared for receiving a chat job's images. NULL or
-    empty means the worker takes no images; unknown names are not stored."""
+    """The ``ChatImageTransport`` values the worker's last pop declared for receiving a chat job's images. NULL or
+    empty means the worker takes no images; unknown values are not stored."""
 
     softprompts: Mapped[list[TextWorkerSoftprompts]] = relationship(
         "TextWorkerSoftprompts",
@@ -126,7 +126,7 @@ class TextWorker(Worker):
         # declaration for the same reason: a chat-only worker must not receive a prompt.
         self.accepts_chat_jobs = accepts_chat_jobs
         self.accepts_prompt_jobs = accepts_prompt_jobs or not accepts_chat_jobs
-        self.chat_features = sorted(set(chat_features or ()) & KNOWN_CHAT_DECLARATION_NAMES) if accepts_chat_jobs else None
+        self.chat_features = sorted(set(chat_features or ()) & KNOWN_CHAT_DECLARATIONS) if accepts_chat_jobs else None
         self.chat_max_context_length = chat_max_context_length if accepts_chat_jobs else None
         self.chat_max_length = chat_max_length if accepts_chat_jobs else None
         self.chat_tools_max_temperature = chat_tools_max_temperature if accepts_chat_jobs else None
@@ -309,7 +309,7 @@ class TextWorker(Worker):
             and self.chat_tools_max_temperature is not None
             and waiting_prompt.chat_tools_temperature > self.chat_tools_max_temperature
         ):
-            return ChatLimitName.TOOLS_MAX_TEMPERATURE.value
+            return ChatLimitField.TOOLS_MAX_TEMPERATURE.value
         if self.chat_max_context_length is None or self.chat_max_context_length < waiting_prompt.max_context_length:
             return "max_context_length"
         if self.chat_max_length is None or self.chat_max_length < waiting_prompt.max_length:

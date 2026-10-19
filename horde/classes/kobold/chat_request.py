@@ -5,7 +5,7 @@
 
 A chat request is a text request whose worker input is a ``messages`` array instead of a prompt.
 [`parse_chat_request`][horde.classes.kobold.chat_request.parse_chat_request] accepts the supported
-subset of the OpenAI body and rejects everything else by name.
+subset of the OpenAI body and rejects everything else, with the offending key in the message.
 [`build_text_params`][horde.classes.kobold.chat_request.build_text_params],
 [`build_model_names`][horde.classes.kobold.chat_request.build_model_names] and
 [`build_worker_targeting`][horde.classes.kobold.chat_request.build_worker_targeting] map it onto the text
@@ -18,7 +18,7 @@ validation makes to it has to be mirrored onto the messages, which
 [`rewrite_message_texts`][horde.classes.kobold.chat_request.rewrite_message_texts] does.
 
 A worker declares on pop which optional request features it implements and which parts of the OpenAI contract it
-follows exactly, as the SDK's ``ChatFeature`` and ``ChatGuarantee`` names (ADR 0036).
+follows exactly, as the SDK's ``ChatFeature`` and ``ChatGuarantee`` values (ADR 0036).
 [`required_chat_features`][horde.classes.kobold.chat_request.required_chat_features] lists the ones a request needs
 under its conformance mode. [`build_chat_job_payload`][horde.classes.kobold.chat_request.build_chat_job_payload] fills
 the sampling defaults a chat job's payload always carries.
@@ -47,6 +47,15 @@ import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Annotated, Any, Literal, NoReturn
 
+from horde_sdk.generation_parameters.text.chat_limits import (
+    CHAT_SAMPLING_DEFAULTS,
+    DEFAULT_PARALLEL_TOOL_CALLS,
+    MAX_CHAT_TEXT_BYTES,
+    MAX_CHAT_TOOL_COUNT,
+    MAX_CHAT_TOOL_SPEC_BYTES,
+    OPENAI_SAMPLING_RANGES,
+    SUPPORTED_CHAT_CHOICE_COUNT,
+)
 from horde_sdk.generation_parameters.text.chat_policy import (
     ChatConformance,
     ChatFeature,
@@ -56,6 +65,7 @@ from horde_sdk.generation_parameters.text.chat_policy import (
 )
 from horde_sdk.generation_parameters.text.chat_policy import ChatResponseFormatType as PolicyResponseFormatType
 from horde_sdk.generation_parameters.text.chat_policy import ChatToolChoiceMode as PolicyToolChoiceMode
+from horde_sdk.worker.chat_declaration import ChatFaultReason, ChatFinishReason, ChatImageTransport
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, best_match
 from jsonschema.validators import validator_for
@@ -81,11 +91,8 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
-    MAX_CHAT_TEXT_BYTES,
     MAX_CHAT_TOOL_CALL_COUNT,
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
-    MAX_CHAT_TOOL_COUNT,
-    MAX_CHAT_TOOL_SPEC_BYTES,
     UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE,
     UNSUPPORTED_CHAT_PARAMETER_RC,
     ChatHordeOptions,
@@ -116,13 +123,11 @@ __all__ = [
     "CHAT_IMAGE_PLACEHOLDER",
     "CHAT_IMAGE_REFERENCE_PREFIX",
     "CHAT_REQUEST_CONFLICT_RC",
-    "CHAT_SAMPLING_DEFAULTS",
     "CHAT_SUBMIT_INVALID_RC",
     "CHAT_SUBMIT_NONCONFORMANT_RC",
     "CHAT_WORKER_FAULT_MESSAGES",
     "CHAT_WORKER_FAULT_RC",
     "DEFAULT_CHAT_MAX_TOKENS",
-    "DEFAULT_PARALLEL_TOOL_CALLS",
     "MAX_CHAT_FAULT_REASON_LENGTH",
     "MAX_CHAT_REFUSAL_RC_LENGTH",
     "MAX_NATIVE_FINISH_REASON_LENGTH",
@@ -131,12 +136,9 @@ __all__ = [
     "ChargeBasis",
     "ChatCompletionRequest",
     "ChatImageDetail",
-    "ChatImageTransport",
     "ChatMessage",
     "ChatRole",
     "ChatSubmittedMessage",
-    "ChatWorkerFaultReason",
-    "FinishReason",
     "build_chat_extras",
     "build_chat_image_key",
     "build_chat_job_payload",
@@ -191,15 +193,6 @@ DEFAULT_CHAT_MAX_TOKENS = 512
 """``max_length`` for a chat request that sets neither token limit. OpenAI clients usually omit it, and the text
 default of 80 tokens is too short for a chat reply."""
 
-SUPPORTED_CHOICE_COUNT = 1
-"""The only ``n`` a chat request may ask for. Each choice would need its own model pin and reply to be stored."""
-
-MIN_SAMPLING_PENALTY = -2.0
-"""The lowest ``frequency_penalty`` or ``presence_penalty`` OpenAI accepts."""
-
-MAX_SAMPLING_PENALTY = 2.0
-"""The highest ``frequency_penalty`` or ``presence_penalty`` OpenAI accepts."""
-
 SUPPORTED_REQUEST_KEYS = frozenset(
     {
         "model",
@@ -224,8 +217,8 @@ SUPPORTED_REQUEST_KEYS = frozenset(
         "horde",
     },
 )
-"""Top-level keys a chat request may carry. Any other key, ``logprobs`` and ``audio`` among them, is refused by name
-rather than dropped, so a client never receives a reply that silently ignored part of its request."""
+"""Top-level keys a chat request may carry. Any other key, ``logprobs`` and ``audio`` among them, is refused with
+the key in the message rather than dropped, so a client never receives a reply that silently ignored part of its request."""
 
 SUPPORTED_MESSAGE_KEYS = frozenset(
     {
@@ -310,63 +303,15 @@ claims one."""
 MAX_NATIVE_FINISH_REASON_LENGTH = 32
 """The longest backend finish reason a worker may report, which is the width of its column."""
 
-CHAT_SAMPLING_DEFAULTS: Mapping[str, float | int] = {
-    "temperature": 1.0,
-    "top_p": 1.0,
-    "frequency_penalty": 0.0,
-    "presence_penalty": 0.0,
-    "rep_pen": 1.0,
-    "top_k": 0,
-    "min_p": 0.0,
-}
-"""The sampling values a chat job's payload carries when the client did not set them. They are OpenAI's defaults,
-and neutral for the samplers OpenAI has no key for, so a worker's own defaults never apply to a chat job."""
-
-
-class FinishReason(enum.StrEnum):
-    """Why a worker stopped generating a chat reply, normalised by the worker on submit."""
-
-    STOP = "stop"
-    """The model ended the reply or hit a stop sequence."""
-
-    LENGTH = "length"
-    """Generation reached ``max_length``."""
-
-    CONTENT_FILTER = "content_filter"
-    """The backend withheld or cut the reply on a content rule."""
-
-    TOOL_CALLS = "tool_calls"
-    """The model called one or more tools; the submitted message carries them."""
-
-
-class ChatWorkerFaultReason(enum.StrEnum):
-    """Why a worker faulted a chat job, sent as ``fault_reason`` with its ``faulted`` submit."""
-
-    PROMPT_OVERFLOW = "prompt_overflow"
-    """The rendered messages did not fit the worker's context."""
-
-    UNBUILDABLE_GRAMMAR = "unbuildable_grammar"
-    """The worker could not build the grammar that enforces the request's ``tool_choice`` or ``response_format``."""
-
-    TOOL_VIOLATION = "tool_violation"
-    """The model's reply broke the request's tool controls, and the worker discarded it rather than submit it."""
-
-    REPLY_REFUSED = "reply_refused"
-    """The Horde refused the worker's reply. The refusal's own message is kept when the Horde recorded one."""
-
-    GENERATION_ERROR = "generation_error"
-    """The backend failed while generating."""
-
-
 CHAT_WORKER_FAULT_MESSAGES: Mapping[str, str] = {
-    ChatWorkerFaultReason.PROMPT_OVERFLOW: "The worker could not fit the prompt into its context.",
-    ChatWorkerFaultReason.UNBUILDABLE_GRAMMAR: "The worker could not build the grammar the request's tool choice or response format needs.",
-    ChatWorkerFaultReason.TOOL_VIOLATION: "The model's reply broke the request's tool controls.",
-    ChatWorkerFaultReason.REPLY_REFUSED: "The AI Horde refused the worker's reply.",
-    ChatWorkerFaultReason.GENERATION_ERROR: "The worker's backend failed while generating.",
+    ChatFaultReason.PROMPT_OVERFLOW: "The worker could not fit the prompt into its context.",
+    ChatFaultReason.UNBUILDABLE_GRAMMAR: "The worker could not build the grammar the request's tool choice or response format needs.",
+    ChatFaultReason.TOOL_VIOLATION: "The model's reply broke the request's tool controls.",
+    ChatFaultReason.REPLY_REFUSED: "The AI Horde refused the worker's reply.",
+    ChatFaultReason.GENERATION_ERROR: "The worker's backend failed while generating.",
 }
-"""The message the Horde stores for each fault reason a worker reports. The Horde writes its own sentence rather than
-any worker text, so a client reads a fixed vocabulary."""
+"""The message the Horde stores for each fault reason a worker reports, one per the SDK's ``ChatFaultReason`` values.
+The Horde writes its own sentence rather than any worker text, so a client reads a fixed vocabulary."""
 
 
 def chat_worker_fault_message(fault_reason: object) -> str | None:
@@ -393,16 +338,6 @@ class ChargeBasis(enum.StrEnum):
     """The text formula's estimate of the output: the characters returned divided by 4, rounded up, at least 20
     and at most the requested ``max_length``. Identical to a text generation's; reported token counts do not
     enter it."""
-
-
-class ChatImageTransport(enum.StrEnum):
-    """How a worker accepts a chat job's images, declared in ``image_transports`` on pop."""
-
-    URL = "url"
-    """The worker fetches a signed object storage URL. Preferred whenever a worker declares it."""
-
-    BASE64 = "base64"
-    """The worker reads a ``data:image/jpeg;base64,`` URL inlined in the pop response."""
 
 
 class ChatRole(enum.StrEnum):
@@ -492,7 +427,7 @@ class ChatMessage(BaseModel):
 
     @model_validator(mode="after")
     def validate_content_and_tool_fields(self) -> ChatMessage:
-        """Validate that only a tool-calling message omits its content and that a ``tool`` message names its call.
+        """Validate that only a tool-calling message omits its content and that a ``tool`` message references its call.
 
         Which roles may carry ``tool_calls`` and ``tool_call_id`` at all is checked by key before validation.
 
@@ -521,7 +456,7 @@ class ChatCompletionRequest(BaseModel):
     """How many tokens to generate. Must equal ``max_completion_tokens`` when both are set."""
 
     max_completion_tokens: StrictInt | None = None
-    """How many tokens to generate; the newer OpenAI name for ``max_tokens``."""
+    """How many tokens to generate; the newer OpenAI key for ``max_tokens``."""
 
     temperature: StrictFloat | StrictInt | None = None
     """Sampling temperature."""
@@ -540,13 +475,13 @@ class ChatCompletionRequest(BaseModel):
 
     frequency_penalty: Annotated[
         StrictFloat | StrictInt | None,
-        Field(ge=MIN_SAMPLING_PENALTY, le=MAX_SAMPLING_PENALTY),
+        Field(ge=OPENAI_SAMPLING_RANGES["frequency_penalty"][0], le=OPENAI_SAMPLING_RANGES["frequency_penalty"][1]),
     ] = None
     """OpenAI's frequency penalty. A non-zero value needs a worker that declares ``frequency_penalty``."""
 
     presence_penalty: Annotated[
         StrictFloat | StrictInt | None,
-        Field(ge=MIN_SAMPLING_PENALTY, le=MAX_SAMPLING_PENALTY),
+        Field(ge=OPENAI_SAMPLING_RANGES["presence_penalty"][0], le=OPENAI_SAMPLING_RANGES["presence_penalty"][1]),
     ] = None
     """OpenAI's presence penalty. A non-zero value needs a worker that declares ``presence_penalty``."""
 
@@ -564,7 +499,7 @@ class ChatCompletionRequest(BaseModel):
 
     tools: list[ChatTool] | None = None
     """The functions the model may call, at most
-    [`MAX_CHAT_TOOL_COUNT`][horde.chat_contract.MAX_CHAT_TOOL_COUNT]. An empty list is the same as none."""
+    the SDK's ``MAX_CHAT_TOOL_COUNT``. An empty list is the same as none."""
 
     tool_choice: ChatToolChoice | None = None
     """Whether and which tool the model has to call. Only allowed with tools; ``none`` forwards no tool definitions."""
@@ -581,7 +516,7 @@ class ChatCompletionRequest(BaseModel):
     @field_validator("tools", mode="before")
     @classmethod
     def validate_tool_count(cls, tools: object) -> object:
-        """Validate that at most [`MAX_CHAT_TOOL_COUNT`][horde.chat_contract.MAX_CHAT_TOOL_COUNT] tools are sent.
+        """Validate that at most the SDK's ``MAX_CHAT_TOOL_COUNT`` tools are sent.
 
         Checked before the tools are validated, so an oversized list costs no per-tool validation, and reported as a
         value outside the service contract rather than as a malformed one.
@@ -648,7 +583,7 @@ def _reject_unsupported_message(message: object, message_index: int) -> None:
 
     Args:
         message: One entry of the request's ``messages``.
-        message_index: Its position, used to name the offending key.
+        message_index: Its position, used to report the offending key's path.
 
     Raises:
         horde.exceptions.BadRequest: If the message uses something unsupported.
@@ -681,7 +616,7 @@ def _reject_unsupported_message(message: object, message_index: int) -> None:
 
 
 def _reject_unsupported_keys(request_body: Mapping[str, Any]) -> None:
-    """Refuse every key, role and content part outside the supported subset, naming the first one found.
+    """Refuse every key, role and content part outside the supported subset, reporting the first one found.
 
     Args:
         request_body: The decoded JSON body.
@@ -719,7 +654,7 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
             ``json_object`` request whose messages never mention JSON; or an image validation failure for too many,
             malformed or oversized image URLs.
     """
-    if chat_request.n is not None and chat_request.n != SUPPORTED_CHOICE_COUNT:
+    if chat_request.n is not None and chat_request.n != SUPPORTED_CHAT_CHOICE_COUNT:
         _raise_unsupported(f"n={chat_request.n}")
 
     both_limits_set = chat_request.max_tokens is not None and chat_request.max_completion_tokens is not None
@@ -750,7 +685,7 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
 
 
 def _refusal_error(refusal: ChatRequestRefusal) -> e.BadRequest:
-    """Return the 400 for a shared request rule's refusal, with the request path it names in the message."""
+    """Return the 400 for a shared request rule's refusal, with the refusal's request path in the message."""
     return e.BadRequest(f"'{refusal.param}': {refusal.message}", rc=refusal.rc)
 
 
@@ -779,7 +714,7 @@ def _reject_conflicting_tool_values(chat_request: ChatCompletionRequest) -> None
 
     Raises:
         horde.exceptions.BadRequest: With ``UnsupportedChatParameter`` for a tool spec over
-            [`MAX_CHAT_TOOL_SPEC_BYTES`][horde.chat_contract.MAX_CHAT_TOOL_SPEC_BYTES] or a history
+            the SDK's ``MAX_CHAT_TOOL_SPEC_BYTES`` or a history
             [`check_tool_history`][horde.chat_contract.check_tool_history] refuses; ``ChatRequestConflict`` for a
             ``tool_choice`` (``none`` included) or ``parallel_tool_calls`` without tools, or a ``tool_choice``
             forcing a function the tools do not define.
@@ -1090,7 +1025,7 @@ def has_image_parts(messages: Sequence[Mapping[str, Any]]) -> bool:
 def list_image_urls(messages: Sequence[Mapping[str, Any]]) -> list[str]:
     """Return the URL of every image part, in message order.
 
-    An image's position in this list is its ordinal, which names the object stored for it.
+    An image's position in this list is its ordinal, which is part of the key of the object stored for it.
 
     Args:
         messages: A ``messages`` array.
@@ -1442,16 +1377,12 @@ def build_operation_fingerprint(chat_request: ChatCompletionRequest) -> str:
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
-DEFAULT_PARALLEL_TOOL_CALLS = True
-"""OpenAI's ``parallel_tool_calls`` when a request offers tools without setting it."""
-
-
 def _tool_choice_mode(tool_choice: str | Mapping[str, Any] | None) -> PolicyToolChoiceMode:
     """Return the policy mode of a stored ``tool_choice``; an unset choice is OpenAI's ``auto``."""
     if tool_choice is None:
         return PolicyToolChoiceMode.AUTO
     if isinstance(tool_choice, Mapping):
-        return PolicyToolChoiceMode.NAMED
+        return PolicyToolChoiceMode.FUNCTION
     return PolicyToolChoiceMode(tool_choice)
 
 
@@ -1465,7 +1396,7 @@ def build_chat_request_traits(params: Mapping[str, Any], chat_extras: Mapping[st
 
     Returns:
         The traits, with the temperature the job payload carries (the client's, or the one in
-        [`CHAT_SAMPLING_DEFAULTS`][horde.classes.kobold.chat_request.CHAT_SAMPLING_DEFAULTS]), the tool choice as
+        the SDK's ``CHAT_SAMPLING_DEFAULTS``), the tool choice as
         stored (unset is ``auto``), ``parallel_tool_calls`` defaulting to true, and the response format's type and
         ``json_schema.strict`` flag.
     """
@@ -1561,7 +1492,7 @@ def build_worker_chat_extras(chat_extras: Mapping[str, Any] | None) -> dict[str,
 
     The stored extras keep the client's values for the response and a replay; only the worker's copy is narrowed.
     Under ``tool_choice: none`` no tool key is forwarded, so a backend that ignores ``none`` has no definition to
-    call. Under a named ``tool_choice`` only the named function is forwarded, with ``tool_choice: required``, so a
+    call. Under a ``tool_choice`` that specifies one function only that function is forwarded, with ``tool_choice: required``, so a
     backend that knows only the modes still has to call that function. ``auto`` and ``required`` are forwarded as
     stored.
 
@@ -1718,8 +1649,8 @@ def _verify_response_format(message: ChatSubmittedMessage, chat_extras: Mapping[
 def chat_reply_finish_reason(finish_reason: str, message: ChatSubmittedMessage, chat_extras: Mapping[str, Any] | None) -> str:
     """Return the finish reason the client receives for a verified reply.
 
-    OpenAI finishes a reply to a named ``tool_choice`` with ``stop`` and the call in ``tool_calls``, and finishes
-    ``auto`` and ``required`` replies with ``tool_calls``. A worker receives a named choice as ``required`` (see
+    OpenAI finishes a reply to a ``tool_choice`` that specifies a function with ``stop`` and the call in ``tool_calls``, and finishes
+    ``auto`` and ``required`` replies with ``tool_calls``. A worker receives such a choice as ``required`` (see
     [`build_worker_chat_extras`][horde.classes.kobold.chat_request.build_worker_chat_extras]), so its backend reports
     ``tool_calls``. The reason is mapped back to OpenAI's under every conformance mode, since it is the shape of the
     reply rather than how faithfully the backend followed the request.
@@ -1730,11 +1661,11 @@ def chat_reply_finish_reason(finish_reason: str, message: ChatSubmittedMessage, 
         chat_extras: The request's stored extras.
 
     Returns:
-        ``stop`` for a ``tool_calls`` finish of a reply with calls to a request with a named ``tool_choice``; the
+        ``stop`` for a ``tool_calls`` finish of a reply with calls to a request whose ``tool_choice`` specifies a function; the
         submitted reason otherwise, so ``length`` and ``content_filter`` are kept.
     """
-    if finish_reason == FinishReason.TOOL_CALLS and message.tool_calls and isinstance((chat_extras or {}).get("tool_choice"), Mapping):
-        return FinishReason.STOP.value
+    if finish_reason == ChatFinishReason.TOOL_CALLS and message.tool_calls and isinstance((chat_extras or {}).get("tool_choice"), Mapping):
+        return str(ChatFinishReason.STOP)
     return finish_reason
 
 
@@ -1787,7 +1718,7 @@ def build_chat_job_payload(params: Mapping[str, Any], *, max_length: int, max_co
     """Return the payload a chat job is sent with, apart from its messages.
 
     Every sampling field in
-    [`CHAT_SAMPLING_DEFAULTS`][horde.classes.kobold.chat_request.CHAT_SAMPLING_DEFAULTS] is present, with its
+    the SDK's ``CHAT_SAMPLING_DEFAULTS`` is present, with its
     default where the client left it unset; ``stop_sequence`` and ``seed`` only when the client sent them. There is
     no prompt.
 
@@ -1807,5 +1738,5 @@ def build_chat_job_payload(params: Mapping[str, Any], *, max_length: int, max_co
             chat_payload[optional_field] = params[optional_field]
     chat_payload[MAX_LENGTH_PARAMETER] = max_length
     chat_payload[MAX_CONTEXT_LENGTH_PARAMETER] = max_context_length
-    chat_payload["n"] = SUPPORTED_CHOICE_COUNT
+    chat_payload["n"] = SUPPORTED_CHAT_CHOICE_COUNT
     return chat_payload

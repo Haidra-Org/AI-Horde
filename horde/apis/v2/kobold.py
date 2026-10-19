@@ -10,7 +10,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 from flask import request
 from flask_restx import Resource, marshal_with, reqparse
 from flask_restx.reqparse import ParseResult
-from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, ChatLimitName
+from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, ChatLimitField
+from horde_sdk.worker.chat_declaration import ChatFinishReason
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -45,7 +46,6 @@ from horde.classes.kobold.chat_request import (
     CHAT_WORKER_FAULT_RC,
     MAX_NATIVE_FINISH_REASON_LENGTH,
     ChatSubmittedMessage,
-    FinishReason,
     build_chat_extras,
     build_chat_image_key,
     build_model_names,
@@ -1171,7 +1171,7 @@ class TextJobPop(JobPopTemplate):
                 "A worker that sets chat_jobs has to send chat_limits with max_context_length and max_length.",
                 rc="ChatDeclarationInvalid",
             )
-        tools_max_temperature = chat_limits.get(ChatLimitName.TOOLS_MAX_TEMPERATURE.value)
+        tools_max_temperature = chat_limits.get(ChatLimitField.TOOLS_MAX_TEMPERATURE.value)
         if tools_max_temperature is not None and (
             isinstance(tools_max_temperature, bool)
             or not isinstance(tools_max_temperature, int | float)
@@ -1210,7 +1210,7 @@ class TextJobPop(JobPopTemplate):
             chat_features=self.args.chat_features,
             chat_max_context_length=chat_limits.get("max_context_length"),
             chat_max_length=chat_limits.get("max_length"),
-            chat_tools_max_temperature=chat_limits.get(ChatLimitName.TOOLS_MAX_TEMPERATURE.value),
+            chat_tools_max_temperature=chat_limits.get(ChatLimitField.TOOLS_MAX_TEMPERATURE.value),
             chat_model_id=self.args.model_id,
             image_transports=self.args.image_transports,
         )
@@ -1364,7 +1364,7 @@ class TextJobSubmit(JobSubmitTemplate):
         if self.args.finish_reason is None:
             raise e.BadRequest("A chat job's submission needs 'finish_reason'.", rc="ChatSubmitInvalid")
         # The other direction is not enforced: a named tool_choice finishes with 'stop' and its call under OpenAI.
-        if self.args.finish_reason == FinishReason.TOOL_CALLS and not chat_message.tool_calls:
+        if self.args.finish_reason == ChatFinishReason.TOOL_CALLS and not chat_message.tool_calls:
             raise e.BadRequest("A 'tool_calls' finish reason needs 'message.tool_calls'.", rc="ChatSubmitInvalid")
         native_finish_reason = self.args.native_finish_reason
         if native_finish_reason is not None:

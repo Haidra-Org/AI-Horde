@@ -223,7 +223,7 @@ capability or guarantee none declares, or a declared limit the request exceeds. 
 no endpoint supporting the requested features, with a 404."""
 
 GUARANTEE_NAMES: frozenset[str] = frozenset(guarantee.value for guarantee in ChatGuarantee)
-"""The declaration names that are guarantees, which ``horde.conformance: best_effort`` stops requiring."""
+"""The declared values that are guarantees, which ``horde.conformance: best_effort`` stops requiring."""
 
 OPERATION_KEY_CONFLICT_CODE: str = "OperationKeyConflict"
 """The Horde rc for an operation key already claimed with a different request."""
@@ -251,8 +251,8 @@ NATIVE_FIELD_PARAMETERS: Mapping[str, str] = MappingProxyType(
         "stop_sequence": "stop",
     },
 )
-"""The request key of each native text param whose name differs from it. The native route checks a chat request's
-sampling values against the text params model, so a failure there names the text param."""
+"""The request key of each native text param whose key differs from it. The native route checks a chat request's
+sampling values against the text params model, so a failure there reports the text param."""
 
 MAX_FAILED_CANCELS: int = 10_000
 """The most finished requests with a failed cancel held for the shutdown drain; the oldest is dropped past it.
@@ -807,7 +807,7 @@ def _format_location(location: tuple[int | str, ...], request_body: object) -> s
 def _validation_error(error: ValidationError, request_body: object) -> ChatFrontError:
     """Create the 400 for the first validation failure of a request body.
 
-    The message is prefixed with the request path unless it already names the parameter in OpenAI's wording.
+    The message is prefixed with the request path unless it already holds the parameter in OpenAI's wording.
 
     Args:
         error: The pydantic failure.
@@ -1433,7 +1433,7 @@ def _wait_error(
 def _declaration_gap_error(impossible_reason: ChatImpossibleReason, *, request_id: str) -> ChatFrontError:
     """Create the 404 for a request the online workers serving its model cannot take because of what they declare.
 
-    Retrying the same request does not help until a worker declaring the missing names comes online, so the error
+    Retrying the same request does not help until a worker declaring the missing values comes online, so the error
     carries no ``Retry-After``.
     """
     causes: list[str] = []
