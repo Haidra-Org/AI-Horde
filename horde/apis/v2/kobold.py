@@ -201,7 +201,7 @@ class TextAsyncGenerate(GenerateTemplate):
             "id": self.wp.id,
             "kudos": round(self.kudos),
         }
-        if not database.wp_has_valid_workers(self.wp) and not settings.mode_raid():
+        if not database.check_new_request_has_valid_workers(self.wp) and not settings.mode_raid():
             ret_dict["message"] = self.get_size_too_big_message()
         return (ret_dict, 202)
 

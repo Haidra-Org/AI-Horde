@@ -41,6 +41,26 @@ _COMPLETION_VALIDATED_FIELD = "completion_validated"
 _STALL_VALIDATED_FIELD = "stall_validated"
 
 
+def assignment_pressure_window_is_sufficient(*, target_created_at: datetime, observed_at: datetime) -> bool:
+    """Return whether a request has been queued long enough for assignment pressure to fire.
+
+    The observation window opens at the later of the request's creation and the
+    start of the bounded window, so a request younger than the minimum always
+    yields ``insufficient_window`` whatever the dispatch history holds. Callers
+    use this to skip loading that history.
+
+    Args:
+        target_created_at: Creation time of the queued request.
+        observed_at: End of the bounded observation window.
+
+    Returns:
+        True when the window spans at least the minimum observation period.
+    """
+
+    window_start = max(target_created_at, observed_at - ASSIGNMENT_PRESSURE_WINDOW)
+    return (observed_at - window_start).total_seconds() >= ASSIGNMENT_PRESSURE_MINIMUM_SECONDS
+
+
 @dataclass(frozen=True)
 class SchedulingForecast:
     """Represent one shadow forecast for request start and completion."""
@@ -473,7 +493,7 @@ def calculate_assignment_pressure(
         arriving_work > returned_work for arriving_work, returned_work in zip(interval_arriving_work, interval_returned_work, strict=True)
     )
 
-    if (observed_at - window_start).total_seconds() < ASSIGNMENT_PRESSURE_MINIMUM_SECONDS:
+    if not assignment_pressure_window_is_sufficient(target_created_at=target_created_at, observed_at=observed_at):
         evidence = "insufficient_window"
     elif has_incomplete_return_history:
         evidence = "incomplete_return_history"

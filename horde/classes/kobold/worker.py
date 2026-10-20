@@ -31,6 +31,27 @@ uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(
 text_array_column_type = ARRAY(db.Text) if not SQLITE_MODE else JSON
 """A list of strings: a text array on Postgres, JSON where arrays are not available."""
 
+TEXT_WORKER_DECLARATION_GENERATION_KEY = "text_worker_declaration_generation"
+"""Redis counter of changes to the text worker state that decides chat eligibility: the chat declaration and the model
+list. A cached text request availability records the value it was computed under and is recomputed once the counter
+moves, so a worker that pops with a new declaration is reflected at the next status poll rather than when the cache
+expires. A missing key reads as 0."""
+
+
+def bump_text_worker_declaration_generation() -> None:
+    """Invalidate every cached text request availability computed before the current worker state.
+
+    Call only after the changed worker row is committed. A poll that computes between the bump and the commit would
+    read the old row and cache it under the new generation, keeping the stale verdict until the cache expires.
+    Only the primary Redis is incremented because availability reads the counter from the primary alone.
+    """
+    if hr.horde_r is None:
+        return
+    try:
+        hr.horde_r.incr(TEXT_WORKER_DECLARATION_GENERATION_KEY)
+    except Exception as err:
+        logger.warning(f"Failed to bump the text worker declaration generation: {err}")
+
 
 def get_minimum_text_worker_speed(model_names: Sequence[str]) -> int:
     """Return the normal-speed threshold for a text worker's first model.
@@ -121,9 +142,11 @@ class TextWorker(Worker):
     ):
         # The chat declaration is replaced at every pop, outside the check-in debounce: this request's chat
         # eligibility and payload shape are decided from these fields, and a worker that stops declaring chat must
-        # not receive a chat payload. Unchanged values leave the row clean, so a steady worker adds no UPDATE; a
-        # changed one is written by the commit the pop makes after check-in. The plain-job opt-out is part of the
+        # not receive a chat payload. Unchanged values leave the row clean, so a steady worker does not add an UPDATE or a
+        # generation bump. A changed one is committed here, ahead of the pop's own commit, because the bump that
+        # invalidates cached request availability must follow the commit. The plain-job opt-out is part of the
         # declaration for the same reason: a chat-only worker must not receive a prompt.
+        previous_chat_declaration = self.get_chat_declaration()
         self.accepts_chat_jobs = accepts_chat_jobs
         self.accepts_prompt_jobs = accepts_prompt_jobs or not accepts_chat_jobs
         self.chat_features = sorted(set(chat_features or ()) & KNOWN_CHAT_DECLARATIONS) if accepts_chat_jobs else None
@@ -134,7 +157,11 @@ class TextWorker(Worker):
         self.image_transports = (
             sorted(set(image_transports or ()) & {transport.value for transport in ChatImageTransport}) if accepts_chat_jobs else None
         )
+        chat_declaration_changed = self.get_chat_declaration() != previous_chat_declaration
         if not super().check_in(**kwargs):
+            if chat_declaration_changed:
+                db.session.commit()
+                bump_text_worker_declaration_generation()
             return
         self.max_length = max_length
         self.max_context_length = max_context_length
@@ -147,6 +174,40 @@ class TextWorker(Worker):
             f"at {self.max_length} max tokens and {self.max_context_length} max content length.",
         )
         db.session.commit()
+        if chat_declaration_changed:
+            bump_text_worker_declaration_generation()
+
+    def get_chat_declaration(self) -> tuple[Any, ...]:
+        """Return the stored check-in fields that decide chat eligibility, for detecting a changed declaration.
+
+        Returns:
+            The chat opt-in, the plain-job opt-in, the chat features, limits, model and image transports.
+        """
+        return (
+            self.accepts_chat_jobs,
+            self.accepts_prompt_jobs,
+            self.chat_features,
+            self.chat_max_context_length,
+            self.chat_max_length,
+            self.chat_tools_max_temperature,
+            self.chat_model_id,
+            self.image_transports,
+        )
+
+    def set_models(self, models) -> bool:
+        """Replace the advertised models, bumping the declaration generation when they change.
+
+        A chat request that lists models is refused by a worker that does not advertise any of them, and the pop speed threshold
+        depends on the first model, so the model list is part of eligibility. The base method commits a change
+        before returning, so the bump follows the commit.
+
+        Returns:
+            True when the stored model list changed.
+        """
+        models_changed = super().set_models(models)
+        if models_changed:
+            bump_text_worker_declaration_generation()
+        return models_changed
 
     def refresh_softprompt_cache(self) -> list[str]:
         # Read the authoritative rows straight from text_worker_softprompts rather than

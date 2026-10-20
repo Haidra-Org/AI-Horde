@@ -6,17 +6,21 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, ChatFeature, ChatGuarantee
 
+from horde.apis.v2.base import GenerateTemplate
+from horde.apis.v2.kobold import TextAsyncGenerate
 from horde.classes.base.user import UserRoleTypes
 from horde.classes.base.worker import WorkerModel
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.classes.kobold.worker import TextWorker, get_minimum_text_worker_speed
+from horde.classes.kobold.worker import TEXT_WORKER_DECLARATION_GENERATION_KEY, TextWorker, get_minimum_text_worker_speed
 from horde.database import functions
 from horde.flask import db
 
@@ -83,6 +87,50 @@ def test_availability_matches_model_dependent_pop_speed(
 
     assert get_minimum_text_worker_speed([model_name]) == (5 if parameter_count == 7 else 3)
     assert availability.worker_count == expected_workers
+
+
+def test_queuing_a_text_request_seeds_the_availability_its_first_status_poll_reads(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_name = "seeded-model"
+    monkeypatch.setattr(
+        "horde.classes.kobold.worker.model_reference.get_text_model_multiplier",
+        lambda _model_name: 20,
+    )
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    request = _make_text_request(user, model_name)
+    _make_text_worker(user, model_name, speed=10)
+
+    def create_request(resource: TextAsyncGenerate) -> None:
+        resource.wp = request
+        resource.kudos = 1
+
+    resource = TextAsyncGenerate()
+    monkeypatch.setattr(resource, "parse_request_args", lambda: SimpleNamespace(context_fit=None, dry_run=False))
+    monkeypatch.setattr(GenerateTemplate, "post", create_request)
+
+    response, status_code = resource.queue_generation()
+
+    assert status_code == 202
+    assert "message" not in response
+    assert json.loads(fake_redis.horde_r_get(f"wp_availability_{request.id}")) == {
+        "workers": 1,
+        "threads": 1,
+        "might_stall": False,
+        "impossible_reason": None,
+        "declaration_generation": 0,
+    }
+
+    def fail_worker_query(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("the first status poll repeated the eligible-worker query")
+
+    monkeypatch.setattr(functions, "_iter_eligible_workers_for_request", fail_worker_query)
+    assert functions.get_worker_availability_for_request(request).worker_count == 1
 
 
 def test_runtime_gate_rejects_a_model_the_worker_does_not_serve(
@@ -552,3 +600,98 @@ def test_a_debounced_check_in_stores_the_text_job_opt_out(
     db.session.commit()
 
     assert worker.accepts_prompt_jobs is stored
+
+
+def _declaration_generation(fake_redis: Any) -> int:
+    return int(fake_redis.horde_r.get(TEXT_WORKER_DECLARATION_GENERATION_KEY) or 0)
+
+
+def _make_debounced_chat_worker(user: Any) -> TextWorker:
+    """Return a chat worker whose next check-in falls inside the debounce, which still replaces the declaration."""
+    worker = _make_chat_worker(user)
+    worker.created = datetime.utcnow() - timedelta(minutes=5)
+    worker.last_check_in = datetime.utcnow()
+    db.session.commit()
+    return worker
+
+
+def _check_in_chat_declaration(worker: TextWorker, **chat_declaration: Any) -> None:
+    declaration = {
+        "accepts_chat_jobs": True,
+        "chat_features": [ChatFeature.SEED.value, ChatFeature.PRESENCE_PENALTY.value, STRICT_BASELINE_GUARANTEE],
+        "chat_max_context_length": 8192,
+        "chat_max_length": 1024,
+        "chat_model_id": CHAT_MODEL,
+        **chat_declaration,
+    }
+    worker.check_in(80, 1024, [], **declaration)
+
+
+def test_cached_chat_availability_is_recomputed_after_a_worker_declaration_change(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """A worker popping with a new declaration is reflected at the next poll, while the cache entry is still live."""
+    user = make_user()
+    worker = _make_debounced_chat_worker(user)
+    request = _make_chat_request(user)
+
+    assert functions.get_worker_availability_for_request(request).worker_count == 1
+
+    _check_in_chat_declaration(worker, accepts_chat_jobs=False)
+
+    assert fake_redis.horde_r.get(f"wp_availability_{request.id}") is not None
+    availability = functions.get_worker_availability_for_request(request)
+    assert availability.worker_count == 0
+    assert availability.is_possible is False
+
+
+def test_a_steady_chat_check_in_does_not_bump_the_declaration_generation(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    user = make_user()
+    worker = _make_debounced_chat_worker(user)
+    _check_in_chat_declaration(worker)
+    generation = _declaration_generation(fake_redis)
+
+    _check_in_chat_declaration(worker)
+    _check_in_chat_declaration(worker)
+
+    assert _declaration_generation(fake_redis) == generation
+
+
+def test_a_changed_chat_declaration_bumps_the_declaration_generation_once(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    user = make_user()
+    worker = _make_debounced_chat_worker(user)
+    _check_in_chat_declaration(worker)
+    generation = _declaration_generation(fake_redis)
+
+    _check_in_chat_declaration(worker, chat_tools_max_temperature=1.0)
+    _check_in_chat_declaration(worker, chat_tools_max_temperature=1.0)
+
+    assert _declaration_generation(fake_redis) == generation + 1
+    db.session.expire(worker)
+    assert worker.chat_tools_max_temperature == 1.0
+
+
+def test_a_changed_model_list_bumps_the_declaration_generation_once(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    user = make_user()
+    worker = _make_chat_worker(user)
+
+    assert worker.set_models([CHAT_MODEL]) is False
+    assert _declaration_generation(fake_redis) == 0
+
+    assert worker.set_models([CHAT_MODEL, "koboldcpp/another-model"]) is True
+    assert worker.set_models([CHAT_MODEL, "koboldcpp/another-model"]) is False
+    assert _declaration_generation(fake_redis) == 1

@@ -32,7 +32,7 @@ from horde.classes.base.waiting_prompt import WaitingPrompt, WPAllowedWorkers, W
 from horde.classes.base.worker import Worker, WorkerMessage, WorkerModel, WorkerPerformance, WorkerTemplate
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.classes.kobold.worker import TextWorker
+from horde.classes.kobold.worker import TEXT_WORKER_DECLARATION_GENERATION_KEY, TextWorker
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -61,6 +61,7 @@ from horde.request_scheduling import (
     AssignmentPressure,
     EligibleWorkerState,
     PrecedingArrival,
+    assignment_pressure_window_is_sufficient,
     build_worker_scheduling_state,
     get_request_assignment_pressure,
 )
@@ -2198,25 +2199,29 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
         Python capability gates used by the existing possibility check.
 
     Performance:
-        Results are cached per request for 60 seconds. A cache miss evaluates
-        every SQL candidate because an exact count cannot stop at the first
-        valid worker. Pressure history is loaded for the complete eligible pool
-        in one Redis pipeline.
+        Results are cached per request for 60 seconds. A text request's cached
+        result is discarded once a text worker's declaration changes, which
+        costs reading the cache entry and the declaration generation from the
+        primary Redis in one MGET. A cache miss evaluates every SQL candidate
+        because an exact count cannot stop at the first valid worker. Pressure
+        history is loaded for the complete eligible pool in one Redis pipeline,
+        and only once the request is old enough for pressure to fire.
     """
 
-    cached_availability = hr.horde_r_get(f"wp_availability_{waiting_prompt.id}")
+    cached_availability, declaration_generation = _get_cached_availability_and_declaration_generation(waiting_prompt)
     if cached_availability is not None:
         try:
             parsed_availability = json.loads(cached_availability)
-            might_stall = parsed_availability["might_stall"]
-            if not isinstance(might_stall, bool):
-                raise TypeError("might_stall must be a boolean")
-            return RequestWorkerAvailability(
-                worker_count=int(parsed_availability["workers"]),
-                thread_count=int(parsed_availability["threads"]),
-                might_stall=might_stall,
-                impossible_reason=_parse_cached_impossible_reason(parsed_availability.get("impossible_reason")),
-            )
+            if parsed_availability.get("declaration_generation") == declaration_generation:
+                might_stall = parsed_availability["might_stall"]
+                if not isinstance(might_stall, bool):
+                    raise TypeError("might_stall must be a boolean")
+                return RequestWorkerAvailability(
+                    worker_count=int(parsed_availability["workers"]),
+                    thread_count=int(parsed_availability["threads"]),
+                    might_stall=might_stall,
+                    impossible_reason=_parse_cached_impossible_reason(parsed_availability.get("impossible_reason")),
+                )
         except (KeyError, TypeError, ValueError):
             logger.debug(f"Ignoring malformed worker availability cache for request {waiting_prompt.id}")
 
@@ -2225,6 +2230,154 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
         eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt, refusals))
     # Only a request no worker can take pays for naming the cause, from the refusals the same pass collected.
     impossible_reason = None if eligible_workers else find_chat_declaration_gap(waiting_prompt, refusals)
+    thread_count = sum(max(worker.threads, 1) for worker in eligible_workers)
+    availability = RequestWorkerAvailability(
+        worker_count=len(eligible_workers),
+        thread_count=thread_count,
+        might_stall=_assess_request_might_stall(waiting_prompt, eligible_workers, thread_count),
+        impossible_reason=impossible_reason,
+    )
+    _cache_worker_availability(waiting_prompt, availability, declaration_generation)
+    return availability
+
+
+def _get_cached_availability_and_declaration_generation(waiting_prompt: WaitingPrompt) -> tuple[bytes | str | None, int]:
+    """Return a request's cached availability and the declaration generation a usable entry must carry.
+
+    Only text eligibility depends on the text worker declaration, so image requests skip the counter and keep the
+    local-first read. A text request reads both keys from the primary in one MGET: the counter must not come from the
+    local cache, whose copy would hide a declaration change for up to its TTL.
+
+    Args:
+        waiting_prompt: Request whose cached availability is wanted.
+
+    Returns:
+        The raw cache entry or None, and the current generation (0 for image requests and a missing counter).
+    """
+    availability_key = f"wp_availability_{waiting_prompt.id}"
+    if waiting_prompt.wp_type != "text" or hr.horde_r is None:
+        return hr.horde_r_get(availability_key), 0
+    cached_availability, raw_generation = hr.horde_r.mget(availability_key, TEXT_WORKER_DECLARATION_GENERATION_KEY)
+    return cached_availability, _parse_declaration_generation(raw_generation)
+
+
+def _get_declaration_generation(waiting_prompt: WaitingPrompt) -> int:
+    """Return the declaration generation an availability computed now for this request must be cached under.
+
+    Read before the eligible-worker query: a worker bumping the counter after committing a new declaration then
+    leaves this entry outdated, whichever row the query saw.
+
+    Args:
+        waiting_prompt: Request whose availability is about to be computed.
+
+    Returns:
+        The primary's text worker declaration generation for a text request, and 0 otherwise.
+    """
+    if waiting_prompt.wp_type != "text" or hr.horde_r is None:
+        return 0
+    return _parse_declaration_generation(hr.horde_r.get(TEXT_WORKER_DECLARATION_GENERATION_KEY))
+
+
+def _parse_declaration_generation(raw_generation: bytes | str | None) -> int:
+    """Return a stored declaration generation, reading a counter that was never incremented as 0."""
+    if raw_generation is None:
+        return 0
+    return int(raw_generation)
+
+
+def check_new_request_has_valid_workers(waiting_prompt: WaitingPrompt) -> bool:
+    """Return whether a just-created request has an eligible worker, seeding its availability when it does.
+
+    A feasible verdict is cached as the full availability, so the first status poll does not repeat the
+    eligible-worker query. An infeasible verdict caches only the validity flag: the status route reports the
+    cause from the workers' declarations, and a worker commonly checks in with new declarations between
+    creation and the first poll, so that poll computes availability afresh.
+
+    Args:
+        waiting_prompt: Request created by the current API call, with no generation started.
+
+    Returns:
+        True when at least one recently active worker passes all known dispatch gates.
+    """
+
+    declaration_generation = _get_declaration_generation(waiting_prompt)
+    with logfire.span("horde.db.eligible_workers", wp_id=str(waiting_prompt.id)):
+        eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt))
+    if not eligible_workers:
+        hr.horde_r_setex(f"wp_validity_{waiting_prompt.id}", timedelta(seconds=60), 0)
+        return False
+    thread_count = sum(max(worker.threads, 1) for worker in eligible_workers)
+    availability = RequestWorkerAvailability(
+        worker_count=len(eligible_workers),
+        thread_count=thread_count,
+        might_stall=_assess_request_might_stall(waiting_prompt, eligible_workers, thread_count),
+    )
+    _cache_worker_availability(waiting_prompt, availability, declaration_generation)
+    return True
+
+
+def _assess_request_might_stall(
+    waiting_prompt: WaitingPrompt,
+    eligible_workers: list[ImageWorker | TextWorker],
+    thread_count: int,
+) -> bool:
+    """Return the stall advisory for a request, recording the assignment-pressure evidence behind it.
+
+    Args:
+        waiting_prompt: Request whose incoming pressure is measured.
+        eligible_workers: Workers that passed the request's dispatch gates.
+        thread_count: Advertised threads across ``eligible_workers``.
+
+    Returns:
+        Whether preceding arrivals persistently outpace clearance; False when nothing is waiting.
+    """
+
+    if waiting_prompt.n <= 0:
+        return False
+    assignment_pressure = _measure_request_assignment_pressure(waiting_prompt, eligible_workers, thread_count)
+    try:
+        record_request_assignment_pressure(
+            gentype=waiting_prompt.wp_type,
+            evidence=assignment_pressure.evidence,
+            might_stall=assignment_pressure.might_stall,
+            dispatch_opportunities=assignment_pressure.dispatch_opportunities,
+            lost_opportunities=assignment_pressure.lost_opportunities,
+            returned_capacity=assignment_pressure.returned_capacity,
+            active_preceding_dispatches=assignment_pressure.active_preceding_dispatches,
+            arriving_preceding_work=assignment_pressure.arriving_preceding_work,
+            returned_work=assignment_pressure.returned_work,
+        )
+    except Exception as err:
+        logger.warning(f"Unable to record assignment-pressure metrics for request {waiting_prompt.id}: {err}")
+    return assignment_pressure.might_stall
+
+
+def _measure_request_assignment_pressure(
+    waiting_prompt: WaitingPrompt,
+    eligible_workers: list[ImageWorker | TextWorker],
+    thread_count: int,
+) -> AssignmentPressure:
+    """Return the assignment-pressure evidence for a request with generations still waiting.
+
+    A request younger than the minimum observation window cannot reach any verdict other than
+    ``insufficient_window``, so its dispatch history and preceding arrivals are not loaded. That
+    verdict carries zero counts instead of the partial-window counts a full evaluation would report;
+    the recorded counts therefore describe only requests old enough to be judged.
+
+    Args:
+        waiting_prompt: Request whose incoming pressure is measured.
+        eligible_workers: Workers that passed the request's dispatch gates.
+        thread_count: Advertised threads across ``eligible_workers``.
+
+    Returns:
+        The evidence and the resulting stall advisory.
+    """
+
+    if not eligible_workers:
+        return AssignmentPressure("none_eligible", 0, 0, 0, False)
+    observed_at = datetime.utcnow()
+    if not assignment_pressure_window_is_sufficient(target_created_at=waiting_prompt.created, observed_at=observed_at):
+        return AssignmentPressure("insufficient_window", 0, 0, 0, False)
     eligible_worker_states = tuple(
         EligibleWorkerState(
             worker_id=str(worker.id),
@@ -2232,64 +2385,46 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
                 gentype=waiting_prompt.wp_type,
                 model_names=_worker_model_names(worker),
                 bridge_agent=worker.bridge_agent,
-                softprompt_names=(
-                    _text_worker_softprompt_names(worker) if isinstance(worker, TextWorker) else ()
-                ),
+                softprompt_names=(_text_worker_softprompt_names(worker) if isinstance(worker, TextWorker) else ()),
             ),
         )
         for worker in eligible_workers
     )
-    thread_count = sum(max(worker.threads, 1) for worker in eligible_workers)
-    might_stall = False
-    if waiting_prompt.n > 0:
-        assignment_pressure = AssignmentPressure("none_eligible", 0, 0, 0, False)
-        if eligible_worker_states:
-            with logfire.span("horde.scheduling.assignment_pressure", eligible_workers=len(eligible_worker_states)):
-                observed_at = datetime.utcnow()
-                active_dispatches = _get_active_worker_dispatches(
-                    waiting_prompt,
-                    [worker_state.worker_id for worker_state in eligible_worker_states],
-                )
-                assignment_pressure = get_request_assignment_pressure(
-                    observed_at=observed_at,
-                    target_request_id=str(waiting_prompt.id),
-                    target_user_id=str(waiting_prompt.user_id),
-                    target_created_at=waiting_prompt.created,
-                    target_extra_priority=int(waiting_prompt.extra_priority),
-                    eligible_worker_states={
-                        worker_state.worker_id: worker_state.scheduling_state for worker_state in eligible_worker_states
-                    },
-                    eligible_worker_threads=thread_count,
-                    active_dispatch_ids=[dispatch.dispatch_id for dispatch in active_dispatches],
-                    preceding_arrivals=_get_preceding_arrivals(waiting_prompt, eligible_workers, observed_at),
-                )
-        might_stall = assignment_pressure.might_stall
-        try:
-            record_request_assignment_pressure(
-                gentype=waiting_prompt.wp_type,
-                evidence=assignment_pressure.evidence,
-                might_stall=assignment_pressure.might_stall,
-                dispatch_opportunities=assignment_pressure.dispatch_opportunities,
-                lost_opportunities=assignment_pressure.lost_opportunities,
-                returned_capacity=assignment_pressure.returned_capacity,
-                active_preceding_dispatches=assignment_pressure.active_preceding_dispatches,
-                arriving_preceding_work=assignment_pressure.arriving_preceding_work,
-                returned_work=assignment_pressure.returned_work,
-            )
-        except Exception as err:
-            logger.warning(f"Unable to record assignment-pressure metrics for request {waiting_prompt.id}: {err}")
-    availability = RequestWorkerAvailability(
-        worker_count=len(eligible_workers),
-        thread_count=thread_count,
-        might_stall=might_stall,
-        impossible_reason=impossible_reason,
-    )
-    worker_found = availability.worker_count > 0
+    with logfire.span("horde.scheduling.assignment_pressure", eligible_workers=len(eligible_worker_states)):
+        active_dispatches = _get_active_worker_dispatches(
+            waiting_prompt,
+            [worker_state.worker_id for worker_state in eligible_worker_states],
+        )
+        return get_request_assignment_pressure(
+            observed_at=observed_at,
+            target_request_id=str(waiting_prompt.id),
+            target_user_id=str(waiting_prompt.user_id),
+            target_created_at=waiting_prompt.created,
+            target_extra_priority=int(waiting_prompt.extra_priority),
+            eligible_worker_states={worker_state.worker_id: worker_state.scheduling_state for worker_state in eligible_worker_states},
+            eligible_worker_threads=thread_count,
+            active_dispatch_ids=[dispatch.dispatch_id for dispatch in active_dispatches],
+            preceding_arrivals=_get_preceding_arrivals(waiting_prompt, eligible_workers, observed_at),
+        )
+
+
+def _cache_worker_availability(
+    waiting_prompt: WaitingPrompt,
+    availability: RequestWorkerAvailability,
+    declaration_generation: int,
+) -> None:
+    """Memoize a request's availability and the validity verdict derived from it for 60 seconds.
+
+    The availability entry carries the declaration generation read before it was computed, and a read under any
+    other generation ignores it.
+    """
+
     hr.horde_r_setex(
         f"wp_validity_{waiting_prompt.id}",
         timedelta(seconds=60),
-        int(worker_found),
+        int(availability.is_possible),
     )
+    impossible_reason = availability.impossible_reason
     hr.horde_r_setex(
         f"wp_availability_{waiting_prompt.id}",
         timedelta(seconds=60),
@@ -2299,10 +2434,10 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
                 "threads": availability.thread_count,
                 "might_stall": availability.might_stall,
                 "impossible_reason": impossible_reason.model_dump(mode="json") if impossible_reason is not None else None,
+                "declaration_generation": declaration_generation,
             },
         ),
     )
-    return availability
 
 
 def _get_active_worker_dispatches(

@@ -6,6 +6,8 @@
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from horde import request_scheduling
 from horde.bridge_reference import CAPABILITY_CONTROL_STRENGTH_REGEN_VERSION
 
@@ -256,6 +258,56 @@ def test_worker_priority_pass_precedes_a_target_outside_that_pass() -> None:
     )
 
     assert pressure.might_stall is True
+
+
+@pytest.mark.parametrize(
+    ("request_age", "expected_sufficient"),
+    [
+        (timedelta(seconds=-5), False),
+        (timedelta(seconds=0), False),
+        (timedelta(seconds=request_scheduling.ASSIGNMENT_PRESSURE_MINIMUM_SECONDS - 1), False),
+        (timedelta(seconds=request_scheduling.ASSIGNMENT_PRESSURE_MINIMUM_SECONDS), True),
+        (request_scheduling.ASSIGNMENT_PRESSURE_WINDOW + timedelta(minutes=10), True),
+    ],
+)
+def test_assignment_pressure_window_is_sufficient_from_the_minimum_request_age(
+    request_age: timedelta,
+    expected_sufficient: bool,
+) -> None:
+    now = datetime(2026, 8, 22, 12, 0, 0)
+
+    assert (
+        request_scheduling.assignment_pressure_window_is_sufficient(target_created_at=now - request_age, observed_at=now)
+        is expected_sufficient
+    )
+
+
+@pytest.mark.parametrize("request_age_seconds", [30, 119, 120, 240, 900])
+def test_insufficient_window_evidence_follows_the_age_rule(request_age_seconds: int) -> None:
+    # Callers skip loading history for young requests on the strength of this rule, so the ladder
+    # must reach insufficient_window for exactly the ages the rule rejects.
+    now = datetime(2026, 8, 22, 12, 0, 0)
+    target_created_at = now - timedelta(seconds=request_age_seconds)
+
+    pressure = request_scheduling.calculate_assignment_pressure(
+        observed_at=now,
+        target_request_id="target",
+        target_user_id="target-user",
+        target_created_at=target_created_at,
+        target_extra_priority=0,
+        eligible_worker_states={"worker-1": _CURRENT_WORKER_STATE},
+        eligible_worker_threads=1,
+        active_dispatch_ids=("dispatch-1",),
+        preceding_arrivals=(),
+        dispatch_observations=[_dispatch(now, 1, created_at=now, dispatched_at=now - timedelta(seconds=10))],
+        capacity_returns=[],
+    )
+
+    window_is_sufficient = request_scheduling.assignment_pressure_window_is_sufficient(
+        target_created_at=target_created_at,
+        observed_at=now,
+    )
+    assert (pressure.evidence == "insufficient_window") is not window_is_sufficient
 
 
 def test_dispatch_and_capacity_return_observations_round_trip_through_redis(fake_redis, monkeypatch) -> None:

@@ -859,11 +859,16 @@ class Worker(WorkerTemplate):
             return self.refresh_model_cache()
         return models_ret
 
-    def set_models(self, models):
+    def set_models(self, models) -> bool:
+        """Replace the worker's advertised models, committing only when they change.
+
+        Returns:
+            True when the stored model list changed.
+        """
         models = self.parse_models(models)
         existing_model_names = set(self.get_model_names())
         if existing_model_names == models:
-            return
+            return False
         # logger.debug([existing_model_names,models, existing_model_names == models])
         db.session.query(WorkerModel).filter_by(worker_id=self.id).delete()
         db.session.flush()
@@ -875,6 +880,7 @@ class Worker(WorkerTemplate):
         # otherwise keep serving the pre-change rows for the rest of this session.
         db.session.expire(self, ["models"])
         self.refresh_model_cache()
+        return True
 
     def parse_models(self, models):
         """Parses the models provided by the worker into a set

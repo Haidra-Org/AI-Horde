@@ -289,6 +289,50 @@ class TestFreshCapableWorker:
         # The existing boolean API and cache contract remain unchanged.
         assert f.wp_has_valid_workers(wp) is True
 
+    def test_young_request_availability_does_not_load_pressure_history(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        wp = _make_image_wp(user)
+        _make_image_worker(user)
+
+        def fail_history_load(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("a request inside the minimum window loaded assignment-pressure history")
+
+        monkeypatch.setattr(f, "_get_active_worker_dispatches", fail_history_load)
+        monkeypatch.setattr(f, "_get_preceding_arrivals", fail_history_load)
+        monkeypatch.setattr(f, "get_request_assignment_pressure", fail_history_load)
+
+        availability = f.get_worker_availability_for_request(wp)
+
+        assert availability.worker_count == 1
+        assert availability.might_stall is False
+
+    def test_request_past_the_minimum_window_is_judged_on_pressure_history(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        wp = _make_image_wp(user)
+        wp.created = datetime.utcnow() - timedelta(minutes=4)
+        db.session.commit()
+        _make_image_worker(user)
+        stalled = f.AssignmentPressure("arrival_outpaces_drain", 3, 2, 1, True)
+        monkeypatch.setattr(f, "get_request_assignment_pressure", lambda **_kwargs: stalled)
+
+        availability = f.get_worker_availability_for_request(wp)
+
+        assert availability.might_stall is True
+
     def test_availability_does_not_read_each_workers_model_cache(
         self,
         db_session: Any,
