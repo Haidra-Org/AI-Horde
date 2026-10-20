@@ -6,8 +6,8 @@
 
 ``get_status`` assembles a status payload from three sources that are read at
 different moments: ``self.n``, loaded with the instance; the validity verdict,
-sampled by the caller and passed in; and the generation counts, read from
-``processing_gens`` when the payload is built. A generation that starts in
+sampled by the caller and passed in; and the generation counts, read with the
+request's completion snapshot when the payload is built. A generation that starts in
 between leaves the earlier two describing a state the counts have already moved
 past.
 

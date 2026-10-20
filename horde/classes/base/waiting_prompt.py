@@ -113,6 +113,8 @@ class RequestCompletionSnapshot:
     """The return code stored with ``fault_reason``."""
     cancelled: bool = False
     """Whether maintenance stopped dispatching jobs; work already in flight can still return results."""
+    faulted_jobs: int = 0
+    """The request's real generations that faulted without storing a result, restarted or not."""
 
     def is_completed(self, jobs: int) -> bool:
         """Return whether a request asking for ``jobs`` generations is completed in this snapshot.
@@ -770,37 +772,38 @@ class WaitingPrompt(db.Model):
         ``n`` and fault flag decide.
         """
         procgen_class = procgen_classes[self.wp_type]
-        completed_jobs = (
-            select(func.count(procgen_class.id))
+        # One grouped pass over the generation rows reads every count; a correlated subquery per count would scan them
+        # once per count on every submit, status read and completion check. The derived table is still part of the same
+        # statement as ``n``, so the counts stay consistent with it.
+        unfinished = procgen_class.generation.is_(None)
+        generation_counts = (
+            select(
+                procgen_class.wp_id.label("wp_id"),
+                func.count().filter(procgen_class.faulted.is_(False), procgen_class.generation.is_not(None)).label("completed_jobs"),
+                func.count().filter(procgen_class.faulted.is_(False), unfinished).label("processing_jobs"),
+                func.count().filter(procgen_class.faulted.is_(True), unfinished).label("faulted_jobs"),
+            )
             .where(
                 procgen_class.wp_id == self.id,
                 procgen_class.fake.is_(False),
-                procgen_class.faulted.is_(False),
-                procgen_class.generation.is_not(None),
             )
-            .scalar_subquery()
-        )
-        processing_jobs = (
-            select(func.count(procgen_class.id))
-            .where(
-                procgen_class.wp_id == self.id,
-                procgen_class.fake.is_(False),
-                procgen_class.faulted.is_(False),
-                procgen_class.generation.is_(None),
-            )
-            .scalar_subquery()
+            .group_by(procgen_class.wp_id)
+            .subquery()
         )
         fault_reason_column, fault_rc_column = self.fault_detail_columns()
+        # The outer join keeps the request row when it has no generations; its counts then read null.
         completion_row = (
             db.session.query(
                 WaitingPrompt.n,
                 WaitingPrompt.faulted,
-                completed_jobs,
-                processing_jobs,
+                func.coalesce(generation_counts.c.completed_jobs, 0),
+                func.coalesce(generation_counts.c.processing_jobs, 0),
+                func.coalesce(generation_counts.c.faulted_jobs, 0),
                 fault_reason_column,
                 fault_rc_column,
                 WaitingPrompt.terminal_outcome,
             )
+            .outerjoin(generation_counts, generation_counts.c.wp_id == WaitingPrompt.id)
             .filter(WaitingPrompt.id == self.id)
             .one_or_none()
         )
@@ -819,6 +822,7 @@ class WaitingPrompt(db.Model):
             stored_faulted,
             completed_job_count,
             processing_job_count,
+            faulted_job_count,
             stored_fault_reason,
             stored_fault_rc,
             terminal_outcome,
@@ -828,6 +832,7 @@ class WaitingPrompt(db.Model):
             faulted=stored_faulted,
             completed_jobs=completed_job_count,
             processing_jobs=processing_job_count,
+            faulted_jobs=faulted_job_count,
             fault_reason=stored_fault_reason,
             fault_rc=stored_fault_rc,
             cancelled=terminal_outcome == RequestTerminalOutcome.CANCELLED.value,
@@ -917,15 +922,19 @@ class WaitingPrompt(db.Model):
         """
         completion = self.read_completion_snapshot()
         active_worker_thread_count = active_worker_count[1]
-        ret_dict = self.count_processing_gens()
-        # The snapshot's `n` is read earlier than the generation counts above: a
-        # generation started in between is counted here while `n` still includes
-        # the slot it consumed, reporting more outstanding generations than the
-        # request asked for. The slot count reconciles `waiting` against the
-        # counts actually reported. A faulted generation returns its slot to `n`
-        # and is reported separately as `restarted`, so it is not subtracted here.
-        # `jobs` is zero on rows predating the column, where no reconciliation is
-        # possible.
+        ret_dict = {
+            "finished": completion.completed_jobs,
+            "processing": completion.processing_jobs,
+            "restarted": completion.faulted_jobs,
+        }
+        # `n` can still count a slot that a generation has claimed: a pop writes
+        # `n` from the value it loaded, so concurrent pops of one request can
+        # leave a single decrement for two generations, reporting more
+        # outstanding generations than the request asked for. The slot count
+        # reconciles `waiting` against the counts actually reported. A faulted
+        # generation returns its slot to `n` and is reported separately as
+        # `restarted`, so it is not subtracted here. `jobs` is zero on rows
+        # predating the column, where no reconciliation is possible.
         waiting = max(completion.n, 0)
         if self.jobs > 0:
             waiting = min(waiting, max(self.jobs - ret_dict["processing"] - ret_dict["finished"], 0))
