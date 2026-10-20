@@ -34,10 +34,23 @@ def telemetry_environment(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch
 
 def test_telemetry_is_not_configured_without_the_environment(telemetry_environment: pytest.MonkeyPatch) -> None:
     configure_calls: list[dict[str, Any]] = []
+    httpx_instrumentations: list[dict[str, Any]] = []
     telemetry_environment.setattr(logfire, "configure", lambda **kwargs: configure_calls.append(kwargs))
+    telemetry_environment.setattr(logfire, "instrument_httpx", lambda **kwargs: httpx_instrumentations.append(kwargs))
 
     assert front_main.configure_telemetry() is False
     assert configure_calls == []
+    assert httpx_instrumentations == []
+
+
+def test_instrument_app_records_server_spans_except_health_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    fastapi_instrumentations: list[tuple[Any, dict[str, Any]]] = []
+    monkeypatch.setattr(logfire, "instrument_fastapi", lambda app, **kwargs: fastapi_instrumentations.append((app, kwargs)))
+    app = object()
+
+    front_main.instrument_app(app)  # type: ignore[arg-type]
+
+    assert fastapi_instrumentations == [(app, {"excluded_urls": "healthz"})]
 
 
 def test_telemetry_is_configured_from_an_otlp_endpoint_as_horde_oai(telemetry_environment: pytest.MonkeyPatch) -> None:
@@ -47,8 +60,11 @@ def test_telemetry_is_configured_from_an_otlp_endpoint_as_horde_oai(telemetry_en
     telemetry_environment.setattr(logfire, "configure", lambda **kwargs: configure_calls.append(kwargs))
     telemetry_environment.setattr(logfire, "loguru_handler", lambda: {"sink": print})
     telemetry_environment.setattr(logger, "add", lambda **kwargs: added_sinks.append(kwargs))
+    httpx_instrumentations: list[dict[str, Any]] = []
+    telemetry_environment.setattr(logfire, "instrument_httpx", lambda **kwargs: httpx_instrumentations.append(kwargs))
 
     assert front_main.configure_telemetry() is True
+    assert httpx_instrumentations == [{}]
     (configure_kwargs,) = configure_calls
     assert configure_kwargs["service_name"] == "horde-oai"
     assert configure_kwargs["send_to_logfire"] is False

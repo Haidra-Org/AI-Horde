@@ -174,6 +174,10 @@ class CancelOutcome(StrEnum):
     ACKNOWLEDGED = "acknowledged"
     FAILED = "failed"
     TIMED_OUT = "timed_out"
+    NOT_STARTED = "not_started"
+    """No cancel slot became free in time, so the cancel was not sent and is retried later."""
+    ALREADY_GONE = "already_gone"
+    """The Horde answered 404: the request no longer exists, such as after its expiry, so the cancel is not retried."""
 
 
 class InflightCounts(Protocol):

@@ -32,7 +32,7 @@ model list routes over the horde's native `/v2/generate/chat` routes (see
 | Admission caps and gauges' source | `horde/oai/app.py` | `InflightLimiter`, `InflightSlot` |
 | Request lifecycle | `horde/oai/app.py` | `_chat_completions`, `_wait_for_completion`, `_stream_completion` |
 | Submit and lost-submit recovery | `horde/oai/app.py` | `_submit`, `_recover_submit` |
-| Bounded cancels | `horde/oai/app.py` | `_cancel_within_budget`, `_cancel_open_requests` |
+| Bounded cancels | `horde/oai/app.py` | `_cancel_within_budget`, `_retry_failed_cancels`, `_cancel_open_requests` |
 | Per-request timing and finished line | `horde/oai/app.py` | `RequestTrace` |
 | Error envelope and SSE error | `horde/oai/app.py` | `ChatFrontError` |
 | OpenAI request, response and error models | `horde/oai/schema.py` | `ChatCompletionRequest`, `ChatCompletionResponse`, `ErrorMetadata` |
@@ -41,7 +41,7 @@ model list routes over the horde's native `/v2/generate/chat` routes (see
 | Model list entries | `horde/oai/mapping.py` | `build_model_card` |
 | Streamed chunks and keepalive | `horde/oai/sse.py` | `build_completion_events`, `build_keepalive_event`, `build_error_events` |
 | `Client-Agent` attribution | `horde/oai/attribution.py` | `build_client_agent` |
-| Native HTTP client and root rotation | `horde/oai/horde_client.py` | `HordeClient`, `create_http_client` |
+| Native HTTP client and root rotation | `horde/oai/horde_client.py` | `HordeClient`, `create_http_client`, `cancel_max_connections` |
 | Completion signal subscription and liveness ping | `horde/oai/waiter.py` | `CompletionSignalListener` |
 | Per-request wait, poll and deadline | `horde/oai/waiter.py` | `ChatRequestWatcher`, `WaitBudget`, `WakeSource` |
 | No eligible worker and declaration gap | `horde/oai/waiter.py`, `horde/oai/app.py` | `NoEligibleWorkerError`, `DeclarationGapError`, `_wait_error` |
@@ -174,8 +174,14 @@ worker count and the queued work.
 `configure_telemetry` runs before the application is built. It configures Logfire when
 `horde.telemetry.telemetry_enabled` is true and `OTEL_SDK_DISABLED` is not `true`, with the same variables, resource
 attributes and sampling as the Flask application, the service name `horde-oai` unless `OTEL_SERVICE_NAME` sets
-another, and the views from `horde.oai.metrics.histogram_views`. It bridges Loguru records to OpenTelemetry logs. The
-Flask application's `init_telemetry_early` is not reused because it instruments a Flask app.
+another, and the views from `horde.oai.metrics.histogram_views`. It bridges Loguru records to OpenTelemetry logs and
+instruments httpx, so each call to the horde is a client span whose `traceparent` the horde's Flask instrumentation
+continues. The Flask application's `init_telemetry_early` is not reused because it instruments a Flask app.
+
+`instrument_app` adds the server spans (`POST /v1/chat/completions`, `GET /v1/models`) once `create_app` has built
+the application; `main` calls it only when telemetry was configured. `/healthz` is excluded, since the listener and
+the container poll it every few seconds. The instrumentation does not capture headers or bodies. A streamed request's span lasts
+until the stream ends.
 
 `create_app` takes the meter from the global meter provider unless one is passed as `meter`; tests pass a meter of
 a separate `MeterProvider` with an `InMemoryMetricReader`. Unconfigured, the global provider does not record
@@ -207,7 +213,7 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | `horde.oai.client_retry_hints` | counter | none | Chat requests carrying `x-stainless-retry-count` above zero. |
 | `horde.oai.completions` | counter | `model`, `estimated_usage` | Delivered completions; `estimated_usage` true when a count was estimated because the worker did not report it. |
 | `horde.oai.completions.empty` | counter | `model` | Delivered completions with a generation holding no visible text, the case `x_horde.notice` reports. |
-| `horde.oai.cancels` | counter | `outcome` | Cancels sent to the horde: `acknowledged`, `failed`, or `timed_out` past `HORDE_OAI_CANCEL_TIMEOUT_SECONDS`. A failed or timed-out cancel is sent once more by the shutdown drain and counted again; at most `horde.oai.app.MAX_FAILED_CANCELS` answered requests are held for that, oldest dropped first. |
+| `horde.oai.cancels` | counter | `outcome` | Cancels sent to the horde: `acknowledged`, `failed`, `timed_out` when the HTTP call took longer than `HORDE_OAI_CANCEL_TIMEOUT_SECONDS`, `not_started` when no cancel slot became free within that time and the cancel was not sent, or `already_gone` when the horde answered 404 because the request no longer exists. A cancel that ended `failed`, `timed_out` or `not_started` is sent again every `HORDE_OAI_CANCEL_RETRY_SECONDS` and once more by the shutdown drain, each attempt counted; a request is dropped from the retries 20 minutes after its submit (`horde.oai.app.HORDE_CHAT_REQUEST_EXPIRY_SECONDS`), and at most `horde.oai.app.MAX_FAILED_CANCELS` answered requests are held, oldest dropped first. |
 
 The front does not measure settlement lag between delivery and the native terminal state, since it does not observe
 the horde's settlement.

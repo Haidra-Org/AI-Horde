@@ -20,8 +20,9 @@ lost is sent again with the same key and body, which the Horde answers with the 
 the Horde holds a request, or may hold one, every error carries ``x-should-retry: false`` so a client SDK does not
 create a second charged job; a successful stream carries it too.
 Cancels on disconnect, deadline, fail-fast, a status read the wait cannot fix and shutdown are bounded, shielded from
-the client's disconnect and use the client's separate cancel pool. A request's handling sends at most one cancel; the
-shutdown drain sends a failed one once more, never alongside one in progress.
+the client's disconnect and use the client's separate cancel pool. A request's handling sends at most one cancel and
+holds its in-flight slot until that cancel ends. A failed cancel is sent again every ``HORDE_OAI_CANCEL_RETRY_SECONDS``
+until the Horde would have expired the request, and once more by the shutdown drain, never alongside one in progress.
 """
 
 from __future__ import annotations
@@ -70,6 +71,8 @@ from horde.chat_contract import (
 from horde.consts import ANONYMOUS_API_KEY, HORDE_VERSION
 from horde.oai.attribution import build_client_agent
 from horde.oai.horde_client import (
+    SUBMIT_MAX_CONCURRENT_CALLS,
+    CancelSlotUnavailableError,
     HordeActiveModel,
     HordeAPIError,
     HordeAsyncSubmission,
@@ -77,6 +80,7 @@ from horde.oai.horde_client import (
     HordeClient,
     HordeCredentials,
     HordeUnavailableError,
+    cancel_max_connections,
     create_http_client,
 )
 from horde.oai.mapping import (
@@ -166,6 +170,13 @@ INFLIGHT_RETRY_AFTER_SECONDS: int = 5
 
 NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS: int = 30
 """The ``Retry-After`` of a 503 for no eligible worker; long enough for a worker restart or model load to show."""
+
+TIMEOUT_RETRY_AFTER_SECONDS: int = NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS
+"""The ``Retry-After`` of a 408 ``ChatRequestTimeout``.
+
+A request that waited its whole budget usually met a stalled or saturated Horde; an immediate retry would join the same
+queue, so clients are asked to wait as long as for a missing worker.
+"""
 
 HORDE_UNAVAILABLE_RETRY_AFTER_SECONDS: int = 30
 """The ``Retry-After`` added to a Horde 503 that carries none, such as chat admission switched off for maintenance."""
@@ -259,6 +270,14 @@ MAX_FAILED_CANCELS: int = 10_000
 
 Cancels fail together during a long Horde outage, and each held record keeps a request id and the client's
 credentials in memory until the process stops.
+"""
+
+HORDE_CHAT_REQUEST_EXPIRY_SECONDS: float = 20 * 60
+"""How long after its submit the Horde keeps a chat request before its cleanup deletes it.
+
+Matches the default of ``WaitingPrompt.expiry`` in ``horde/classes/base/waiting_prompt.py``, which is
+``horde.utils.get_expiry_date``: the creation time plus 20 minutes. A failed cancel older than this is dropped instead
+of retried, since the request it would cancel no longer exists.
 """
 
 CLIENT_RETRY_COUNT_HEADER: str = "x-stainless-retry-count"
@@ -434,28 +453,32 @@ class CancelState(StrEnum):
     IN_PROGRESS = "in_progress"
     """A cancel is being sent; no second one starts until it ends."""
     ACKNOWLEDGED = "acknowledged"
-    """The Horde answered the cancel with success."""
+    """The Horde answered the cancel with success, or with 404 because the request no longer exists; never retried."""
     FAILED = "failed"
-    """The cancel was refused, unreachable or not answered within its budget; the shutdown drain sends it once more."""
+    """The cancel was refused, unreachable, not started or not answered within its budget; it is sent again later."""
 
 
 class OpenRequest:
     """A submitted Horde request the process may still have to cancel.
 
-    The request's own handling sends at most one cancel; the shutdown drain sends one more only when that one failed.
+    The request's own handling sends at most one cancel; the retry sweep and the shutdown drain send more only when
+    that one failed.
     """
 
-    def __init__(self, *, request_id: str, credentials: HordeCredentials) -> None:
+    def __init__(self, *, request_id: str, credentials: HordeCredentials, opened_at: float) -> None:
         """Create the record.
 
         Args:
             request_id: The Horde request id.
             credentials: Who the cancel is made for.
+            opened_at: The monotonic time the Horde acknowledged the submit.
         """
         self.request_id: str = request_id
         """The Horde request id."""
         self.credentials: HordeCredentials = credentials
         """Who the cancel is made for."""
+        self.opened_at: float = opened_at
+        """The monotonic time the Horde acknowledged the submit; the retry sweep measures the request's age from it."""
         self.cancel_state: CancelState = CancelState.NOT_ATTEMPTED
         """How far the request's cancel got."""
 
@@ -516,8 +539,8 @@ class FrontState:
         self.open_requests: dict[str, OpenRequest] = {}
         """The submitted requests not yet finished, by Horde request id; a clean stop cancels them."""
         self.failed_cancels: dict[str, OpenRequest] = {}
-        """The finished requests whose cancel failed, oldest first, by Horde request id; a clean stop sends each cancel
-        once more. At most [`MAX_FAILED_CANCELS`][horde.oai.app.MAX_FAILED_CANCELS] are held."""
+        """The finished requests whose cancel failed, oldest first, by Horde request id; the retry sweep and a clean
+        stop send each cancel again. At most [`MAX_FAILED_CANCELS`][horde.oai.app.MAX_FAILED_CANCELS] are held."""
         self.model_list_cache: ModelListCache = ModelListCache()
         """The cached Horde chat model list."""
         self.front_metrics: FrontMetrics = front_metrics
@@ -528,14 +551,15 @@ class FrontState:
 
     def open_request(self, *, request_id: str, credentials: HordeCredentials) -> OpenRequest:
         """Create and register the record of a submitted request."""
-        open_request = OpenRequest(request_id=request_id, credentials=credentials)
+        open_request = OpenRequest(request_id=request_id, credentials=credentials, opened_at=time.monotonic())
         self.open_requests[request_id] = open_request
         return open_request
 
     def close_request(self, open_request: OpenRequest) -> None:
         """Mutate the registry by removing a finished request; removing it twice is harmless.
 
-        A request whose cancel failed moves to ``failed_cancels``, so the shutdown drain can send its cancel once more.
+        A request whose cancel failed moves to ``failed_cancels``, so the retry sweep and the shutdown drain can send
+        its cancel again.
         """
         if self.open_requests.get(open_request.request_id) is not open_request:
             return
@@ -547,7 +571,7 @@ class FrontState:
             del self.failed_cancels[evicted_request_id]
             logger.warning(
                 f"Dropped the failed cancel of chat request {evicted_request_id}: {MAX_FAILED_CANCELS} failed cancels are "
-                "already held, so the shutdown drain does not retry it",
+                "already held, so it is not retried",
             )
         self.failed_cancels[open_request.request_id] = open_request
 
@@ -566,22 +590,24 @@ def create_app(
         settings: The front's settings.
         http_client: The HTTP client for submits, status reads and model lists; None creates one sized by
             ``settings.native_max_connections`` that the app closes on shutdown.
-        cancel_http_client: The HTTP client for cancels; None creates a separate small pool the app closes on shutdown.
+        cancel_http_client: The HTTP client for cancels; None creates a separate pool sized by
+            [`cancel_max_connections`][horde.oai.horde_client.cancel_max_connections] that the app closes on shutdown.
         redis_client: The client for the Horde's chat signal database; None creates one from ``settings.redis_url``
             when it is set, and otherwise requests wait on the fallback poll alone.
         meter: The meter the front's instruments are created on; None takes it from the global meter provider, which
             ``logfire.configure`` installs.
 
     Returns:
-        The application; its lifespan starts the signal listener and, on stop, cancels every open request within
-        ``settings.shutdown_cancel_seconds`` before closing the subscription.
+        The application; its lifespan starts the signal listener and the failed cancel retry sweep and, on stop,
+        cancels every open request within ``settings.shutdown_cancel_seconds`` before closing the subscription.
     """
+    cancel_connections = cancel_max_connections(settings.max_inflight)
     owned_http_clients: list[httpx.AsyncClient] = []
     if http_client is None:
         http_client = create_http_client(settings.native_max_connections)
         owned_http_clients.append(http_client)
     if cancel_http_client is None:
-        cancel_http_client = create_http_client()
+        cancel_http_client = create_http_client(cancel_connections)
         owned_http_clients.append(cancel_http_client)
     owns_redis_client = redis_client is None and settings.redis_url is not None
     if redis_client is None and settings.redis_url is not None:
@@ -599,7 +625,10 @@ def create_app(
             cancel_http_client=cancel_http_client,
             proxy_passkey=settings.proxy_passkey,
             front_metrics=front_metrics,
-            max_concurrent_calls=settings.native_max_connections,
+            # Submits take a reserved share of the main pool, so the pool's size is still the total of native calls.
+            max_concurrent_calls=settings.native_max_connections - SUBMIT_MAX_CONCURRENT_CALLS,
+            max_concurrent_submits=SUBMIT_MAX_CONCURRENT_CALLS,
+            max_concurrent_cancels=cancel_connections,
         ),
         listener=CompletionSignalListener(redis_client, liveness_seconds=settings.redis_liveness_seconds),
         front_metrics=front_metrics,
@@ -608,10 +637,14 @@ def create_app(
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await front_state.listener.start()
+        cancel_retry_task = asyncio.create_task(_retry_failed_cancels_forever(front_state), name="horde-oai-cancel-retry")
         try:
             yield
         finally:
             front_state.accepting = False
+            cancel_retry_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_retry_task
             await _cancel_open_requests(front_state)
             await front_state.listener.stop()
             if owns_redis_client and redis_client is not None:
@@ -1153,14 +1186,17 @@ def _submit_outcome_unknown(detail: str, *, operation_key: uuid.UUID) -> ChatFro
 async def _cancel_within_budget(front_state: FrontState, open_request: OpenRequest, *, retry_failed: bool = False) -> None:
     """Cancel a Horde chat request within the cancel budget, logging rather than raising when it fails.
 
-    Every cancel logs exactly one outcome: cancelled, failed, or not completed within the budget. A request whose
-    cancel is in progress or acknowledged is left alone, so two cancels never overlap; a failed one is sent again only
-    when ``retry_failed`` is set.
+    Every cancel logs exactly one outcome: cancelled, already gone (404, so there is nothing left to cancel), failed,
+    not started because no cancel slot became free, or not completed within the budget. The budget covers the HTTP
+    call; the wait for a cancel slot has a bound of the same length of its own, so a wave of cancels queued behind each
+    other is not reported as a slow Horde. A request whose cancel is in progress or acknowledged is left alone, so two
+    cancels never overlap; a failed one is sent again only when ``retry_failed`` is set.
 
     Args:
         front_state: The process state.
         open_request: The request to cancel.
-        retry_failed: Whether a request whose earlier cancel failed is cancelled again; the shutdown drain sets it.
+        retry_failed: Whether a request whose earlier cancel failed is cancelled again; the retry sweep and the shutdown
+            drain set it.
     """
     retry_allowed = retry_failed and open_request.cancel_state == CancelState.FAILED
     if open_request.cancel_state != CancelState.NOT_ATTEMPTED and not retry_allowed:
@@ -1169,19 +1205,40 @@ async def _cancel_within_budget(front_state: FrontState, open_request: OpenReque
     acknowledged = False
     cancel_timeout_seconds = front_state.settings.cancel_timeout_seconds
     try:
-        with anyio.move_on_after(cancel_timeout_seconds) as cancel_deadline:
-            try:
-                await front_state.horde_client.cancel_chat(request_id=open_request.request_id, credentials=open_request.credentials)
-            except (HordeAPIError, HordeUnavailableError, httpx.HTTPError) as error:
-                front_state.front_metrics.record_cancel(CancelOutcome.FAILED)
-                logger.warning(f"Cancelling chat request {open_request.request_id} failed: {error}")
-                return
-            acknowledged = True
-            front_state.front_metrics.record_cancel(CancelOutcome.ACKNOWLEDGED)
-            logger.info(f"Cancelled chat request {open_request.request_id}")
-        if cancel_deadline.cancelled_caught:
+        try:
+            await front_state.horde_client.cancel_chat(
+                request_id=open_request.request_id,
+                credentials=open_request.credentials,
+                slot_wait_seconds=cancel_timeout_seconds,
+                call_timeout_seconds=cancel_timeout_seconds,
+            )
+        except CancelSlotUnavailableError:
+            front_state.front_metrics.record_cancel(CancelOutcome.NOT_STARTED)
+            logger.warning(
+                f"Cancelling chat request {open_request.request_id} did not start: no cancel slot freed within {cancel_timeout_seconds:g}s",
+            )
+            return
+        except TimeoutError:
             front_state.front_metrics.record_cancel(CancelOutcome.TIMED_OUT)
             logger.warning(f"Cancelling chat request {open_request.request_id} did not complete within {cancel_timeout_seconds:g}s")
+            return
+        except HordeAPIError as error:
+            if error.status_code == HTTPStatus.NOT_FOUND:
+                # The Horde deleted the request already, such as at its expiry; a retry would only meet the same 404.
+                acknowledged = True
+                front_state.front_metrics.record_cancel(CancelOutcome.ALREADY_GONE)
+                logger.info(f"Chat request {open_request.request_id} was already gone when cancelled")
+                return
+            front_state.front_metrics.record_cancel(CancelOutcome.FAILED)
+            logger.warning(f"Cancelling chat request {open_request.request_id} failed: {error}")
+            return
+        except (HordeUnavailableError, httpx.HTTPError) as error:
+            front_state.front_metrics.record_cancel(CancelOutcome.FAILED)
+            logger.warning(f"Cancelling chat request {open_request.request_id} failed: {error}")
+            return
+        acknowledged = True
+        front_state.front_metrics.record_cancel(CancelOutcome.ACKNOWLEDGED)
+        logger.info(f"Cancelled chat request {open_request.request_id}")
     finally:
         # Also reached when an enclosing scope, such as the shutdown bound, cuts the cancel off.
         open_request.cancel_state = CancelState.ACKNOWLEDGED if acknowledged else CancelState.FAILED
@@ -1195,6 +1252,53 @@ async def _cancel_shielded(front_state: FrontState, open_request: OpenRequest) -
     """
     with anyio.CancelScope(shield=True):
         await _cancel_within_budget(front_state, open_request)
+
+
+async def _retry_failed_cancels_forever(front_state: FrontState) -> None:
+    """Run [`_retry_failed_cancels`][horde.oai.app._retry_failed_cancels] every ``settings.cancel_retry_seconds`` until
+    the task is cancelled."""
+    while True:
+        await asyncio.sleep(front_state.settings.cancel_retry_seconds)
+        try:
+            await _retry_failed_cancels(front_state)
+        except Exception:
+            logger.exception("Retrying failed chat request cancels raised; the next sweep tries again")
+
+
+async def _retry_failed_cancels(front_state: FrontState) -> None:
+    """Send the failed cancels once more, dropping those whose request the Horde has expired.
+
+    The retries run at most half the cancel slots at a time, so a long list of failures from an outage does not take
+    the slots the cancels of requests ending now need. A retry that is acknowledged, or answered 404 because the
+    request is gone, leaves ``failed_cancels``; one that fails again stays for the next sweep.
+    """
+    now = time.monotonic()
+    expired_request_ids = [
+        request_id
+        for request_id, open_request in front_state.failed_cancels.items()
+        if now - open_request.opened_at >= HORDE_CHAT_REQUEST_EXPIRY_SECONDS
+    ]
+    for expired_request_id in expired_request_ids:
+        del front_state.failed_cancels[expired_request_id]
+    if expired_request_ids:
+        logger.info(
+            f"Dropped {len(expired_request_ids)} failed chat request cancels older than the Horde's "
+            f"{HORDE_CHAT_REQUEST_EXPIRY_SECONDS:g}s expiry",
+        )
+    retryable_requests = [
+        open_request for open_request in front_state.failed_cancels.values() if open_request.cancel_state == CancelState.FAILED
+    ]
+    if not retryable_requests:
+        return
+    logger.info(f"Retrying {len(retryable_requests)} failed chat request cancels")
+    retry_batch_size = max(1, cancel_max_connections(front_state.settings.max_inflight) // 2)
+    for batch_start in range(0, len(retryable_requests), retry_batch_size):
+        retry_batch = retryable_requests[batch_start : batch_start + retry_batch_size]
+        await asyncio.gather(*(_cancel_within_budget(front_state, open_request, retry_failed=True) for open_request in retry_batch))
+        for open_request in retry_batch:
+            still_held = front_state.failed_cancels.get(open_request.request_id) is open_request
+            if still_held and open_request.cancel_state == CancelState.ACKNOWLEDGED:
+                del front_state.failed_cancels[open_request.request_id]
 
 
 async def _cancel_open_requests(front_state: FrontState) -> None:
@@ -1413,7 +1517,8 @@ def _wait_error(
             status_code=HTTPStatus.REQUEST_TIMEOUT,
             message="The request was still waiting for a worker at its deadline and was cancelled.",
             code=TIMEOUT_CODE,
-            metadata=ErrorMetadata(request_id=request_id),
+            metadata=ErrorMetadata(request_id=request_id, retry_after=TIMEOUT_RETRY_AFTER_SECONDS),
+            headers={RETRY_AFTER_HEADER: str(TIMEOUT_RETRY_AFTER_SECONDS)},
             job_may_exist=True,
         )
     if isinstance(error, DeclarationGapError):
@@ -1574,8 +1679,10 @@ async def _chat_completions(request: Request) -> Response:
                 inflight_slot=inflight_slot,
             )
         except BaseException:
-            inflight_slot.release()
-            await _cancel_shielded(front_state, open_request)
+            try:
+                await _cancel_shielded(front_state, open_request)
+            finally:
+                inflight_slot.release()
             front_state.close_request(open_request)
             raise
     try:
@@ -1586,10 +1693,8 @@ async def _chat_completions(request: Request) -> Response:
             request_trace=request_trace,
             submitted_at=submitted_at,
             deadline=deadline,
-            inflight_slot=inflight_slot,
         )
     except asyncio.CancelledError:
-        inflight_slot.release()
         # A separate task survives repeated Task.cancel() calls; the AnyIO shield also protects against cancellation
         # scopes during ASGI teardown. The cancel has its own bounded budget and finishes before cleanup returns.
         cancel_task = asyncio.create_task(_cancel_within_budget(front_state, open_request))
@@ -1614,12 +1719,11 @@ async def _wait_for_completion(
     request_trace: RequestTrace,
     submitted_at: float,
     deadline: float,
-    inflight_slot: InflightSlot,
 ) -> Response:
     """Wait for a submitted request and return its completion, or the error that ended the wait.
 
-    The in-flight slot is released before an abandoned request's cancel, so a slow cancel does not count against new
-    requests; the cancel's own duration is bounded by the cancel budget.
+    The caller releases the in-flight slot after this returns, so an abandoned request's cancel counts against the cap
+    until it ends: the slot then bounds the Horde calls the process has open, cancels included.
     """
     front_state = _front_state(request)
     request_id = open_request.request_id
@@ -1642,19 +1746,16 @@ async def _wait_for_completion(
                 await asyncio.gather(wait_task, disconnect_task, return_exceptions=True)
         if wait_task.cancelled():
             logger.info(f"Client of chat request {request_id} disconnected while waiting")
-            inflight_slot.release()
             await _cancel_shielded(front_state, open_request)
             request_trace.finish_disconnected(status_code=CLIENT_CLOSED_REQUEST_STATUS, watcher=watcher)
             return Response(status_code=CLIENT_CLOSED_REQUEST_STATUS)
         try:
             status = wait_task.result()
         except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError) as error:
-            inflight_slot.release()
             await _cancel_shielded(front_state, open_request)
             return request_trace.error_response(_wait_error(error, request_id=request_id), watcher=watcher)
         except HordeAPIError as error:
             if _status_error_needs_cancel(error):
-                inflight_slot.release()
                 await _cancel_shielded(front_state, open_request)
             return request_trace.error_response(_wait_error(error, request_id=request_id), watcher=watcher)
     if status.faulted:
@@ -1669,7 +1770,6 @@ async def _wait_for_completion(
     except CompletionWithoutGenerationError:
         # A guard: the watcher returns no status without a generation unless it is faulted. Should one get through,
         # it ends as the settled state does, cancelled, rather than as an empty completion.
-        inflight_slot.release()
         await _cancel_shielded(front_state, open_request)
         return request_trace.error_response(_no_generation_error(request_id), watcher=watcher)
     request_trace.record_completion(completion, status)
@@ -1694,9 +1794,9 @@ def _stream_completion(
 ) -> EventSourceResponse:
     """Return the server-sent event response that waits for a submitted request and then delivers it.
 
-    The in-flight slot is released before an abandoned request's cancel. When the client disconnects before the event
-    generator first runs, sse-starlette never starts it, so the response's background task releases the slot and
-    cancels the request instead.
+    The in-flight slot is released after an abandoned request's cancel ends, so the cap counts cancelling requests. When
+    the client disconnects before the event generator first runs, sse-starlette never starts it, so the response's
+    background task cancels the request and releases the slot instead.
     """
     front_state = _front_state(request)
     settings = front_state.settings
@@ -1723,14 +1823,12 @@ def _stream_completion(
                 try:
                     status = await latest_watcher.wait_until_finished()
                 except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError) as error:
-                    inflight_slot.release()
                     await _cancel_shielded(front_state, open_request)
                     for error_event in request_trace.error_events(_wait_error(error, request_id=request_id), watcher=latest_watcher):
                         yield error_event
                     return
                 except HordeAPIError as error:
                     if _status_error_needs_cancel(error):
-                        inflight_slot.release()
                         await _cancel_shielded(front_state, open_request)
                     outcome_settled = True
                     for error_event in request_trace.error_events(_wait_error(error, request_id=request_id), watcher=latest_watcher):
@@ -1751,7 +1849,6 @@ def _stream_completion(
             except CompletionWithoutGenerationError:
                 # A guard: the watcher returns no status without a generation unless it is faulted. Should one get
                 # through, it ends as the settled state does, cancelled, rather than as an empty completion.
-                inflight_slot.release()
                 await _cancel_shielded(front_state, open_request)
                 for error_event in request_trace.error_events(_no_generation_error(request_id), watcher=latest_watcher):
                     yield error_event
@@ -1767,20 +1864,24 @@ def _stream_completion(
                 estimated_usage=completion.x_horde.estimated_usage,
             )
         finally:
-            inflight_slot.release()
-            if not outcome_settled:
-                if open_request.cancel_state == CancelState.NOT_ATTEMPTED:
-                    logger.info(f"Client of streamed chat request {request_id} disconnected while waiting")
-                await _cancel_shielded(front_state, open_request)
+            try:
+                if not outcome_settled:
+                    if open_request.cancel_state == CancelState.NOT_ATTEMPTED:
+                        logger.info(f"Client of streamed chat request {request_id} disconnected while waiting")
+                    await _cancel_shielded(front_state, open_request)
+            finally:
+                inflight_slot.release()
             request_trace.finish_disconnected(status_code=HTTPStatus.OK, watcher=latest_watcher)
             front_state.close_request(open_request)
 
     async def finish_unstarted_stream() -> None:
-        inflight_slot.release()
-        if not stream_started:
-            logger.info(f"Client of streamed chat request {request_id} disconnected before the stream started")
-            await _cancel_shielded(front_state, open_request)
-            request_trace.finish_disconnected(status_code=HTTPStatus.OK, watcher=None)
+        try:
+            if not stream_started:
+                logger.info(f"Client of streamed chat request {request_id} disconnected before the stream started")
+                await _cancel_shielded(front_state, open_request)
+                request_trace.finish_disconnected(status_code=HTTPStatus.OK, watcher=None)
+        finally:
+            inflight_slot.release()
         front_state.close_request(open_request)
 
     return EventSourceResponse(

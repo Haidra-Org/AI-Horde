@@ -14,10 +14,12 @@ headers; no root answering raises [`HordeUnavailableError`][horde.oai.horde_clie
 ``request_sent`` says whether the call may have reached a Horde. A submit sent again to recover a lost answer may fall
 back to roots left out of the rotation, since waiting out their backoff would spend the request's budget.
 
-Submits, status reads and model lists share one pool whose size the caller sets (``HORDE_OAI_NATIVE_MAX_CONNECTIONS``);
-the rest wait on a semaphore in arrival order before they reach the pool. Cancels use a second, smaller pool and
-semaphore ([`CANCEL_MAX_CONNECTIONS`][horde.oai.horde_client.CANCEL_MAX_CONNECTIONS]), so a burst of slow cancels cannot
-starve submits and a queue of status reads cannot delay a cancel.
+Submits, status reads and model lists share one pool whose size the caller sets (``HORDE_OAI_NATIVE_MAX_CONNECTIONS``).
+Submits wait on a semaphore of their own ([`SUBMIT_MAX_CONCURRENT_CALLS`][horde.oai.horde_client.SUBMIT_MAX_CONCURRENT_CALLS])
+and status reads and model lists on another, each in arrival order, so a queue of slow status reads cannot hold back a
+new request's submit. Cancels use a second, smaller pool and semaphore
+([`cancel_max_connections`][horde.oai.horde_client.cancel_max_connections]), so a burst of slow cancels cannot starve
+submits and a queue of status reads cannot delay a cancel.
 
 The Horde response models here are parsed leniently (unknown fields ignored), so a Horde that adds status fields does
 not break the front.
@@ -39,8 +41,11 @@ from horde.chat_contract import ChatImpossibleReason, ChatToolCall
 from horde.oai.metrics import FrontMetrics, NativeCallOutcome, NativeCallType
 
 __all__ = [
-    "CANCEL_MAX_CONNECTIONS",
+    "CANCEL_MIN_CONNECTIONS",
     "HTTP_MAX_CONNECTIONS",
+    "INFLIGHT_REQUESTS_PER_CANCEL_CONNECTION",
+    "SUBMIT_MAX_CONCURRENT_CALLS",
+    "CancelSlotUnavailableError",
     "HordeAPIError",
     "HordeActiveModel",
     "HordeAsyncSubmission",
@@ -51,6 +56,7 @@ __all__ = [
     "HordeClient",
     "HordeCredentials",
     "HordeUnavailableError",
+    "cancel_max_connections",
     "create_http_client",
 ]
 
@@ -96,19 +102,32 @@ UNEXPECTED_RESPONSE_CODE: str = "HordeUnexpectedResponse"
 HTTP_MAX_CONNECTIONS: int = 200
 """The default for the most simultaneous calls to the Horde, and the size of the connection pool.
 
-[`HordeClient`][horde.oai.horde_client.HordeClient] admits this many calls at once through a semaphore of the same
-size, so the pool never queues a request. httpcore rescans every in-flight request against every pooled connection
+[`HordeClient`][horde.oai.horde_client.HordeClient] admits this many calls at once through its submit semaphore and its
+status read semaphore together, so the pool never queues a request. httpcore rescans every in-flight request against every pooled connection
 on each pool event, probing each idle connection's socket, so the cost of one event grows with the square of this
 number. The number also bounds how many slow calls can be in flight at once: with too few slots, submits queue behind
 slow status reads until clients give up.
 """
 
-CANCEL_MAX_CONNECTIONS: int = 16
-"""The most simultaneous cancels, and the size of their separate connection pool.
+SUBMIT_MAX_CONCURRENT_CALLS: int = 32
+"""The most simultaneous submits, carved out of the main pool so status reads cannot take every connection.
+
+Every waiting request reads its status once per poll interval, so status reads far outnumber submits; when the Horde
+slows they fill every slot and a new request's submit would wait behind them until its client gives up. A share of the
+main pool reserved for submits keeps admission moving without enlarging the pool, whose per-event cost grows with the
+square of its size. A submit runs moderation and kudos checks and usually answers within a second, so 32 at once is
+several times the submit rate of a busy front.
+"""
+
+CANCEL_MIN_CONNECTIONS: int = 16
+"""The fewest simultaneous cancels, and the smallest size of their separate connection pool.
 
 Cancels are rare next to status reads, but each can take its whole budget when the Horde is slow; a pool of their own
 keeps them from holding the slots submits need, and keeps them moving when status reads fill the main pool.
 """
+
+INFLIGHT_REQUESTS_PER_CANCEL_CONNECTION: int = 20
+"""How many open requests share one cancel slot once the in-flight cap is large enough to raise the cancel pool."""
 
 HTTP_KEEPALIVE_EXPIRY_SECONDS: float = 20.0
 """How long an idle pooled connection is kept before the front closes it.
@@ -131,11 +150,27 @@ connect-and-drop churn exhausts the server's descriptors faster than it can reco
 """
 
 
+def cancel_max_connections(max_inflight: int) -> int:
+    """Return the most simultaneous cancels, and the cancel pool size, for an in-flight cap of ``max_inflight``.
+
+    Requests admitted together while the Horde stalls reach their deadline together and are cancelled in one wave, so
+    the cancel pool grows with the cap: one slot per
+    [`INFLIGHT_REQUESTS_PER_CANCEL_CONNECTION`][horde.oai.horde_client.INFLIGHT_REQUESTS_PER_CANCEL_CONNECTION] open
+    requests, and never fewer than [`CANCEL_MIN_CONNECTIONS`][horde.oai.horde_client.CANCEL_MIN_CONNECTIONS]. A pool sized
+    for every open request would cost the quadratic per-event scan the main pool avoids; a wave larger than the pool
+    waits its turn, and a cancel that does not start in time is retried later.
+
+    Args:
+        max_inflight: The front's in-flight cap, ``HORDE_OAI_MAX_INFLIGHT``.
+    """
+    return max(CANCEL_MIN_CONNECTIONS, max_inflight // INFLIGHT_REQUESTS_PER_CANCEL_CONNECTION)
+
+
 def create_http_client(max_connections: int = HTTP_MAX_CONNECTIONS) -> httpx.AsyncClient:
     """Create an HTTP client for Horde calls.
 
     Args:
-        max_connections: The pool size; keep it equal to the semaphore the calls through this client wait on.
+        max_connections: The pool size; keep it equal to the semaphores the calls through this client wait on, together.
     """
     return httpx.AsyncClient(
         timeout=httpx.Timeout(HTTP_READ_TIMEOUT_SECONDS, connect=HTTP_CONNECT_TIMEOUT_SECONDS),
@@ -211,6 +246,10 @@ class HordeUnavailableError(Exception):
         super().__init__(message)
         self.request_sent: bool = request_sent
         """Whether the call may have reached a Horde, which leaves a submit's outcome unknown."""
+
+
+class CancelSlotUnavailableError(Exception):
+    """No cancel slot became free within the wait allowed, so the cancel was not sent."""
 
 
 class HordeAsyncSubmission(BaseModel):
@@ -396,8 +435,9 @@ class HordeClient:
 
     Concurrency:
         Safe to share between concurrent requests on one event loop; the rotation counter and the unhealthy marks are
-        updated without awaiting. At most ``max_concurrent_calls`` calls and, separately, ``max_concurrent_cancels``
-        cancels are in flight; the rest wait in arrival order.
+        updated without awaiting. At most ``max_concurrent_calls`` status reads and model lists, and separately
+        ``max_concurrent_submits`` submits and ``max_concurrent_cancels`` cancels, are in flight; the rest wait in
+        arrival order.
     """
 
     def __init__(
@@ -409,7 +449,8 @@ class HordeClient:
         front_metrics: FrontMetrics,
         cancel_http_client: httpx.AsyncClient | None = None,
         max_concurrent_calls: int = HTTP_MAX_CONNECTIONS,
-        max_concurrent_cancels: int = CANCEL_MAX_CONNECTIONS,
+        max_concurrent_submits: int = SUBMIT_MAX_CONCURRENT_CALLS,
+        max_concurrent_cancels: int = CANCEL_MIN_CONNECTIONS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Create the client.
@@ -421,9 +462,10 @@ class HordeClient:
             front_metrics: Where each call's latency and outcome is recorded.
             cancel_http_client: The HTTP client for cancels; None sends them through ``http_client`` under their own
                 semaphore. The caller owns and closes it.
-            max_concurrent_calls: The most non-cancel calls in flight at once; keep it equal to the main pool's
-                ``max_connections`` so the pool never queues.
-            max_concurrent_cancels: The most cancels in flight at once.
+            max_concurrent_calls: The most status reads and model lists in flight at once.
+            max_concurrent_submits: The most submits in flight at once; keep it plus ``max_concurrent_calls`` within
+                the main pool's ``max_connections`` so the pool never queues.
+            max_concurrent_cancels: The most cancels in flight at once; keep it within the cancel pool's size.
             clock: The monotonic clock the unhealthy marks are measured on.
         """
         if not horde_urls:
@@ -435,6 +477,7 @@ class HordeClient:
         self._front_metrics = front_metrics
         self._rotation = itertools.count()
         self._call_slots = asyncio.Semaphore(max_concurrent_calls)
+        self._submit_slots = asyncio.Semaphore(max_concurrent_submits)
         self._cancel_slots = asyncio.Semaphore(max_concurrent_cancels)
         self._clock = clock
         self._unhealthy_until: dict[str, float] = {}
@@ -466,6 +509,7 @@ class HordeClient:
             call_type=NativeCallType.RECOVERY if fall_back_to_unhealthy_roots else NativeCallType.SUBMIT,
             credentials=credentials,
             json_body=request_body,
+            call_slots=self._submit_slots,
             fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots,
         )
         submission = _parse_response(response, HordeAsyncSubmission)
@@ -486,26 +530,49 @@ class HordeClient:
         response = await self._send("GET", status_path, call_type=NativeCallType.STATUS, credentials=credentials)
         return _parse_response(response, HordeChatStatus)
 
-    async def cancel_chat(self, *, request_id: str, credentials: HordeCredentials) -> HordeChatStatus:
+    async def cancel_chat(
+        self,
+        *,
+        request_id: str,
+        credentials: HordeCredentials,
+        slot_wait_seconds: float,
+        call_timeout_seconds: float,
+    ) -> HordeChatStatus:
         """Cancel a chat request through the cancel pool and return its last status.
+
+        The wait for a cancel slot and the HTTP call have separate bounds, so a cancel queued behind a wave of others
+        is told apart from one the Horde was slow to answer.
 
         Args:
             request_id: The Horde request id.
             credentials: Who the call is made for.
+            slot_wait_seconds: How long to wait for a free cancel slot before giving up without sending anything.
+            call_timeout_seconds: How long the HTTP call may take once a slot is held.
 
         Raises:
+            CancelSlotUnavailableError: No cancel slot became free within ``slot_wait_seconds``;
+                the cancel was not sent.
+            TimeoutError: The call did not complete within ``call_timeout_seconds``.
             HordeAPIError: The Horde answered with an error.
             HordeUnavailableError: No Horde root accepted the connection.
         """
         status_path = CHAT_STATUS_PATH_TEMPLATE.format(request_id=request_id)
-        response = await self._send(
-            "DELETE",
-            status_path,
-            call_type=NativeCallType.CANCEL,
-            credentials=credentials,
-            http_client=self._cancel_http_client,
-            call_slots=self._cancel_slots,
-        )
+        try:
+            async with asyncio.timeout(slot_wait_seconds):
+                await self._cancel_slots.acquire()
+        except TimeoutError as error:
+            raise CancelSlotUnavailableError(f"No cancel slot became free within {slot_wait_seconds:g}s for {request_id}") from error
+        try:
+            async with asyncio.timeout(call_timeout_seconds):
+                response = await self._send_holding_slot(
+                    "DELETE",
+                    status_path,
+                    call_type=NativeCallType.CANCEL,
+                    credentials=credentials,
+                    sending_client=self._cancel_http_client,
+                )
+        finally:
+            self._cancel_slots.release()
         return _parse_response(response, HordeChatStatus)
 
     async def list_chat_models(self, *, credentials: HordeCredentials) -> list[HordeActiveModel]:
@@ -550,11 +617,10 @@ class HordeClient:
         credentials: HordeCredentials,
         json_body: Mapping[str, object] | None = None,
         query: Mapping[str, str] | None = None,
-        http_client: httpx.AsyncClient | None = None,
         call_slots: asyncio.Semaphore | None = None,
         fall_back_to_unhealthy_roots: bool = False,
     ) -> httpx.Response:
-        """Send one call, trying each healthy root in rotation until one accepts the connection.
+        """Send one call through the main client, trying each healthy root in rotation until one accepts the connection.
 
         Args:
             method: The HTTP method.
@@ -563,8 +629,7 @@ class HordeClient:
             credentials: Who the call is made for.
             json_body: The JSON body, if any.
             query: The query parameters, if any.
-            http_client: The client to send through; None selects the main client.
-            call_slots: The semaphore bounding calls through that client; None selects the main one.
+            call_slots: The semaphore bounding the call; None selects the status read and model list one.
             fall_back_to_unhealthy_roots: Whether to try every root in rotation order when none is healthy.
 
         Returns:
@@ -575,35 +640,63 @@ class HordeClient:
             HordeUnavailableError: No healthy root accepted the connection, or the connection failed after the call
                 was sent.
         """
-        headers = self._build_headers(credentials)
-        sending_client = http_client if http_client is not None else self._http_client
         async with call_slots if call_slots is not None else self._call_slots:
-            # Timed after taking a call slot, so time queued on the semaphore is not part of the latency.
-            started_at = time.perf_counter()
-            outcome = NativeCallOutcome.ABANDONED
-            try:
-                response = await self._send_in_rotation(
-                    method,
-                    path,
-                    sending_client=sending_client,
-                    headers=headers,
-                    json_body=json_body,
-                    query=query,
-                    fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots,
-                )
-                outcome = NativeCallOutcome.OK
-            except HordeAPIError:
-                outcome = NativeCallOutcome.REFUSED
-                raise
-            except HordeUnavailableError:
-                outcome = NativeCallOutcome.UNREACHABLE
-                raise
-            finally:
-                self._front_metrics.record_native_call(
-                    call_type=call_type,
-                    outcome=outcome,
-                    duration_seconds=time.perf_counter() - started_at,
-                )
+            return await self._send_holding_slot(
+                method,
+                path,
+                call_type=call_type,
+                credentials=credentials,
+                sending_client=self._http_client,
+                json_body=json_body,
+                query=query,
+                fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots,
+            )
+
+    async def _send_holding_slot(
+        self,
+        method: str,
+        path: str,
+        *,
+        call_type: NativeCallType,
+        credentials: HordeCredentials,
+        sending_client: httpx.AsyncClient,
+        json_body: Mapping[str, object] | None = None,
+        query: Mapping[str, str] | None = None,
+        fall_back_to_unhealthy_roots: bool = False,
+    ) -> httpx.Response:
+        """Send one call and record its latency and outcome; the caller holds the slot that bounds it.
+
+        Raises:
+            HordeAPIError: The Horde answered with a status of 400 or above.
+            HordeUnavailableError: No healthy root accepted the connection, or the connection failed after the call
+                was sent.
+        """
+        # Timed after the caller took a call slot, so time queued on the semaphore is not part of the latency.
+        started_at = time.perf_counter()
+        outcome = NativeCallOutcome.ABANDONED
+        try:
+            response = await self._send_in_rotation(
+                method,
+                path,
+                sending_client=sending_client,
+                headers=self._build_headers(credentials),
+                json_body=json_body,
+                query=query,
+                fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots,
+            )
+            outcome = NativeCallOutcome.OK
+        except HordeAPIError:
+            outcome = NativeCallOutcome.REFUSED
+            raise
+        except HordeUnavailableError:
+            outcome = NativeCallOutcome.UNREACHABLE
+            raise
+        finally:
+            self._front_metrics.record_native_call(
+                call_type=call_type,
+                outcome=outcome,
+                duration_seconds=time.perf_counter() - started_at,
+            )
         return response
 
     async def _send_in_rotation(

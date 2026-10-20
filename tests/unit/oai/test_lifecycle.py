@@ -19,8 +19,16 @@ import redis.asyncio
 from loguru import logger
 
 from horde.oai import waiter
-from horde.oai.app import CancelState, _cancel_open_requests, create_app
-from horde.oai.horde_client import HordeCredentials
+from horde.oai.app import (
+    HORDE_CHAT_REQUEST_EXPIRY_SECONDS,
+    CancelState,
+    OpenRequest,
+    _cancel_open_requests,
+    _retry_failed_cancels,
+    create_app,
+)
+from horde.oai.horde_client import SUBMIT_MAX_CONCURRENT_CALLS, HordeCredentials, cancel_max_connections
+from horde.oai.metrics import CANCELS_NAME
 from horde.oai.waiter import CompletionSignalListener
 from tests.unit.oai.conftest import (
     CALL_WAIT_SECONDS,
@@ -228,7 +236,7 @@ async def test_disconnect_before_the_id_is_known_releases_the_slot_and_cancels_o
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_disconnect_during_the_wait_releases_the_slot_before_the_cancel_answers(start_front: StartFront, stream: bool) -> None:
+async def test_disconnect_during_the_wait_holds_the_slot_until_the_cancel_answers(start_front: StartFront, stream: bool) -> None:
     async with start_front() as front:
         front.horde.cancel_gate = asyncio.Event()
         app_task, _sent_messages = await call_raw(
@@ -242,7 +250,7 @@ async def test_disconnect_during_the_wait_releases_the_slot_before_the_cancel_an
         front.horde.cancel_gate.set()
         await asyncio.wait_for(app_task, timeout=CALL_WAIT_SECONDS)
 
-    assert inflight_while_cancel_pending == 0
+    assert inflight_while_cancel_pending == 1
     assert front.horde.cancel_route.call_count == 1
     assert_slot_released(front)
 
@@ -295,7 +303,7 @@ async def test_cancelled_nonstream_handler_cleans_up_the_job(start_front: StartF
         else:
             request_task.cancel()
         await wait_for_call(lambda: front.horde.cancels_received)
-        assert front.inflight == 0
+        assert front.inflight == 1
         if cancel_mode == "repeated":
             request_task.cancel()
             await asyncio.sleep(0)
@@ -307,6 +315,7 @@ async def test_cancelled_nonstream_handler_cleans_up_the_job(start_front: StartF
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(request_task, timeout=2)
         assert front.horde.cancel_route.call_count == 1
+        assert front.inflight == 0
         assert not front.app.state.front.listener._subscriptions
 
 
@@ -436,6 +445,119 @@ async def test_shutdown_drain_leaves_a_cancel_in_progress_to_finish_alone(start_
     assert response.status_code == 408
     assert front.horde.cancels_received == 1
     assert open_request.cancel_state == CancelState.ACKNOWLEDGED
+
+
+async def test_deadline_cancel_holds_the_slot_until_it_answers(start_front: StartFront) -> None:
+    async with start_front(DEADLINE_SETTINGS, with_redis=False) as front:
+        front.horde.cancel_gate = asyncio.Event()
+        request_task = asyncio.create_task(front.client.post("/v1/chat/completions", json=build_chat_body()))
+        await wait_for_call(lambda: front.horde.cancels_received)
+        inflight_while_cancel_pending = front.inflight
+        front.horde.cancel_gate.set()
+        response = await asyncio.wait_for(request_task, timeout=CALL_WAIT_SECONDS)
+
+    assert inflight_while_cancel_pending == 1
+    assert response.status_code == 408
+    assert_slot_released(front)
+
+
+async def test_cancel_waiting_for_a_slot_is_not_started_rather_than_timed_out(start_front: StartFront) -> None:
+    warnings: list[str] = []
+    sink_id = logger.add(lambda message: warnings.append(message.record["message"]), level="WARNING")
+    settings = DEADLINE_SETTINGS.model_copy(update={"cancel_timeout_seconds": 0.1})
+    try:
+        async with start_front(settings, with_redis=False) as front:
+            horde_client = front.app.state.front.horde_client
+            horde_client._cancel_slots = asyncio.Semaphore(0)
+            response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+            open_request = front.app.state.front.failed_cancels[REQUEST_ID]
+            assert open_request.cancel_state == CancelState.FAILED
+            not_started = front.metric_total(CANCELS_NAME, horde_outcome="not_started")
+            timed_out = front.metric_total(CANCELS_NAME, horde_outcome="timed_out")
+            horde_client._cancel_slots = asyncio.Semaphore(1)
+    finally:
+        logger.remove(sink_id)
+
+    assert response.status_code == 408
+    assert not_started == 1
+    assert timed_out == 0
+    assert front.horde.cancels_received == 1  # Sent by the shutdown drain once a slot was free.
+    assert any(f"Cancelling chat request {REQUEST_ID} did not start" in warning for warning in warnings)
+    assert not any("did not complete within" in warning for warning in warnings)
+
+
+async def test_retry_sweep_resends_a_failed_cancel_while_the_process_runs(start_front: StartFront) -> None:
+    settings = DEADLINE_SETTINGS.model_copy(update={"cancel_retry_seconds": 0.1})
+    async with start_front(settings, with_redis=False) as front:
+        front.horde.cancel_route.mock(
+            side_effect=[
+                httpx.Response(503, json={"message": "Unavailable"}),
+                httpx.Response(200, json=waiting_status()),
+            ],
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        open_request = front.app.state.front.failed_cancels[REQUEST_ID]
+        await wait_for_call(lambda: front.horde.cancel_route.call_count, minimum=2)
+        await wait_for_call(lambda: int(not front.app.state.front.failed_cancels))
+        acknowledged = front.metric_total(CANCELS_NAME, horde_outcome="acknowledged")
+
+    assert response.status_code == 408
+    assert open_request.cancel_state == CancelState.ACKNOWLEDGED
+    assert acknowledged == 1
+    assert front.horde.cancel_route.call_count == 2
+
+
+async def test_cancel_answered_404_is_already_gone_and_never_retried(start_front: StartFront) -> None:
+    settings = DEADLINE_SETTINGS.model_copy(update={"cancel_retry_seconds": 0.05})
+    async with start_front(settings, with_redis=False) as front:
+        front.horde.cancel_route.mock(return_value=httpx.Response(404, json={"message": "Request not found.", "rc": "RequestNotFound"}))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        failed_cancels_after_request = dict(front.app.state.front.failed_cancels)
+        await asyncio.sleep(0.3)  # Several retry sweep periods.
+        already_gone = front.metric_total(CANCELS_NAME, horde_outcome="already_gone")
+        failed = front.metric_total(CANCELS_NAME, horde_outcome="failed")
+
+    assert response.status_code == 408
+    assert failed_cancels_after_request == {}
+    assert already_gone == 1
+    assert failed == 0
+    assert front.horde.cancel_route.call_count == 1  # Neither the retry sweep nor the shutdown drain sent it again.
+
+
+async def test_retry_sweep_drops_failed_cancels_older_than_the_horde_expiry(start_front: StartFront) -> None:
+    credentials = HordeCredentials(apikey="test-key", client_agent="test:1:test")
+    async with start_front(FAST_TEST_SETTINGS, with_redis=False) as front:
+        front_state = front.app.state.front
+        expired_request = OpenRequest(
+            request_id="expired-request",
+            credentials=credentials,
+            opened_at=time.monotonic() - HORDE_CHAT_REQUEST_EXPIRY_SECONDS - 1,
+        )
+        expired_request.cancel_state = CancelState.FAILED
+        front_state.failed_cancels[expired_request.request_id] = expired_request
+        await _retry_failed_cancels(front_state)
+        failed_cancels_after_sweep = dict(front_state.failed_cancels)
+
+    assert failed_cancels_after_sweep == {}
+    assert front.horde.cancels_received == 0
+
+
+async def test_created_pools_follow_the_inflight_cap_and_reserve_submit_slots() -> None:
+    settings = FAST_TEST_SETTINGS.model_copy(update={"max_inflight": 1000})
+    app = create_app(settings)
+    horde_client = app.state.front.horde_client
+    try:
+        cancel_pool = horde_client._cancel_http_client._transport._pool
+        main_pool = horde_client._http_client._transport._pool
+
+        assert cancel_pool._max_connections == cancel_max_connections(1000) == 50
+        assert horde_client._cancel_slots._value == 50
+        assert main_pool._max_connections == settings.native_max_connections
+        assert horde_client._submit_slots._value == SUBMIT_MAX_CONCURRENT_CALLS
+        assert horde_client._call_slots._value == settings.native_max_connections - SUBMIT_MAX_CONCURRENT_CALLS
+    finally:
+        await horde_client._http_client.aclose()
+        await horde_client._cancel_http_client.aclose()
 
 
 async def test_owned_redis_client_enables_keepalive_without_the_client_health_check(monkeypatch: pytest.MonkeyPatch) -> None:

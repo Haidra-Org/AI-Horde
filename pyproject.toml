@@ -63,7 +63,8 @@ dependencies = [
     # logfire is hard-pinned deliberately: the OTel/Logfire bridge API is not yet
     # stable across minors and our telemetry wiring (horde/telemetry.py) is tested
     # against this exact version. Bump only with a telemetry smoke re-run.
-    "logfire[flask,sqlalchemy,redis,requests]==4.32.1",
+    # fastapi and httpx: the chat front's server spans and its calls to the horde (horde.oai.__main__).
+    "logfire[flask,sqlalchemy,redis,requests,fastapi,httpx]==4.32.1",
     "chardet<6",
     "pycurl>=7.45.7,<8",
     # The OpenAI-compatible chat front (horde/oai) is an ASGI app, so one process holds thousands of waiting requests and streams.

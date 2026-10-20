@@ -14,12 +14,15 @@ import pytest
 import respx
 
 from horde.oai.horde_client import (
+    CANCEL_MIN_CONNECTIONS,
     HTTP_KEEPALIVE_EXPIRY_SECONDS,
     HTTP_MAX_CONNECTIONS,
     UNHEALTHY_URL_BACKOFF_SECONDS,
+    CancelSlotUnavailableError,
     HordeClient,
     HordeCredentials,
     HordeUnavailableError,
+    cancel_max_connections,
     create_http_client,
 )
 from horde.oai.waiter import ChatRequestWatcher, ChatWaitTimeoutError, CompletionSubscription, WaitBudget
@@ -230,12 +233,105 @@ async def test_cancels_use_their_own_pool_while_status_reads_fill_the_main_one()
             )
             held_read = asyncio.create_task(horde_client.get_chat_status(request_id=REQUEST_ID, credentials=CREDENTIALS))
             await asyncio.sleep(0.05)
-            cancelled = await asyncio.wait_for(horde_client.cancel_chat(request_id=REQUEST_ID, credentials=CREDENTIALS), timeout=1)
+            cancelled = await asyncio.wait_for(
+                horde_client.cancel_chat(request_id=REQUEST_ID, credentials=CREDENTIALS, slot_wait_seconds=1, call_timeout_seconds=1),
+                timeout=2,
+            )
             release_status.set()
             await held_read
 
     assert cancelled.done
     assert cancel_route.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("max_inflight", "expected_cancel_connections"),
+    [(1, CANCEL_MIN_CONNECTIONS), (100, CANCEL_MIN_CONNECTIONS), (1000, 50), (4000, 200)],
+)
+async def test_cancel_pool_grows_with_the_inflight_cap_above_its_floor(max_inflight: int, expected_cancel_connections: int) -> None:
+    assert cancel_max_connections(max_inflight) == expected_cancel_connections
+
+
+async def test_cancel_waiting_for_a_slot_is_not_sent_and_is_told_apart_from_a_slow_call() -> None:
+    release_cancel = asyncio.Event()
+    cancels_received = 0
+
+    async def hold_cancel(_request: httpx.Request) -> httpx.Response:
+        nonlocal cancels_received
+        cancels_received += 1
+        await release_cancel.wait()
+        return httpx.Response(200, json=done_status())
+
+    with respx.mock() as router:
+        router.delete(f"{FIRST_URL}{STATUS_PATH}").mock(side_effect=hold_cancel)
+        async with httpx.AsyncClient() as http_client:
+            horde_client = HordeClient(
+                horde_urls=(FIRST_URL,),
+                http_client=http_client,
+                proxy_passkey=None,
+                front_metrics=UNRECORDED_METRICS,
+                max_concurrent_cancels=1,
+            )
+            held_cancel = asyncio.create_task(
+                horde_client.cancel_chat(request_id=REQUEST_ID, credentials=CREDENTIALS, slot_wait_seconds=1, call_timeout_seconds=5),
+            )
+            await asyncio.sleep(0.05)
+            with pytest.raises(CancelSlotUnavailableError):
+                await horde_client.cancel_chat(
+                    request_id=REQUEST_ID,
+                    credentials=CREDENTIALS,
+                    slot_wait_seconds=0.05,
+                    call_timeout_seconds=5,
+                )
+            assert cancels_received == 1
+            release_cancel.set()
+            await held_cancel
+            release_cancel.clear()
+            # With a slot free at once, only the HTTP call counts against the call timeout.
+            with pytest.raises(TimeoutError):
+                await horde_client.cancel_chat(
+                    request_id=REQUEST_ID,
+                    credentials=CREDENTIALS,
+                    slot_wait_seconds=1,
+                    call_timeout_seconds=0.05,
+                )
+            release_cancel.set()
+
+    assert cancels_received == 2
+
+
+async def test_submits_proceed_while_status_reads_hold_every_read_slot() -> None:
+    release_status = asyncio.Event()
+
+    async def hold_status(_request: httpx.Request) -> httpx.Response:
+        await release_status.wait()
+        return httpx.Response(200, json=done_status())
+
+    with respx.mock() as router:
+        router.get(f"{FIRST_URL}{STATUS_PATH}").mock(side_effect=hold_status)
+        submit_route = router.post(f"{FIRST_URL}/v2/generate/chat/async").mock(return_value=httpx.Response(202, json={"id": REQUEST_ID}))
+        async with httpx.AsyncClient() as http_client:
+            horde_client = HordeClient(
+                horde_urls=(FIRST_URL,),
+                http_client=http_client,
+                proxy_passkey=None,
+                front_metrics=UNRECORDED_METRICS,
+                max_concurrent_calls=2,
+                max_concurrent_submits=1,
+            )
+            held_reads = [
+                asyncio.create_task(horde_client.get_chat_status(request_id=REQUEST_ID, credentials=CREDENTIALS)) for _ in range(3)
+            ]
+            await asyncio.sleep(0.05)
+            submission = await asyncio.wait_for(horde_client.submit_chat(request_body={"model": "m"}, credentials=CREDENTIALS), timeout=1)
+            reads_done_at_submit = sum(held_read.done() for held_read in held_reads)
+            release_status.set()
+            statuses = await asyncio.gather(*held_reads)
+
+    assert submission.request_id == REQUEST_ID
+    assert submit_route.call_count == 1
+    assert reads_done_at_submit == 0
+    assert all(status.done for status in statuses)
 
 
 async def test_credentials_representation_omits_the_api_key() -> None:

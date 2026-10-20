@@ -38,12 +38,13 @@ def test_defaults_match_the_documented_values() -> None:
     settings = load_settings()
 
     assert settings.horde_urls == (DEFAULT_HORDE_URL,)
-    assert settings.max_inflight == 100
+    assert settings.max_inflight == 1000
     assert settings.max_inflight_per_source == 5
     assert settings.nonstream_timeout_seconds == 300
     assert settings.stream_timeout_seconds == 600
     assert settings.final_status_timeout_seconds == 2
     assert settings.cancel_timeout_seconds == 10
+    assert settings.cancel_retry_seconds == 30
     assert settings.heartbeat_seconds == 5
     assert settings.fallback_poll_seconds == 15
     assert settings.fail_fast_grace_seconds == 20
@@ -82,6 +83,8 @@ def test_settings_load_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> 
         ("HORDE_OAI_PORT", "70000"),
         ("HORDE_OAI_NONSTREAM_TIMEOUT_SECONDS", "-1"),
         ("HORDE_OAI_REDIS_LIVENESS_SECONDS", "0"),
+        ("HORDE_OAI_CANCEL_RETRY_SECONDS", "0"),
+        ("HORDE_OAI_NATIVE_MAX_CONNECTIONS", "32"),
         ("HORDE_OAI_HORDE_URLS", " , "),
     ],
 )

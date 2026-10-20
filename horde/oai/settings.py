@@ -19,6 +19,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from horde.chat_contract import MAX_CHAT_BODY_BYTES, MAX_CHAT_MESSAGE_COUNT
+from horde.oai.horde_client import HTTP_MAX_CONNECTIONS, SUBMIT_MAX_CONCURRENT_CALLS
 
 __all__ = [
     "DEFAULT_HORDE_URL",
@@ -85,10 +86,14 @@ class FrontSettings(BaseSettings):
     suspicion apply to the user rather than to the front. It is a credential, so it is left out of the representation.
     """
 
-    max_inflight: int = Field(default=100, ge=1)
+    max_inflight: int = Field(default=1000, ge=1)
     """Open requests per process before 503 ``FrontAtCapacity``.
 
-    Every open request costs native status reads; the cap stays low until the native call budget is measured.
+    A waiting request holds its slot until it ends, so when the Horde stalls and requests wait to their deadline the
+    cap trips at ``max_inflight`` divided by the budget in requests per second (1000 over 300 seconds is 3.3 per
+    second). The cap therefore detects a stall rather than limiting throughput, and it is set well above the open
+    requests a working Horde leaves. It also sizes the cancel pool; see
+    [`cancel_max_connections`][horde.oai.horde_client.cancel_max_connections].
     """
 
     max_inflight_per_source: int = Field(default=5, ge=1)
@@ -128,7 +133,19 @@ class FrontSettings(BaseSettings):
     """The allowance for the one status read made at the deadline, so an outcome reached just in time is returned."""
 
     cancel_timeout_seconds: float = Field(default=10.0, gt=0)
-    """The budget of one cancel, which runs shielded from the client's disconnect."""
+    """The budget of one cancel's HTTP call, which runs shielded from the client's disconnect.
+
+    The wait for a free cancel slot has a bound of the same length of its own, so a cancel queued behind others is
+    reported as not started rather than as a slow Horde.
+    """
+
+    cancel_retry_seconds: float = Field(default=30.0, gt=0)
+    """How often the cancels that failed or timed out are sent once more.
+
+    A request whose cancel failed may still be queued on the Horde and take a worker; retrying while the process runs,
+    instead of only at shutdown, frees that worker once the Horde recovers. Requests older than the Horde's chat
+    request expiry are dropped instead of retried.
+    """
 
     shutdown_cancel_seconds: float = Field(default=15.0, gt=0)
     """The process-wide bound for cancelling every open request on a clean stop, not one cancel budget per request."""
@@ -161,8 +178,12 @@ class FrontSettings(BaseSettings):
     answer from holding the request until its deadline. 0 answers a lost submit with 502 at once.
     """
 
-    native_max_connections: int = Field(default=200, ge=1)
-    """The most simultaneous calls to the Horde and the size of the main connection pool; cancels use their own pool."""
+    native_max_connections: int = Field(default=HTTP_MAX_CONNECTIONS, gt=SUBMIT_MAX_CONCURRENT_CALLS)
+    """The most simultaneous calls to the Horde and the size of the main connection pool; cancels use their own pool.
+
+    [`SUBMIT_MAX_CONCURRENT_CALLS`][horde.oai.horde_client.SUBMIT_MAX_CONCURRENT_CALLS] of these are reserved for
+    submits and the rest serve status reads and model lists, so the value must be larger than the submit share.
+    """
 
     forwarded_allow_ips: str = "127.0.0.1"
     """The listener addresses uvicorn trusts for ``X-Forwarded-For``; the ASGI client address is then the end user."""

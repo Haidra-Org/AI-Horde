@@ -13,7 +13,8 @@ Telemetry export reads the variables the Flask application reads (see ``horde.te
 ``OTEL_EXPORTER_OTLP_*`` endpoint or ``AI_HORDE_TELEMETRY_ENABLED`` turns it on, ``OTEL_SDK_DISABLED=true`` turns it
 off, and ``OTEL_SERVICE_NAME``, ``DEPLOYMENT_ENVIRONMENT`` and ``OTEL_TRACES_SAMPLER_ARG`` set the resource and
 sampling. The service name defaults to [`FRONT_SERVICE_NAME`][horde.oai.__main__.FRONT_SERVICE_NAME]. With none of
-them set the front exports nothing.
+them set the front exports nothing. Configured, the front records one server span per request (health checks
+excluded) and a client span per call to the horde, carrying the trace context into the horde's own spans.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import os
 
 import logfire
 import uvicorn
+from fastapi import FastAPI
 from loguru import logger
 
 from horde.oai.app import create_app
@@ -32,13 +34,19 @@ from horde.telemetry import build_sampling_options, otel_sdk_enabled, telemetry_
 
 __all__ = [
     "FRONT_SERVICE_NAME",
+    "HEALTH_URL_PATTERN",
     "configure_telemetry",
+    "instrument_app",
     "main",
 ]
 
 FRONT_SERVICE_NAME: str = "horde-oai"
 """The OpenTelemetry service name of the front when ``OTEL_SERVICE_NAME`` is unset; the Flask application's is
 ``ai-horde``."""
+
+HEALTH_URL_PATTERN: str = "healthz"
+"""Requests whose URL matches this pattern get no server span: the listener's and the container's health checks
+poll ``/healthz`` every few seconds and would otherwise outnumber the chat requests in the trace store."""
 
 
 def configure_telemetry() -> bool:
@@ -48,11 +56,15 @@ def configure_telemetry() -> bool:
     with the same variables, its own service name and the bucket boundaries of its histograms. Loguru records,
     the finished-request line included, are bridged to OpenTelemetry logs. Pyroscope profiling is not started.
 
+    httpx is instrumented here, before the application creates its clients, so every call to the horde is a client
+    span that carries the trace context (``traceparent``) the horde's Flask instrumentation continues; the server
+    spans are added by [`instrument_app`][horde.oai.__main__.instrument_app] once the application exists.
+
     Returns:
         Whether telemetry was configured.
 
     Side Effects:
-        Installs the global OpenTelemetry tracer and meter providers and adds a Loguru sink.
+        Installs the global OpenTelemetry tracer and meter providers, instruments httpx and adds a Loguru sink.
     """
     if not telemetry_enabled() or not otel_sdk_enabled():
         return False
@@ -66,15 +78,34 @@ def configure_telemetry() -> bool:
     )
     loguru_handler = logfire.loguru_handler()
     logger.add(**loguru_handler)
+    logfire.instrument_httpx()
     return True
+
+
+def instrument_app(app: FastAPI) -> None:
+    """Record one server span per request on the application, health checks excluded.
+
+    Streamed responses keep their span open until the stream ends, so the span's duration is the whole request.
+    Headers and bodies are not captured: a bearer key, a prompt and a completion never reach the trace store.
+
+    Args:
+        app: The application ``create_app`` built.
+
+    Side Effects:
+        Adds the OpenTelemetry ASGI middleware to the application.
+    """
+    logfire.instrument_fastapi(app, excluded_urls=HEALTH_URL_PATTERN)
 
 
 def main() -> None:
     """Serve the chat front until interrupted, exporting telemetry when the environment configures it."""
-    configure_telemetry()
+    telemetry_configured = configure_telemetry()
     settings = load_settings()
+    app = create_app(settings)
+    if telemetry_configured:
+        instrument_app(app)
     uvicorn.run(
-        create_app(settings),
+        app,
         host=settings.listen,
         port=settings.port,
         proxy_headers=True,

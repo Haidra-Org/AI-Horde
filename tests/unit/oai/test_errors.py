@@ -276,7 +276,8 @@ async def test_deadline_with_the_request_still_waiting_is_408_without_retry_and_
     error = response.json()["error"]
     assert error["code"] == "ChatRequestTimeout"
     assert error["type"] == "timeout_error"
-    assert error["metadata"] == {"request_id": REQUEST_ID}
+    assert error["metadata"] == {"request_id": REQUEST_ID, "retry_after": 30}
+    assert response.headers["retry-after"] == "30"
     assert front.horde.cancel_route.call_count == 1
 
 

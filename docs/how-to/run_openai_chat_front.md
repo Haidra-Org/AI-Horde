@@ -47,8 +47,8 @@ directory is read too. A variable that is set but invalid stops the start with a
 | `HORDE_OAI_PORT` | `7002` | Port to bind. |
 | `HORDE_OAI_REDIS_URL` | unset | Redis URL of the horde's primary Redis, such as `redis://redis:6379/7`. Pub/sub ignores the logical database, so only the host matters. Unset, every request waits on the fallback poll alone. |
 | `HORDE_OAI_REDIS_LIVENESS_SECONDS` | `30` | How long the signal subscription may receive nothing before the front sends a PING, and how long the PONG may take. A missing PONG sets `signal_subscribed: false` on `/healthz` and the front subscribes again, so a connection a network fault black-holes does not pass for an idle one. The front also turns on TCP keepalive for this connection. |
-| `HORDE_OAI_PROXY_PASSKEY` | unset | The front operator's service account proxy passkey. When set, the front sends it as `Proxy-Authorization` with the client's address as `Proxied-For`, so IP timeouts and suspicion apply to the client and not to the front. |
-| `HORDE_OAI_MAX_INFLIGHT` | `100` | Open requests per process before 503 `FrontAtCapacity`. |
+| `HORDE_OAI_PROXY_PASSKEY` | unset | The front operator's service account proxy passkey. When set, the front sends it as `Proxy-Authorization` with the client's address as `Proxied-For`, so IP timeouts and suspicion apply to the client. |
+| `HORDE_OAI_MAX_INFLIGHT` | `1000` | Open requests per process before 503 `FrontAtCapacity`. A request holds its slot until it ends, including its cancel, so when the horde stalls the cap trips at this value divided by the request budget per second; it detects a stall and does not limit throughput. It also sizes the cancel pool: one cancel slot per 20 open requests, at least 16. |
 | `HORDE_OAI_MAX_INFLIGHT_PER_SOURCE` | `5` | Open requests per client address per process before 503 `FrontAtCapacity`; checked before the global cap, and before any of the body is read. Users behind one egress address share it. |
 | `HORDE_OAI_MAX_BODY_BYTES` | `37748736` | Largest request body, counted while it is received and before JSON is parsed; larger is 413. The default is the native route's 36 MiB, room for five 5 MiB images as data URLs plus the text limit. |
 | `HORDE_OAI_MAX_MESSAGE_COUNT` | `1024` | Most messages per request; more is 400. |
@@ -57,7 +57,8 @@ directory is read too. A variable that is set but invalid stops the start with a
 | `HORDE_OAI_NONSTREAM_TIMEOUT_SECONDS` | `300` | Total budget of a non-streamed request, from before the submit. |
 | `HORDE_OAI_STREAM_TIMEOUT_SECONDS` | `600` | Total budget of a streamed request, from before the submit. |
 | `HORDE_OAI_FINAL_STATUS_TIMEOUT_SECONDS` | `2` | Allowance for the one status read made at the deadline. |
-| `HORDE_OAI_CANCEL_TIMEOUT_SECONDS` | `10` | Budget of one cancel. |
+| `HORDE_OAI_CANCEL_TIMEOUT_SECONDS` | `10` | Budget of one cancel's HTTP call. The wait for a free cancel slot is bounded by the same length; a cancel that does not get a slot in time is not sent and is retried. |
+| `HORDE_OAI_CANCEL_RETRY_SECONDS` | `30` | How often cancels that failed, timed out or did not start are sent again, until 20 minutes after the submit, when the horde has expired the request. |
 | `HORDE_OAI_SHUTDOWN_DRAIN_SECONDS` | `30` | How long uvicorn waits for open requests on a clean stop before cancelling their handlers. |
 | `HORDE_OAI_SHUTDOWN_CANCEL_SECONDS` | `15` | Process-wide bound for cancelling every request still open at stop. |
 | `HORDE_OAI_HEARTBEAT_SECONDS` | `5` | Interval of the keepalive comment on a streamed response. |
@@ -65,7 +66,7 @@ directory is read too. A variable that is set but invalid stops the start with a
 | `HORDE_OAI_SIGNAL_RECHECK_SECONDS` | `0.5` | Delay of the one extra status read after a terminal signal whose outcome the first read did not show. |
 | `HORDE_OAI_FAIL_FAST_GRACE_SECONDS` | `20` | How long the horde may report no eligible worker, with nothing processing, before the request is cancelled and answered 503. |
 | `HORDE_OAI_SUBMIT_RECOVERY_ATTEMPTS` | `2` | How many times a submit whose answer was lost is sent again with the same operation key, within the request's budget. `0` answers a lost submit with 502 at once. See [Lost submits](#lost-submits). |
-| `HORDE_OAI_NATIVE_MAX_CONNECTIONS` | `200` | Simultaneous submits, status reads and model lists to the horde, and the size of their pool. Cancels use a separate pool of 16. |
+| `HORDE_OAI_NATIVE_MAX_CONNECTIONS` | `200` | Simultaneous submits, status reads and model lists to the horde, and the size of their pool. 32 of these are reserved for submits, so status reads cannot hold back a new request's submit; the value must be above 32. Cancels use a separate pool sized from `HORDE_OAI_MAX_INFLIGHT`. |
 | `HORDE_OAI_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Addresses uvicorn trusts for `X-Forwarded-For`. Set it to the listener's addresses: the resulting client address is the per-source admission key and the `Proxied-For` value. |
 
 The proxy passkey belongs to a service account: `PUT /v2/users/<user id>` with `{"generate_proxy_passkey": true}`,
@@ -106,6 +107,7 @@ Reversal: stop the process, or `docker compose stop aihorde_oai`. On a clean sto
 `HORDE_OAI_SHUTDOWN_DRAIN_SECONDS` for open requests, then cancels every request still open on the horde within
 `HORDE_OAI_SHUTDOWN_CANCEL_SECONDS` before closing its Redis subscription. A request whose earlier cancel failed or
 timed out, even one already answered, gets its cancel sent once more; a cancel still in progress is not sent twice.
+While the process runs, the same failed cancels are sent again every `HORDE_OAI_CANCEL_RETRY_SECONDS`.
 At most 10,000 answered requests are held for this; past that the oldest is dropped with a warning.
 After a crash, open requests are dropped; their horde jobs run to completion, are charged and are never collected.
 
@@ -253,9 +255,9 @@ retry into a second charged job. Errors before the submit do not carry the heade
 | 400 | `TooManyExtraSourceImages` | | More than five image parts. |
 | 400 | `SourceImageSizeExceeded` | | An image data URL decodes to more than 5 MiB. `param` is the path of the part's `url`. |
 | 401 | `InvalidAuthorizationHeader` | | `Authorization` is present but not `Bearer <key>`. Omit it to use the anonymous key. |
-| 404 | `model_not_found` | | The model id contains `:`; no model variant is served. A horde 404 keeps the horde's `rc` as `code`. |
-| 408 | `ChatRequestTimeout` | `false` | The request was still waiting after `HORDE_OAI_NONSTREAM_TIMEOUT_SECONDS` and one final status read; it is cancelled. An outcome reached by the deadline is returned instead. |
-| 408 | `RequestBodyTimeout` | | The body took longer than `HORDE_OAI_BODY_READ_TIMEOUT_SECONDS` to arrive. Nothing was submitted. |
+| 404 | `model_not_found` | | The model id contains `:`; the front does not serve model variants. A horde 404 keeps the horde's `rc` as `code`. |
+| 408 | `ChatRequestTimeout` | `false` | The request was still waiting after `HORDE_OAI_NONSTREAM_TIMEOUT_SECONDS` and one final status read; it is cancelled. An outcome reached by the deadline is returned instead. `Retry-After: 30`. |
+| 408 | `RequestBodyTimeout` | | The body took longer than `HORDE_OAI_BODY_READ_TIMEOUT_SECONDS` to arrive. The request was not submitted. |
 | 413 | `RequestTooLarge` | | The body exceeds `HORDE_OAI_MAX_BODY_BYTES`. |
 | 502 | `ChatRequestFaulted` | `false` | The horde reports the request as faulted, or it expired on the horde. When the fault followed a refused worker reply, the message states the refusal and `metadata.rc` carries its return code. |
 | 502 | `ChatRequestNoGeneration` | `false` | The horde reported the request done without a generation and not faulted, after a short recheck or a `cancelled` signal, for example after a maintenance cancel; it is cancelled. |
@@ -306,8 +308,10 @@ queued; a retry hint shows that a client SDK retried, for whatever cause.
 
 ## Export telemetry
 
-The front exports OpenTelemetry metrics, and its Loguru log records as OpenTelemetry logs, through the same
-environment variables as the horde's Flask application. With none of them set it exports nothing.
+The front exports OpenTelemetry traces (one server span per request, `/healthz` excluded, and a client span per
+call to the horde that the horde's spans continue), metrics, and its Loguru log records as OpenTelemetry logs,
+through the same environment variables as the horde's Flask application. With none of them set it does not export
+anything.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -322,7 +326,8 @@ environment variables as the horde's Flask application. With none of them set it
 The front does not start Pyroscope, and `PYROSCOPE_ENABLED` alone does not turn its export on.
 
 Verification: with an endpoint set, a collector receives `horde.oai.*` metrics within the SDK's export interval
-after the first request, and one `Chat request <id> finished: ...` log record per finished request. The metric and
-log field lists are in the [Chat front reference](../reference/chat_front.md).
+after the first request, one `Chat request <id> finished: ...` log record per finished request, and a trace per
+request whose root is the front's `POST /v1/chat/completions` span with the horde's `POST /api/v2/generate/chat/async`
+span beneath it. The metric and log field lists are in the [Chat front reference](../reference/chat_front.md).
 
 Reversal: unset the variables and restart the front.
