@@ -650,8 +650,10 @@ class TextAsyncRequest(Resource):
     @api.response(404, "Request Not found", models.response_model_error)
     def get(self, id=""):
         """Retrieve the parameters of a submitted asynchronous generation request.
-        Unlike the status and check endpoints, the request ID alone is not enough: the apikey header
-        must be the key which submitted the request.
+
+        Unlike the status and check endpoints, the request ID alone is not enough: the `apikey` header
+        must be the key used to submit the request.
+
         The response has the same shape as the generation input, holding the values the horde recorded
         after filling in parameter defaults. The prompt is the original submission, before styles or
         moderation, and is omitted for legacy rows. Styled requests are not an exact replay.
@@ -745,25 +747,43 @@ class ChatAsyncGenerate(TextAsyncGenerate):
     @api.response(429, "Too Many Prompts", models.response_model_error)
     def post(self):
         """Initiate an asynchronous chat request.
-        The body is an OpenAI chat-completions request with text messages, and image parts on user messages,
-        without logprobs, audio or file content, plus an optional 'horde' object for the request options OpenAI has
-        no key for. A key, value or content part outside the supported set is refused with the
-        UnsupportedChatParameter return code, and a body above the size limit with RequestTooLarge (413).
-        tools, tool_choice, parallel_tool_calls and response_format are stored and sent to the worker as the client
-        sent them. A request offering tools, or whose history carries tool calls or tool messages, only goes to
-        workers declaring the tools feature; a json_object or json_schema response format only to workers declaring
-        that feature. A tool_choice other than none without tools, or forcing a function the tools do not define, is
-        refused with ChatRequestConflict; a tool message answering no earlier tool call with UnsupportedChatParameter.
-        Each image, a base64 data URL or an http(s) URL, is validated, stored, and charged the extra source image
-        tax; a URL resolving or redirecting to a private address is refused with SourceImageUrlRefused. Only
-        workers declaring the vision feature and an image transport serve a request with images.
-        A model that the text model reference does not list and no online chat worker serves is refused with
-        UnknownChatModel (404).
-        A request that carries horde.operation_key is claimed under that key for its user. Submitting the same
-        key again with the same request returns the first request's id and kudos with status 200 and queues
-        nothing; the same key with a changed request is refused with OperationKeyConflict.
-        The request is queued with text requests and served by the text workers that accept chat jobs.
-        This endpoint immediately returns the UUID of the request; poll /generate/chat/status for the result.
+
+        The body is an OpenAI chat-completions request with text messages and image parts on user messages. Logprobs,
+        audio and file content are not supported. An optional `horde` object holds the options that OpenAI does not
+        define a key for.
+
+        `tools`, `tool_choice`, `parallel_tool_calls` and `response_format` are stored and sent to the worker as
+        the client sent them. A request offering tools, or whose history carries tool calls or tool messages, only
+        goes to workers declaring the `tools` feature; a `json_object` or `json_schema` response format only to
+        workers declaring that feature. Each image is a base64 data URL or an http(s) URL. The horde validates and
+        stores each image and charges the extra source image tax for it. Only workers declaring the `vision` feature
+        and an image transport serve a request with images.
+
+        Refused with:
+
+        - `UnsupportedChatParameter` (400): a key, value or content part outside the supported set, or a tool
+          message that does not answer an earlier tool call.
+        - `ChatRequestConflict` (400): a `tool_choice` other than `none` without tools, or one forcing a function
+          that the tools do not define.
+        - `RequestTooLarge` (413): a body above the size limit.
+        - `SourceImageUrlRefused` (400): an image URL resolving or redirecting to a private address.
+        - `SourceImageUrlInvalid`, `SourceImageUnreadable`, `SourceImageSizeExceeded` or
+          `SourceImageResolutionExceeded` (400): an image that cannot be fetched or read, or is above the size or
+          resolution limit.
+        - `TooManyExtraSourceImages` (400): more images than a chat request can carry.
+        - `MoreThanMinExtraSourceImage` (400): more images than the limit for users who are not trusted or patrons.
+        - `UnknownChatModel` (404): a model that the text model reference does not list and that no online chat
+          worker serves.
+        - `OperationKeyConflict` (400): `horde.operation_key` reused with a changed request.
+        - `ChatAdmissionDisabled` (503): the horde is not accepting new chat requests.
+        - `ChatImageStorageUnavailable` (503): the request's images could not be stored.
+
+        A request carrying `horde.operation_key` is claimed under that key for its user. Submitting the same key
+        with the same request returns the first request's id and kudos with status 200 and does not queue a new
+        request.
+
+        The request is queued with text requests and served by the text workers that accept chat jobs. The
+        response is the request's UUID; poll `/generate/chat/status` for the result.
         """
         self.chat_request = parse_chat_request(read_chat_request_body())
         self.operation_claim = self.get_operation_claim()
@@ -1101,9 +1121,17 @@ class ChatAsyncStatus(TextAsyncStatus):
     @api.response(404, "Request Not found", models.response_model_error)
     def get(self, id=""):
         """Retrieve the full status of a chat request, with every finished generation.
-        Each generation carries the assistant message, the finish reasons and token counts its worker reported
-        (null when not reported), the charge basis, and how long the request queued before the generation was
-        assigned. A text request's id is not found here.
+
+        Each generation carries the assistant message, the finish reasons, the token counts the worker reported
+        (null when it did not report them), the charge basis, and how long the request queued before the generation
+        was assigned to a worker.
+
+        `context_adjustments` lists the changes the horde made to the request's context length. When the workers'
+        declarations are the reason no worker can take the request, `impossible_reason` lists the declarations they
+        lack and the limits the request exceeds. Once the request faults, `fault_reason` and `fault_rc` hold the
+        message and return code of the last refused reply or worker fault.
+
+        A text request's id returns 404 here; poll `/generate/text/status` for text requests.
         """
         self.args = self.get_parser.parse_args()
         return self.get_request_status(id)
@@ -1117,7 +1145,9 @@ class ChatAsyncStatus(TextAsyncStatus):
     @api.response(404, "Request Not found", models.response_model_error)
     def delete(self, id=""):
         """Cancel an unfinished chat request.
-        The response includes every generation already finished.
+
+        The response is the request's full status from before the cancellation, with every generation already
+        finished. A text request's id returns 404 here.
         """
         self.args = self.delete_parser.parse_args()
         return self.cancel_request(id)
@@ -1135,10 +1165,16 @@ class TextJobPop(JobPopTemplate):
     @api.response(403, "Access Denied", models.response_model_error)
     def post(self):
         """Check if there are generation requests queued for fulfillment.
+
         This endpoint is used by registered workers only.
-        A worker that sets chat_jobs also receives chat jobs, whose response carries chat: true and a payload with
-        messages in place of a prompt (the GenerationPayloadChat model). A worker that also sets prompt_jobs to false
-        receives only chat jobs.
+
+        A worker that sets `chat_jobs` also receives chat jobs. A chat job's response carries `chat: true` and a
+        payload with `messages` in place of a prompt (the `GenerationPayloadChat` model). A worker that also sets
+        `prompt_jobs` to false receives only chat jobs.
+
+        Refused with `ChatDeclarationInvalid` (400) when `chat_jobs` is set without `chat_limits` or `model_id`,
+        `model_id` is not one of `models`, `chat_limits.tools_max_temperature` is negative or not a number, or
+        `prompt_jobs` is false without `chat_jobs`.
         """
         # Splitting the post to its own function so that I can have the decorators of post on each extended class
         # Without copying the whole post() code
@@ -1250,8 +1286,24 @@ class TextJobSubmit(JobSubmitTemplate):
     @api.response(404, "Request Not Found", models.response_model_error)
     def post(self):
         """Submit generated text.
+
         This endpoint is used by registered workers only.
-        A chat job is submitted with message, finish_reason and model_id in place of generation.
+
+        A chat job is submitted with `message`, `finish_reason` and `model_id` in place of `generation`. A faulted
+        chat job is submitted with `state` set to `faulted` and does not need a `message`; an optional
+        `fault_reason` says why the worker faulted it.
+
+        Refused with:
+
+        - `ChatSubmitInvalid` (400): a chat submission without a valid `message` or `finish_reason`, a reply that
+          calls a function the request did not offer or repeats a call id, or a text job's submission carrying
+          `message`.
+        - `ChatSubmitNonconformant` (400): a reply that a `strict` request's `tool_choice` or `response_format`
+          rules out.
+        - `ChatModelMismatch` (400): a `model_id` other than the model the job was assigned.
+
+        A refused reply's message and return code are stored on the request. Once the request faults, its status
+        reports them as `fault_reason` and `fault_rc`.
         """
         # We have to parse the args here, to ensure we use the correct parser class
         submit_body = request.get_json(silent=True)
