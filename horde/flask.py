@@ -98,6 +98,10 @@ def create_app(config: dict[str, object] | None = None) -> Flask:
                 "pool_pre_ping": os.getenv("SQLALCHEMY_POOL_PRE_PING", "0") == "1",
             }
     app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
+    # flask-restx appends "You have requested this URI [...] but did you mean ..." to every 404 raised
+    # as an exception, so a refusal such as UnknownChatModel reads as a routing mistake. The route
+    # was found; the message is the refusal alone.
+    app.config.setdefault("RESTX_ERROR_404_HELP", False)
     db.init_app(app)
 
     if not SQLITE_MODE and not app.config.get("TESTING"):
