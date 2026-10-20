@@ -582,23 +582,19 @@ class ImageAsyncStatus(Resource):
                         client_agent=self.args["Client-Agent"],
                         ipaddr=request.remote_addr,
                     )
-                with logfire.span("horde.db.get_request_avg", gentype="image"):
-                    request_avg = database.get_request_avg("image")
+                request_avg = database.get_request_avg("image")
                 worker_availability = database.get_worker_availability_for_request(wp)
-                with logfire.span("horde.db.get_wp_queue_stats", wp_id=id):
-                    wp_queue_stats = database.get_wp_queue_stats(wp)
-                with logfire.span("horde.db.count_active_workers"):
-                    active_worker_count = database.count_active_workers()
-                with logfire.span("horde.generate.status.assemble"):
-                    wp_status = wp.get_status(
-                        request_avg=request_avg,
-                        has_valid_workers=worker_availability.is_possible,
-                        wp_queue_stats=wp_queue_stats,
-                        active_worker_count=active_worker_count,
-                        eligible_workers=worker_availability.worker_count,
-                        eligible_worker_threads=worker_availability.thread_count,
-                        might_stall=worker_availability.might_stall,
-                    )
+                wp_queue_stats = database.get_wp_queue_stats(wp)
+                active_worker_count = database.count_active_workers()
+                wp_status = wp.get_status(
+                    request_avg=request_avg,
+                    has_valid_workers=worker_availability.is_possible,
+                    wp_queue_stats=wp_queue_stats,
+                    active_worker_count=active_worker_count,
+                    eligible_workers=worker_availability.worker_count,
+                    eligible_worker_threads=worker_availability.thread_count,
+                    might_stall=worker_availability.might_stall,
+                )
                 # wp_status is a fully materialized plain dict; release the
                 # pooled connection before flask_restx marshalling/JSON
                 # serialization and the response write, so it is not held
@@ -779,24 +775,22 @@ class ImageAsyncCheck(Resource):
                         client_agent=self.args["Client-Agent"],
                         ipaddr=request.remote_addr,
                     )
-                with logfire.span("horde.db.get_request_avg", gentype="image"):
-                    request_avg = database.get_request_avg("image")
+                request_avg = database.get_request_avg("image")
                 worker_availability = database.get_worker_availability_for_request(wp)
-                with logfire.span("horde.db.get_wp_queue_stats", wp_id=id):
-                    wp_queue_stats = database.get_wp_queue_stats(wp)
-                with logfire.span("horde.db.count_active_workers"):
-                    active_worker_count = database.count_active_workers()
-                with logfire.span("horde.generate.check.lite_status"):
-                    lite_status = wp.get_lite_status(
-                        request_avg=request_avg,
-                        has_valid_workers=worker_availability.is_possible,
-                        wp_queue_stats=wp_queue_stats,
-                        active_worker_count=active_worker_count,
-                        eligible_workers=worker_availability.worker_count,
-                        eligible_worker_threads=worker_availability.thread_count,
-                        might_stall=worker_availability.might_stall,
-                    )
-                logger.debug(f"{id}: {lite_status}")
+                wp_queue_stats = database.get_wp_queue_stats(wp)
+                active_worker_count = database.count_active_workers()
+                lite_status = wp.get_lite_status(
+                    request_avg=request_avg,
+                    has_valid_workers=worker_availability.is_possible,
+                    wp_queue_stats=wp_queue_stats,
+                    active_worker_count=active_worker_count,
+                    eligible_workers=worker_availability.worker_count,
+                    eligible_worker_threads=worker_availability.thread_count,
+                    might_stall=worker_availability.might_stall,
+                )
+                # Loguru formats positional arguments only for an emitted record, so the status dict is not
+                # stringified on every check while debug logging is off.
+                logger.debug("{}: {}", id, lite_status)
                 return (lite_status, 200)
             except Exception:
                 if outcome == "found":

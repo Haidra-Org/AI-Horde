@@ -361,8 +361,16 @@ def init_telemetry_early(app: Flask) -> None:
     logger.init_ok("Telemetry", status="Early ready")
 
 
+def _instrumentation_enabled(environment_variable: str) -> bool:
+    """Return whether the instrumentation gated by ``environment_variable`` should run; on unless it is false or 0."""
+    return os.environ.get(environment_variable, "true").lower() not in ("false", "0")
+
+
 def init_telemetry_late(app: Flask) -> None:
-    """Instrument SQLAlchemy and Redis once the app is fully constructed."""
+    """Instrument SQLAlchemy and Redis once the app is fully constructed.
+
+    ``OTEL_INSTRUMENT_SQLALCHEMY`` and ``OTEL_INSTRUMENT_REDIS`` turn either instrumentation off per deployment.
+    """
     global _initialized_late
     if _initialized_late:
         return
@@ -373,11 +381,12 @@ def init_telemetry_late(app: Flask) -> None:
 
     from horde.flask import db
 
-    with app.app_context():
-        logfire.instrument_sqlalchemy(engine=db.engine)
-    logger.init_ok("Telemetry", status="SQLAlchemy")
+    if _instrumentation_enabled("OTEL_INSTRUMENT_SQLALCHEMY"):
+        with app.app_context():
+            logfire.instrument_sqlalchemy(engine=db.engine)
+        logger.init_ok("Telemetry", status="SQLAlchemy")
 
-    if os.environ.get("OTEL_INSTRUMENT_REDIS", "true").lower() not in ("false", "0"):
+    if _instrumentation_enabled("OTEL_INSTRUMENT_REDIS"):
         try:
             logfire.instrument_redis()
             logger.init_ok("Telemetry", status="Redis")
