@@ -161,3 +161,5 @@ locust.conf
 
 # Local design-scratch area for in-progress design notes; never committed.
 docs/design/
+
+models/horde_model_reference/
