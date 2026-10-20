@@ -97,6 +97,20 @@ class _ImageReferenceState:
 
 
 @dataclass(frozen=True)
+class _LoadedSnapshotDocument:
+    """Represents the last fleet snapshot document parsed from Redis, so an unchanged one is not parsed again."""
+
+    encoded: str | bytes
+    """The document as read from Redis, compared byte for byte with the next read."""
+
+    revision: str
+    """The revision the document produced, compared with the served state's."""
+
+    degraded: bool
+    """Whether the document was degraded, compared with the served state's flag."""
+
+
+@dataclass(frozen=True)
 class _TextReferenceState:
     models: dict[str, dict[str, object]]
     model_names: frozenset[str]
@@ -204,6 +218,7 @@ class ModelReference:
     def __init__(self) -> None:
         """Start with HMR's packaged policy until production initialization loads Redis."""
         self._last_stale_warning: float | None = None
+        self._last_loaded_document: _LoadedSnapshotDocument | None = None
         self._image_state = _ImageReferenceState(
             models={},
             baselines=dict(_packaged_baseline_catalog().baselines),
@@ -324,19 +339,49 @@ class ModelReference:
             )
 
     def refresh_from_redis(self, *, log_missing: bool = True) -> bool:
-        """Load the central fleet snapshot, retaining local state on any Redis failure."""
+        """Load the central fleet snapshot, retaining local state on any Redis failure.
+
+        Every process refreshes every few seconds while the document rarely changes, so a document
+        byte-identical to the last one parsed is not parsed or hash-verified again when the served state
+        still carries the revision it produced.
+        """
         try:
-            snapshot = redis_image_reference_snapshots.load()
+            encoded = redis_image_reference_snapshots.load_encoded()
         except Exception as err:
             logger.error(f"Failed to load the fleet image-reference snapshot from Redis: {err}")
             return False
-        if snapshot is None:
+        if encoded is None:
             if log_missing:
                 logger.warning("The fleet image-reference snapshot is absent from central Redis.")
             return False
+        if self._serves_loaded_document(encoded):
+            self._report_snapshot_health()
+            return False
+        try:
+            snapshot = redis_image_reference_snapshots.parse(encoded)
+        except Exception as err:
+            logger.error(f"Failed to load the fleet image-reference snapshot from Redis: {err}")
+            return False
         changed = self._apply_snapshot(snapshot)
+        self._last_loaded_document = _LoadedSnapshotDocument(
+            encoded=encoded,
+            revision=snapshot.revision,
+            degraded=snapshot.degraded,
+        )
         self._report_snapshot_health()
         return changed
+
+    def _serves_loaded_document(self, encoded: str | bytes) -> bool:
+        """Return whether applying this document would leave the served state unchanged.
+
+        The served state is compared as well as the bytes because other paths, such as a local
+        publication, replace the state without going through Redis.
+        """
+        loaded_document = self._last_loaded_document
+        if loaded_document is None or loaded_document.encoded != encoded:
+            return False
+        state = self._image_state
+        return state.revision == loaded_document.revision and state.degraded == loaded_document.degraded
 
     @staticmethod
     def _records_from_payload(payload: dict[str, object]) -> dict[str, ImageGenerationModelRecord]:

@@ -133,13 +133,28 @@ class RedisImageReferenceSnapshots:
 
     def load(self) -> ImageReferenceSnapshot | None:
         """Read directly from central Redis, deliberately bypassing the per-host cache."""
+        encoded = self.load_encoded()
+        if encoded is None:
+            return None
+        return self.parse(encoded)
+
+    @staticmethod
+    def load_encoded() -> str | bytes | None:
+        """Return the stored snapshot document unparsed, read directly from central Redis."""
         redis_backend = hr.horde_r
         if redis_backend is None:
             return None
-        raw = redis_backend.get(SNAPSHOT_KEY)
-        if raw is None:
-            return None
-        snapshot = ImageReferenceSnapshot.model_validate_json(raw)
+        return redis_backend.get(SNAPSHOT_KEY)
+
+    @staticmethod
+    def parse(encoded: str | bytes) -> ImageReferenceSnapshot:
+        """Parse a stored snapshot document and verify its content against its revision hash.
+
+        Raises:
+            pydantic.ValidationError: If the document is not a valid snapshot.
+            ValueError: If the content does not match the revision hash.
+        """
+        snapshot = ImageReferenceSnapshot.model_validate_json(encoded)
         snapshot.verify_revision()
         return snapshot
 
