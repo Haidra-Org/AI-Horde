@@ -309,6 +309,45 @@ def test_missing_or_malformed_redis_value_does_not_clear_local_state(fake_redis,
     assert process.reference == previous.models
 
 
+def test_unchanged_redis_document_is_not_parsed_again(fake_redis, monkeypatch) -> None:
+    process = ModelReference()
+    served = _snapshot("unchanged-model")
+    fake_redis.horde_r.set(SNAPSHOT_KEY, served.model_dump_json())
+    assert process.refresh_from_redis() is True
+
+    def fail_parse(_encoded: str | bytes) -> ImageReferenceSnapshot:
+        raise AssertionError("an unchanged snapshot document was parsed again")
+
+    monkeypatch.setattr(model_reference_module.redis_image_reference_snapshots, "parse", fail_parse)
+
+    assert process.refresh_from_redis() is False
+    assert process._snapshot_revision == served.revision
+
+
+def test_changed_redis_document_is_parsed_and_applied(fake_redis) -> None:
+    process = ModelReference()
+    fake_redis.horde_r.set(SNAPSHOT_KEY, _snapshot("first-model").model_dump_json())
+    assert process.refresh_from_redis() is True
+    replacement = _snapshot("second-model")
+    fake_redis.horde_r.set(SNAPSHOT_KEY, replacement.model_dump_json())
+
+    assert process.refresh_from_redis() is True
+    assert process._snapshot_revision == replacement.revision
+
+
+def test_unchanged_redis_document_is_reapplied_once_local_state_diverges(fake_redis) -> None:
+    process = ModelReference()
+    served = _snapshot("redis-model")
+    fake_redis.horde_r.set(SNAPSHOT_KEY, served.model_dump_json())
+    assert process.refresh_from_redis() is True
+    process._apply_snapshot(_snapshot("locally-applied-model").model_copy(update={"degraded": True}))
+
+    assert process.refresh_from_redis() is True
+    assert process._snapshot_revision == served.revision
+    assert process._image_state.degraded is False
+    assert set(process.reference or {}) == {"redis-model"}
+
+
 class _PrimaryBackend:
     def __init__(self, *, fallback: bool = False) -> None:
         self.fallback = fallback
