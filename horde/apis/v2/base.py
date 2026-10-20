@@ -1220,10 +1220,6 @@ class JobPopTemplate(Resource):
             raise e.PolymorphicNameConflict(self.worker_name)
         self.check_ip()
         if not self.worker:
-            if is_profane(self.worker_name):
-                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, "worker name", rc="ProfaneWorkerName")
-            if is_profane(self.args.bridge_agent):
-                raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, "bridge agent", rc="ProfaneBridgeAgent")
             colab_search = re.compile(r"colab|tpu|google", re.IGNORECASE)
             cs = colab_search.search(self.worker_name)
             if cs:
@@ -1247,6 +1243,12 @@ class JobPopTemplate(Resource):
                 )
             if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
                 raise e.TooManySameIPs(self.user.username)
+            # The profanity checks run a model prediction, so they come after the cheap refusals: a user at a worker
+            # limit who keeps popping with new names does not cost a prediction per pop.
+            if is_profane(self.worker_name):
+                raise e.Profanity(self.user.get_unique_alias(), self.worker_name, "worker name", rc="ProfaneWorkerName")
+            if is_profane(self.args.bridge_agent):
+                raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, "bridge agent", rc="ProfaneBridgeAgent")
             self.worker = self.worker_class(
                 user_id=self.user.id,
                 name=self.worker_name,
