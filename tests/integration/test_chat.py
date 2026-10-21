@@ -1284,6 +1284,100 @@ def test_a_grown_context_is_reported_on_the_chat_status(client, request_headers:
     _cancel(client, request_headers, "chat", fitting_id)
 
 
+LONG_HISTORY_SYSTEM = {"role": "system", "content": "You are a terse assistant."}
+LONG_HISTORY_LATEST_USER = {"role": "user", "content": "And which colour comes last?"}
+LONG_HISTORY = [
+    LONG_HISTORY_SYSTEM,
+    *(
+        message
+        for turn in range(8)
+        for message in (
+            {"role": "user", "content": f"Turn {turn}: " + "tell me about colours " * 200},
+            {"role": "assistant", "content": f"Reply {turn}: " + "red green blue " * 200},
+        )
+    ),
+    LONG_HISTORY_LATEST_USER,
+]
+"""A history whose estimate is far above any context the fake worker serves, while its latest turn is short."""
+
+
+def test_a_long_history_under_truncate_oldest_is_admitted_with_its_oldest_turns_dropped(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    chat_worker.pop()
+
+    request_id = _submit_chat_request(
+        client,
+        request_headers,
+        messages=LONG_HISTORY,
+        max_tokens=64,
+        horde={"max_context_length": 2048, "context_fit": "truncate_oldest"},
+    )
+
+    grow_adjustment, truncate_adjustment = _chat_status(client, request_headers, request_id)["context_adjustments"]
+    assert grow_adjustment["reason"] == "grow"
+    assert grow_adjustment["from"] == 2048
+    assert 2048 < grow_adjustment["to"] <= 8192
+    assert truncate_adjustment["reason"] == "truncate_oldest"
+    assert truncate_adjustment["dropped_messages"] > 0
+    assert truncate_adjustment["dropped_messages"] % 2 == 0
+    assert truncate_adjustment["from"] > grow_adjustment["to"]
+    assert truncate_adjustment["to"] + 64 <= grow_adjustment["to"]
+
+    popped = chat_worker.pop()
+    assert popped["id"] is not None, popped
+    kept_messages = popped["payload"]["messages"]
+    assert popped["payload"]["max_context_length"] == grow_adjustment["to"]
+    assert len(kept_messages) == len(LONG_HISTORY) - truncate_adjustment["dropped_messages"]
+    assert kept_messages[0] == LONG_HISTORY_SYSTEM
+    assert kept_messages[-1] == LONG_HISTORY_LATEST_USER
+    assert kept_messages[1:] == LONG_HISTORY[1 + truncate_adjustment["dropped_messages"] :]
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_long_history_under_reject_is_refused(client, request_headers: dict[str, str], chat_worker: FakeChatWorker) -> None:
+    chat_worker.pop()
+
+    response = client.post(
+        "/api/v2/generate/chat/async",
+        json={
+            "model": CHAT_MODEL,
+            "messages": LONG_HISTORY,
+            "max_tokens": 64,
+            "horde": {"max_context_length": 2048, "context_fit": "reject"},
+        },
+        headers=request_headers,
+    )
+
+    assert response.status_code == 400, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "PromptExceedsContext"
+
+
+def test_a_latest_turn_too_long_for_any_context_is_refused_under_truncate_oldest(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    chat_worker.pop()
+    overlong_latest_user = {"role": "user", "content": "describe every colour " * 2000}
+
+    response = client.post(
+        "/api/v2/generate/chat/async",
+        json={
+            "model": CHAT_MODEL,
+            "messages": [*LONG_HISTORY[:-1], overlong_latest_user],
+            "max_tokens": 64,
+            "horde": {"max_context_length": 2048, "context_fit": "truncate_oldest"},
+        },
+        headers=request_headers,
+    )
+
+    assert response.status_code == 400, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "PromptExceedsContext"
+
+
 @pytest.mark.parametrize("field", ["temperature", "top_p", "frequency_penalty", "presence_penalty"])
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
 def test_native_http_refuses_nonfinite_sampling_values(client, request_headers: dict[str, str], field: str, value: float) -> None:

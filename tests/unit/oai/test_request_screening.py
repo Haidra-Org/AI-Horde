@@ -336,7 +336,7 @@ async def test_token_limit_openai_accepts_below_the_horde_floor_is_refused_with_
         ({"stream": True, "stream_options": {"include_obfuscation": True}}, "stream_options.include_obfuscation"),
         ({"temperature": "hot"}, None),
         ({"user": "u" * 300}, "user"),
-        ({"horde": {"context_fit": "truncate_oldest"}}, "horde.context_fit"),
+        ({"horde": {"context_fit": "ignore"}}, "horde.context_fit"),
         ({"messages": [{"role": "assistant", "content": None}]}, "messages[0].content"),
         ({"messages": [{"role": "assistant"}]}, "messages[0].content"),
         ({"messages": [{"role": "user", "content": None}]}, "messages[0].content"),

@@ -76,6 +76,9 @@ class ContextFitOutcome(enum.StrEnum):
     REFUSED = "refused"
     """The request was refused with ``PromptExceedsContext``."""
 
+    TRUNCATED = "truncated"
+    """A chat request under ``truncate_oldest`` had its oldest turns dropped so its messages fit."""
+
 
 def parse_context_fit(raw_context_fit: object) -> ContextFit:
     """Resolve the request's ``context_fit``, defaulting to the long-standing behaviour.

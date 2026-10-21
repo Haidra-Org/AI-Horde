@@ -127,6 +127,21 @@ async def test_the_conformance_mode_is_forwarded_as_sent(start_front: StartFront
     assert front.horde.submitted_body()["horde"]["conformance"] == "best_effort"
 
 
+async def test_truncate_oldest_is_forwarded_and_its_context_adjustments_reach_x_horde(start_front: StartFront) -> None:
+    context_adjustments = [
+        {"from": 2048, "to": 8192, "reason": "grow"},
+        {"from": 21000, "to": 7900, "reason": "truncate_oldest", "dropped_messages": 10},
+    ]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        front.horde.status_payload["context_adjustments"] = context_adjustments
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"context_fit": "truncate_oldest"}))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["horde"]["context_fit"] == "truncate_oldest"
+    assert response.json()["x_horde"]["context_adjustments"] == context_adjustments
+
+
 async def test_an_unknown_conformance_mode_is_refused_before_submitting(start_front: StartFront) -> None:
     async with start_front() as front:
         response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"conformance": "lenient"}))

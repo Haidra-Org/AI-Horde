@@ -219,7 +219,8 @@ message among them, is 400 `UnsupportedChatParameter` with `param` holding its p
 reported as `messages[1].content[0].type=input_audio`, the form the native route uses.
 
 The `horde` object takes `only` or `ignore` (worker ids, not both), `trusted_workers`, `validated_backends`,
-`slow_workers`, `max_context_length` and `context_fit` (`grow` or `reject`). `dry_run` and `operation_key` are refused.
+`slow_workers`, `max_context_length` and `context_fit` (`grow`, `reject` or `truncate_oldest`). `dry_run` and
+`operation_key` are refused.
 
 ## Image inputs
 

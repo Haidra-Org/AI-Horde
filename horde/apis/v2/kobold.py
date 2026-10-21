@@ -60,6 +60,7 @@ from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX
 from horde.classes.kobold.chat_request import (
     CHAT_WORKER_FAULT_RC,
     MAX_NATIVE_FINISH_REASON_LENGTH,
+    ChatHistoryTruncation,
     ChatMessagesOffload,
     ChatSubmittedMessage,
     build_chat_image_key,
@@ -81,6 +82,7 @@ from horde.classes.kobold.chat_request import (
     rewrite_message_texts,
     serialize_messages,
     streams_progress,
+    truncate_oldest_messages,
     verify_chat_reply,
 )
 from horde.classes.kobold.genstats import (
@@ -407,7 +409,7 @@ class TextAsyncGenerate(GenerateTemplate):
         db.session.commit()
         logger.debug(f"Style '{self.args.style}' applied.")
 
-    def apply_context_fit(self):
+    def apply_context_fit(self) -> None:
         """Size the request's context against the prompt that will actually be sent.
 
         Runs after any style has been applied, since a style's template changes how long the prompt
@@ -445,12 +447,19 @@ class TextAsyncGenerate(GenerateTemplate):
             self.count_context_fit(ContextFitOutcome.FITS)
             return
         self.count_context_fit(ContextFitOutcome.GROWN)
+        self.set_fitted_max_context_length(fitted_context_length)
+        logger.debug(f"Context grown from {max_context_length} to {fitted_context_length} to fit the prompt.")
 
+    def set_fitted_max_context_length(self, fitted_context_length: int) -> None:
+        """Mutate the request's params to run under the context its sizing chose.
+
+        Args:
+            fitted_context_length: The context length the request runs under.
+        """
         # Copied before writing, since self.params may still be the parsed request body; the quote,
         # the hash and the waiting prompt all read the params back off self.
         self.params = dict(self.params)
         self.params[MAX_CONTEXT_LENGTH_PARAMETER] = fitted_context_length
-        logger.debug(f"Context grown from {max_context_length} to {fitted_context_length} to fit the prompt.")
 
     def count_context_fit(self, outcome: ContextFitOutcome) -> None:
         """Count what sizing this request against its prompt came to.
@@ -466,7 +475,7 @@ class TextAsyncGenerate(GenerateTemplate):
             },
         )
 
-    def get_context_growth_upper_bound(self, *, requested_max_context_length):
+    def get_context_growth_upper_bound(self, *, requested_max_context_length: int) -> int:
         """Return the largest context this request may grow to.
 
         Args:
@@ -940,7 +949,12 @@ class ChatAsyncGenerate(TextAsyncGenerate):
                 "params": text_params,
                 "models": build_model_names(chat_request),
                 "softprompt": None,
-                "context_fit": horde_options.context_fit.value,
+                # truncate_oldest grows first as grow does; its truncation runs in this class's apply_context_fit.
+                "context_fit": (
+                    ContextFit.GROW.value
+                    if horde_options.context_fit is ChatContextFit.TRUNCATE_OLDEST
+                    else horde_options.context_fit.value
+                ),
                 "trusted_workers": horde_options.trusted_workers,
                 "validated_backends": horde_options.validated_backends,
                 "workers": worker_ids,
@@ -967,17 +981,20 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         check, then context sizing, so an unknown model is refused as unknown rather than as a context that cannot
         grow, and only after the refusals every other route gives first. A chat request carries no style, so the
         style steps only report that none applied.
+
+        Moderation screens the full submitted messages, and its rewrite is mirrored onto them before sizing, so
+        ``truncate_oldest`` trims the rewritten messages and the row stores what the worker receives.
         """
         self.prompt = self.args.prompt
         self.apikey = self.args.apikey
         GenerateTemplate.validate(self)
         self.ensure_model_known()
+        self.mirror_prompt_rewrites_onto_messages()
         self.apply_context_fit()
         self.decide_style_surcharge()
         self.report_style_application()
         param_validator = ParamValidator(self.prompt, self.args.models, self.params, self.user)
         self.warnings = param_validator.validate_text_params()
-        self.mirror_prompt_rewrites_onto_messages()
         self.load_chat_images()
         self.prepare_messages_offload()
 
@@ -1089,21 +1106,110 @@ class ChatAsyncGenerate(TextAsyncGenerate):
             return
         raise e.UnknownChatModel(model_name)
 
-    def apply_context_fit(self):
-        """Size the request's context as a text request's, and record a change for the chat status."""
+    def apply_context_fit(self) -> None:
+        """Size the request's context as a text request's, trim its history under ``truncate_oldest``, and record
+        each change for the chat status."""
         requested_max_context_length = self.params.get(MAX_CONTEXT_LENGTH_PARAMETER, DEFAULT_MAX_CONTEXT_LENGTH)
-        super().apply_context_fit()
+        truncation = None
+        if self.chat_request.horde.context_fit is ChatContextFit.TRUNCATE_OLDEST:
+            truncation = self.fit_context_truncating_oldest(requested_max_context_length=requested_max_context_length)
+        else:
+            super().apply_context_fit()
         fitted_max_context_length = self.params.get(MAX_CONTEXT_LENGTH_PARAMETER, DEFAULT_MAX_CONTEXT_LENGTH)
-        self.context_adjustments = None
-        # Only growth changes the context length; a request that does not fit under reject is refused instead.
+        context_adjustments = []
+        # A request that does not fit under reject is refused instead, so only growth and truncation are recorded.
         if fitted_max_context_length != requested_max_context_length:
-            self.context_adjustments = [
+            context_adjustments.append(
                 {
                     "from": requested_max_context_length,
                     "to": fitted_max_context_length,
                     "reason": ChatContextFit.GROW.value,
                 },
-            ]
+            )
+        if truncation is not None:
+            context_adjustments.append(
+                {
+                    "from": truncation.estimated_prompt_tokens_before,
+                    "to": truncation.estimated_prompt_tokens_after,
+                    "reason": ChatContextFit.TRUNCATE_OLDEST.value,
+                    "dropped_messages": truncation.dropped_message_count,
+                },
+            )
+        self.context_adjustments = context_adjustments or None
+
+    def fit_context_truncating_oldest(self, *, requested_max_context_length: int) -> ChatHistoryTruncation | None:
+        """Grow the context as ``grow`` does, then drop the oldest turns when the messages still do not fit.
+
+        When the messages do not fit even at the bound ``grow`` is held to, the request runs under the larger of
+        that bound and the requested context, and its history is trimmed to fit it. The trimmed messages and their
+        flattened prompt replace the request's, so the row stores, and the worker receives, only the kept turns.
+
+        Args:
+            requested_max_context_length: The context the request set before any growth.
+
+        Returns:
+            The truncation applied, or None when the messages fit without dropping any.
+
+        Raises:
+            horde.exceptions.BadRequest: With ``PromptExceedsContext``, as ``grow`` refuses, when the messages do not
+                fit after every droppable turn is dropped.
+        """
+        max_length = self.params.get(MAX_LENGTH_PARAMETER, DEFAULT_MAX_LENGTH)
+        estimated_prompt_tokens = estimate_prompt_tokens(self.prompt)
+        if prompt_fits_context(
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            max_length=max_length,
+            max_context_length=requested_max_context_length,
+        ):
+            self.count_context_fit(ContextFitOutcome.FITS)
+            return None
+
+        upper_bound = self.get_context_growth_upper_bound(requested_max_context_length=requested_max_context_length)
+        try:
+            grown_context_length = fit_context_length(
+                estimated_prompt_tokens=estimated_prompt_tokens,
+                max_length=max_length,
+                max_context_length=requested_max_context_length,
+                context_fit=ContextFit.GROW,
+                upper_bound=upper_bound,
+            )
+        except e.BadRequest as refusal:
+            largest_context_length = max(requested_max_context_length, upper_bound)
+            truncation = truncate_oldest_messages(
+                self.messages,
+                self.chat_extras,
+                max_length=max_length,
+                max_context_length=largest_context_length,
+            )
+            if not truncation.fits:
+                self.count_context_fit(ContextFitOutcome.REFUSED)
+                raise refusal from None
+            self.count_context_fit(ContextFitOutcome.TRUNCATED)
+            if largest_context_length != requested_max_context_length:
+                self.set_fitted_max_context_length(largest_context_length)
+            self.messages = truncation.messages
+            self.prompt = truncation.prompt
+            return truncation
+
+        self.count_context_fit(ContextFitOutcome.GROWN)
+        self.set_fitted_max_context_length(grown_context_length)
+        return None
+
+    def count_context_fit(self, outcome: ContextFitOutcome) -> None:
+        """Count what sizing this request against its messages came to, under the chat request's mode.
+
+        The text path runs a ``truncate_oldest`` request as ``grow``, so the mode is read from the chat request.
+
+        Args:
+            outcome: The result of the sizing.
+        """
+        metrics.text_context_fit.add(
+            1,
+            {
+                "horde.context_fit.mode": self.chat_request.horde.context_fit.value,
+                "horde.context_fit.outcome": outcome.value,
+            },
+        )
 
     def activate_waiting_prompt(self):
         """Activate the request, deleting the images this submission stored when activation fails.

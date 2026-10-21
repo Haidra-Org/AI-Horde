@@ -83,9 +83,11 @@ from horde.classes.kobold.chat_request import (
     select_chat_transport,
     serialize_messages,
     streams_progress,
+    truncate_oldest_messages,
     verify_chat_reply,
 )
 from horde.classes.kobold.processing_generation import is_empty_submission
+from horde.classes.kobold.request_fit import estimate_prompt_tokens
 from horde.exceptions import KNOWN_RC
 from horde.image import MAX_CHAT_IMAGE_SIDE, load_chat_image
 from horde.r2 import is_chat_messages_key
@@ -1780,6 +1782,235 @@ def _image_part(url: str, **image_url_fields: str) -> dict[str, Any]:
 
 def _image_messages(*image_urls: str) -> list[dict[str, Any]]:
     return [{"role": "user", "content": [{"type": "text", "text": "Describe these."}, *(_image_part(url) for url in image_urls)]}]
+
+
+TRUNCATION_MAX_LENGTH = 10
+"""The ``max_length`` the truncation tests size against; any small value works, since each context is derived from it."""
+
+
+def _context_fitting(messages: list[dict[str, Any]], chat_extras: dict[str, Any] | None = None) -> int:
+    """Return the smallest context the flattened messages fit with ``TRUNCATION_MAX_LENGTH`` tokens to generate."""
+    return estimate_prompt_tokens(flatten_messages(messages, chat_extras)) + TRUNCATION_MAX_LENGTH
+
+
+def _tool_call(call_id: str, arguments: str = "{}") -> dict[str, Any]:
+    return {"id": call_id, "type": "function", "function": {"name": "lookup", "arguments": arguments}}
+
+
+class TestTruncateOldest:
+    def test_a_history_that_fits_is_kept_whole(self) -> None:
+        messages = [
+            {"role": "system", "content": "Be brief."},
+            {"role": "user", "content": "Hello?"},
+        ]
+
+        truncation = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(messages),
+        )
+
+        assert truncation.fits
+        assert truncation.messages == messages
+        assert truncation.dropped_message_count == 0
+        assert truncation.estimated_prompt_tokens_before == truncation.estimated_prompt_tokens_after
+
+    def test_the_oldest_turn_is_dropped_first_and_no_more_than_needed(self) -> None:
+        system = {"role": "system", "content": "Be brief."}
+        oldest_user = {"role": "user", "content": "old question " * 40}
+        oldest_reply = {"role": "assistant", "content": "old answer " * 40}
+        newer_user = {"role": "user", "content": "newer question"}
+        newer_reply = {"role": "assistant", "content": "newer answer"}
+        latest_user = {"role": "user", "content": "latest question"}
+        messages = [system, oldest_user, oldest_reply, newer_user, newer_reply, latest_user]
+        expected_kept = [system, newer_user, newer_reply, latest_user]
+
+        truncation = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(expected_kept),
+        )
+
+        assert truncation.fits
+        assert truncation.messages == expected_kept
+        assert truncation.dropped_message_count == 2
+        assert truncation.prompt == flatten_messages(expected_kept)
+        assert truncation.estimated_prompt_tokens_before == estimate_prompt_tokens(flatten_messages(messages))
+        assert truncation.estimated_prompt_tokens_after == estimate_prompt_tokens(flatten_messages(expected_kept))
+
+    def test_the_estimate_is_taken_again_for_each_candidate(self) -> None:
+        """A context one token short of the two-turn candidate drops a second turn, and a fitting one stops at the first."""
+        first_user = {"role": "user", "content": "first " * 30}
+        second_user = {"role": "user", "content": "second " * 30}
+        third_user = {"role": "user", "content": "third"}
+        latest_user = {"role": "user", "content": "latest"}
+        messages = [first_user, second_user, third_user, latest_user]
+        after_one_drop = [second_user, third_user, latest_user]
+
+        stops_at_one = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(after_one_drop),
+        )
+        needs_two = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(after_one_drop) - 1,
+        )
+
+        assert stops_at_one.messages == after_one_drop
+        assert needs_two.messages == [third_user, latest_user]
+        assert needs_two.dropped_message_count == 2
+
+    def test_a_tool_call_and_its_results_are_dropped_together(self) -> None:
+        system = {"role": "system", "content": "Use the tools."}
+        asking_user = {"role": "user", "content": "Look it up."}
+        calling_reply: dict[str, Any] = {"role": "assistant", "content": None, "tool_calls": [_tool_call("call_1"), _tool_call("call_2")]}
+        first_result = {"role": "tool", "tool_call_id": "call_1", "content": "result " * 40}
+        second_result = {"role": "tool", "tool_call_id": "call_2", "content": "result " * 40}
+        final_reply = {"role": "assistant", "content": "Found it."}
+        latest_user = {"role": "user", "content": "Thanks, and the next?"}
+        messages: list[dict[str, Any]] = [system, asking_user, calling_reply, first_result, second_result, final_reply, latest_user]
+        expected_kept: list[dict[str, Any]] = [system, final_reply, latest_user]
+
+        truncation = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(expected_kept),
+        )
+
+        assert truncation.messages == expected_kept
+        assert truncation.dropped_message_count == 4
+
+    def test_an_assistant_tool_call_without_a_user_before_it_is_one_turn_with_its_results(self) -> None:
+        opening_user = {"role": "user", "content": "Start."}
+        opening_reply = {"role": "assistant", "content": "Started."}
+        calling_reply: dict[str, Any] = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [_tool_call("call_1", '{"q": "' + "x" * 200 + '"}')],
+        }
+        call_result = {"role": "tool", "tool_call_id": "call_1", "content": "done"}
+        latest_user = {"role": "user", "content": "And now?"}
+        messages: list[dict[str, Any]] = [opening_user, opening_reply, calling_reply, call_result, latest_user]
+
+        after_first_turn = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting([calling_reply, call_result, latest_user]),
+        )
+        after_tool_turn = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting([latest_user]),
+        )
+
+        assert after_first_turn.messages == [calling_reply, call_result, latest_user]
+        assert after_tool_turn.messages == [latest_user]
+        assert after_tool_turn.dropped_message_count == 4
+
+    def test_system_and_developer_messages_are_kept_wherever_they_sit(self) -> None:
+        system = {"role": "system", "content": "Be brief."}
+        older_user = {"role": "user", "content": "old " * 40}
+        developer = {"role": "developer", "content": "Answer in French."}
+        older_reply = {"role": "assistant", "content": "vieux " * 40}
+        latest_user = {"role": "user", "content": "Bonjour?"}
+        messages = [system, older_user, developer, older_reply, latest_user]
+        expected_kept = [system, developer, latest_user]
+
+        truncation = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(expected_kept),
+        )
+
+        assert truncation.fits
+        assert truncation.messages == expected_kept
+        assert truncation.dropped_message_count == 2
+
+    def test_the_latest_user_message_and_what_follows_it_are_kept(self) -> None:
+        system = {"role": "system", "content": "Use the tools."}
+        older_user = {"role": "user", "content": "old " * 40}
+        older_reply = {"role": "assistant", "content": "old answer"}
+        latest_user = {"role": "user", "content": "Look it up."}
+        calling_reply: dict[str, Any] = {"role": "assistant", "content": None, "tool_calls": [_tool_call("call_1")]}
+        call_result = {"role": "tool", "tool_call_id": "call_1", "content": "result " * 40}
+        messages: list[dict[str, Any]] = [system, older_user, older_reply, latest_user, calling_reply, call_result]
+        expected_kept: list[dict[str, Any]] = [system, latest_user, calling_reply, call_result]
+
+        truncation = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(expected_kept),
+        )
+
+        assert truncation.fits
+        assert truncation.messages == expected_kept
+
+    def test_a_history_that_does_not_fit_once_every_turn_is_dropped_does_not_fit(self) -> None:
+        system = {"role": "system", "content": "Be brief."}
+        older_user = {"role": "user", "content": "old"}
+        older_reply = {"role": "assistant", "content": "old answer"}
+        latest_user = {"role": "user", "content": "latest " * 40}
+        messages = [system, older_user, older_reply, latest_user]
+
+        truncation = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting([system, latest_user]) - 1,
+        )
+
+        assert not truncation.fits
+        assert truncation.messages == [system, latest_user]
+        assert truncation.dropped_message_count == 2
+
+    def test_a_single_user_message_too_long_for_the_context_does_not_fit(self) -> None:
+        messages = [{"role": "user", "content": "long " * 40}]
+
+        truncation = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(messages) - 1,
+        )
+
+        assert not truncation.fits
+        assert truncation.messages == messages
+        assert truncation.dropped_message_count == 0
+
+    def test_the_tools_json_counts_towards_the_estimate(self) -> None:
+        older_user = {"role": "user", "content": "old question"}
+        older_reply = {"role": "assistant", "content": "old answer"}
+        latest_user = {"role": "user", "content": "latest"}
+        messages = [older_user, older_reply, latest_user]
+        chat_extras = {"tools": [{"type": "function", "function": {"name": "lookup", "description": "x" * 300}}]}
+
+        without_tools = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(messages),
+        )
+        with_tools = truncate_oldest_messages(
+            messages,
+            chat_extras,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting([latest_user], chat_extras),
+        )
+
+        assert without_tools.dropped_message_count == 0
+        assert with_tools.messages == [latest_user]
+        assert with_tools.prompt == flatten_messages([latest_user], chat_extras)
 
 
 class TestImageReferences:

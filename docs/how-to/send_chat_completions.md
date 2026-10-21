@@ -179,7 +179,7 @@ The `horde` object carries the Horde options OpenAI does not have a key for:
 | `validated_backends` | `false` | `true` restricts the request to workers on validated backends. |
 | `slow_workers` | `true` | `false` excludes workers the Horde marks slow. |
 | `max_context_length` | none | An explicit context length; a worker serves the request only when its declared chat context is at least this. |
-| `context_fit` | `grow` | `grow` raises the context to fit the messages, up to the largest chat context an online worker for the model declares. `reject` refuses messages that do not fit the context. |
+| `context_fit` | `grow` | `grow` raises the context to fit the messages, up to the largest chat context an online worker for the model declares. `reject` refuses messages that do not fit the context. `truncate_oldest` grows as `grow` does, then drops whole turns from the oldest forward until the messages fit, keeping every system and developer message and the latest user message with what follows it. |
 | `conformance` | `strict` | `strict` sends the request only to workers that follow every part of the OpenAI contract it relies on. `best_effort` also accepts workers that may deviate; see [Conformance](#conformance). |
 | `openai_guards` | `false` | `true` turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format whose messages never mention "json" is 400 `ChatRequestConflict`. |
 | `include_reasoning` | `false` | `true` returns the model's reasoning as `reasoning_content`; see [Reasoning](#reasoning). |
@@ -193,6 +193,19 @@ With the Python SDK, send the object as `extra_body={"horde": {...}}`; other cli
 
 Verification: `x_horde.worker_id` of the response is one of the `only` ids, and `x_horde.context_adjustments` lists
 `{"from", "to", "reason": "grow"}` when `grow` raised the context, null otherwise.
+
+A long conversation can be sent whole under `truncate_oldest`, and the Horde drops what does not fit:
+
+```python
+completion = client.chat.completions.create(
+    model="<MODEL>",
+    messages=conversation,
+    extra_body={"horde": {"context_fit": "truncate_oldest"}},
+)
+for adjustment in completion.x_horde["context_adjustments"] or []:
+    if adjustment["reason"] == "truncate_oldest":
+        print(f"{adjustment['dropped_messages']} oldest messages were dropped")
+```
 
 ## Reasoning
 

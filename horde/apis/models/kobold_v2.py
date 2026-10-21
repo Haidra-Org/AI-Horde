@@ -1263,7 +1263,10 @@ class TextModels(v2.Models):
                     enum=[setting.value for setting in ChatContextFit],
                     description=(
                         "What to do when the messages do not fit the context: grow it up to what an online chat worker "
-                        "serves, or reject the request."
+                        "serves, reject the request, or truncate_oldest: grow, then drop whole turns from the oldest "
+                        "forward until the messages fit. Every system and developer message is kept, as are the latest "
+                        "user message and everything after it; a request that still does not fit is refused as under "
+                        "reject."
                     ),
                 ),
                 "conformance": fields.String(
@@ -1412,11 +1415,30 @@ class TextModels(v2.Models):
         self.response_model_chat_context_adjustment = api.model(
             "ChatContextAdjustment",
             {
-                "from": fields.Integer(description="The context length the request asked for, or the default."),
-                "to": fields.Integer(description="The context length the request runs under."),
+                "from": fields.Integer(
+                    description=(
+                        "For 'grow', the context length the request asked for, or the default. For "
+                        "'truncate_oldest', the estimated token count of the submitted messages."
+                    ),
+                ),
+                "to": fields.Integer(
+                    description=(
+                        "For 'grow', the context length the request runs under. For 'truncate_oldest', the "
+                        "estimated token count of the kept messages."
+                    ),
+                ),
                 "reason": fields.String(
-                    enum=[ChatContextFit.GROW.value],
-                    description="Why it changed: 'grow' when the context was grown to fit the messages.",
+                    enum=[
+                        ChatContextFit.GROW.value,
+                        ChatContextFit.TRUNCATE_OLDEST.value,
+                    ],
+                    description=(
+                        "Why it changed: 'grow' when the context was grown to fit the messages, 'truncate_oldest' "
+                        "when the oldest turns were dropped so the messages fit."
+                    ),
+                ),
+                "dropped_messages": fields.Integer(
+                    description="How many messages were dropped; only on a 'truncate_oldest' entry.",
                 ),
             },
         )
@@ -1449,7 +1471,7 @@ class TextModels(v2.Models):
             {
                 "generations": fields.List(fields.Nested(self.response_model_chat_generation_result)),
                 "context_adjustments": fields.List(
-                    fields.Nested(self.response_model_chat_context_adjustment),
+                    fields.Nested(self.response_model_chat_context_adjustment, skip_none=True),
                     description="How the horde changed the request's context length; null when it did not.",
                 ),
                 "impossible_reason": fields.Nested(

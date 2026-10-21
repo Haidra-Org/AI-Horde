@@ -120,6 +120,8 @@ from horde.chat_contract import (
 from horde.classes.kobold.request_fit import (
     MAX_CONTEXT_LENGTH_PARAMETER,
     MAX_LENGTH_PARAMETER,
+    estimate_prompt_tokens,
+    prompt_fits_context,
 )
 from horde.image import parse_image_data_url
 from horde.r2 import CHAT_MESSAGES_KEY_SUFFIX
@@ -144,6 +146,7 @@ __all__ = [
     "ChatCompletionRequest",
     "ChatImageDetail",
     "ChatMessage",
+    "ChatHistoryTruncation",
     "ChatMessagesOffload",
     "ChatRole",
     "ChatSubmittedMessage",
@@ -179,6 +182,7 @@ __all__ = [
     "select_chat_transport",
     "serialize_messages",
     "streams_progress",
+    "truncate_oldest_messages",
     "verify_chat_reply",
 ]
 
@@ -1378,6 +1382,137 @@ def flatten_messages(messages: Sequence[Mapping[str, Any]], chat_extras: Mapping
     if "tools" in chat_extras:
         flattened_parts.append(_compact_json(chat_extras["tools"]))
     return FLATTENED_MESSAGE_SEPARATOR.join(flattened_parts)
+
+
+TRUNCATION_KEPT_ROLES: frozenset[str] = frozenset(
+    {
+        ChatRole.SYSTEM.value,
+        ChatRole.DEVELOPER.value,
+    },
+)
+"""The roles ``truncate_oldest`` never drops, wherever their messages sit: they hold the instructions the rest of the
+conversation is read under."""
+
+
+class ChatHistoryTruncation(NamedTuple):
+    """Represents the outcome of dropping a chat history's oldest turns to fit a context."""
+
+    messages: list[dict[str, Any]]
+    """The messages that are kept, in their original order."""
+
+    prompt: str
+    """The kept messages flattened by [`flatten_messages`][horde.classes.kobold.chat_request.flatten_messages]."""
+
+    dropped_message_count: int
+    """How many messages were dropped."""
+
+    estimated_prompt_tokens_before: int
+    """The token estimate of the full history."""
+
+    estimated_prompt_tokens_after: int
+    """The token estimate of the kept messages."""
+
+    fits: bool
+    """Whether the kept messages fit the context. False when every droppable turn was dropped and they still do
+    not, in which case the request is refused."""
+
+
+def _truncation_units(messages: Sequence[Mapping[str, Any]]) -> list[list[int]]:
+    """Return the droppable turns of a history, oldest first, each as the indexes of its messages.
+
+    A turn is a ``user`` message with the ``assistant`` message right after it, or an ``assistant`` message carrying
+    ``tool_calls`` with the ``tool`` messages that answer it; any other message is a turn of its own. A ``user``
+    message whose reply carries ``tool_calls`` takes the answering ``tool`` messages too. Request validation
+    (``check_tool_history``) already guarantees the answers follow the calling message at once, so taking the run of
+    ``tool`` messages after it is the whole group, and a dropped turn never leaves a call or an answer without the
+    other. Messages of the roles in ``TRUNCATION_KEPT_ROLES``, the latest ``user`` message and everything after it
+    belong to no turn. A history without a ``user`` message keeps its last message, so a request keeps the message it
+    ends with.
+
+    Args:
+        messages: The stored ``messages`` array, oldest first.
+
+    Returns:
+        The turns, each a list of message indexes in order.
+    """
+    user_indexes = [index for index, message in enumerate(messages) if message["role"] == ChatRole.USER.value]
+    kept_tail_start = user_indexes[-1] if user_indexes else max(len(messages) - 1, 0)
+
+    def takes_tool_answers(index: int) -> bool:
+        return messages[index]["role"] == ChatRole.ASSISTANT.value and bool(messages[index].get("tool_calls"))
+
+    units: list[list[int]] = []
+    index = 0
+    while index < kept_tail_start:
+        role = messages[index]["role"]
+        if role in TRUNCATION_KEPT_ROLES:
+            index += 1
+            continue
+        unit = [index]
+        index += 1
+        if role == ChatRole.USER.value and index < kept_tail_start and messages[index]["role"] == ChatRole.ASSISTANT.value:
+            unit.append(index)
+            index += 1
+        if takes_tool_answers(unit[-1]):
+            while index < kept_tail_start and messages[index]["role"] == ChatRole.TOOL.value:
+                unit.append(index)
+                index += 1
+        units.append(unit)
+    return units
+
+
+def truncate_oldest_messages(
+    messages: Sequence[Mapping[str, Any]],
+    chat_extras: Mapping[str, Any] | None,
+    *,
+    max_length: int,
+    max_context_length: int,
+) -> ChatHistoryTruncation:
+    """Return the history with its oldest turns dropped, one turn at a time, until it fits the context.
+
+    Each candidate is flattened as the request's prompt is, tools JSON included, and estimated again, so the fit is
+    judged on the same estimate the request is sized and charged by. The turns are formed by ``_truncation_units``.
+
+    Args:
+        messages: The stored ``messages`` array, oldest first.
+        chat_extras: The request's stored extras, whose ``tools`` count towards the estimate.
+        max_length: How many tokens the request wants generated.
+        max_context_length: The context the kept messages have to fit.
+
+    Returns:
+        The kept messages and the estimates before and after. ``fits`` is False when dropping every droppable turn
+        does not make the history fit.
+    """
+    kept_messages = [dict(message) for message in messages]
+    prompt = flatten_messages(kept_messages, chat_extras)
+    estimated_prompt_tokens_before = estimate_prompt_tokens(prompt)
+    estimated_prompt_tokens = estimated_prompt_tokens_before
+    dropped_indexes: set[int] = set()
+    units = iter(_truncation_units(messages))
+    while not prompt_fits_context(
+        estimated_prompt_tokens=estimated_prompt_tokens,
+        max_length=max_length,
+        max_context_length=max_context_length,
+    ):
+        unit = next(units, None)
+        if unit is None:
+            break
+        dropped_indexes.update(unit)
+        kept_messages = [dict(message) for index, message in enumerate(messages) if index not in dropped_indexes]
+        prompt = flatten_messages(kept_messages, chat_extras)
+        estimated_prompt_tokens = estimate_prompt_tokens(prompt)
+    return ChatHistoryTruncation(
+        messages=kept_messages,
+        prompt=prompt,
+        dropped_message_count=len(dropped_indexes),
+        estimated_prompt_tokens_before=estimated_prompt_tokens_before,
+        estimated_prompt_tokens_after=estimated_prompt_tokens,
+        fits=prompt_fits_context(
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            max_length=max_length,
+            max_context_length=max_context_length,
+        ),
+    )
 
 
 def _replace_nuls(value: Any) -> Any:

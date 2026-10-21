@@ -110,9 +110,10 @@ The route handles a submission in this order:
 6. The model is checked (see [Known models](#known-models)).
 7. The context is sized (`context_fit`) and the params are validated, then the request is created and activated as a
    text request is. A text request sizes its context before step 5; a chat request sizes it after the model check,
-   so an unknown model returns `404` rather than `PromptExceedsContext`. The `apikey` and `Client-Agent` headers are
-read as on text requests. The text submit response carries no `is_possible`, so neither does the chat one: when no
-online worker can serve the request it carries the usual warning `message`, and the status route reports
+   so an unknown model returns `404` even when its messages exceed the context. Moderation's rewrite is mirrored onto the
+   messages before sizing, so `truncate_oldest` trims the screened and rewritten messages. The `apikey` and `Client-Agent` headers are
+read as on text requests. The text submit response does not carry `is_possible`, and the chat one does not either:
+when no online worker can serve the request it carries the usual warning `message`, and the status route reports
 `is_possible`.
 
 ### Known models
@@ -210,7 +211,7 @@ and values:
 | `trusted_workers`, `validated_backends`         | boolean               | `false` | As on text requests                                            |
 | `slow_workers`                                  | boolean               | `true`  | As on text requests                                            |
 | `max_context_length`                            | positive integer      | none    | An explicit context length                                     |
-| `context_fit`                                   | `grow` or `reject`    | `grow`  | With `grow`, the context grows only up to the largest chat context an online chat worker serving the model declares |
+| `context_fit`                                   | `grow`, `reject` or `truncate_oldest` | `grow`  | With `grow`, the context grows only up to the largest chat context an online chat worker serving the model declares. With `truncate_oldest`, the context grows as under `grow`; when the messages do not fit even at that bound, whole turns are dropped from the oldest forward until they do. See [Context adjustments](#context-adjustments) |
 | `conformance`                                   | `strict` or `best_effort` | `strict` | With `strict`, only workers declaring every guarantee the request needs serve it; `best_effort` drops that requirement. See [Guarantees](#guarantees) |
 | `openai_guards`                                 | boolean               | `false` | Turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format without the word "json" (any case) in some message text returns `400 ChatRequestConflict` with OpenAI's message. Acts on admission only; not stored |
 | `include_reasoning`                             | boolean               | `false` | Read by the OpenAI front, which returns the model's reasoning only when it is set. The native route accepts it and does not store it; it is not in the operation fingerprint, and the native status shows a submitted `reasoning_content` either way |
@@ -439,6 +440,28 @@ requested `max_context_length` or the default. It is `null` when sizing did not 
 stored in a separate nullable JSONB column: the requested length is not kept anywhere else once growth overwrites
 it, so the adjustment cannot be recomputed at status time.
 
+Under `truncate_oldest` the context first grows as under `grow`. When the messages do not fit at the growth bound, the
+request runs under the larger of that bound and the requested length, and its oldest turns are dropped one at a time
+until the token estimate of the remaining messages fits (`truncate_oldest_messages`, `horde/classes/kobold/chat_request.py`).
+A turn is a `user` message with the `assistant` message right after it, or an `assistant` message carrying
+`tool_calls` with the `tool` messages answering it; any other message is a turn by itself. Every `system` and
+`developer` message is kept wherever it sits, as are the latest `user` message and everything after it. A request that
+still does not fit returns `400 PromptExceedsContext`, as under `grow`. A trimmed request records both changes:
+
+```json
+[
+  {"from": 2048, "to": 8192, "reason": "grow"},
+  {"from": 21000, "to": 7900, "reason": "truncate_oldest", "dropped_messages": 10}
+]
+```
+
+On a `truncate_oldest` entry, `from` and `to` are the token estimates of the submitted and the kept messages, and
+`dropped_messages` is how many messages were dropped; a `grow` entry does not carry it. The grow
+entry is absent when the requested context was already at or above the bound. The `horde.text.context_fit` counter records a
+trimmed request with the outcome `truncated` and the mode `truncate_oldest`. A dry run is trimmed the same way, so its
+quote and `estimated_prompt_tokens` describe the kept messages; its `resolved.context_fit` reports `grow`, the mode
+the text sizing ran under.
+
 ## Flattened prompt
 
 The request's `prompt` column holds the messages flattened into one string: each message as `role: text`, with the
@@ -452,7 +475,9 @@ the flattened messages as submitted.
 
 Every rewrite validation makes to the flattened prompt is mirrored onto the messages. The replacement filter applied
 for flagged users and NSFW models is applied to each message text, a text the filter empties becomes an empty string,
-and the prompt is flattened again from the result. `messages` therefore always holds what workers receive. Tool call
+and the prompt is flattened again from the result. `messages` therefore always holds what workers receive. Under
+`truncate_oldest`, `messages` and `prompt` hold only the kept turns, and images in dropped turns are not fetched,
+stored or charged; `submitted_prompt` holds the full flattened submission, which moderation screened. Tool call
 arguments, the tool definitions and the response format are JSON documents and are not rewritten.
 
 ## Chat declaration on pop

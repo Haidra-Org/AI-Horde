@@ -116,7 +116,9 @@ An unserved role (such as `function`) or content part type (such as `input_audio
 is null only when the worker returned tool calls without text; `tool_calls` is written only when the worker returned
 calls, each `{"id", "type": "function", "function": {"name", "arguments"}}` as the worker sent it. `finish_reason` is
 `stop`, `length`, `content_filter` or `tool_calls`. `x_horde.notice` marks a reply with neither visible text nor tool
-calls. `reasoning_content`, the model's reasoning as DeepSeek and OpenRouter return it, is written only when the
+calls. `x_horde.context_adjustments` is the native status's list, passed through unchanged: a `grow` entry when the
+context grew and a `truncate_oldest` entry with `dropped_messages` when the oldest turns were dropped (see
+[Context adjustments](chat_requests.md#context-adjustments)); it is left out when the Horde changed neither. `reasoning_content`, the model's reasoning as DeepSeek and OpenRouter return it, is written only when the
 request sets `horde.include_reasoning` and the worker submitted reasoning; it is never part of `content`.
 `usage.completion_tokens_details.reasoning_tokens`, OpenAI's shape, is the reasoning count the worker reported,
 written whether or not the reasoning is returned and left out when no worker reported one. Like the other reported

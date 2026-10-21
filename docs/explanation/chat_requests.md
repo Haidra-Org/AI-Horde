@@ -440,9 +440,13 @@ usage, and `[DONE]` ([Response shape](../reference/chat_front.md#response-shape)
 
 Horde behaviour without an OpenAI key (worker restrictions, trusted or validated workers, context sizing) travels in
 a `horde` object in the request body, which every SDK can send as extra body fields
-([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). The record also reserves
-`:variant` suffixes on the model id for presets that a model picker can show; no variant is served, and the front
-answers 404 for a model id that contains a colon. Base-URL profiles were the alternative
+([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). Under
+`context_fit: truncate_oldest` a history too long for any served context loses its oldest whole turns and keeps every
+system and developer message and the latest user turn. Moderation screens the full submitted messages before any
+message is dropped. For the request's lifetime its row stores the kept messages, which the worker receives, and, as on
+every request, the full flattened submission in `submitted_prompt`. The record also reserves `:variant` suffixes on
+the model id for presets that a model picker can show; the front does not serve a variant, and answers 404 for a
+model id that contains a colon. Base-URL profiles were the alternative
 ([ADR 0021](../decisions/0021-select-chat-service-by-base-url-profiles.md)): one configuration per application, at the
 price of a resolver and revision store, invisible to model pickers, and lost by clients that hardcode `/v1`.
 

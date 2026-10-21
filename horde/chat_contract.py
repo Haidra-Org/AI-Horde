@@ -164,6 +164,11 @@ class ChatContextFit(StrEnum):
     REJECT = "reject"
     """Refuse a request whose messages do not fit the requested context."""
 
+    TRUNCATE_OLDEST = "truncate_oldest"
+    """Grow as ``grow`` does, then drop whole turns from the oldest forward until the messages fit. Every system and
+    developer message is kept, as are the latest user message and everything after it; a request that still does not
+    fit is refused as under ``reject``."""
+
 
 class ChatAvailabilityMode(StrEnum):
     """How a request is treated when the online pool cannot serve it within the client's budget."""
