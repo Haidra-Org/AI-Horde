@@ -24,14 +24,15 @@ from horde.classes.kobold.chat_request import (
     MAX_CHAT_FAULT_REASON_LENGTH,
     MAX_CHAT_REFUSAL_RC_LENGTH,
     build_chat_job_payload,
+    build_chat_messages_key,
     build_chat_request_traits,
     build_worker_chat_extras,
     chat_tools_temperature,
     has_image_parts,
-    list_chat_image_keys,
+    list_stored_chat_object_keys,
     required_chat_features,
     resolve_image_references,
-    select_image_transport,
+    select_chat_transport,
 )
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.worker import text_array_column_type
@@ -44,6 +45,11 @@ from horde.r2 import delete_chat_images, download_chat_image, generate_chat_imag
 MIN_CHAT_IMAGE_URL_SECONDS = 600
 """The shortest lifetime of a signed chat image URL. A URL lives at least as long as the job's TTL, and never less
 than this, so a worker that queues the job behind another still finds the URL valid when it fetches."""
+
+CHAT_MESSAGES_URL_SECONDS = 120
+"""The lifetime of a signed URL to a chat job's offloaded messages. A worker fetches the messages right after the pop,
+before it can queue or render the job, so the URL does not need to cover the job's TTL the way an image URL does,
+and a short lifetime limits how long a leaked URL can be replayed."""
 
 CHAT_IMAGE_PART_CONTAINMENT = [{"content": [{"type": "image_url"}]}]
 """The JSONB containment pattern that matches a ``messages`` array with at least one image part."""
@@ -138,6 +144,11 @@ class TextWaitingPrompt(WaitingPrompt):
     """The ``(operation_key, operation_fingerprint)`` pair activation claims, or None. A plain attribute rather than
     a column, so it survives the rollback a deadlock retry of activation makes and is written again in the retried
     transaction."""
+    chat_messages_offloaded = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.false())
+    """Whether a chat request's messages, images inlined, were also stored as one object under
+    [`build_chat_messages_key`][horde.classes.kobold.chat_request.build_chat_messages_key] at submit, so a worker that
+    declared the ``messages_url`` transport is sent a URL to it. Written once when the request is created; false on
+    every other request. Not deferred, since generation assignment reads it for every popped request."""
     carries_chat_images: Mapped[bool | None] = query_expression()
     """Whether ``messages`` holds an image part, as the pop queue query computes it in SQL with
     [`chat_images_clause`][horde.classes.kobold.waiting_prompt.chat_images_clause]; None when the loading query did
@@ -211,9 +222,13 @@ class TextWaitingPrompt(WaitingPrompt):
             "assigned_max_context_length": worker.chat_max_context_length,
             "assigned_max_length": worker.chat_max_length,
         }
-        if self.needs_chat_images():
-            image_transport = select_image_transport(worker.image_transports)
-            assignment["image_transport"] = None if image_transport is None else image_transport.value
+        chat_transport = select_chat_transport(
+            worker.image_transports,
+            carries_images=self.needs_chat_images(),
+            messages_offloaded=self.chat_messages_offloaded,
+        )
+        if chat_transport is not None:
+            assignment["image_transport"] = chat_transport.value
         return assignment
 
     def needs_chat_images(self) -> bool:
@@ -266,10 +281,14 @@ class TextWaitingPrompt(WaitingPrompt):
         raise ValueError(f"Chat request {self.id} carries images and generation {generation.id} has no image transport.")
 
     def delete(self) -> None:
-        """Delete the request's row, then the images its messages reference."""
-        image_keys = list_chat_image_keys(self.messages or []) if self.is_chat else []
+        """Delete the request's row, then the images and offloaded messages it stored."""
+        object_keys = (
+            list_stored_chat_object_keys(str(self.id), self.messages, messages_offloaded=self.chat_messages_offloaded)
+            if self.is_chat
+            else []
+        )
         super().delete()
-        delete_stored_chat_images(image_keys)
+        delete_stored_chat_images(object_keys)
 
     def count_stored_generations(self) -> int:
         """Return how many generations of this request hold a submitted result, as the status route reports them.
@@ -295,8 +314,10 @@ class TextWaitingPrompt(WaitingPrompt):
             payload: The job payload, which for a chat job carries no prompt.
 
         Returns:
-            The pop response. A chat job's payload carries ``messages``, and the ``tools``, ``tool_choice``,
-            ``parallel_tool_calls`` and ``response_format`` the request stored, narrowed by
+            The pop response. A chat job's payload carries ``messages``, or ``messages_url`` in its place when the
+            generation was assigned the ``messages_url`` transport, signed for
+            [`CHAT_MESSAGES_URL_SECONDS`][horde.classes.kobold.waiting_prompt.CHAT_MESSAGES_URL_SECONDS]; and the
+            ``tools``, ``tool_choice``, ``parallel_tool_calls`` and ``response_format`` the request stored, narrowed by
             [`build_worker_chat_extras`][horde.classes.kobold.chat_request.build_worker_chat_extras]; the response
             carries ``chat: true``. A text job's response is unchanged.
         """
@@ -304,7 +325,14 @@ class TextWaitingPrompt(WaitingPrompt):
             return super().get_pop_payload(procgen_list, payload)
 
         chat_payload = dict(payload)
-        chat_payload["messages"] = self.build_worker_messages(procgen_list[0])
+        if procgen_list[0].image_transport == ChatImageTransport.MESSAGES_URL:
+            # Signing is local, so no store request is made while the pop response is built.
+            chat_payload["messages_url"] = generate_chat_image_download_url(
+                build_chat_messages_key(str(self.id)),
+                expires_in=CHAT_MESSAGES_URL_SECONDS,
+            )
+        else:
+            chat_payload["messages"] = self.build_worker_messages(procgen_list[0])
         chat_payload.update(build_worker_chat_extras(self.chat_extras))
         pop_payload = super().get_pop_payload(procgen_list, chat_payload)
         pop_payload["chat"] = True

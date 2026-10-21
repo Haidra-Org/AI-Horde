@@ -116,8 +116,9 @@ class TextProcessingGeneration(ProcessingGeneration):
     assigned_max_length = db.Column(db.Integer, nullable=True)
     """The chat output length the worker declared when the generation was assigned."""
     image_transport = db.Column(db.String(16), nullable=True)
-    """How the generation's worker receives the request's images, a ``ChatImageTransport`` value chosen from its
-    declaration at assignment. NULL when the request carries no images and on text generations."""
+    """How the generation's worker receives the request's messages and images, a ``ChatImageTransport`` value chosen
+    from its declaration at assignment: ``messages_url`` when the messages were offloaded and the worker declared it,
+    else the image transport. NULL when the messages are sent inline without images and on text generations."""
     chat_refusal_rc = db.Column(db.String(MAX_CHAT_REFUSAL_RC_LENGTH), nullable=True)
     """The return code the Horde last refused this generation's reply with, written at the refusal. The worker's
     fault submit that follows is counted by it, so a worker cannot claim the exemption a nonconformant reply has from

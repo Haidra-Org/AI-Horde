@@ -99,7 +99,9 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   ([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). Choose a name without a
   colon.
 - `image_transports` lists how the worker accepts images: `url`, `base64` or both. Leave it out, or send it empty,
-  when the worker takes no images (see [step 5](#5-serve-images)).
+  when the worker takes no images (see [step 5](#5-serve-images)). Add `messages_url` to receive a large request's
+  messages as one URL (see [Fetch offloaded messages](#fetch-offloaded-messages)); it can be declared without
+  `vision`.
 - `prompt_jobs` is optional and defaults to `true`. Send `"prompt_jobs": false` with `chat_jobs: true` to serve chat
   jobs only: the worker then does not receive text jobs, does not make a text request possible, and may leave out
   `max_length` and `max_context_length`.
@@ -222,6 +224,29 @@ never reaches a worker without `vision` and a transport. Covered by `tests/integ
 `test_a_url_worker_receives_a_signed_url_valid_for_at_least_the_job_ttl`,
 `test_a_base64_worker_receives_a_jpeg_data_url_built_after_the_queue_lock_is_released` and
 `test_a_worker_without_vision_or_a_transport_never_pops_an_image_request`.
+
+### Fetch offloaded messages
+
+A horde with the messages offload enabled stores a large request's whole `messages` array as one object at submit
+([Messages offload](../reference/chat_requests.md#messages-offload)). Declare `messages_url` in `image_transports`,
+beside `url` or `base64` when the worker declares `vision`, to receive such a request as one URL:
+
+- The payload carries `messages_url` in place of `messages`. Fetch it right after the pop: the URL is valid for 120
+  seconds.
+- The body is the JSON `messages` array, each image part's `url` a `data:image/jpeg;base64,` URL, so the worker does
+  not need a further fetch. It is served either plain or with `Content-Encoding: gzip`. Decode by the response's
+  `Content-Encoding` header; Python's `urllib` does not decode gzip on its own.
+- Cap the decoded body at 36 MiB, the chat request body cap, which bounds the body at every request limit.
+- A request that was not offloaded still arrives with `messages` inline, and a worker that does not declare
+  `messages_url` receives offloaded requests inline too.
+
+A fetch that fails is a faulted job (see [step 7](#7-fault-a-job)); send it without `fault_reason`, since the reasons
+do not cover a failed input fetch.
+
+Verification: covered by `tests/integration/test_chat_images.py`,
+`test_a_messages_url_worker_fetches_the_offloaded_messages_as_plain_json_with_images_inlined`,
+`test_a_worker_without_messages_url_receives_an_offloaded_request_inline` and
+`test_a_request_under_the_threshold_is_not_offloaded`.
 
 ## 6. Submit the reply
 

@@ -28,7 +28,7 @@ from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.user import User
 from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
 from horde.classes.base.worker import SPEED_BASELINE_THINGS_PER_SEC, WorkerPerformance, WorkerTemplate
-from horde.classes.kobold.chat_request import list_chat_image_keys
+from horde.classes.kobold.chat_request import list_stored_chat_object_keys
 from horde.classes.kobold.genstats import CompiledTextGensStatsTotals, CompiledTextGenStatsModels
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import (
@@ -274,10 +274,10 @@ def publish_chat_faults(chat_faults: list[tuple[str, int, str | None, str | None
 
 
 def collect_expired_chat_image_keys(cutoff_time: datetime) -> list[str]:
-    """Return the keys of every stored image an expired chat request references, before the rows are deleted.
+    """Return the keys of the objects the expired chat requests stored at submit, before the rows are deleted.
 
-    Only expired chat rows whose messages hold an image part are read, so the deferred messages of other rows stay
-    unloaded.
+    Only expired chat rows whose messages hold an image part or were offloaded are read, so the deferred messages of
+    other rows stay unloaded.
 
     Args:
         cutoff_time: The expiry cutoff of this cleanup pass.
@@ -285,12 +285,23 @@ def collect_expired_chat_image_keys(cutoff_time: datetime) -> list[str]:
     Returns:
         The object keys.
     """
-    expired_messages = db.session.query(TextWaitingPrompt.messages).filter(
+    expired_requests = db.session.query(
+        TextWaitingPrompt.id,
+        TextWaitingPrompt.messages,
+        TextWaitingPrompt.chat_messages_offloaded,
+    ).filter(
         TextWaitingPrompt.expiry < cutoff_time,
         TextWaitingPrompt.is_chat.is_(True),
-        chat_images_clause(),
+        or_(
+            chat_images_clause(),
+            TextWaitingPrompt.chat_messages_offloaded.is_(True),
+        ),
     )
-    return [image_key for (messages,) in expired_messages for image_key in list_chat_image_keys(messages or [])]
+    return [
+        object_key
+        for request_id, messages, messages_offloaded in expired_requests
+        for object_key in list_stored_chat_object_keys(str(request_id), messages, messages_offloaded=messages_offloaded)
+    ]
 
 
 @logger.catch(reraise=True)

@@ -73,3 +73,11 @@ Signed URLs and worker lifetimes must be bounded; lease refresh cannot justify i
 
 Ruling R25 of the review. User-supplied URL ingestion at submit is a separate concern, addressed by binding the
 validated address to the connection in `horde/image.py`.
+
+A third, additive transport, `messages_url`, is opt-in per deployment: a request whose messages are larger than a
+threshold has the whole array, images inlined as JPEG data URLs, stored as one plain JSON object at submit, and a
+worker that declares it receives one signed URL, valid for 120 seconds, in place of `messages`. The koboldcpp
+maintainer prefers one self-contained JSON fetch to per-image URLs: it is stateless, a JSON parser bounds it, and
+the worker does not manage a partial download. It also keeps large bodies off the pop path for requests without images.
+The `url` and `base64` transports stay valid, and the per-image objects are still stored. See
+[Messages offload](../reference/chat_requests.md#messages-offload).

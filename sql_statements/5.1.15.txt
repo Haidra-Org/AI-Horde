@@ -17,6 +17,7 @@
 -- the temperature the request forwards with tools, NULL when it forwards none, which the pop query
 -- compares with a worker's tool temperature limit. chat_fault_reason and chat_fault_rc hold the message
 -- and return code of the last refused reply to a chat request, which its status reports once it faulted.
+-- chat_messages_offloaded marks a chat request whose messages were also stored as one object at submit.
 -- The workers columns hold the chat declaration a worker sends on each pop: whether it accepts chat
 -- jobs and whether it still accepts text jobs, the optional features and guarantees it declares, its chat
 -- limits, the model it serves chat jobs with and the transports it accepts images by.
@@ -40,6 +41,7 @@ ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS chat_conformance VARCHAR NO
 ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS chat_tools_temperature DOUBLE PRECISION;
 ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS chat_fault_reason VARCHAR(1000);
 ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS chat_fault_rc VARCHAR(32);
+ALTER TABLE waiting_prompts ADD COLUMN IF NOT EXISTS chat_messages_offloaded BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS accepts_chat_jobs BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS accepts_prompt_jobs BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE workers ADD COLUMN IF NOT EXISTS chat_features TEXT[];

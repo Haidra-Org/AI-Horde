@@ -198,6 +198,26 @@ class TestEvidenceClientConfiguration:
         assert r2.EVIDENCE_ACCOUNT_ENV not in warning
 
 
+@pytest.fixture
+def separate_chat_buckets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the offloaded messages a bucket apart from the source images, as a deployment may."""
+    monkeypatch.setattr(r2, "r2_source_image_bucket", "source-images")
+    monkeypatch.setattr(r2, "r2_chat_messages_bucket", "chat-messages")
+
+
+class TestChatObjectKeys:
+    @pytest.mark.parametrize(
+        ("key", "expected"),
+        [
+            ("req_chat_messages.json", True),
+            ("req_chat_0.jpg", False),
+            ("req_chat_messages.json.jpg", False),
+        ],
+    )
+    def test_a_key_is_a_messages_key_only_with_the_messages_suffix(self, key: str, expected: bool) -> None:
+        assert r2.is_chat_messages_key(key) is expected
+
+
 class TestChatImages:
     def test_a_download_url_is_signed_for_the_requested_lifetime(self, fake_clients) -> None:
         transient, _ = fake_clients
@@ -224,3 +244,60 @@ class TestChatImages:
         first_batch, second_batch = (call.kwargs["Delete"]["Objects"] for call in client.delete_objects.call_args_list)
         assert len(first_batch) == r2.CHAT_IMAGE_DELETE_BATCH_SIZE
         assert second_batch == [{"Key": keys[-1]}]
+
+    @pytest.mark.usefixtures("separate_chat_buckets")
+    def test_a_download_url_names_the_bucket_of_its_key(self, fake_clients) -> None:
+        transient, _ = fake_clients
+
+        r2.generate_chat_image_download_url("req_chat_0.jpg", expires_in=900)
+        r2.generate_chat_image_download_url("req_chat_messages.json", expires_in=900)
+
+        assert [call["params"] for call in transient.calls] == [
+            {"Bucket": "source-images", "Key": "req_chat_0.jpg"},
+            {"Bucket": "chat-messages", "Key": "req_chat_messages.json"},
+        ]
+
+    @pytest.mark.usefixtures("separate_chat_buckets")
+    def test_a_mixed_bulk_delete_deletes_each_key_from_its_bucket_and_reports_failures(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        client = Mock()
+        client.delete_objects.side_effect = [
+            {"Errors": [{"Key": "req_chat_messages.json", "Code": "AccessDenied"}]},
+            {"Errors": [{"Key": "req_chat_0.jpg", "Code": "NoSuchKey"}, {"Key": "req_chat_1.jpg", "Code": "InternalError"}]},
+        ]
+        monkeypatch.setattr(r2, "s3_client", client)
+
+        failed_keys = r2.delete_chat_images(["req_chat_1.jpg", "req_chat_messages.json", "req_chat_0.jpg"])
+
+        assert failed_keys == {"req_chat_messages.json", "req_chat_1.jpg"}
+        assert [(call.kwargs["Bucket"], call.kwargs["Delete"]["Objects"]) for call in client.delete_objects.call_args_list] == [
+            ("chat-messages", [{"Key": "req_chat_messages.json"}]),
+            ("source-images", [{"Key": "req_chat_0.jpg"}, {"Key": "req_chat_1.jpg"}]),
+        ]
+
+
+class TestChatMessages:
+    @pytest.mark.usefixtures("separate_chat_buckets")
+    @pytest.mark.parametrize("gzipped", [True, False])
+    def test_offloaded_messages_are_stored_as_json_that_is_not_transformed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        gzipped: bool,
+    ) -> None:
+        client = Mock()
+        monkeypatch.setattr(r2, "s3_client", client)
+
+        r2.upload_chat_messages(b"body", "req_chat_messages.json", gzipped=gzipped)
+
+        expected_object = {
+            "Bucket": "chat-messages",
+            "Key": "req_chat_messages.json",
+            "Body": b"body",
+            "ContentType": "application/json",
+            "CacheControl": "no-transform",
+        }
+        if gzipped:
+            expected_object["ContentEncoding"] = "gzip"
+        client.put_object.assert_called_once_with(**expected_object)

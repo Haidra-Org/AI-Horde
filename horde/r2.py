@@ -28,6 +28,10 @@ r2_permanent_account = os.getenv(
 r2_transient_bucket = os.getenv("R2_TRANSIENT_BUCKET", "stable-horde")
 r2_permanent_bucket = os.getenv("R2_PERMANENT_BUCKET", "stable-horde")
 r2_source_image_bucket = os.getenv("R2_SOURCE_IMAGE_BUCKET", "stable-horde-source-images")
+r2_chat_messages_bucket = os.getenv("R2_CHAT_MESSAGES_BUCKET", r2_source_image_bucket)
+"""The bucket of chat requests' offloaded messages objects. It defaults to the source image bucket, beside the
+requests' images, so an existing layout is unchanged unless a deployment keeps text payloads in a bucket of their
+own."""
 
 s3_client = boto3.client("s3", endpoint_url=r2_transient_account)
 s3_client_shared = boto3.client(
@@ -157,6 +161,46 @@ def upload_source_image(image, filename):
 CHAT_IMAGE_DELETE_BATCH_SIZE = 1000
 """The most keys one bulk delete of chat images names, which is the S3 ``DeleteObjects`` limit."""
 
+CHAT_MESSAGES_CACHE_CONTROL = "no-transform"
+"""The ``Cache-Control`` an offloaded messages object is stored with, gzipped or not. Cloudflare R2 may decompress an
+object stored with ``Content-Encoding: gzip`` on the fly and drop the header unless the object carries
+``no-transform``; a worker honours whichever encoding it is served, and this keeps the stored one."""
+
+CHAT_MESSAGES_KEY_SUFFIX = "_chat_messages.json"
+"""The suffix of every offloaded messages object key, which
+[`build_chat_messages_key`][horde.classes.kobold.chat_request.build_chat_messages_key] appends to the request id."""
+
+
+def is_chat_messages_key(key: str) -> bool:
+    """Return whether an object key identifies a chat request's offloaded messages rather than one of its images.
+
+    The suffix is the object's declared type: every messages key ends with
+    [`CHAT_MESSAGES_KEY_SUFFIX`][horde.r2.CHAT_MESSAGES_KEY_SUFFIX], and every image key
+    [`build_chat_image_key`][horde.classes.kobold.chat_request.build_chat_image_key] builds ends with ``.jpg``. The
+    keys queued for a delete retry are bare keys, so the bucket an object is in is read from its key.
+
+    Args:
+        key: The object key.
+
+    Returns:
+        Whether the key is an offloaded messages key.
+    """
+    return key.endswith(CHAT_MESSAGES_KEY_SUFFIX)
+
+
+def _chat_object_bucket(key: str) -> str:
+    """Return the bucket a chat request's stored object is in: the messages bucket or the source image bucket.
+
+    Args:
+        key: The object key.
+
+    Returns:
+        The bucket name.
+    """
+    if is_chat_messages_key(key):
+        return r2_chat_messages_bucket
+    return r2_source_image_bucket
+
 
 def upload_chat_image(jpeg_bytes: bytes, key: str) -> None:
     """Store one chat request's image in the source image bucket.
@@ -171,6 +215,37 @@ def upload_chat_image(jpeg_bytes: bytes, key: str) -> None:
     """
     with logfire.span("horde.r2.upload_chat_image", key=key, size=len(jpeg_bytes)):
         s3_client.put_object(Bucket=r2_source_image_bucket, Key=key, Body=jpeg_bytes, ContentType="image/jpeg")
+
+
+def upload_chat_messages(body: bytes, key: str, *, gzipped: bool) -> None:
+    """Store a chat request's offloaded ``messages`` array in the ``R2_CHAT_MESSAGES_BUCKET`` bucket.
+
+    The bucket is the source image bucket, beside the request's images, unless a deployment sets it.
+
+    The object is the plain JSON array, stored with ``Content-Encoding: gzip`` when ``gzipped`` is set and with
+    [`CHAT_MESSAGES_CACHE_CONTROL`][horde.r2.CHAT_MESSAGES_CACHE_CONTROL] either way, so an edge that compresses
+    downloads does not change what is stored.
+
+    Args:
+        body: The UTF-8 JSON of the messages, gzipped when ``gzipped`` is set.
+        key: The object key.
+        gzipped: Whether ``body`` is gzip compressed.
+
+    Raises:
+        botocore.exceptions.ClientError: If the store refuses the write.
+        botocore.exceptions.BotoCoreError: If the store cannot be reached.
+    """
+    object_arguments = {
+        "Bucket": r2_chat_messages_bucket,
+        "Key": key,
+        "Body": body,
+        "ContentType": "application/json",
+        "CacheControl": CHAT_MESSAGES_CACHE_CONTROL,
+    }
+    if gzipped:
+        object_arguments["ContentEncoding"] = "gzip"
+    with logfire.span("horde.r2.upload_chat_messages", key=key, size=len(body), gzipped=gzipped):
+        s3_client.put_object(**object_arguments)
 
 
 def download_chat_image(filename: str) -> bytes:
@@ -193,9 +268,10 @@ def download_chat_image(filename: str) -> bytes:
 
 
 def generate_chat_image_download_url(filename: str, *, expires_in: int) -> str:
-    """Return a presigned download URL for a chat request's image.
+    """Return a presigned download URL for a chat request's stored image or offloaded messages.
 
-    Signing is local, so this makes no request to the store.
+    The URL references the bucket [`is_chat_messages_key`][horde.r2.is_chat_messages_key] places the key in. Signing is
+    local, so this makes no request to the store.
 
     Args:
         filename: The object key.
@@ -207,15 +283,16 @@ def generate_chat_image_download_url(filename: str, *, expires_in: int) -> str:
     return generate_presigned_url(
         s3_client,
         "get_object",
-        {"Bucket": r2_source_image_bucket, "Key": filename},
+        {"Bucket": _chat_object_bucket(filename), "Key": filename},
         expires_in=expires_in,
     )
 
 
 def delete_chat_images(keys: Collection[str]) -> set[str]:
-    """Delete chat images from the source image bucket, in bulk.
+    """Delete chat images and offloaded chat messages, in bulk.
 
-    A key that does not exist counts as deleted.
+    Each key is deleted from the bucket [`is_chat_messages_key`][horde.r2.is_chat_messages_key] places it in, one
+    batch of requests per bucket. A key that does not exist counts as deleted.
 
     Args:
         keys: The object keys.
@@ -227,18 +304,22 @@ def delete_chat_images(keys: Collection[str]) -> set[str]:
         botocore.exceptions.ClientError: If the store refuses a whole request.
         botocore.exceptions.BotoCoreError: If the store cannot be reached.
     """
-    sorted_keys = sorted(set(keys))
+    keys_by_bucket: dict[str, set[str]] = {}
+    for key in keys:
+        keys_by_bucket.setdefault(_chat_object_bucket(key), set()).add(key)
     failed_keys: set[str] = set()
-    for start in range(0, len(sorted_keys), CHAT_IMAGE_DELETE_BATCH_SIZE):
-        batch_keys = sorted_keys[start : start + CHAT_IMAGE_DELETE_BATCH_SIZE]
-        with logfire.span("horde.r2.delete_chat_images", count=len(batch_keys)):
-            response = s3_client.delete_objects(
-                Bucket=r2_source_image_bucket,
-                Delete={"Objects": [{"Key": key} for key in batch_keys], "Quiet": True},
-            )
-        for error in response.get("Errors", []):
-            if error.get("Code") != "NoSuchKey" and error.get("Key") is not None:
-                failed_keys.add(error["Key"])
+    for bucket, bucket_keys in sorted(keys_by_bucket.items()):
+        sorted_keys = sorted(bucket_keys)
+        for start in range(0, len(sorted_keys), CHAT_IMAGE_DELETE_BATCH_SIZE):
+            batch_keys = sorted_keys[start : start + CHAT_IMAGE_DELETE_BATCH_SIZE]
+            with logfire.span("horde.r2.delete_chat_images", bucket=bucket, count=len(batch_keys)):
+                response = s3_client.delete_objects(
+                    Bucket=bucket,
+                    Delete={"Objects": [{"Key": key} for key in batch_keys], "Quiet": True},
+                )
+            for error in response.get("Errors", []):
+                if error.get("Code") != "NoSuchKey" and error.get("Key") is not None:
+                    failed_keys.add(error["Key"])
     return failed_keys
 
 

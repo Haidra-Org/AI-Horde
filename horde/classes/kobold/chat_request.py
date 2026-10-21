@@ -35,17 +35,22 @@ A user message may carry image parts, as a data URL or an http(s) URL. The nativ
 storage and keeps only a reference to it in the stored messages
 ([`replace_image_urls`][horde.classes.kobold.chat_request.replace_image_urls]); at pop the reference becomes a signed
 URL or a data URL, by the transport the worker declared
-([`select_image_transport`][horde.classes.kobold.chat_request.select_image_transport]).
+([`select_chat_transport`][horde.classes.kobold.chat_request.select_chat_transport]). A large request's whole
+``messages`` array, images inlined, may also be stored as one object at submit
+([`build_chat_messages_offload`][horde.classes.kobold.chat_request.build_chat_messages_offload]); a worker that
+declared the ``messages_url`` transport then receives a signed URL to it in place of the messages.
 """
 
 from __future__ import annotations
 
+import base64
 import enum
+import gzip
 import hashlib
 import itertools
 import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Annotated, Any, Literal, NoReturn
+from typing import Annotated, Any, Literal, NamedTuple, NoReturn
 
 from horde_sdk.generation_parameters.text.chat_limits import (
     CHAT_SAMPLING_DEFAULTS,
@@ -117,6 +122,7 @@ from horde.classes.kobold.request_fit import (
     MAX_LENGTH_PARAMETER,
 )
 from horde.image import parse_image_data_url
+from horde.r2 import CHAT_MESSAGES_KEY_SUFFIX
 
 __all__ = [
     "CHAT_IMAGE_DATA_URL_PREFIX",
@@ -137,11 +143,14 @@ __all__ = [
     "ChatCompletionRequest",
     "ChatImageDetail",
     "ChatMessage",
+    "ChatMessagesOffload",
     "ChatRole",
     "ChatSubmittedMessage",
     "build_chat_extras",
     "build_chat_image_key",
     "build_chat_job_payload",
+    "build_chat_messages_key",
+    "build_chat_messages_offload",
     "build_chat_request_traits",
     "build_model_names",
     "build_operation_fingerprint",
@@ -155,15 +164,17 @@ __all__ = [
     "chat_worker_fault_message",
     "flatten_messages",
     "has_image_parts",
+    "inline_chat_images",
     "list_chat_image_keys",
     "list_image_urls",
+    "list_stored_chat_object_keys",
     "message_text",
     "parse_chat_request",
     "replace_image_urls",
     "required_chat_features",
     "resolve_image_references",
     "rewrite_message_texts",
-    "select_image_transport",
+    "select_chat_transport",
     "serialize_messages",
     "verify_chat_reply",
 ]
@@ -279,6 +290,11 @@ the source image bucket, so the database never holds image bytes or a fetchable 
 
 CHAT_IMAGE_DATA_URL_PREFIX = "data:image/jpeg;base64,"
 """Prefix of a data URL holding a stored chat image, which is always JPEG."""
+
+CHAT_MESSAGES_GZIP_LEVEL = 6
+"""The gzip level an offloaded ``messages`` body is compressed at, zlib's default. Most of a large body is base64
+JPEG, which compresses by about a quarter at any level, so a higher level adds compression time at submit for little
+saving."""
 
 CHAT_IMAGE_PLACEHOLDER = "[image]"
 """The text an image part is rendered as in the flattened prompt, so the token estimate and moderation see that the
@@ -1088,18 +1104,32 @@ def list_chat_image_keys(messages: Sequence[Mapping[str, Any]]) -> list[str]:
     ]
 
 
-def select_image_transport(declared_transports: Sequence[str] | None) -> ChatImageTransport | None:
-    """Return the transport a worker's images are sent with.
+def select_chat_transport(
+    declared_transports: Sequence[str] | None,
+    *,
+    carries_images: bool,
+    messages_offloaded: bool,
+) -> ChatImageTransport | None:
+    """Return the transport a chat job's messages and images are sent to a worker with.
 
-    ``url`` is chosen whenever the worker declared it; ``base64`` only when it is the only one declared.
+    ``messages_url`` is chosen whenever the request's messages were offloaded and the worker declared it. Otherwise a
+    request with images uses ``url`` whenever the worker declared it, and ``base64`` only when that is the only image
+    transport declared.
 
     Args:
         declared_transports: The ``image_transports`` the worker declared on its last pop.
+        carries_images: Whether the request's messages hold an image part.
+        messages_offloaded: Whether the request's messages were stored as one object at submit.
 
     Returns:
-        The transport, or None when the worker declared none.
+        The transport, or None when the messages are sent inline and do not carry an image, or the worker did
+        not declare a transport for them.
     """
     declared = set(declared_transports or ())
+    if messages_offloaded and ChatImageTransport.MESSAGES_URL.value in declared:
+        return ChatImageTransport.MESSAGES_URL
+    if not carries_images:
+        return None
     for transport in (ChatImageTransport.URL, ChatImageTransport.BASE64):
         if transport.value in declared:
             return transport
@@ -1136,6 +1166,109 @@ def replace_image_urls(messages: Sequence[Mapping[str, Any]], request_id: str) -
         messages,
         lambda _submitted_url: f"{CHAT_IMAGE_REFERENCE_PREFIX}{build_chat_image_key(request_id, next(image_ordinals))}",
     )
+
+
+def build_chat_messages_key(request_id: str) -> str:
+    """Return the object key a chat request's offloaded ``messages`` array is stored under.
+
+    The key is the same whether the body is stored gzipped or plain; the object's ``Content-Encoding`` tells them
+    apart, so deleting and signing the object needs only the request id. The key ends with
+    [`CHAT_MESSAGES_KEY_SUFFIX`][horde.r2.CHAT_MESSAGES_KEY_SUFFIX], which
+    [`is_chat_messages_key`][horde.r2.is_chat_messages_key] reads to sign and delete it in the messages bucket.
+
+    Args:
+        request_id: The chat request's id.
+
+    Returns:
+        The key in the ``R2_CHAT_MESSAGES_BUCKET`` bucket, which defaults to the source image bucket beside the
+        request's images.
+    """
+    return f"{request_id}{CHAT_MESSAGES_KEY_SUFFIX}"
+
+
+def list_stored_chat_object_keys(
+    request_id: str,
+    messages: Sequence[Mapping[str, Any]] | None,
+    *,
+    messages_offloaded: bool,
+) -> list[str]:
+    """Return the key of every object a chat request stored at submit.
+
+    Args:
+        request_id: The chat request's id.
+        messages: The request's stored messages, whose image parts hold references.
+        messages_offloaded: Whether the request's messages were also stored as one object.
+
+    Returns:
+        The keys of the images the messages reference, in message order, then the offloaded messages key when there
+        is one.
+    """
+    object_keys = list_chat_image_keys(messages or [])
+    if messages_offloaded:
+        object_keys.append(build_chat_messages_key(request_id))
+    return object_keys
+
+
+def inline_chat_images(messages: Sequence[Mapping[str, Any]], jpeg_images: Sequence[bytes]) -> list[dict[str, Any]]:
+    """Return a copy of the messages with each image part's URL replaced by its stored JPEG as a data URL.
+
+    Args:
+        messages: A ``messages`` array whose image parts hold the submitted URLs.
+        jpeg_images: The stored JPEG bytes of each image part, in message order.
+
+    Returns:
+        The messages as a ``base64`` worker receives them.
+
+    Raises:
+        ValueError: If the number of images differs from the number of image parts.
+    """
+    if len(jpeg_images) != len(list_image_urls(messages)):
+        raise ValueError("Every image part needs exactly one stored image.")
+    stored_images = iter(jpeg_images)
+    return _replace_image_urls_in_order(
+        messages,
+        lambda _submitted_url: CHAT_IMAGE_DATA_URL_PREFIX + base64.b64encode(next(stored_images)).decode("ascii"),
+    )
+
+
+class ChatMessagesOffload(NamedTuple):
+    """Represents the object a large chat request's ``messages`` array is stored as."""
+
+    body: bytes
+    """The UTF-8 JSON of the messages array, gzipped when ``gzipped`` is set."""
+
+    gzipped: bool
+    """Whether ``body`` is gzip compressed, which the object's ``Content-Encoding: gzip`` records."""
+
+
+def build_chat_messages_offload(
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    threshold_bytes: int,
+    compress: bool,
+) -> ChatMessagesOffload | None:
+    """Return the object a ``messages`` array is offloaded as, or None when it is small enough to send inline.
+
+    The body is the plain JSON array. Compression applies to the whole body as a transport encoding, and the fields
+    inside it stay plain. It is used only when ``compress`` is set and gzip makes the body smaller.
+
+    Args:
+        messages: The messages as a worker receives them, images inlined as data URLs.
+        threshold_bytes: The largest compact JSON size, in bytes, that stays inline.
+        compress: Whether to try gzip on the body.
+
+    Returns:
+        The body and whether it is gzipped, or None when the compact JSON is at most ``threshold_bytes``.
+    """
+    plain_body = _compact_json(list(messages)).encode("utf-8")
+    if len(plain_body) <= threshold_bytes:
+        return None
+    if not compress:
+        return ChatMessagesOffload(body=plain_body, gzipped=False)
+    gzipped_body = gzip.compress(plain_body, compresslevel=CHAT_MESSAGES_GZIP_LEVEL, mtime=0)
+    if len(gzipped_body) < len(plain_body):
+        return ChatMessagesOffload(body=gzipped_body, gzipped=True)
+    return ChatMessagesOffload(body=plain_body, gzipped=False)
 
 
 def resolve_image_references(

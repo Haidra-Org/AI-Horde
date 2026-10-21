@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import base64
+import gzip
+import json
 import uuid
 from io import BytesIO
 from typing import Any
@@ -51,6 +53,8 @@ from horde.classes.kobold.chat_request import (
     build_chat_extras,
     build_chat_image_key,
     build_chat_job_payload,
+    build_chat_messages_key,
+    build_chat_messages_offload,
     build_chat_request_traits,
     build_model_names,
     build_stored_reply,
@@ -62,20 +66,23 @@ from horde.classes.kobold.chat_request import (
     chat_tools_temperature,
     flatten_messages,
     has_image_parts,
+    inline_chat_images,
     list_chat_image_keys,
     list_image_urls,
+    list_stored_chat_object_keys,
     parse_chat_request,
     replace_image_urls,
     required_chat_features,
     resolve_image_references,
     rewrite_message_texts,
-    select_image_transport,
+    select_chat_transport,
     serialize_messages,
     verify_chat_reply,
 )
 from horde.classes.kobold.processing_generation import is_empty_submission
 from horde.exceptions import KNOWN_RC
 from horde.image import MAX_CHAT_IMAGE_SIDE, load_chat_image
+from horde.r2 import is_chat_messages_key
 
 CHAT_MODEL = "koboldcpp/LLaMA2-13B-Tiefighter"
 
@@ -1686,6 +1693,87 @@ class TestImageReferences:
             resolve_image_references(_image_messages(SMALL_DATA_URL), lambda image_key: image_key)
 
 
+class TestMessagesOffload:
+    def test_messages_at_or_under_the_threshold_stay_inline(self) -> None:
+        messages = [{"role": "user", "content": "Hello."}]
+        compact_size = len(json.dumps(messages, separators=(",", ":")).encode())
+
+        assert build_chat_messages_offload(messages, threshold_bytes=compact_size, compress=True) is None
+
+    def test_compressible_messages_over_the_threshold_are_stored_gzipped(self) -> None:
+        messages = [{"role": "user", "content": "the same words again " * 2000}]
+
+        offload = build_chat_messages_offload(messages, threshold_bytes=1024, compress=True)
+
+        assert offload is not None
+        assert offload.gzipped is True
+        assert json.loads(gzip.decompress(offload.body)) == messages
+        assert len(offload.body) < len(json.dumps(messages, separators=(",", ":")).encode())
+
+    def test_messages_that_gzip_does_not_shrink_are_stored_plain(self) -> None:
+        # gzip's header and trailer alone outweigh what deflate saves on a body this short.
+        messages = [{"role": "user", "content": "x"}]
+
+        offload = build_chat_messages_offload(messages, threshold_bytes=1, compress=True)
+
+        assert offload is not None
+        assert offload.gzipped is False
+        assert json.loads(offload.body) == messages
+
+    def test_non_ascii_text_is_stored_as_utf8(self) -> None:
+        messages = [{"role": "user", "content": "été 中文 " * 500}]
+
+        offload = build_chat_messages_offload(messages, threshold_bytes=1, compress=True)
+
+        assert offload is not None
+        assert json.loads(gzip.decompress(offload.body).decode("utf-8")) == messages
+
+    def test_messages_are_stored_as_plain_json_while_compression_is_off(self) -> None:
+        messages = [{"role": "user", "content": "the same words again " * 2000}]
+
+        offload = build_chat_messages_offload(messages, threshold_bytes=1024, compress=False)
+
+        assert offload is not None
+        assert offload.gzipped is False
+        assert json.loads(offload.body) == messages
+
+    def test_images_are_inlined_as_jpeg_data_urls_in_order(self) -> None:
+        messages = _image_messages("https://example.com/a.png", SMALL_DATA_URL)
+
+        inlined_messages = inline_chat_images(messages, [b"first", b"second"])
+
+        assert list_image_urls(inlined_messages) == [
+            f"data:image/jpeg;base64,{base64.b64encode(b'first').decode('ascii')}",
+            f"data:image/jpeg;base64,{base64.b64encode(b'second').decode('ascii')}",
+        ]
+        assert inlined_messages[0]["content"][0] == messages[0]["content"][0]
+
+    def test_inlining_refuses_a_count_of_images_other_than_the_image_parts(self) -> None:
+        with pytest.raises(ValueError):
+            inline_chat_images(_image_messages(SMALL_DATA_URL), [])
+
+    def test_the_messages_key_sits_beside_the_image_keys(self) -> None:
+        assert build_chat_messages_key("request-id") == "request-id_chat_messages.json"
+
+    def test_only_the_messages_key_is_read_as_a_messages_key(self) -> None:
+        """The store routes a key to the messages bucket by its suffix, so no image key may carry it."""
+        assert is_chat_messages_key(build_chat_messages_key("request-id"))
+        assert not is_chat_messages_key(build_chat_image_key("request-id", 0))
+        assert not is_chat_messages_key(build_chat_image_key("request-id_chat_messages", 12))
+
+    def test_stored_object_keys_list_the_images_then_the_offloaded_messages(self) -> None:
+        stored_messages = replace_image_urls(_image_messages(SMALL_DATA_URL), "request-id")
+
+        assert list_stored_chat_object_keys("request-id", stored_messages, messages_offloaded=True) == [
+            build_chat_image_key("request-id", 0),
+            build_chat_messages_key("request-id"),
+        ]
+        assert list_stored_chat_object_keys("request-id", stored_messages, messages_offloaded=False) == [
+            build_chat_image_key("request-id", 0),
+        ]
+        assert list_stored_chat_object_keys("request-id", None, messages_offloaded=False) == []
+
+
 def _png_data_url(size: tuple[int, int], mode: str = "RGB") -> str:
     image_buffer = BytesIO()
     Image.new(mode, size).save(image_buffer, format="PNG")
@@ -1733,12 +1821,34 @@ class TestImageTransport:
             (["base64", "url"], ChatImageTransport.URL),
             (["url"], ChatImageTransport.URL),
             (["base64"], ChatImageTransport.BASE64),
+            (["messages_url"], None),
             ([], None),
             (None, None),
         ],
     )
     def test_url_is_chosen_whenever_declared_and_base64_only_alone(self, declared: list[str] | None, expected: Any) -> None:
-        assert select_image_transport(declared) == expected
+        assert select_chat_transport(declared, carries_images=True, messages_offloaded=False) == expected
+
+    @pytest.mark.parametrize(
+        ("declared", "carries_images", "expected"),
+        [
+            (["url", "messages_url"], True, ChatImageTransport.MESSAGES_URL),
+            (["messages_url", "base64"], True, ChatImageTransport.MESSAGES_URL),
+            (["messages_url"], False, ChatImageTransport.MESSAGES_URL),
+            (["url", "base64"], True, ChatImageTransport.URL),
+            (["url"], False, None),
+        ],
+    )
+    def test_an_offloaded_request_uses_messages_url_whenever_the_worker_declared_it(
+        self,
+        declared: list[str],
+        carries_images: bool,
+        expected: Any,
+    ) -> None:
+        assert select_chat_transport(declared, carries_images=carries_images, messages_offloaded=True) == expected
+
+    def test_a_request_sent_inline_without_images_has_no_transport(self) -> None:
+        assert select_chat_transport(["url", "base64", "messages_url"], carries_images=False, messages_offloaded=False) is None
 
     def test_vision_is_a_declared_feature_name(self) -> None:
         assert ChatFeature("vision") is ChatFeature.VISION

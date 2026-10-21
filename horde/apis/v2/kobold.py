@@ -45,9 +45,12 @@ from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX
 from horde.classes.kobold.chat_request import (
     CHAT_WORKER_FAULT_RC,
     MAX_NATIVE_FINISH_REASON_LENGTH,
-    ChatSubmittedMessage,
+    ChatMessagesOffload,
     build_chat_extras,
+    ChatSubmittedMessage,
     build_chat_image_key,
+    build_chat_messages_key,
+    build_chat_messages_offload,
     build_model_names,
     build_operation_fingerprint,
     build_stored_reply,
@@ -56,6 +59,7 @@ from horde.classes.kobold.chat_request import (
     chat_reply_finish_reason,
     chat_worker_fault_message,
     flatten_messages,
+    inline_chat_images,
     list_image_urls,
     parse_chat_request,
     replace_image_urls,
@@ -96,7 +100,7 @@ from horde.limiter import limiter
 from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.patreon import patrons
-from horde.r2 import upload_chat_image
+from horde.r2 import upload_chat_image, upload_chat_messages
 from horde.request_scheduling import record_request_cancellation_forecast
 from horde.utils import get_db_uuid, hash_dictionary
 from horde.validation import ParamValidator
@@ -727,7 +731,11 @@ class ChatAsyncGenerate(TextAsyncGenerate):
     """The request's images, validated and encoded as the JPEG to store, in message order. Empty for a dry run,
     which neither fetches nor stores them."""
     chat_image_keys: tuple[str, ...] = ()
-    """The object keys this submission stored images under, deleted again when activation fails."""
+    """The object keys this submission stored images and offloaded messages under, deleted again when activation
+    fails."""
+    chat_messages_offload: ChatMessagesOffload | None = None
+    """The object the request's messages are offloaded as, from ``prepare_messages_offload``, or None when they stay
+    inline: offloading is disabled, the messages are small, or the request is a dry run."""
     chat_extras = None
     """The tools and response format the request applies, from ``build_chat_extras``, or None."""
 
@@ -920,6 +928,7 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         self.warnings = param_validator.validate_text_params()
         self.mirror_prompt_rewrites_onto_messages()
         self.load_chat_images()
+        self.prepare_messages_offload()
 
     def get_extra_source_images_count(self):
         """Return how many images the request carries, each of which is charged the extra source image tax.
@@ -962,17 +971,34 @@ class ChatAsyncGenerate(TextAsyncGenerate):
             return
         self.chat_images = tuple(encode_chat_image(load_chat_image(image_url)) for image_url in image_urls)
 
-    def upload_source_images(self):
-        """Store the request's images under keys derived from its id, after its inactive row exists.
+    def prepare_messages_offload(self):
+        """Build the object the messages are offloaded as when offloading is enabled and they are large.
 
-        The row's messages already reference these keys, so a request whose handling stops after this point leaves
-        no image that its row's deletion does not remove.
+        The size is that of the messages as a ``base64`` worker would receive them, each image inlined as its stored
+        JPEG, so a request is offloaded exactly when it would make a large pop response. A dry run does not store
+        anything and is never offloaded.
+        """
+        self.chat_messages_offload = None
+        if self.args.dry_run or not Config.chat_messages_offload_enabled:
+            return
+        self.chat_messages_offload = build_chat_messages_offload(
+            inline_chat_images(self.messages, self.chat_images),
+            threshold_bytes=Config.chat_messages_offload_bytes,
+            compress=Config.chat_messages_offload_gzip,
+        )
+
+    def upload_source_images(self):
+        """Store the request's images, then its offloaded messages, under keys derived from its id once its row exists.
+
+        The row's messages already reference the image keys and its ``chat_messages_offloaded`` marks the messages
+        key, so a request whose handling stops after this point leaves only objects that its row's deletion
+        removes.
 
         Raises:
-            horde.exceptions.ServiceUnavailable: With ``ChatImageStorageUnavailable`` when the store refuses an image;
-                the row and the images already stored are deleted first.
+            horde.exceptions.ServiceUnavailable: With ``ChatImageStorageUnavailable`` when the store refuses an image
+                or the messages; the row and the objects already stored are deleted first.
         """
-        if not self.chat_images:
+        if not self.chat_images and self.chat_messages_offload is None:
             return
         stored_keys: list[str] = []
         try:
@@ -980,6 +1006,14 @@ class ChatAsyncGenerate(TextAsyncGenerate):
                 image_key = build_chat_image_key(str(self.wp.id), ordinal)
                 upload_chat_image(jpeg_bytes, image_key)
                 stored_keys.append(image_key)
+            if self.chat_messages_offload is not None:
+                messages_key = build_chat_messages_key(str(self.wp.id))
+                upload_chat_messages(
+                    self.chat_messages_offload.body,
+                    messages_key,
+                    gzipped=self.chat_messages_offload.gzipped,
+                )
+                stored_keys.append(messages_key)
         except (BotoCoreError, ClientError) as err:
             logger.warning(f"Could not store the images of chat request {self.wp.id}: {err}")
             self.wp.delete()
@@ -1093,9 +1127,11 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         waiting_prompt_arguments["chat_extras"] = self.chat_extras
         waiting_prompt_arguments["chat_conformance"] = self.chat_request.horde.conformance.value
         waiting_prompt_arguments["context_adjustments"] = self.context_adjustments
-        if list_image_urls(self.messages):
+        waiting_prompt_arguments["chat_messages_offloaded"] = self.chat_messages_offload is not None
+        if list_image_urls(self.messages) or self.chat_messages_offload is not None:
             # The id is chosen here so the row is written with each image already replaced by the reference to the
-            # key it is stored under; the submitted image bytes and URLs never reach the database.
+            # key it is stored under, and the offloaded messages key is known before the row exists; the submitted
+            # image bytes and URLs never reach the database.
             request_id = get_db_uuid()
             waiting_prompt_arguments["id"] = request_id
             waiting_prompt_arguments["messages"] = replace_image_urls(self.messages, str(request_id))

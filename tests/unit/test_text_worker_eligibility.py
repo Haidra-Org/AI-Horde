@@ -321,6 +321,13 @@ IMAGE_CHAT_MESSAGES = [
         ({"image_transports": ["url"]}, [False, "chat_features"]),
         ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE]}, [False, "chat_features"]),
         ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": []}, [False, "chat_features"]),
+        (
+            {
+                "chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE],
+                "image_transports": ["messages_url"],
+            },
+            [False, "chat_features"],
+        ),
         ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": ["base64"]}, [True, None]),
         ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": ["url"]}, [True, None]),
     ],

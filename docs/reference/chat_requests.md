@@ -68,7 +68,9 @@ those workers keep receiving text jobs.
 | Signal database                  | `horde/redis_ctrl.py`                           | `chat_signal_db`                                      |
 | Image fetch, normalise, encode   | `horde/image.py`                                | `fetch_public_image`, `load_chat_image`, `encode_chat_image` |
 | Image storage at submit          | `horde/apis/v2/kobold.py`                       | `ChatAsyncGenerate.load_chat_images`, `ChatAsyncGenerate.upload_source_images` |
-| Image references and transport   | `horde/classes/kobold/chat_request.py`          | `replace_image_urls`, `select_image_transport`        |
+| Image references and transport   | `horde/classes/kobold/chat_request.py`          | `replace_image_urls`, `select_chat_transport`         |
+| Messages offload                 | `horde/classes/kobold/chat_request.py`, `horde/apis/v2/kobold.py`, `horde/r2.py` | `build_chat_messages_offload`, `ChatAsyncGenerate.prepare_messages_offload`, `upload_chat_messages` |
+| Messages URL at pop              | `horde/classes/kobold/waiting_prompt.py`        | `TextWaitingPrompt.get_pop_payload`, `CHAT_MESSAGES_URL_SECONDS` |
 | Image parts at pop               | `horde/classes/kobold/waiting_prompt.py`        | `TextWaitingPrompt.build_worker_messages`             |
 | Image cleanup                    | `horde/database/threads.py`                     | `collect_expired_chat_image_keys`                     |
 | Image delete retry               | `horde/classes/kobold/waiting_prompt.py`        | `delete_stored_chat_images`, `retry_chat_image_deletes` |
@@ -268,6 +270,62 @@ they generate with a scanner and report a job as `worker_csam`; chat workers do 
 chat vision path is not screened for CSAM on any side
 ([recorded events](moderation_operations.md#recorded-events)).
 
+### Messages offload
+
+The submit route can store a large request's whole `messages` array as one object, so a worker fetches one
+self-contained JSON body and the pop response does not carry a large payload. It is off unless enabled:
+
+| Setting                               | Default                  | Effect                                                                      |
+| ------------------------------------- | ------------------------ | --------------------------------------------------------------------------- |
+| `HORDE_CHAT_MESSAGES_OFFLOAD_ENABLED` | `false`                  | Offload requests over the threshold at submit                               |
+| `HORDE_CHAT_MESSAGES_OFFLOAD_BYTES`   | `262144`                 | The largest messages size, in bytes, that stays inline                      |
+| `HORDE_CHAT_MESSAGES_OFFLOAD_GZIP`    | `false`                  | Store the body gzipped, with `Content-Encoding: gzip`, when that is smaller |
+| `R2_CHAT_MESSAGES_BUCKET`             | `R2_SOURCE_IMAGE_BUCKET` | The bucket the messages object is stored in                                 |
+
+The size compared is the compact JSON of the messages as a `base64` worker receives them, each image inlined as its
+stored JPEG in a `data:image/jpeg;base64,` URL. 256 KiB keeps text-only requests inline and offloads any request
+carrying a stored image over about 192 KiB. A dry run is never offloaded.
+
+The object is the plain JSON messages array in that form, keyed `<request id>_chat_messages.json` in the
+`R2_CHAT_MESSAGES_BUCKET` bucket. That bucket defaults to the source image bucket, so the object sits beside the
+images unless `R2_CHAT_MESSAGES_BUCKET` sets another bucket. The key suffix tells a messages object from an
+image when the object is signed or deleted, so a queued delete retry reaches the right bucket. The object is stored
+with `Content-Type: application/json` and `Cache-Control: no-transform`. With
+`HORDE_CHAT_MESSAGES_OFFLOAD_GZIP` on, the whole body is gzipped and kept only when smaller, and the object carries
+`Content-Encoding: gzip`; the key is the same either way. Compression is a transport encoding of the whole body,
+and the JSON fields are plain. Object storage that honours `Cache-Control: no-transform`, Cloudflare R2 and
+Garage included, serves the gzip-stored object as stored, with `Content-Encoding: gzip`, whatever `Accept-Encoding`
+the client sends.
+The row is written with `chat_messages_offloaded` set, then the images and the messages object are stored before
+activation; a store failure deletes the row and the objects already stored and returns `503
+ChatImageStorageUnavailable`. The images are stored as without the offload, so every other transport keeps working.
+
+At assignment `select_chat_transport` picks `messages_url` for an offloaded request when the worker declared it, and
+otherwise the transports above; the generation records it in `processing_gens.image_transport`, which is NULL for a
+request sent inline without images. A `messages_url` job's payload carries `messages_url` in place of `messages`: a
+presigned download URL, signed locally after the queue lock is released, valid for 120 seconds
+(`CHAT_MESSAGES_URL_SECONDS`). The worker fetches right after the pop, so the URL does not cover the job's TTL as an
+image URL does, and a short lifetime limits replay of a leaked URL. A worker that did not declare `messages_url`
+receives an offloaded request inline, as if it had not been offloaded.
+
+The response to the URL is the JSON body either plain or with `Content-Encoding: gzip`, depending on the setting the
+request was stored under. The fetcher has to honour `Content-Encoding` on the response and cannot assume either
+form; Python's `urllib`, which koboldcpp's worker uses, does not decode it automatically.
+
+The body is bounded by the request limits. Its non-image part is the stored messages, whose text is at most 1 MiB
+(`MAX_CHAT_TEXT_BYTES`) and whose JSON is no larger than the same part of the submitted body. Each of at most 5 images
+is a JPEG of at most 2048 pixels a side at quality 90; random noise, the worst case for JPEG, encodes to about 3.6
+MiB, or 4.8 MiB as base64, so 5 images stay under 25 MiB. The whole body therefore stays under the 36 MiB
+`MAX_CHAT_BODY_BYTES`, which is the fetch cap to set on a worker for the decoded body.
+
+A fetch that fails is a faulted job, as for an image URL. `ChatFaultReason` does not include a value for a failed
+input fetch, so the fault is sent without `fault_reason`.
+
+The object is deleted with the request's images: `TextWaitingPrompt.delete`, the expiry cleanup in
+`collect_expired_chat_image_keys`, a failed activation and the delete retry set all include its key
+(`list_stored_chat_object_keys`). The Horde does not set an object store lifecycle rule for `*_chat_messages.json`
+objects; a chat request's TTL is 20 minutes.
+
 ### Tools
 
 The tool and response format shapes are validated by the models in `horde/chat_contract.py` the front validates with.
@@ -392,7 +450,7 @@ them. A pop without `chat_jobs` therefore withdraws the whole declaration and do
 | `chat_features` | array of strings                       | no              | The optional features and the guarantees below that the worker declares, in one list; unknown values are ignored, absent means none |
 | `chat_limits`   | `{max_context_length, max_length, tools_max_temperature?}` | with `chat_jobs` | The limits chat jobs run under; the text pop's limits bound only text jobs. `tools_max_temperature` is stored as `workers.chat_tools_max_temperature` |
 | `model_id`      | string                                 | with `chat_jobs` | The model the worker serves chat jobs with; exactly one of `models` |
-| `image_transports` | array of `url`, `base64`            | no              | How the worker receives images; absent or empty means none; unknown values are ignored |
+| `image_transports` | array of `url`, `base64`, `messages_url` | no         | How the worker receives images and offloaded messages; absent or empty means none; unknown values are ignored. Only `url` and `base64` let it receive images; `messages_url` is declared beside them ([Messages offload](#messages-offload)) |
 
 A pop that sets `chat_jobs` without `chat_limits` or `model_id`, with a negative `chat_limits.tools_max_temperature`,
 or with a `model_id` that is not one of `models`, or sets `prompt_jobs` to `false` without `chat_jobs`, returns
@@ -450,7 +508,7 @@ applies the rest and repeats them for worker availability:
 
 1. The worker declared `chat_jobs` on its latest pop and its `model_id` is the request's model.
 2. Every feature and guarantee in the request's `chat_required_features` is in the worker's `chat_features`, and a request with
-   images finds an image transport in its `image_transports`. The queue query withholds requests with images from a worker without both,
+   images finds `url` or `base64` in its `image_transports`. The queue query withholds requests with images from a worker without both,
    testing `messages` for an image part by JSONB containment on chat rows only, and computes the same test for the
    returned page so `can_generate` does not load candidates' messages.
 3. The request's `max_context_length` and `max_length` fit the worker's `chat_limits` (its text limits do not
@@ -489,7 +547,8 @@ A text job's pop response does not carry a `chat` key. A chat job's response has
 
 | Field                                                                  | Value                                                         |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `messages`                                                             | The stored array; roles `system`, `user`, `assistant`, `tool`; `tool_calls` and `tool_call_id` as stored; image parts as in [Images](#images) |
+| `messages`                                                             | The stored array; roles `system`, `user`, `assistant`, `tool`; `tool_calls` and `tool_call_id` as stored; image parts as in [Images](#images). Absent when `messages_url` is sent |
+| `messages_url`                                                         | Only for a generation assigned the `messages_url` transport: a signed URL, valid for 120 seconds, to the array as in [Messages offload](#messages-offload) |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format`       | Each only when stored in `chat_extras`, narrowed as below     |
 | `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `rep_pen`, `top_k`, `min_p` | Always present; the client's value or `1.0`, `1.0`, `0`, `0`, `1.0`, `0`, `0` |
 | `stop_sequence`, `seed`                                                | Only when the client sent them                                |
@@ -703,7 +762,8 @@ false), `accepts_prompt_jobs` (boolean, not null, default true), `chat_features`
 `assigned_max_context_length`, `assigned_max_length` and `image_transport` (varchar 16); and
 `waiting_prompts.operation_key` (UUID), `operation_fingerprint` (char 64),
 `context_adjustments` (JSONB), `chat_extras` (JSONB, deferred in the ORM), `chat_required_features` (text array),
-`chat_conformance` (varchar, not null, default `strict`) and `chat_tools_temperature` (double precision); and
+`chat_conformance` (varchar, not null, default `strict`), `chat_tools_temperature` (double precision) and
+`chat_messages_offloaded` (boolean, not null, default false); and
 `workers.chat_tools_max_temperature` (double precision); and `waiting_prompts.chat_fault_reason` (varchar 1000) and
 `chat_fault_rc` (varchar 32), `processing_gens.chat_refusal_rc` (varchar 32) and `workers.nonconformant_replies`
 (integer, not null, default 0). Every column is nullable or has a constant default, so no table is rewritten. The

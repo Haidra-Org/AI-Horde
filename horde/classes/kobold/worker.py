@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import Any
 
 from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATIONS, ChatFeature, ChatLimitField
-from horde_sdk.worker.chat_declaration import ChatImageTransport
+from horde_sdk.worker.chat_declaration import IMAGE_PART_TRANSPORTS, ChatImageTransport
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, relationship
@@ -114,8 +114,10 @@ class TextWorker(Worker):
     """The model the worker serves chat jobs with, from its last pop. A chat request is only given to a worker whose
     ``chat_model_id`` is the request's model."""
     image_transports = db.Column(text_array_column_type, nullable=True)
-    """The ``ChatImageTransport`` values the worker's last pop declared for receiving a chat job's images. NULL or
-    empty means the worker takes no images; unknown values are not stored."""
+    """The ``ChatImageTransport`` values the worker's last pop declared for receiving a chat job's images and
+    offloaded messages. NULL or empty means the worker does not take images; unknown values are not stored. Only ``url``
+    and ``base64`` let it receive images, since ``messages_url`` applies only to requests whose messages were
+    offloaded."""
 
     softprompts: Mapped[list[TextWorkerSoftprompts]] = relationship(
         "TextWorkerSoftprompts",
@@ -389,7 +391,7 @@ class TextWorker(Worker):
         """
         needed_features = set(waiting_prompt.chat_required_features or ())
         missing_declarations = needed_features - set(self.chat_features or ())
-        if ChatFeature.VISION.value in needed_features - missing_declarations and not self.image_transports:
+        if ChatFeature.VISION.value in needed_features - missing_declarations and not self.declares_image_part_transport():
             missing_declarations.add("image_transports")
         return missing_declarations
 
@@ -397,9 +399,17 @@ class TextWorker(Worker):
         """Return whether the worker's chat declaration lets it receive a chat request's images.
 
         Returns:
-            True when it declared the ``vision`` feature and at least one image transport.
+            True when it declared the ``vision`` feature and the ``url`` or ``base64`` image transport.
         """
-        return ChatFeature.VISION.value in (self.chat_features or ()) and bool(self.image_transports)
+        return ChatFeature.VISION.value in (self.chat_features or ()) and self.declares_image_part_transport()
+
+    def declares_image_part_transport(self) -> bool:
+        """Return whether the worker declared a transport that delivers every image part, ``url`` or ``base64``.
+
+        Returns:
+            True when its ``image_transports`` holds one of the SDK's ``IMAGE_PART_TRANSPORTS``.
+        """
+        return not {transport.value for transport in IMAGE_PART_TRANSPORTS}.isdisjoint(self.image_transports or ())
 
     def get_details(self, is_privileged=False):
         ret_dict = super().get_details(is_privileged)

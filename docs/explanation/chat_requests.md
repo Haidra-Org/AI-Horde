@@ -210,6 +210,23 @@ megabytes in a JSON response. The `base64` transport reads the store after the l
 row would load image bytes on every queue scan. The cost of URLs is that object
 storage reachability becomes the worker's concern, and a failed fetch is a faulted job.
 
+A deployment can also offload a large request whole: the messages, images inlined, are stored as one JSON object at
+submit, and a worker that declares `messages_url` receives one short-lived signed URL in place of `messages`
+([Messages offload](../reference/chat_requests.md#messages-offload)). The worker then makes one self-contained fetch
+with no partial download to manage, which the koboldcpp maintainer prefers, and large bodies stay off the pop
+response. The transport is chosen per generation, from what the request stored and what the popping worker declared:
+
+```mermaid
+flowchart TD
+    P[Worker pops a chat job] --> O{Request offloaded and<br/>worker declares messages_url?}
+    O -->|yes| MU[messages_url<br/>one signed URL, 120 s]
+    O -->|no| I{Request has images?}
+    I -->|no| IN[messages inline]
+    I -->|yes| T{Worker declares url?}
+    T -->|yes| U[messages inline<br/>one signed URL per image]
+    T -->|no, base64 only| B[messages inline<br/>image bytes inlined]
+```
+
 ### Sampling defaults and the developer role
 
 Every chat payload carries every sampling field, with OpenAI's default where the client left one out

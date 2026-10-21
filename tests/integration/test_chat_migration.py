@@ -88,6 +88,7 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 ("waiting_prompts", "chat_extras", "jsonb", None, "YES"),
                 ("waiting_prompts", "chat_fault_rc", "character varying", 32, "YES"),
                 ("waiting_prompts", "chat_fault_reason", "character varying", 1000, "YES"),
+                ("waiting_prompts", "chat_messages_offloaded", "boolean", None, "NO"),
                 ("waiting_prompts", "chat_required_features", "ARRAY", None, "YES"),
                 ("waiting_prompts", "chat_tools_temperature", "double precision", None, "YES"),
                 ("waiting_prompts", "context_adjustments", "jsonb", None, "YES"),

@@ -406,7 +406,17 @@ class TextModels(v2.Models):
                         "download URL for a worker that declared the url transport, or a data:image/jpeg;base64 URL for "
                         "one that declared only base64. An assistant message may carry tool_calls, with content null "
                         "when it carries nothing else; a tool message carries tool_call_id, the id of the call it "
-                        "answers. A developer message is sent as system. The worker applies its own chat template."
+                        "answers. A developer message is sent as system. The worker applies its own chat template. "
+                        "Absent when messages_url is sent."
+                    ),
+                ),
+                "messages_url": fields.String(
+                    description=(
+                        "In place of messages, for a worker that declared the messages_url transport and a request "
+                        "whose messages the horde stored as one object: a signed URL, valid for 120 seconds, to the "
+                        "messages array as JSON with each image part's url a data:image/jpeg;base64 URL. The body is "
+                        "served either plain or with Content-Encoding: gzip; honour the header. A failed fetch faults "
+                        "the job."
                     ),
                 ),
                 "tools": fields.List(
@@ -588,7 +598,10 @@ class TextModels(v2.Models):
                         f"How the worker accepts a chat job's images: {', '.join(transport.value for transport in ChatImageTransport)}. "
                         "'url' fetches a signed object storage URL, 'base64' "
                         "reads a data URL in the pop response. A chat request with images only goes to workers that "
-                        "declare the vision feature and at least one transport; url is used whenever it is declared. "
+                        "declare the vision feature and url or base64; url is used whenever it is declared. "
+                        "'messages_url' fetches the whole messages array from the payload's messages_url, sent in "
+                        "place of messages for a request whose messages the horde stored as one object; it is "
+                        "declared beside url or base64. "
                         "Absent or empty means the worker takes no images. Unknown names are ignored."
                     ),
                 ),

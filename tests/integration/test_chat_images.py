@@ -2,11 +2,14 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Chat request images end to end: storage at submit, eligibility, transports at pop, tax and cleanup."""
+"""Chat request images end to end: storage at submit, eligibility, transports at pop, tax and cleanup, and the
+offloaded messages object."""
 
 from __future__ import annotations
 
 import base64
+import gzip
+import json
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
@@ -394,6 +397,200 @@ def test_a_storage_failure_refuses_the_request_and_leaves_no_row(
     assert response.get_json()["rc"] == "ChatImageStorageUnavailable"
     with app.app_context():
         assert db.session.query(TextWaitingPrompt).filter(TextWaitingPrompt.user_id == requester.id).count() == 0
+
+
+OFFLOAD_THRESHOLD_BYTES = 256
+"""A threshold that a request carrying one small image exceeds and a short text-only request stays under."""
+
+MESSAGES_URL_TRANSPORTS = ["url", "messages_url"]
+"""A worker declaration that takes offloaded messages, and per-image URLs for a request sent inline."""
+
+
+@pytest.fixture
+def messages_offload(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enable the messages offload, uncompressed, with a threshold small enough for this module's requests."""
+    from horde.config import Config
+
+    monkeypatch.setattr(Config, "chat_messages_offload_enabled", True)
+    monkeypatch.setattr(Config, "chat_messages_offload_bytes", OFFLOAD_THRESHOLD_BYTES)
+    monkeypatch.setattr(Config, "chat_messages_offload_gzip", False)
+
+
+def _offloaded(app, request_id: str) -> bool:
+    from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+    from horde.flask import db
+
+    with app.app_context():
+        return db.session.get(TextWaitingPrompt, uuid.UUID(request_id)).chat_messages_offloaded
+
+
+def _signed_url_lifetime(signed_url: str) -> int:
+    query = parse_qs(urlparse(signed_url).query)
+    if "X-Amz-Expires" in query:
+        return int(query["X-Amz-Expires"][0])
+    return int(query["Expires"][0]) - int(datetime.utcnow().timestamp())
+
+
+def _messages_head(request_id: str) -> dict[str, Any]:
+    from horde.classes.kobold.chat_request import build_chat_messages_key
+
+    store, bucket = _source_image_store()
+    return store.head_object(Bucket=bucket, Key=build_chat_messages_key(request_id))
+
+
+@pytest.mark.usefixtures("messages_offload")
+def test_a_messages_url_worker_fetches_the_offloaded_messages_as_plain_json_with_images_inlined(
+    app,
+    client,
+    request_headers: dict[str, str],
+) -> None:
+    from horde.classes.kobold.chat_request import build_chat_image_key, build_chat_messages_key
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.classes.kobold.waiting_prompt import CHAT_MESSAGES_URL_SECONDS
+    from horde.flask import db
+
+    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    assert _offloaded(app, request_id) is True
+
+    pop_result = _worker(client, request_headers, chat_features=VISION_FEATURES, image_transports=MESSAGES_URL_TRANSPORTS).pop()
+
+    payload = pop_result["payload"]
+    assert "messages" not in payload
+    assert _signed_url_lifetime(payload["messages_url"]) <= CHAT_MESSAGES_URL_SECONDS
+    download = requests.get(payload["messages_url"], timeout=10)
+    assert download.status_code == 200
+    assert "Content-Encoding" not in download.headers
+    fetched_messages = json.loads(download.content)
+    assert fetched_messages[0] == {"role": "system", "content": "Describe images briefly."}
+    data_url = fetched_messages[1]["content"][1]["image_url"]["url"]
+    assert base64.b64decode(data_url.removeprefix("data:image/jpeg;base64,")) == _stored_object(build_chat_image_key(request_id, 0))
+    assert json.loads(_stored_object(build_chat_messages_key(request_id))) == fetched_messages
+    stored_head = _messages_head(request_id)
+    assert stored_head["CacheControl"] == "no-transform"
+    assert stored_head["ContentType"] == "application/json"
+    assert "ContentEncoding" not in stored_head
+    with app.app_context():
+        assert db.session.get(TextProcessingGeneration, uuid.UUID(pop_result["id"])).image_transport == "messages_url"
+
+
+def test_with_gzip_enabled_the_offloaded_messages_are_stored_with_content_encoding_gzip(
+    app,
+    client,
+    request_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from horde.classes.kobold.chat_request import build_chat_messages_key
+    from horde.config import Config
+
+    monkeypatch.setattr(Config, "chat_messages_offload_enabled", True)
+    monkeypatch.setattr(Config, "chat_messages_offload_bytes", 16)
+    monkeypatch.setattr(Config, "chat_messages_offload_gzip", True)
+    chat_body = _image_body()
+    chat_body["messages"][0]["content"] = "Describe images briefly. " * 400
+
+    request_id = _submit(client, request_headers, chat_body)
+
+    stored_head = _messages_head(request_id)
+    assert stored_head["ContentEncoding"] == "gzip"
+    assert stored_head["CacheControl"] == "no-transform"
+    assert json.loads(gzip.decompress(_stored_object(build_chat_messages_key(request_id))))[0] == chat_body["messages"][0]
+
+
+@pytest.mark.usefixtures("messages_offload")
+def test_a_worker_without_messages_url_receives_an_offloaded_request_inline(app, client, request_headers: dict[str, str]) -> None:
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.flask import db
+
+    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    assert _offloaded(app, request_id) is True
+
+    pop_result = _worker(client, request_headers, chat_features=VISION_FEATURES, image_transports=["url"]).pop()
+
+    assert "messages_url" not in pop_result["payload"]
+    assert pop_result["payload"]["messages"][1]["content"][1]["image_url"]["url"].startswith("http")
+    with app.app_context():
+        assert db.session.get(TextProcessingGeneration, uuid.UUID(pop_result["id"])).image_transport == "url"
+
+
+@pytest.mark.usefixtures("messages_offload")
+def test_a_request_under_the_threshold_is_not_offloaded(app, client, request_headers: dict[str, str]) -> None:
+    from horde.classes.kobold.chat_request import build_chat_messages_key
+
+    request_id = _submit(client, request_headers, _image_body())
+
+    assert _offloaded(app, request_id) is False
+    assert _stored_object(build_chat_messages_key(request_id)) is None
+    pop_result = _worker(client, request_headers, image_transports=MESSAGES_URL_TRANSPORTS).pop()
+    assert "messages_url" not in pop_result["payload"]
+    assert pop_result["payload"]["messages"][0] == {"role": "system", "content": "Describe images briefly."}
+
+
+def test_messages_stay_inline_while_the_offload_is_disabled(app, client, request_headers: dict[str, str]) -> None:
+    from horde.classes.kobold.chat_request import build_chat_messages_key
+
+    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+
+    assert _offloaded(app, request_id) is False
+    assert _stored_object(build_chat_messages_key(request_id)) is None
+    pop_result = _worker(client, request_headers, chat_features=VISION_FEATURES, image_transports=MESSAGES_URL_TRANSPORTS).pop()
+    assert "messages_url" not in pop_result["payload"]
+    assert pop_result["payload"]["messages"][1]["content"][1]["image_url"]["url"].startswith("http")
+
+
+def test_a_large_text_only_request_is_offloaded_and_sent_inline_to_a_worker_without_messages_url(
+    app,
+    client,
+    request_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.config import Config
+    from horde.flask import db
+
+    monkeypatch.setattr(Config, "chat_messages_offload_enabled", True)
+    monkeypatch.setattr(Config, "chat_messages_offload_bytes", 16)
+    request_id = _submit(client, request_headers, _image_body())
+    assert _offloaded(app, request_id) is True
+
+    pop_result = _worker(client, request_headers).pop()
+
+    assert "messages_url" not in pop_result["payload"]
+    assert pop_result["payload"]["messages"][0] == {"role": "system", "content": "Describe images briefly."}
+    with app.app_context():
+        assert db.session.get(TextProcessingGeneration, uuid.UUID(pop_result["id"])).image_transport is None
+
+
+@pytest.mark.usefixtures("messages_offload")
+def test_the_offloaded_messages_are_deleted_with_the_expired_request_row(app, client, request_headers: dict[str, str]) -> None:
+    from horde.classes.kobold.chat_request import build_chat_messages_key
+    from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+    from horde.database import threads
+    from horde.flask import db
+
+    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    assert _stored_object(build_chat_messages_key(request_id)) is not None
+    with app.app_context():
+        db.session.get(TextWaitingPrompt, uuid.UUID(request_id)).expiry = datetime.utcnow() - timedelta(hours=1)
+        db.session.commit()
+
+    threads.check_waiting_prompts()
+
+    assert _stored_object(build_chat_messages_key(request_id)) is None
+
+
+@pytest.mark.usefixtures("messages_offload")
+def test_the_offloaded_messages_are_deleted_with_the_request(app, client, request_headers: dict[str, str]) -> None:
+    from horde.classes.kobold.chat_request import build_chat_messages_key
+    from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+    from horde.flask import db
+
+    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    assert _stored_object(build_chat_messages_key(request_id)) is not None
+
+    with app.app_context():
+        db.session.get(TextWaitingPrompt, uuid.UUID(request_id)).delete()
+
+    assert _stored_object(build_chat_messages_key(request_id)) is None
 
 
 @pytest.fixture
