@@ -40,6 +40,7 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
+    MAX_CHAT_MODEL_COUNT,
     ChatHordeOptions,
     KudosCapExcess,
 )
@@ -264,6 +265,78 @@ class TestMalformedRequests:
         operation_key = uuid.uuid4()
 
         assert parse_chat_request(_body(horde={"operation_key": str(operation_key)})).horde.operation_key == operation_key
+
+
+class TestModelList:
+    """``models``, the list of acceptable models a request may send in place of ``model``."""
+
+    @staticmethod
+    def _listing_body(models: object) -> dict[str, Any]:
+        body = _body(models=models)
+        del body["model"]
+        return body
+
+    def test_a_request_with_both_model_and_models_is_refused_as_a_conflict(self) -> None:
+        rejection = _rejection(_body(models=[CHAT_MODEL]))
+
+        assert rejection.rc == CHAT_REQUEST_CONFLICT_RC
+        assert "'models'" in rejection.specific
+
+    def test_a_request_with_neither_model_nor_models_is_refused(self) -> None:
+        body = _body()
+        del body["model"]
+
+        rejection = _rejection(body)
+
+        assert rejection.rc == "BadRequest"
+        assert "'model' or 'models'" in rejection.specific
+
+    def test_a_model_listed_twice_is_refused_at_the_repeated_entry(self) -> None:
+        rejection = _rejection(self._listing_body([CHAT_MODEL, "other/model", CHAT_MODEL]))
+
+        assert rejection.rc == "BadRequest"
+        assert "'models[2]'" in rejection.specific
+
+    @pytest.mark.parametrize("models", [[], [""], [CHAT_MODEL, ""]])
+    def test_an_empty_list_or_an_empty_entry_is_refused(self, models: list[str]) -> None:
+        rejection = _rejection(self._listing_body(models))
+
+        assert rejection.rc == "BadRequest"
+        assert "models" in rejection.specific
+
+    def test_more_entries_than_the_bound_are_refused(self) -> None:
+        models = [f"model/{model_index}" for model_index in range(MAX_CHAT_MODEL_COUNT + 1)]
+
+        rejection = _rejection(self._listing_body(models))
+
+        assert rejection.rc == "BadRequest"
+        assert "models" in rejection.specific
+
+    def test_the_request_accepts_every_listed_model_in_the_order_sent(self) -> None:
+        chat_request = parse_chat_request(self._listing_body(["b/model", "a/model"]))
+
+        assert build_model_names(chat_request) == ["b/model", "a/model"]
+
+    def test_the_same_models_in_another_order_are_the_same_operation(self) -> None:
+        forward = build_operation_fingerprint(parse_chat_request(self._listing_body(["a/model", "b/model"])))
+        reverse = build_operation_fingerprint(parse_chat_request(self._listing_body(["b/model", "a/model"])))
+
+        assert forward == reverse
+
+    def test_one_listed_model_is_the_same_operation_as_that_model(self) -> None:
+        listed = build_operation_fingerprint(parse_chat_request(self._listing_body([CHAT_MODEL])))
+
+        assert listed == build_operation_fingerprint(parse_chat_request(_body()))
+
+    def test_another_set_of_models_is_another_operation(self) -> None:
+        widened = build_operation_fingerprint(parse_chat_request(self._listing_body([CHAT_MODEL, "other/model"])))
+
+        assert widened != build_operation_fingerprint(parse_chat_request(_body()))
+
+    def test_an_unknown_entry_is_reported_at_its_path(self) -> None:
+        refusal = e.UnknownChatModel("other/model", request_path="models[1]")
+
+        assert refusal.specific.startswith("'models[1]': The model 'other/model' is not known")
 
 
 class TestKudosCap:

@@ -125,6 +125,10 @@ memory; the worker table is queried only for a model the reference does not list
 horde tax, dry runs included. A known model that
 no online worker can serve is accepted, waits, and reports `is_possible` false, as a text request does.
 
+Every entry of `models` has to be known. The first unknown entry refuses the whole request with
+`404 UnknownChatModel`, whose message starts with the entry's quoted path, such as `'models[1]'`; an unknown entry is
+never dropped, since the request served would then differ from the one sent.
+
 ### Operation key
 
 `horde.operation_key` is a UUID a native caller, normally the OpenAI-compatible front, sends to identify one
@@ -143,11 +147,12 @@ submission (ADR 0026). It is claimed for the submitting user, the owner of the s
 - The claim is held only by the request row and lasts as long as the row.
 
 The fingerprint is the SHA-256 hex digest of canonical JSON (sorted keys, no insignificant whitespace, UTF-8) over the
-messages as stored (`developer` rewritten to `system`), the mapped text params, the model list, every `horde`
+messages as stored (`developer` rewritten to `system`), the mapped text params, the model list sorted, every `horde`
 option with defaults filled in except `operation_key` and `dry_run`, and the stored `chat_extras` only when the request
 has any. `max_tokens` and `max_completion_tokens` with the
-same value, or an option sent at its default and one left out, give the same fingerprint. `stream`,
-`stream_options`, `user` and `metadata` are not in it.
+same value, or an option sent at its default and one left out, give the same fingerprint. Any listed model may serve
+the request, so `models` in another order is the same operation, and `model: "a"` gives the fingerprint of
+`models: ["a"]`. `stream`, `stream_options`, `user` and `metadata` are not in it.
 
 The activation path commits in several places. `WaitingPrompt.__init__` commits the inactive row and
 `prepare_job_payload` commits again; the upfront kudos hold is committed before activation; inside
@@ -178,7 +183,8 @@ returns `429`.
 
 | Key                                      | Mapping                                                                          |
 | ---------------------------------------- | -------------------------------------------------------------------------------- |
-| `model`                                  | Required. The only model the request accepts                                     |
+| `model`                                  | The model the request accepts. A request sends exactly one of `model` and `models` |
+| `models`                                 | The models the request accepts, 1 to `MAX_CHAT_MODEL_COUNT` (5), each non-empty and listed once: the text request's `models`. Whichever of them an online worker runs serves the request, chosen at pop as for a text request, and the generation's `model` on the status route is the one that served it |
 | `messages`                               | Required, at least one. Roles `system`, `developer`, `user`, `assistant`, `tool`; see [Tools](#tools) for the tool keys |
 | `max_tokens`, `max_completion_tokens`    | `max_length`, 16 to 4096, default `512`. Both may be sent only with equal values |
 | `temperature`, `top_p`                   | The text params with the same keys                                                |
@@ -428,9 +434,10 @@ Any key outside the lists above returns `400 UnsupportedChatParameter`, and the 
 
 A body over `MAX_CHAT_BODY_BYTES` returns `413 RequestTooLarge` before any of these checks.
 
-Differing `max_tokens` and `max_completion_tokens`, or both `horde.only` and `horde.ignore`, return
-`400 ChatRequestConflict`. A value of the wrong type, a `context_fit` of `ignore`, an `operation_key` that is not a
-UUID, a missing `model` or an empty `messages` returns `400 BadRequest`.
+Differing `max_tokens` and `max_completion_tokens`, both `horde.only` and `horde.ignore`, or both `model` and `models`
+return `400 ChatRequestConflict`. A value of the wrong type, a `context_fit` of `ignore`, an `operation_key` that is not a
+UUID, neither `model` nor `models`, a `models` that is empty, holds an empty entry, lists a model twice or has more than
+5 entries, or an empty `messages` returns `400 BadRequest`.
 
 ### Context adjustments
 
@@ -549,7 +556,8 @@ temperature as sent. The SDK's `violated_chat_limit` defines the rule; the serve
 A chat request goes to a worker only when every rule holds. The queue query applies the cheap ones; `can_generate`
 applies the rest and repeats them for worker availability:
 
-1. The worker declared `chat_jobs` on its latest pop and its `model_id` is the request's model.
+1. The worker declared `chat_jobs` on its latest pop and its `model_id` is the request's `model` or one of its
+   `models`.
 2. Every feature and guarantee in the request's `chat_required_features` is in the worker's `chat_features`, and a request with
    images finds `url` or `base64` in its `image_transports`. The queue query withholds requests with images from a worker without both,
    testing `messages` for an image part by JSONB containment on chat rows only, and computes the same test for the
@@ -770,6 +778,12 @@ generation, `message` (with `tool_calls` and `reasoning_content` when the worker
 submitted, `native_finish_reason`, `prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `charge_basis` and
 `queue_wait_seconds`, the seconds from
 the request's creation to the generation's assignment. The text status route does not return any of them.
+
+A request listing several `models` is priced as a text request with the same list. The upfront kudos and shared key
+checks use the highest multiplier across the list, so a cheap model listed beside an expensive one does not lower
+them. The quote a dry run returns, which `horde.max_kudos` is checked against, comes from
+`TextWaitingPrompt.calculate_kudos`, which reads the first listed model as the text path does. The generation is
+charged at the model that served it.
 
 A streamed generation still in flight when the client cancels is settled at the cancel on the content its worker
 posted, under the same output estimate: `read_posted_progress` (`horde/chat_progress.py`) joins the generation's

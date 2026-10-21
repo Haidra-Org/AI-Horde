@@ -1129,6 +1129,74 @@ def test_a_repeated_operation_key_with_a_changed_request_is_refused(app, client,
     _cancel(client, headers, "chat", first_response.get_json()["id"])
 
 
+def _listing_body(models: list[str], **horde_options: Any) -> dict[str, Any]:
+    """Return the default chat body with ``models`` in place of ``model``."""
+    chat_body = _chat_body(**horde_options)
+    del chat_body["model"]
+    chat_body["models"] = models
+    return chat_body
+
+
+def test_a_request_listing_models_is_served_by_a_worker_of_one_and_reports_the_served_model(client, make_api_user) -> None:
+    requester = make_api_user()
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
+    custom_model, custom_worker = _serve_custom_chat_model(client, headers)
+    response = _post_chat(client, headers, _listing_body([CHAT_MODEL, custom_model]))
+    assert response.status_code == 202, response.get_data(as_text=True)
+    request_id = response.get_json()["id"]
+
+    pop_result = custom_worker.pop()
+
+    assert pop_result["id"] is not None, pop_result
+    assert pop_result["model"] == custom_model
+    submit_response = custom_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], content="Blue.", model_id=custom_model))
+    assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
+    [generation] = _chat_status(client, headers, request_id)["generations"]
+    assert generation["model"] == custom_model
+
+
+def test_a_dry_run_of_a_request_listing_models_resolves_every_listed_model(client, make_api_user) -> None:
+    requester = make_api_user()
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
+    custom_model, _ = _serve_custom_chat_model(client, headers)
+
+    response = _post_chat(client, headers, _listing_body([CHAT_MODEL, custom_model], dry_run=True))
+
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert response.get_json()["resolved"]["models"] == [CHAT_MODEL, custom_model]
+
+
+def test_an_unknown_entry_of_models_refuses_the_whole_request_at_its_index(app, client, make_api_user) -> None:
+    requester = make_api_user()
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
+    unknown_model = f"custom/unknown-{uuid.uuid4().hex[:8]}"
+
+    response = _post_chat(client, headers, _listing_body([CHAT_MODEL, unknown_model]))
+
+    assert response.status_code == 404, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "UnknownChatModel"
+    assert response.get_json()["message"].startswith(f"'models[1]': The model '{unknown_model}'")
+    assert _count_chat_requests(app, requester.id) == 0
+    assert _count_generation_debits(app, requester.id) == 0
+
+
+def test_a_repeated_operation_key_with_the_models_reordered_returns_the_first_request(app, client, make_api_user) -> None:
+    requester = make_api_user()
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
+    custom_model, _ = _serve_custom_chat_model(client, headers)
+    operation_key = str(uuid.uuid4())
+    first_response = _post_chat(client, headers, _listing_body([CHAT_MODEL, custom_model], operation_key=operation_key))
+    assert first_response.status_code == 202, first_response.get_data(as_text=True)
+    first_submission = first_response.get_json()
+
+    repeated_response = _post_chat(client, headers, _listing_body([custom_model, CHAT_MODEL], operation_key=operation_key))
+
+    assert repeated_response.status_code == 200, repeated_response.get_data(as_text=True)
+    assert repeated_response.get_json() == {"id": first_submission["id"], "kudos": first_submission["kudos"]}
+    assert _count_chat_requests(app, requester.id) == 1
+    _cancel(client, headers, "chat", first_submission["id"])
+
+
 def test_one_operation_key_from_two_users_creates_two_requests(client, make_api_user) -> None:
     operation_key = str(uuid.uuid4())
     request_ids = []

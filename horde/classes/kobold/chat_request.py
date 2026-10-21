@@ -96,6 +96,7 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
+    MAX_CHAT_MODEL_COUNT,
     MAX_CHAT_TOOL_CALL_COUNT,
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
     UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE,
@@ -111,6 +112,7 @@ from horde.chat_contract import (
     ChatToolChoiceMode,
     chat_tool_call_bytes,
     check_json_word,
+    check_model_choice,
     check_strict_response_schema,
     check_strict_tool_schemas,
     check_tool_fields_need_tools,
@@ -218,6 +220,7 @@ so the worker posts deltas to the progress route while it generates. Absent othe
 SUPPORTED_REQUEST_KEYS = frozenset(
     {
         "model",
+        "models",
         "messages",
         "max_tokens",
         "max_completion_tokens",
@@ -476,8 +479,17 @@ class ChatCompletionRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
-    model: StrictStr = Field(min_length=1)
-    """The horde model name to generate with."""
+    model: StrictStr | None = Field(default=None, min_length=1)
+    """The horde model name to generate with. A request sets exactly one of ``model`` and ``models``."""
+
+    models: list[Annotated[StrictStr, Field(min_length=1)]] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_CHAT_MODEL_COUNT,
+    )
+    """The horde model names the request accepts, at most
+    [`MAX_CHAT_MODEL_COUNT`][horde.chat_contract.MAX_CHAT_MODEL_COUNT], each listed once. Whichever of them an online
+    worker runs serves the request, and the generation records the model that served it."""
 
     messages: list[ChatMessage] = Field(min_length=1)
     """The conversation, oldest message first."""
@@ -684,11 +696,17 @@ def _reject_conflicting_values(chat_request: ChatCompletionRequest) -> None:
     Raises:
         horde.exceptions.BadRequest: With ``UnsupportedChatParameter`` for an ``n`` other than 1, messages or a
             tool spec over the shared size limits, a tool history breaking OpenAI's rule, or a ``strict`` schema
-            breaking OpenAI's structural rules; ``ChatRequestConflict`` for differing token limits, a
-            ``tool_choice`` or ``parallel_tool_calls`` the tools do not allow, or, under ``horde.openai_guards``, a
-            ``json_object`` request whose messages never mention JSON; or an image validation failure for too many,
-            malformed or oversized image URLs.
+            breaking OpenAI's structural rules; ``ChatRequestConflict`` for both ``model`` and ``models``, differing
+            token limits, a ``tool_choice`` or ``parallel_tool_calls`` the tools do not allow, or, under
+            ``horde.openai_guards``, a ``json_object`` request whose messages never mention JSON; the plain
+            ``BadRequest`` code for neither ``model`` nor ``models`` or a model listed twice; or an image validation
+            failure for too many, malformed or oversized image URLs.
     """
+    try:
+        check_model_choice(model=chat_request.model, models=chat_request.models)
+    except ChatRequestRefusal as refusal:
+        raise _refusal_error(refusal) from None
+
     if chat_request.n is not None and chat_request.n != SUPPORTED_CHAT_CHOICE_COUNT:
         _raise_unsupported(f"n={chat_request.n}")
 
@@ -930,6 +948,7 @@ def _reject_stored_nuls(chat_request: ChatCompletionRequest) -> None:
         build_chat_extras(chat_request),
         chat_request.stop,
         chat_request.model,
+        chat_request.models,
         chat_request.horde.model_dump(),
     ]
     while pending:
@@ -1602,12 +1621,16 @@ def build_model_names(chat_request: ChatCompletionRequest) -> list[str]:
     """Return the models the request accepts.
 
     Args:
-        chat_request: The validated request.
+        chat_request: The request, validated by
+            [`parse_chat_request`][horde.classes.kobold.chat_request.parse_chat_request], which leaves exactly one of
+            ``model`` and ``models`` set.
 
     Returns:
-        ``model`` alone; a chat request runs on exactly one model.
+        ``models`` in the order the client listed them, or ``model`` alone.
     """
-    return [chat_request.model]
+    if chat_request.models is not None:
+        return list(chat_request.models)
+    return [chat_request.model] if chat_request.model is not None else []
 
 
 def build_worker_targeting(chat_request: ChatCompletionRequest) -> tuple[list[str], bool]:
@@ -1669,11 +1692,12 @@ def build_operation_fingerprint(chat_request: ChatCompletionRequest) -> str:
     """Return the SHA-256 hex digest that tells a repeated submission of one operation key from a changed one.
 
     The hash covers the request as the horde applies it: the messages as stored (``developer`` rewritten to
-    ``system``, unset keys left out), the text params the request maps onto, the model list, and every ``horde``
+    ``system``, unset keys left out), the text params the request maps onto, the model list sorted, and every ``horde``
     option with its default filled in, except ``operation_key``, ``dry_run`` and ``include_reasoning``, and under ``extras`` the tools and
     response format the request applies, only when it applies any. Two bodies that differ only in how
     they say the same thing, such as ``max_tokens`` against ``max_completion_tokens`` or an option sent at its
-    default against one left out, share a fingerprint. Keys that are accepted and not applied (``stream``,
+    default against one left out, share a fingerprint. Any listed model may serve the request, so ``models`` in another
+    order is the same operation, and ``model: "a"`` hashes as ``models: ["a"]``. Keys that are accepted and not applied (``stream``,
     ``stream_options``, ``user``, ``metadata``) are not in the hash.
 
     The serialisation is canonical JSON: keys sorted, no insignificant whitespace, non-ASCII text kept as UTF-8.
@@ -1687,7 +1711,7 @@ def build_operation_fingerprint(chat_request: ChatCompletionRequest) -> str:
     effective_request = {
         "messages": serialize_messages(chat_request),
         "params": build_text_params(chat_request),
-        "models": build_model_names(chat_request),
+        "models": sorted(build_model_names(chat_request)),
         "horde": chat_request.horde.model_dump(mode="json", exclude=set(OPERATION_FINGERPRINT_EXCLUDED_HORDE_KEYS)),
     }
     # Left out when empty, so the fingerprint of a request without tools or a response format covers the keys above only.

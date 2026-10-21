@@ -24,6 +24,7 @@ from tests.unit.oai.conftest import (
     FAST_TEST_SETTINGS,
     FRONT_URL,
     HORDE_URL,
+    MODEL_NAME,
     REQUEST_ID,
     UNRECORDED_METRICS,
     StartFront,
@@ -35,7 +36,7 @@ from tests.unit.oai.conftest import (
     wait_for_call,
     waiting_status,
 )
-from tests.unit.oai.test_chat_front import MODEL_LIST, data_payloads, parse_sse_events
+from tests.unit.oai.test_chat_front import MODEL_LIST, VISION_MODEL_NAME, data_payloads, parse_sse_events
 
 pytestmark = pytest.mark.asyncio
 
@@ -524,6 +525,22 @@ async def test_both_exceeded_size_limits_are_400_on_max_tokens_stating_each(star
     assert "context length that high; the largest any online worker for the model declares now is 8192 tokens." in error["message"]
 
 
+async def test_an_exceeded_size_limit_of_listed_models_states_the_largest_declared_across_them(start_front: StartFront) -> None:
+    """Any listed model may serve the request, so the 400 states the largest limit any of them declares."""
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=MODEL_LIST)
+        front.horde.status_payload = gap_status(missing_declarations=[], exceeded_limits=["max_context_length", "max_length"])
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(model=None, models=[VISION_MODEL_NAME, MODEL_NAME]),
+        )
+
+    assert response.status_code == 400
+    message = response.json()["error"]["message"]
+    assert "completion limit that high; the largest any online worker for the listed models declares now is 1024 tokens." in message
+    assert "context length that high; the largest any online worker for the listed models declares now is 8192 tokens." in message
+
+
 async def test_an_exceeded_size_limit_of_a_model_missing_from_the_list_states_the_limit_name(start_front: StartFront) -> None:
     async with start_front() as front:
         front.horde.status_payload = gap_status(missing_declarations=[], exceeded_limits=["max_length"])
@@ -653,6 +670,28 @@ async def test_horde_image_refusal_passes_through_with_its_rc_and_path(
     error = response.json()["error"]
     assert error["code"] == horde_rc
     assert error["param"] == expected_param
+    assert error["message"] == horde_message
+    assert front.inflight == 0
+
+
+async def test_an_unknown_listed_model_is_404_on_its_entry(start_front: StartFront) -> None:
+    """The native refusal of an unknown entry of ``models`` quotes the entry's path, which becomes ``param``."""
+    horde_message = (
+        "'models[1]': The model 'koboldcpp/Absent' is not known to this horde: the text model reference does not list "
+        "it and no online worker serves chat jobs with it."
+    )
+    async with start_front() as front:
+        front.horde.submit_route.respond(404, json={"message": horde_message, "rc": "UnknownChatModel"})
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(model=None, models=[MODEL_NAME, "koboldcpp/Absent"]),
+        )
+
+    assert response.status_code == 404
+    error = response.json()["error"]
+    assert error["type"] == "not_found_error"
+    assert error["code"] == "UnknownChatModel"
+    assert error["param"] == "models[1]"
     assert error["message"] == horde_message
     assert front.inflight == 0
 

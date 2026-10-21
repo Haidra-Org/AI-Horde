@@ -675,6 +675,25 @@ async def test_reasoning_is_returned_on_the_message_only_when_the_client_asks_fo
     assert response.json()["choices"][0]["message"] == expected_message
 
 
+async def test_models_is_forwarded_unchanged_and_the_response_reports_the_model_that_served(start_front: StartFront) -> None:
+    """A request listing acceptable models is forwarded with the list as sent, and the response ``model`` and
+    fingerprint are those of the listed model a worker served it with."""
+    served_model = "koboldcpp/Other-Model"
+    async with start_front() as front:
+        front.horde.status_payload = done_status(model=served_model, worker_id="worker-1")
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(model=None, models=[MODEL_NAME, served_model]),
+        )
+
+    assert response.status_code == 200
+    submitted_body = front.horde.submitted_body()
+    assert submitted_body["models"] == [MODEL_NAME, served_model]
+    assert "model" not in submitted_body
+    assert response.json()["model"] == served_model
+    assert response.json()["system_fingerprint"] == build_system_fingerprint("worker-1", served_model)
+
+
 async def test_include_reasoning_is_forwarded_to_the_native_route(start_front: StartFront) -> None:
     async with start_front() as front:
         front.horde.status_payload = done_status()

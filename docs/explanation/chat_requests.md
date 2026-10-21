@@ -440,7 +440,10 @@ usage, and `[DONE]` ([Response shape](../reference/chat_front.md#response-shape)
 
 Horde behaviour without an OpenAI key (worker restrictions, trusted or validated workers, context sizing) travels in
 a `horde` object in the request body, which every SDK can send as extra body fields
-([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). Under
+([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). A request may list
+acceptable models in `models` in place of `model`; the Horde serves it with whichever listed model an online worker
+runs, as it serves a text request's model list, and the response reports that model. The list states what the client
+accepts, so it is the same operation in any order, and an unknown entry refuses the request. Under
 `context_fit: truncate_oldest` a history too long for any served context loses its oldest whole turns and keeps every
 system and developer message and the latest user turn. Moderation screens the full submitted messages before any
 message is dropped. For the request's lifetime its row stores the kept messages, which the worker receives, and, as on

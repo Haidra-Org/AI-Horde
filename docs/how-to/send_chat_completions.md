@@ -91,11 +91,28 @@ picked up. A request that no online worker can serve ends with 503 `no_eligible_
 Verification: the model you configured appears in `.data[].id`, with `x_horde.workers` at least 1 and every optional
 parameter your client sends listed in `supported_parameters`.
 
+### Accept any of several models
+
+Send `models`, a list of up to 5 model ids, in place of `model` when any of them will do. The request is served by
+whichever listed model an online worker runs, and the response `model` reports the one that served it:
+
+```bash
+curl -s "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API_KEY" -H "Content-Type: application/json" \
+  -d '{"models": ["<model-a>", "<model-b>"], "messages": [{"role": "user", "content": "Hi"}]}' | jq .model
+```
+
+Every listed id has to exist on the Horde: an unknown one is 404 with `param` at its entry, such as `models[1]`, and
+the request is not queued. More than 5 ids, or an empty one, is 400 `UnsupportedChatParameter`. Sending both `model`
+and `models` is 400 `ChatRequestConflict`. The kudos quote reads the first listed model; the generation is charged at
+the model that served it.
+
+Verification: the printed `model` is one of the listed ids.
+
 ## Request keys the front accepts
 
 | Keys | Handling |
 | --- | --- |
-| `model`, `messages` | Required; `messages` holds at least one message. |
+| `model` or `models`, `messages` | Required: exactly one of `model` and `models` (see [Accept any of several models](#accept-any-of-several-models)); `messages` holds at least one message. |
 | `max_tokens`, `max_completion_tokens` | 16 to 4096 (see [Deliberate deviations](#deliberate-deviations)); equal when both are sent. Default 512 when neither is. |
 | `temperature`, `top_p`, `stop` | Forwarded; `temperature` ranges 0 to 2, `top_p` 0 to 1, and `stop` is a string or up to four strings. |
 | `seed`, `frequency_penalty`, `presence_penalty` | Forwarded; a worker has to declare the feature for `seed` (any value) or a non-zero penalty. Penalties range -2 to 2. |
@@ -131,7 +148,7 @@ body.
 
 Any other key, and any of the dropped keys at another value, is 400 `UnsupportedChatParameter`, with `param` holding
 the key's path. Examples: `logit_bias`, `logprobs: true`, `functions`, `function_call`, `audio`, `modalities`,
-`prediction`, `web_search_options`, `models`, `reasoning_effort`, and sampler extras such as `rep_pen`, `top_k` and
+`prediction`, `web_search_options`, `reasoning_effort`, and sampler extras such as `rep_pen`, `top_k` and
 `min_p`. An unknown key inside `stream_options` or `response_format` is refused at its path, as OpenAI refuses it.
 `tool_calls` on a message other than an assistant message is refused at `messages[<i>].tool_calls`, and a role other
 than the five above at `messages[<i>].role`. A refused content part is reported with its type, such as
@@ -147,8 +164,8 @@ Other 400 codes:
 
 | `code` | Cause |
 | --- | --- |
-| `ChatRequestConflict` | `max_tokens` and `max_completion_tokens` differ; `horde.only` and `horde.ignore` are both set; a `tool_choice` (`none` included) or `parallel_tool_calls` without tools, as OpenAI refuses them; a forced function the tools do not define; under `horde.openai_guards`, a `json_object` request without the word "json" in its messages. |
-| `BadRequest` | The body is not a JSON object, a value has the wrong type or range, `messages` is empty, or a `json_schema` response format has no `schema`. |
+| `ChatRequestConflict` | `max_tokens` and `max_completion_tokens` differ; `model` and `models` are both set; `horde.only` and `horde.ignore` are both set; a `tool_choice` (`none` included) or `parallel_tool_calls` without tools, as OpenAI refuses them; a forced function the tools do not define; under `horde.openai_guards`, a `json_object` request without the word "json" in its messages. |
+| `BadRequest` | The body is not a JSON object, a value has the wrong type or range, neither `model` nor `models` is set, `models` lists a model twice, `messages` is empty, or a `json_schema` response format has no `schema`. |
 
 Each refusal happens before the request is queued, so it is not charged and is safe to correct and resend.
 

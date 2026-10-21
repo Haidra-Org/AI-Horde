@@ -20,7 +20,8 @@ client sent in a shape one definition bounds.
 [`INTERNAL_HORDE_OPTION_KEYS`][horde.chat_contract.INTERNAL_HORDE_OPTION_KEYS]) and supplies the operation key itself.
 
 The request rules both sides apply after validation live here as well, so the native route and the front refuse the
-same requests with the same wording: [`check_tool_fields_need_tools`][horde.chat_contract.check_tool_fields_need_tools],
+same requests with the same wording: [`check_model_choice`][horde.chat_contract.check_model_choice],
+[`check_tool_fields_need_tools`][horde.chat_contract.check_tool_fields_need_tools],
 [`check_tool_history`][horde.chat_contract.check_tool_history],
 [`check_strict_response_schema`][horde.chat_contract.check_strict_response_schema],
 [`check_strict_tool_schemas`][horde.chat_contract.check_strict_tool_schemas] and
@@ -45,6 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 from pydantic_core import PydanticCustomError
 
 __all__ = [
+    "BAD_REQUEST_RC",
     "CHAT_KUDOS_CAP_EXCEEDED_RC",
     "CHAT_REQUEST_CONFLICT_ERROR_TYPE",
     "CHAT_REQUEST_CONFLICT_RC",
@@ -54,6 +56,7 @@ __all__ = [
     "MAX_CHAT_IMAGE_COUNT",
     "MAX_CHAT_IMAGE_COUNT_UNTRUSTED",
     "MAX_CHAT_MESSAGE_COUNT",
+    "MAX_CHAT_MODEL_COUNT",
     "MAX_CHAT_TOOL_CALL_COUNT",
     "MAX_CHAT_TOOL_CALL_ID_LENGTH",
     "MAX_CHAT_TOOL_NAME_LENGTH",
@@ -90,6 +93,7 @@ __all__ = [
     "KudosCapExcess",
     "chat_tool_call_bytes",
     "check_json_word",
+    "check_model_choice",
     "check_strict_response_schema",
     "check_strict_tool_schemas",
     "check_tool_fields_need_tools",
@@ -99,6 +103,11 @@ __all__ = [
 MAX_CHAT_MESSAGE_COUNT: int = 1024
 """The most messages one chat request may carry. A conversation longer than this outgrows any served context long
 before it reaches the cap, so the cap only refuses bodies built to make validation and flattening expensive."""
+
+MAX_CHAT_MODEL_COUNT: int = 5
+"""The most entries ``models`` may list. The native text route sets no bound on its model list; this matches the
+most models a text style may list. Each entry costs a model check before the request is queued, and a list this
+long already covers every model a client would accept in place of another."""
 
 MAX_CHAT_IMAGE_BYTES: int = 5 * 1024 * 1024
 """The largest decoded size of one image in a chat request. Matches the cap on a source image fetched from a URL."""
@@ -135,6 +144,10 @@ UNSUPPORTED_CHAT_PARAMETER_RC: str = "UnsupportedChatParameter"
 
 CHAT_REQUEST_CONFLICT_RC: str = "ChatRequestConflict"
 """Return code for two values of a request that contradict each other, such as differing token limits."""
+
+BAD_REQUEST_RC: str = "BadRequest"
+"""Return code for a request that is malformed, such as a body that is not JSON, a value of the wrong type or a
+request without a model; the Horde's generic code for a 400, which the native route and the front both return."""
 
 CHAT_KUDOS_CAP_EXCEEDED_RC: str = "ChatKudosCapExceeded"
 """Return code for a request whose kudos estimate exceeds the ``horde.max_kudos`` its client set."""
@@ -557,8 +570,9 @@ class ChatRequestRefusal(Exception):
         Args:
             message: The explanation, in OpenAI's wording where OpenAI refuses the same request.
             param: The request path at fault, such as ``messages[2].role``.
-            rc: The return code, [`UNSUPPORTED_CHAT_PARAMETER_RC`][horde.chat_contract.UNSUPPORTED_CHAT_PARAMETER_RC]
-                or [`CHAT_REQUEST_CONFLICT_RC`][horde.chat_contract.CHAT_REQUEST_CONFLICT_RC].
+            rc: The return code, [`UNSUPPORTED_CHAT_PARAMETER_RC`][horde.chat_contract.UNSUPPORTED_CHAT_PARAMETER_RC],
+                [`CHAT_REQUEST_CONFLICT_RC`][horde.chat_contract.CHAT_REQUEST_CONFLICT_RC] or
+                [`BAD_REQUEST_RC`][horde.chat_contract.BAD_REQUEST_RC].
         """
         super().__init__(message)
         self.message: str = message
@@ -648,6 +662,44 @@ def check_tool_fields_need_tools(*, offers_tools: bool, tool_choice_set: bool, p
                 param=request_key,
                 rc=CHAT_REQUEST_CONFLICT_RC,
             )
+
+
+def check_model_choice(*, model: str | None, models: Sequence[str] | None) -> None:
+    """Refuse a request that sets both or neither of ``model`` and ``models``, or lists a model twice.
+
+    ``models`` lists the models a client accepts in place of one ``model``; the request is served by whichever of
+    them an online worker runs. Listing a model twice would make two spellings of one list, so it is refused.
+
+    Args:
+        model: The request's ``model``, or None when it is not set.
+        models: The request's ``models``, or None when it is not set.
+
+    Raises:
+        ChatRequestRefusal: With ``ChatRequestConflict`` and ``param`` ``models`` when both are set;
+            ``BadRequest`` and ``param`` ``model`` when neither is; ``BadRequest`` and the repeated entry's path,
+            such as ``models[2]``, when an entry repeats an earlier one.
+    """
+    if model is not None and models is not None:
+        raise ChatRequestRefusal(
+            "'model' and 'models' cannot be combined; send one of them.",
+            param="models",
+            rc=CHAT_REQUEST_CONFLICT_RC,
+        )
+    if model is None and models is None:
+        raise ChatRequestRefusal(
+            "A chat request needs 'model' or 'models'.",
+            param="model",
+            rc=BAD_REQUEST_RC,
+        )
+    seen_models: set[str] = set()
+    for model_index, model_name in enumerate(models or ()):
+        if model_name in seen_models:
+            raise ChatRequestRefusal(
+                f"'models' lists the model '{model_name}' more than once.",
+                param=f"models[{model_index}]",
+                rc=BAD_REQUEST_RC,
+            )
+        seen_models.add(model_name)
 
 
 def _unanswered_calls_refusal(unanswered_ids: Sequence[str], param: str) -> ChatRequestRefusal:

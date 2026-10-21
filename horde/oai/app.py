@@ -54,6 +54,7 @@ from starlette.background import BackgroundTask
 from starlette.requests import ClientDisconnect
 
 from horde.chat_contract import (
+    BAD_REQUEST_RC,
     CHAT_KUDOS_CAP_EXCEEDED_RC,
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
     MAX_CHAT_IMAGE_BYTES,
@@ -65,6 +66,7 @@ from horde.chat_contract import (
     NonJsonConstantError,
     chat_tool_call_bytes,
     check_json_word,
+    check_model_choice,
     check_strict_response_schema,
     check_strict_tool_schemas,
     check_tool_fields_need_tools,
@@ -99,7 +101,6 @@ from horde.oai.mapping import (
 )
 from horde.oai.metrics import CancelOutcome, FrontMetrics, RelayOutcome, get_front_meter
 from horde.oai.schema import (
-    BAD_REQUEST_CODE,
     CHAT_REQUEST_CONFLICT_CODE,
     PARAMETER_CONTEXT_KEY,
     UNSUPPORTED_PARAMETER_CODE,
@@ -302,9 +303,10 @@ DATA_URL_PREFIX: str = "data:"
 DATA_URL_PAYLOAD_SEPARATOR: str = ","
 """The character that ends a data URL's media type and starts its payload."""
 
-NATIVE_REQUEST_PATH_PATTERN: re.Pattern[str] = re.compile(r"'(?P<request_path>messages\[\d+\][^']*)'")
-"""A quoted message path in a native error message, such as ``'messages[0].content[1].type=image_url'``; the
-native route writes the offending path this way when it refuses a part."""
+NATIVE_REQUEST_PATH_PATTERN: re.Pattern[str] = re.compile(r"'(?P<request_path>(?:messages|models)\[\d+\][^']*)'")
+"""A quoted message or model list path in a native error message, such as
+``'messages[0].content[1].type=image_url'`` or ``'models[1]'``; the native route writes the offending path this way
+when it refuses a part or an unknown entry of ``models``."""
 
 NATIVE_FIELD_PARAMETERS: Mapping[str, str] = MappingProxyType(
     {
@@ -787,7 +789,7 @@ def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist:
         native_path, field_message = next(iter(error.field_errors.items()))
         param = _request_path_of_native_field(native_path) or None
         message = f"{param}: {field_message}" if param is not None else field_message
-        code = code if code is not None else BAD_REQUEST_CODE
+        code = code if code is not None else BAD_REQUEST_RC
     return ChatFrontError(
         status_code=error.status_code,
         message=message,
@@ -951,7 +953,7 @@ def _validation_error(error: ValidationError, request_body: object) -> ChatFront
     """
     first_error = error.errors()[0]
     error_location = _format_location(tuple(first_error["loc"]), request_body)
-    code = BAD_REQUEST_CODE
+    code = BAD_REQUEST_RC
     if first_error["type"] == UNSUPPORTED_PARAMETER_ERROR_TYPE:
         code = UNSUPPORTED_PARAMETER_CODE
     elif first_error["type"] == CHAT_REQUEST_CONFLICT_ERROR_TYPE:
@@ -988,6 +990,7 @@ def _find_contract_refusal(chat_request: ChatCompletionRequest) -> ChatFrontErro
     without a ``param`` for keys outside the messages.
     """
     try:
+        check_model_choice(model=chat_request.model, models=chat_request.models)
         check_tool_fields_need_tools(
             offers_tools=bool(chat_request.tools),
             tool_choice_set=chat_request.tool_choice is not None,
@@ -1044,7 +1047,8 @@ async def _read_chat_request(request: Request, front_state: FrontState) -> ChatC
 
     Raises:
         ChatFrontError: 413 for an oversized body, 408 for a slow body, 400 for invalid JSON, a refused part, a value outside the
-            service contract, a size limit or an image limit, and 404 for a model id with a variant.
+            service contract, a size limit or an image limit, and 404 for a model id with a variant, in ``model`` or
+            in any entry of ``models``.
     """
     settings = front_state.settings
     request_body = await _read_body(request, settings)
@@ -1055,14 +1059,14 @@ async def _read_chat_request(request: Request, front_state: FrontState) -> ChatC
         raise ChatFrontError(
             status_code=HTTPStatus.BAD_REQUEST,
             message=f"The request body is not valid JSON: {error.constant} is not a JSON value.",
-            code=BAD_REQUEST_CODE,
+            code=BAD_REQUEST_RC,
         ) from error
     except ValueError as error:
         raise ChatFrontError(
-            status_code=HTTPStatus.BAD_REQUEST, message="The request body is not valid JSON.", code=BAD_REQUEST_CODE
+            status_code=HTTPStatus.BAD_REQUEST, message="The request body is not valid JSON.", code=BAD_REQUEST_RC
         ) from error
     if not isinstance(decoded_body, dict):
-        raise ChatFrontError(status_code=HTTPStatus.BAD_REQUEST, message="The request body must be a JSON object.", code=BAD_REQUEST_CODE)
+        raise ChatFrontError(status_code=HTTPStatus.BAD_REQUEST, message="The request body must be a JSON object.", code=BAD_REQUEST_RC)
     refused_parameter = find_refused_parameter(decoded_body)
     if refused_parameter is not None:
         raise ChatFrontError(
@@ -1099,18 +1103,19 @@ async def _read_chat_request(request: Request, front_state: FrontState) -> ChatC
     image_limit_error = _find_image_limit_error(chat_request)
     if image_limit_error is not None:
         raise image_limit_error
-    if MODEL_VARIANT_SEPARATOR in chat_request.model:
-        raise _model_not_found(chat_request.model)
+    for model_index, model_id in enumerate(chat_request.requested_models()):
+        if MODEL_VARIANT_SEPARATOR in model_id:
+            raise _model_not_found(model_id, param="model" if chat_request.models is None else f"models[{model_index}]")
     return chat_request
 
 
-def _model_not_found(model_id: str) -> ChatFrontError:
-    """Create the 404 for an unknown model id."""
+def _model_not_found(model_id: str, *, param: str = "model") -> ChatFrontError:
+    """Create the 404 for an unknown model id, with ``param`` the request path holding it."""
     return ChatFrontError(
         status_code=HTTPStatus.NOT_FOUND,
         message=f"The model '{model_id}' does not exist on the AI Horde.",
         code=MODEL_NOT_FOUND_CODE,
-        param="model",
+        param=param,
     )
 
 
@@ -1619,7 +1624,7 @@ async def _settle_wait_failure(
     Args:
         front_state: The front's state.
         error: The error that ended the wait.
-        chat_request: The client's request, whose model the size limit gap error reads the offer for.
+        chat_request: The client's request, whose models the size limit gap error reads offers for.
         open_request: The request to cancel.
     """
     request_id = open_request.request_id
@@ -1628,13 +1633,19 @@ async def _settle_wait_failure(
             await _cancel_shielded(front_state, open_request)
         return _wait_error(error, request_id=request_id)
     await _cancel_shielded(front_state, open_request)
-    chat_offer = await _size_limit_gap_chat_offer(
+    requested_models = chat_request.requested_models()
+    chat_offers = await _size_limit_gap_chat_offers(
         front_state,
         error,
-        model=chat_request.model,
+        models=requested_models,
         credentials=open_request.credentials,
     )
-    return _wait_error(error, request_id=request_id, chat_offer=chat_offer)
+    return _wait_error(
+        error,
+        request_id=request_id,
+        chat_offers=chat_offers,
+        listed_model_count=len(requested_models),
+    )
 
 
 def _create_watcher(
@@ -1668,14 +1679,17 @@ def _wait_error(
     error: ChatWaitTimeoutError | ChatDoneWithoutGenerationError | NoEligibleWorkerError | QueueUnavailableError | HordeAPIError,
     *,
     request_id: str,
-    chat_offer: HordeChatModelOffer | None = None,
+    chat_offers: Sequence[HordeChatModelOffer] = (),
+    listed_model_count: int = 1,
 ) -> ChatFrontError:
     """Create the front error for a wait that ended without a terminal outcome.
 
     Args:
         error: The error that ended the wait.
         request_id: The Horde request id.
-        chat_offer: What the online workers serving the model declare, for the largest limit a size limit gap states.
+        chat_offers: What the online workers serving each requested model declare, for the largest limit a size
+            limit gap states.
+        listed_model_count: How many models the request accepts, which words the size limit gap message.
     """
     if isinstance(error, ChatDoneWithoutGenerationError):
         return _no_generation_error(request_id)
@@ -1690,7 +1704,12 @@ def _wait_error(
         )
     if isinstance(error, DeclarationGapError):
         if _is_size_limit_gap(error.impossible_reason):
-            return _size_limit_gap_error(error.impossible_reason, request_id=request_id, chat_offer=chat_offer)
+            return _size_limit_gap_error(
+                error.impossible_reason,
+                request_id=request_id,
+                chat_offers=chat_offers,
+                listed_model_count=listed_model_count,
+            )
         return _declaration_gap_error(error.impossible_reason, request_id=request_id)
     if isinstance(error, QueueUnavailableError):
         return _queue_unavailable_error(error, request_id=request_id)
@@ -1792,31 +1811,37 @@ def _size_limit_gap_error(
     impossible_reason: ChatImpossibleReason,
     *,
     request_id: str,
-    chat_offer: HordeChatModelOffer | None,
+    chat_offers: Sequence[HordeChatModelOffer],
+    listed_model_count: int,
 ) -> ChatFrontError:
-    """Create the 400 for a request over the size limits every online worker serving its model declares.
+    """Create the 400 for a request over the size limits every online worker serving its models declares.
 
-    The message states the largest value the online workers declare when the model list has the model, and the
-    limit's native name otherwise. ``param`` is ``max_tokens`` when the completion limit is exceeded, and the context
-    length's request key when only that limit is. Workers come and go, so the message states what the online workers
-    declare and leaves retrying to the client.
+    The message states the largest value the online workers declare across the requested models the model list has,
+    and the limit's native name when it has none of them. ``param`` is ``max_tokens`` when the completion limit is
+    exceeded, and the context length's request key when only that limit is. Workers come and go, so the message
+    states what the online workers declare and leaves retrying to the client.
 
     Args:
         impossible_reason: The gap, with only size limits in ``exceeded_limits``.
         request_id: The Horde request id.
-        chat_offer: What the online workers serving the model declare, when the model list has the model.
+        chat_offers: What the online workers serving each requested model declare, for the models the model list has.
+        listed_model_count: How many models the request accepts.
     """
+    model_wording = "the model" if listed_model_count == 1 else "the listed models"
     sentences: list[str] = []
     for limit_name, limit_wording in DECLARED_SIZE_LIMITS.items():
         if limit_name not in impossible_reason.exceeded_limits:
             continue
-        largest_declared = getattr(chat_offer, limit_name) if chat_offer is not None else None
+        declared_values: list[int] = [
+            getattr(chat_offer, limit_name) for chat_offer in chat_offers if getattr(chat_offer, limit_name) is not None
+        ]
+        largest_declared = max(declared_values, default=None)
         if largest_declared is None:
             sentences.append(f"No worker eligible for this request currently declares a {limit_wording} ({limit_name}) that high.")
         else:
             sentences.append(
                 f"No worker eligible for this request currently declares a {limit_wording} that high; "
-                f"the largest any online worker for the model declares now is {largest_declared} tokens.",
+                f"the largest any online worker for {model_wording} declares now is {largest_declared} tokens.",
             )
     sentences.append("The request was cancelled.")
     param_limit = "max_length" if "max_length" in impossible_reason.exceeded_limits else "max_context_length"
@@ -1830,31 +1855,32 @@ def _size_limit_gap_error(
     )
 
 
-async def _size_limit_gap_chat_offer(
+async def _size_limit_gap_chat_offers(
     front_state: FrontState,
     error: Exception,
     *,
-    model: str,
+    models: Sequence[str],
     credentials: HordeCredentials,
-) -> HordeChatModelOffer | None:
-    """Return the model's chat entry from the model list when a wait ended on a size limit gap, or None.
+) -> list[HordeChatModelOffer]:
+    """Return the requested models' chat entries from the model list when a wait ended on a size limit gap.
 
-    The list is read through the process cache. A failed read leaves the 400 without the declared value, since the
-    request is refused either way.
+    Any requested model may serve the request, so the 400 states the largest limit across all of them. The list is
+    read through the process cache. A failed read, or a gap of another kind, returns no entries and leaves the 400
+    without the declared value, since the request is refused either way.
 
     Args:
         front_state: The process state holding the model list cache.
         error: The error that ended the wait.
-        model: The requested model.
+        models: The models the request accepts.
         credentials: The client's credentials, used for the model list read.
     """
     if not isinstance(error, DeclarationGapError) or not _is_size_limit_gap(error.impossible_reason):
-        return None
+        return []
     try:
         active_models = await front_state.model_list_cache.get(front_state.horde_client, credentials)
     except (HordeAPIError, HordeUnavailableError):
-        return None
-    return next((active_model.chat for active_model in active_models if active_model.name == model), None)
+        return []
+    return [active_model.chat for active_model in active_models if active_model.name in models and active_model.chat is not None]
 
 
 def _status_error_needs_cancel(error: HordeAPIError) -> bool:
@@ -2088,8 +2114,8 @@ class DeltaRelay:
         Args:
             completion_id: The completion id every chunk of the stream carries.
             created: When the request was submitted, in Unix seconds.
-            model: The model the client asked for, which the relayed chunks carry and the fingerprint uses when a delta
-                omits the model.
+            model: The model the client asked for, the first listed for ``models``, which the relayed chunks carry and
+                the fingerprint uses when the pinned generation's first delta omits the model that serves it.
             include_usage: Whether the client asked for usage, which writes a null ``usage`` in every chunk.
             include_reasoning: Whether the client asked for reasoning with ``horde.include_reasoning``.
         """
@@ -2103,6 +2129,9 @@ class DeltaRelay:
         self._completion_id = completion_id
         self._created = created
         self._model = model
+        self._served_model = model
+        """The model serving the pinned generation, from its first delta, which the relayed chunks carry; ``model``
+        before that or when the delta omits it."""
         self._include_usage = include_usage
         self._include_reasoning = include_reasoning
         self._exposed = False
@@ -2152,7 +2181,9 @@ class DeltaRelay:
                     if entry.ended or entry.seq != 1 or entry.generation_id in ended_generations:
                         continue
                     self.generation_id = entry.generation_id
-                    self.system_fingerprint = build_system_fingerprint(entry.worker_id, entry.model or self._model)
+                    # Under ``models`` any listed model may serve the request, so the chunks carry the delta's model.
+                    self._served_model = entry.model or self._model
+                    self.system_fingerprint = build_system_fingerprint(entry.worker_id, self._served_model)
                     self._next_seq = 1
             elif entry.generation_id != self.generation_id:
                 self.broken = RelayOutcome.REPLACED_ATTEMPT
@@ -2171,7 +2202,7 @@ class DeltaRelay:
                 build_delta_events(
                     completion_id=self._completion_id,
                     created=self._created,
-                    model=self._model,
+                    model=self._served_model,
                     content=content,
                     first=not self._exposed,
                     include_usage=self._include_usage,
@@ -2345,7 +2376,7 @@ async def _stream_completion(
                     relay = DeltaRelay(
                         completion_id=build_completion_id(request_id),
                         created=int(submitted_at),
-                        model=chat_request.model,
+                        model=chat_request.requested_models()[0],
                         include_usage=include_usage,
                         include_reasoning=chat_request.horde is not None and chat_request.horde.include_reasoning,
                     )

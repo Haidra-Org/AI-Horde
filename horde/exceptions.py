@@ -609,11 +609,21 @@ class TeamNotFound(wze.NotFound):
 class UnknownChatModel(wze.NotFound):
     """A chat request for a model that neither the text model reference lists nor an online chat worker serves."""
 
-    def __init__(self, model_name: str, rc: str = "UnknownChatModel") -> None:
+    def __init__(self, model_name: str, rc: str = "UnknownChatModel", *, request_path: str | None = None) -> None:
+        """Create the refusal.
+
+        Args:
+            model_name: The unknown model.
+            rc: The return code.
+            request_path: The entry of ``models`` holding the model, such as ``models[1]``, written quoted at the start
+                of the message so a client can tell which entry to change; None for ``model``.
+        """
         self.specific = (
             f"The model '{model_name}' is not known to this horde: the text model reference does not list it and "
             "no online worker serves chat jobs with it."
         )
+        if request_path is not None:
+            self.specific = f"'{request_path}': {self.specific}"
         self.log = None
         self.rc = rc
 

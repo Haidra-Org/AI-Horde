@@ -86,7 +86,7 @@ def build_delta_events(
     Args:
         completion_id: The completion id every chunk of the stream carries.
         created: When the request was submitted, in Unix seconds.
-        model: The model the client asked for.
+        model: The model serving the relayed generation, or the model the client asked for when the delta omits it.
         content: The delta's text; no content chunk is sent when it is empty.
         first: Whether this is the stream's first delta, which the role chunk precedes.
         include_usage: Whether the client asked for usage, which writes a null ``usage`` in every chunk.

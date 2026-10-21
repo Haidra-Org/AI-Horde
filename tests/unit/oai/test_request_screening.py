@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_SCHEMA_NESTING
 
-from horde.chat_contract import MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT
+from horde.chat_contract import MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT, MAX_CHAT_MODEL_COUNT
 from tests.unit.oai.conftest import FAST_TEST_SETTINGS, StartFront, build_chat_body, done_status
 
 pytestmark = pytest.mark.asyncio
@@ -94,7 +94,6 @@ async def test_default_no_op_is_accepted_and_not_forwarded(start_front: StartFro
         ({"modalities": ["text"]}, "modalities"),
         ({"prediction": {"type": "content", "content": "x"}}, "prediction"),
         ({"web_search_options": {}}, "web_search_options"),
-        ({"models": ["a", "b"]}, "models"),
         ({"prompt_cache_key": "k"}, "prompt_cache_key"),
         ({"session_id": "s"}, "session_id"),
         ({"some_future_key": 1}, "some_future_key"),
@@ -388,6 +387,53 @@ async def test_model_id_with_a_variant_suffix_is_not_found(start_front: StartFro
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "model_not_found"
+    assert response.json()["error"]["param"] == "model"
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_a_listed_model_id_with_a_variant_suffix_refuses_the_request_at_its_entry(start_front: StartFront) -> None:
+    async with start_front() as front:
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(model=None, models=["koboldcpp/Tiefighter", "koboldcpp/Tiefighter:free"]),
+        )
+
+    assert response.status_code == 404
+    error = response.json()["error"]
+    assert error["code"] == "model_not_found"
+    assert error["param"] == "models[1]"
+    assert "'koboldcpp/Tiefighter:free'" in error["message"]
+    assert front.horde.submit_route.call_count == 0
+
+
+@pytest.mark.parametrize(
+    ("body_overrides", "expected_code", "expected_param"),
+    [
+        ({"models": ["koboldcpp/Tiefighter"]}, "ChatRequestConflict", "models"),
+        ({"model": None}, "BadRequest", "model"),
+        ({"model": None, "models": ["koboldcpp/Tiefighter", "koboldcpp/Tiefighter"]}, "BadRequest", "models[1]"),
+        ({"model": None, "models": []}, "BadRequest", "models"),
+        ({"model": None, "models": ["koboldcpp/Tiefighter", ""]}, "UnsupportedChatParameter", "models[1]"),
+        (
+            {"model": None, "models": [f"koboldcpp/Model-{model_index}" for model_index in range(MAX_CHAT_MODEL_COUNT + 1)]},
+            "UnsupportedChatParameter",
+            "models",
+        ),
+    ],
+)
+async def test_a_request_needs_exactly_one_of_model_and_models_with_each_model_listed_once(
+    start_front: StartFront,
+    body_overrides: dict[str, Any],
+    expected_code: str,
+    expected_param: str,
+) -> None:
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(**body_overrides))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == expected_code
+    assert error["param"] == expected_param
     assert front.horde.submit_route.call_count == 0
 
 

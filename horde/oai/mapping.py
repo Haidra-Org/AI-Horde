@@ -450,7 +450,7 @@ def build_completion(
         )
         estimated_usage = True
     first_generation = status.generations[0]
-    model = first_generation.model or chat_request.model
+    model = first_generation.model or chat_request.requested_models()[0]
     return ChatCompletionResponse(
         completion_id=build_completion_id(request_id),
         created=created,

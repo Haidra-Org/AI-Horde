@@ -66,10 +66,20 @@ unknown keys, as OpenAI does: an unknown key inside `stream_options` or `respons
 
 | Keys | Handling |
 | --- | --- |
-| `model`, `messages`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `n`, `horde` | Validated and forwarded; null counts as omitted. |
+| `model`, `models`, `messages`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `n`, `horde` | Validated and forwarded; null counts as omitted. |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Validated against the `horde/chat_contract.py` shapes and forwarded verbatim; a `json_schema` response format is forwarded with its `schema` key and needs one. Dropped at their default: empty or null `tools`, `{"type": "text"}`; a null `tool_choice` or `parallel_tool_calls` is not forwarded. |
 | `stream`, `stream_options`, `user`, `metadata` | Applied or accepted by the front and not forwarded, except `stream: true` on a request whose deltas are relayed (see [Relayed deltas](#relayed-deltas)). |
 | `logprobs`, `top_logprobs`, `store`, `service_tier` | Dropped at their default (`false`, `0`, `false`, `auto` or `default`); any other value is 400. |
+
+A request sends exactly one of `model`, the OpenAI key, and `models`, a list of 1 to `MAX_CHAT_MODEL_COUNT` (5)
+acceptable models, each non-empty and listed once, forwarded unchanged. Whichever listed model an online worker runs
+serves the request. Both keys are 400 `ChatRequestConflict` with `param` `models`; neither is 400 `BadRequest` with
+`param` `model`; a repeated entry is 400 `BadRequest` at its path, such as `models[2]`. More than 5 entries is 400
+`UnsupportedChatParameter` with `param` `models`, and an empty entry is the same at its path, as `tools` over its cap is
+refused as a value outside the service contract. A model id containing `:` is
+404 `model_not_found` with `param` `model`, or the entry's path such as `models[1]`, and refuses the whole request.
+The Horde refuses a model it does not know with 404 `UnknownChatModel`; for an entry of `models` its message starts
+with the entry's quoted path, which the front returns as `param` (`NATIVE_REQUEST_PATH_PATTERN`).
 
 `ChatCompletionRequest` bounds the sampling values to OpenAI's ranges (the SDK's `OPENAI_SAMPLING_RANGES`): `temperature` 0 to
 2, `top_p` 0 to 1, `frequency_penalty` and `presence_penalty` -2 to 2. A value outside its range, `n` or a token limit
@@ -122,7 +132,9 @@ context grew and a `truncate_oldest` entry with `dropped_messages` when the olde
 request sets `horde.include_reasoning` and the worker submitted reasoning; it is never part of `content`.
 `usage.completion_tokens_details.reasoning_tokens`, OpenAI's shape, is the reasoning count the worker reported,
 written whether or not the reasoning is returned and left out when no worker reported one. Like the other reported
-counts it is informational: the Horde charges and rewards on the reply it measures. `system_fingerprint` is `fp_` and
+counts it is informational: the Horde charges and rewards on the reply it measures. The response `model` is the first
+generation's model, the one that served the request, which under `models` is whichever listed model a worker ran; the
+request's `model`, or its first listed model, stands in only when the generation does not carry a model. `system_fingerprint` is `fp_` and
 the first 10 hex characters of the SHA-256 of the first generation's worker
 id and model (`build_system_fingerprint` in `horde/oai/mapping.py`), null when the generation has no worker id; every
 chunk of a stream carries the same value. A relayed stream computes it from the worker and model of its first delta's
@@ -165,9 +177,9 @@ stream through the reconciliation below.
 
 The first delta with `seq` 1 pins its `gen`, and the first delta that sends anything sends the role chunk and exposes
 the stream. A delta then sends a chunk with `delta.reasoning_content` when it carries reasoning and the request sets
-`horde.include_reasoning`, and a chunk with `delta.content` when it carries text; each chunk carries the request's
-`model` and the `system_fingerprint` of the `worker` and `model` the first delta's entry carries (the request's model
-when the entry omits it). Without `horde.include_reasoning` the reasoning is dropped, and a delta carrying only
+`horde.include_reasoning`, and a chunk with `delta.content` when it carries text; each chunk carries the `model` the
+first delta's entry carries and the `system_fingerprint` of that entry's `worker` and `model` (the request's model, or
+its first listed model, when the entry omits it). Without `horde.include_reasoning` the reasoning is dropped, and a delta carrying only
 reasoning advances the sequence without sending anything, so the text after a reasoning block is still relayed.
 Keepalive comments continue between deltas. Reasoning is not part of the reconciliation below; the final reply sends
 the part of its reasoning the deltas did not cover, before the rest of the text, when it starts with the relayed
@@ -220,11 +232,13 @@ a `Retry-After`. The message lists the missing declarations or the exceeded limi
 required under `best_effort` when a guarantee is missing.
 
 A gap of only `max_length` or `max_context_length` in `exceeded_limits` is a request over the size limits every
-online worker serving the model declares. The front returns 400 `invalid_request_error` with code
+online worker serving the request's models declares. The front returns 400 `invalid_request_error` with code
 `no_worker_supports_limit` instead, with `param` `max_tokens`, or `horde.max_context_length` when only the context
 length is exceeded, and without a `Retry-After`. Each exceeded limit reads "No worker eligible for this request currently
 declares a completion limit that high; the largest any online worker for the model declares now is 1024 tokens." (or
-"a context length"), with the value from the model list's `chat` entry; when the model list has no entry for the model, the sentence states the
+"a context length"), with the value from the model list's `chat` entry. Under `models` any listed model may serve the
+request, so the value is the largest across the listed models' entries and the sentence reads "for the listed models";
+when the model list does not hold an entry for any requested model, the sentence states the
 limit name in its place. Volunteer workers come and go, so the message describes the online workers at the time and
 leaves retrying to the client. Any other gap, including a size limit beside another cause, keeps the 404.
 

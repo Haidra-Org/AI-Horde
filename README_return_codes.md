@@ -230,7 +230,7 @@ The errors returned by the AI horde are always in this json format
 | ChatWorkerFault | Not sent as a refusal. The `fault_rc` of a faulted chat request whose worker sent a known `fault_reason` with its `faulted` submit; `fault_reason` holds the AI Horde's message for that reason. The OpenAI-compatible front returns it as `metadata.rc` of its 502 |
 | ChatModelMismatch | A chat job's submit named another `model_id` than the model the job was assigned |
 | ChatKudosCapExceeded | A chat request's kudos estimate at current pricing exceeds its `horde.max_kudos`; the message states both, and nothing was queued or charged (HTTP 400) |
-| UnknownChatModel | A chat request's model is not in the text model reference and no online worker serves chat jobs with it (HTTP 404) |
+| UnknownChatModel | A chat request's model, or an entry of its `models`, is not in the text model reference and no online worker serves chat jobs with it (HTTP 404); for an entry the message starts with its quoted path, such as `'models[1]'` |
 | ChatImageStorageUnavailable | A chat request's images could not be stored; nothing was queued or charged (HTTP 503) |
 | OperationKeyConflict | A chat request reused an operation key the same user already claimed with a different request |
 | RequestTooLarge | The request body is larger than the route accepts (HTTP 413) |

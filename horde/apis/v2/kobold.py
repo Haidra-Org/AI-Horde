@@ -839,7 +839,8 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         - `TooManyExtraSourceImages` (400): more images than a chat request can carry.
         - `MoreThanMinExtraSourceImage` (400): more images than the limit for users who are not trusted or patrons.
         - `UnknownChatModel` (404): a model that the text model reference does not list and that no online chat
-          worker serves.
+          worker serves; for an entry of `models`, the message starts with its quoted path, such as `'models[1]'`,
+          and the whole request is refused.
         - `OperationKeyConflict` (400): `horde.operation_key` reused with a changed request.
         - `ChatKudosCapExceeded` (400): a kudos estimate at current pricing over `horde.max_kudos`; the message states
           the estimate and the cap.
@@ -1091,20 +1092,23 @@ class ChatAsyncGenerate(TextAsyncGenerate):
             ) from err
         self.chat_image_keys = tuple(stored_keys)
 
-    def ensure_model_known(self):
+    def ensure_model_known(self) -> None:
         """Refuse a model this horde does not know before any request row exists or any kudos is charged.
 
         A model is known when the text model reference lists it or an online worker serves chat jobs with it. A
-        known model that no online worker can serve is still accepted and waits, as a text request does.
+        known model that no online worker can serve is still accepted and waits, as a text request does. Every entry
+        of ``models`` has to be known: dropping an unknown entry would serve a request other than the one sent.
 
         Raises:
-            horde.exceptions.UnknownChatModel: The model is unknown to both.
+            horde.exceptions.UnknownChatModel: The model, or the first entry of ``models``, unknown to both.
         """
-        model_name = self.chat_request.model
-        # The reference is in memory, so the worker table is only queried for a model it does not list.
-        if model_reference.is_known_text_model(model_name) or text_database.is_chat_model_served(model_name):
-            return
-        raise e.UnknownChatModel(model_name)
+        listed_models = self.chat_request.models
+        for model_index, model_name in enumerate(build_model_names(self.chat_request)):
+            # The reference is in memory, so the worker table is only queried for a model it does not list.
+            if model_reference.is_known_text_model(model_name) or text_database.is_chat_model_served(model_name):
+                continue
+            request_path = f"models[{model_index}]" if listed_models is not None else None
+            raise e.UnknownChatModel(model_name, request_path=request_path)
 
     def apply_context_fit(self) -> None:
         """Size the request's context as a text request's, trim its history under ``truncate_oldest``, and record

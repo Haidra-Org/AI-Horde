@@ -17,6 +17,7 @@ from horde_sdk.worker.chat_declaration import ChatFaultReason, ChatFinishReason,
 
 from horde.apis.models import v2
 from horde.chat_contract import (
+    MAX_CHAT_MODEL_COUNT,
     MAX_CHAT_TOOL_CALL_COUNT,
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
     ChatAvailabilityMode,
@@ -1314,7 +1315,21 @@ class TextModels(v2.Models):
         self.input_model_chat_generation = api.model(
             "ChatGenerationInput",
             {
-                "model": fields.String(required=True, description="The horde text model to generate with."),
+                "model": fields.String(
+                    description="The horde text model to generate with. Send exactly one of model and models.",
+                    min_length=1,
+                ),
+                "models": fields.List(
+                    fields.String(min_length=1),
+                    description=(
+                        f"The horde text models the request accepts, 1 to {MAX_CHAT_MODEL_COUNT}, each listed once. "
+                        "Whichever of them an online worker runs serves the request, and the generation reports the "
+                        "model that served it. Every entry has to be known, or the request is refused with "
+                        "UnknownChatModel and the entry's path. Send exactly one of model and models."
+                    ),
+                    min_items=1,
+                    max_items=MAX_CHAT_MODEL_COUNT,
+                ),
                 "messages": fields.List(fields.Nested(self.model_chat_message), required=True, min_items=1),
                 "max_tokens": fields.Integer(
                     description=(

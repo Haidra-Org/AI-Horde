@@ -309,6 +309,26 @@ async def test_every_chunk_of_a_relayed_stream_carries_the_relayed_generations_f
     assert {chunk["system_fingerprint"] for chunk in chunks} == {expected}
 
 
+async def test_relayed_chunks_of_a_request_listing_models_carry_the_model_its_first_delta_reports(start_front: StartFront) -> None:
+    """Any listed model may serve the request, so the relayed chunks carry the model of the pinned generation rather
+    than the first one listed."""
+    served_model = "koboldcpp/Other-Model"
+    async with start_front(with_deltas=True) as front:
+
+        async def generate() -> None:
+            await asyncio.sleep(FIRST_DELTA_DELAY_SECONDS)
+            await front.horde.append_delta(GENERATION_ID, 1, "Hello ", worker_id="worker-1", model=served_model)
+            await asyncio.sleep(RELAY_SETTLE_SECONDS)
+            await finish(front, worker_id="worker-1", model=served_model)
+
+        body = await stream_while(front, generate, model=None, models=[MODEL_NAME, served_model])
+
+    chunks, last_payload = stream_chunks(body)
+    assert last_payload == "[DONE]"
+    assert chunk_deltas(chunks)[:2] == [{"role": "assistant"}, {"content": "Hello "}]
+    assert {chunk["model"] for chunk in chunks} == {served_model}
+
+
 async def test_relayed_chunks_without_a_worker_carry_no_fingerprint(start_front: StartFront) -> None:
     """Entries from a Horde that does not write the worker leave the relayed chunks without a fingerprint."""
     async with start_front(with_deltas=True) as front:

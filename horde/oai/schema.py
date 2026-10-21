@@ -46,6 +46,7 @@ from horde_sdk.generation_parameters.text.chat_limits import (
     SUPPORTED_CHAT_CHOICE_COUNT,
 )
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -65,6 +66,7 @@ from horde.chat_contract import (
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
     CHAT_REQUEST_CONFLICT_RC,
     INTERNAL_HORDE_OPTION_KEYS,
+    MAX_CHAT_MODEL_COUNT,
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
     UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE,
     UNSUPPORTED_CHAT_PARAMETER_RC,
@@ -80,7 +82,6 @@ from horde.chat_contract import (
 )
 
 __all__ = [
-    "BAD_REQUEST_CODE",
     "CHAT_REQUEST_CONFLICT_CODE",
     "DEFAULT_NO_OP_PARAMETERS",
     "PARAMETER_CONTEXT_KEY",
@@ -125,9 +126,6 @@ __all__ = [
 
 UNSUPPORTED_PARAMETER_CODE: str = UNSUPPORTED_CHAT_PARAMETER_RC
 """The error code for a key, role, part or value the service does not serve; the native route returns the same rc."""
-
-BAD_REQUEST_CODE: str = "BadRequest"
-"""The error code for a body that is not valid JSON or fails validation; the Horde's generic rc for a 400."""
 
 CHAT_REQUEST_CONFLICT_CODE: str = CHAT_REQUEST_CONFLICT_RC
 """The error code for two keys whose values contradict each other; the native route returns the same rc."""
@@ -671,6 +669,18 @@ def _unsupported_value_error(message: str) -> PydanticCustomError:
     return PydanticCustomError(UNSUPPORTED_PARAMETER_ERROR_TYPE, message)
 
 
+def _validate_listed_model_name(model_name: str) -> str:
+    """Validate that an entry of ``models`` is not empty.
+
+    Raises:
+        PydanticCustomError: The entry is empty; reported as ``UnsupportedChatParameter`` at its path, such as
+            ``models[1]``.
+    """
+    if not model_name:
+        raise _unsupported_value_error("A listed model name may not be empty.")
+    return model_name
+
+
 def _openai_value_error(
     parameter: str,
     problem_template: str,
@@ -705,8 +715,13 @@ class ChatCompletionRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
-    model: StrictStr = Field(min_length=1)
-    """The Horde text model name."""
+    model: StrictStr | None = Field(default=None, min_length=1)
+    """The Horde text model name. A request sets exactly one of ``model``, the OpenAI key, and ``models``."""
+
+    models: list[Annotated[StrictStr, AfterValidator(_validate_listed_model_name)]] | None = Field(default=None, min_length=1)
+    """The Horde text model names the request accepts, at most
+    [`MAX_CHAT_MODEL_COUNT`][horde.chat_contract.MAX_CHAT_MODEL_COUNT], each listed once, forwarded unchanged.
+    Whichever of them an online worker runs serves the request, and the response ``model`` is the one that did."""
 
     messages: list[ChatMessage]
     """The conversation so far, in order; at least one message."""
@@ -764,6 +779,31 @@ class ChatCompletionRequest(BaseModel):
 
     horde: ChatHordeOptions | None = None
     """The Horde extension object."""
+
+    def requested_models(self) -> list[str]:
+        """Return the models the request accepts: ``models`` as listed, or ``model`` alone.
+
+        Empty only before the shared model rule has refused a request that sets neither key.
+        """
+        if self.models is not None:
+            return list(self.models)
+        return [self.model] if self.model is not None else []
+
+    @field_validator("models", mode="before")
+    @classmethod
+    def validate_model_count(cls, models: object) -> object:
+        """Validate that ``models`` lists at most [`MAX_CHAT_MODEL_COUNT`][horde.chat_contract.MAX_CHAT_MODEL_COUNT]
+        models.
+
+        Checked before the entries are validated and reported as a value outside the service contract, as the native
+        route reports ``tools`` over its cap.
+
+        Raises:
+            PydanticCustomError: More models are listed; reported as ``UnsupportedChatParameter`` on ``models``.
+        """
+        if isinstance(models, list) and len(models) > MAX_CHAT_MODEL_COUNT:
+            raise _unsupported_value_error(f"A chat request may list at most {MAX_CHAT_MODEL_COUNT} models.")
+        return models
 
     @field_validator("messages")
     @classmethod
