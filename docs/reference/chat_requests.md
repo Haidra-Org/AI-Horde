@@ -618,7 +618,10 @@ jobs timed out.
 A request is `done` when it is `faulted`, or when no job is waiting or processing and either all requested results
 are stored or the remaining jobs were cancelled. Cancellation retains partial results and lets in-flight jobs finish,
 but faults after cancellation do not restart jobs. A cancelled request can therefore be `done` without a generation;
-the front reports `ChatRequestNoGeneration` when it has no reply to deliver.
+the front reports `ChatRequestNoGeneration` when it does not have a reply to deliver. The cancel route also tells a worker
+streaming progress for the request to stop (see [Streaming progress](#streaming-progress)). For a streamed
+request it settles each in-flight generation on the content its worker posted (see [Pricing](#pricing)); the
+generation is faulted as cancelled, does not count toward the worker's aborted-job threshold and is not restarted.
 
 Faulted generations do not count as results. A job's fault and its restart are committed together, as are a pop's
 taken job and its first generation. A worker-reported image fault that is not restarted and leaves nothing waiting
@@ -743,6 +746,21 @@ submitted, `native_finish_reason`, `prompt_tokens`, `completion_tokens`, `reason
 `queue_wait_seconds`, the seconds from
 the request's creation to the generation's assignment. The text status route does not return any of them.
 
+A streamed generation still in flight when the client cancels is settled at the cancel on the content its worker
+posted, under the same output estimate: `read_posted_progress` (`horde/chat_progress.py`) joins the generation's
+`content` entries from the request's stream in `seq` order, reasoning aside, and
+`TextProcessingGeneration.settle_cancelled` prices those characters, pays the worker, charges the requester with
+the usual extra burn and faults the generation as cancelled. The posted content is measured by the Horde, so it is
+a charge input where a worker-reported count is not. A cancel before any post pays the floor of 20 tokens. When
+the stream does not hold the generation's entries, the lease's accepted `bytes` stand in for the characters;
+they count a multibyte character more than once and include reasoning, so the rare fallback leans toward the
+worker. A Redis failure settles on the floor. The settlement records the character count it priced in the
+generation's `settled_character_count`, which is null on every other generation and is not shown on the status
+route. The posted content is not stored as the generation's reply, so the
+status does not list a generation for it, and `charge_basis` and `finish_reason` stay null on the cancelled
+generation. The Horde does not measure partial work on a request that does not stream: its worker submits after the
+cancel and is paid for the reply as usual.
+
 ## Chat model list
 
 `GET /v2/status/models?type=text&chat=true` lists only the text models that at least one online chat worker serves,
@@ -780,8 +798,9 @@ still submits the whole reply to the submit route.
 | `delta.content` | The text since the previous post; empty only when `delta.reasoning_content` is set        |
 | `delta.reasoning_content` | Optional: the reasoning since the previous post, never part of `delta.content`  |
 
-A delta with neither non-empty `content` nor non-empty `reasoning_content` returns `400 BadRequest`. Reasoning counts
-toward the byte cap with the content. An accepted post returns `200` with `{"accepted_seq": <seq>}`. A post that
+A delta whose `content` and `reasoning_content` are both empty or absent returns `400 BadRequest`. Reasoning counts
+toward the byte cap with the content. An accepted post returns `200` with `{"accepted_seq": <seq>, "cancelled":
+<bool>}`; `cancelled` is `true` once the request was cancelled. A post that
 repeats the last accepted `seq` with the same content and reasoning returns the same body and does not append an entry, so a worker retries a post whose answer it lost by sending it
 again unchanged.
 
@@ -796,7 +815,7 @@ again unchanged.
 
 When a generation carrying the hint is assigned, the pop writes the lease `horde:chat:lease:<generation id>` on the
 chat signal database: a hash of `request`, `worker`, `model`, `owner` (the owner's user id), `key` (a SHA-256 of the owner's
-stored key hash), `max_bytes` and `fake`. It expires `CHAT_PROGRESS_LEASE_GRACE_SECONDS` (90) after the job's TTL,
+stored key hash), `max_bytes`, `fake` and, once the request is cancelled, `cancelled` (`1`). It expires `CHAT_PROGRESS_LEASE_GRACE_SECONDS` (90) after the job's TTL,
 which covers the stale-generation thread's 60 second tick. The route reads only the lease and does not read Postgres; a key reset
 during the job therefore takes effect for posts only once the lease ends. A fake generation's posts are answered as a
 real one's and not appended.
@@ -818,8 +837,19 @@ one. Caps, in `horde/chat_progress.py`:
 A successful submit deletes the lease and leaves the stream to expire, so a reader reconciles what it relayed with
 the final reply. When a generation with a lease faults, on a faulted submit or in the stale-generation thread, the
 stream gets an entry with `gen` and `ended: 1` and the lease is deleted. The route never publishes on the
-completion signal channel. Writing and deleting the lease and the `ended` entry are best effort: a Redis failure is
-logged and never fails the pop, submit or fault.
+completion signal channel.
+
+When the cancel route claims a streamed request's cancellation, it sets `cancelled` on the lease of each generation
+still in flight and appends that generation's `gen` and `ended: 1` entry, in one transaction that writes only leases
+that still exist. The leases are kept, so the worker's next post is still accepted, and its `200` carries `cancelled:
+true`; the delta it carries was generated before the worker read the flag and is harmless after the ended marker.
+The worker then stops generating and does not submit. Before flagging the leases, the route settles each of those
+generations on the content the stream holds for it (see [Pricing](#pricing)), so a submit that arrives after the
+cancel, from a worker that did not post again, returns `400 AbortedGen`. Maintenance mode's abort does not flag the leases, since it
+lets in-flight jobs settle. A fake generation's lease is flagged without an `ended` entry.
+
+Writing, flagging and deleting the lease and the `ended` entry are best effort: a Redis failure is logged and never
+fails the pop, submit, fault or cancel.
 
 ## Completion signal
 
@@ -859,8 +889,9 @@ false), `accepts_prompt_jobs` (boolean, not null, default true), `chat_features`
 `chat_conformance` (varchar, not null, default `strict`), `chat_tools_temperature` (double precision) and
 `chat_messages_offloaded` (boolean, not null, default false); and
 `workers.chat_tools_max_temperature` (double precision); and `waiting_prompts.chat_fault_reason` (varchar 1000) and
-`chat_fault_rc` (varchar 32), `processing_gens.chat_refusal_rc` (varchar 32) and `workers.nonconformant_replies`
-(integer, not null, default 0). Every column is nullable or has a constant default, so no table is rewritten. The
+`chat_fault_rc` (varchar 32), `processing_gens.chat_refusal_rc` (varchar 32) and `settled_character_count`
+(integer), and `workers.nonconformant_replies`
+(integer, not null, default 0). Every column is nullable or has a constant default, so the migration does not rewrite a table. The
 unique partial index `ix_waiting_prompts_user_operation_key` on `(user_id, operation_key) WHERE operation_key IS NOT
 NULL` is built with `CREATE UNIQUE INDEX CONCURRENTLY`, which cannot run inside a transaction block; a failed
 build leaves an invalid index. `db.create_all()` does not add columns to existing tables.

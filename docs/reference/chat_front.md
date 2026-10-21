@@ -176,7 +176,7 @@ reasoning, and does not send it otherwise. After exposure:
 | Final reply equal to the relayed text | The finish chunk, the usage chunk when asked for, and `[DONE]` |
 | Final reply starting with the relayed text | The rest as one content chunk, then the finish chunk |
 | Final reply not starting with the relayed text | SSE error event `ChatStreamDiverged`, then `[DONE]` |
-| An entry of another `gen`, the pinned `gen`'s `ended` marker, or a `seq` out of order | SSE error event `ChatStreamDiverged`, then `[DONE]`; the front cancels the request |
+| An entry of another `gen`, the pinned `gen`'s `ended` marker (also written when the request is cancelled through the native route), or a `seq` out of order | SSE error event `ChatStreamDiverged`, then `[DONE]`; the front cancels the request |
 | The request faults | SSE error event `ChatRequestFaulted`, as for a buffered stream |
 
 A restarted attempt starts the reply over, so it is never spliced into a choice the client holds part of

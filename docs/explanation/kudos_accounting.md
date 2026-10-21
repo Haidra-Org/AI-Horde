@@ -166,6 +166,13 @@ business transaction commits its job state and emitted facts together. The event
 it does not by itself make every producer retry idempotent. Transfers accept a caller idempotency key and validate a
 replay. Other producers still depend on their existing job-state transaction to prevent duplicate settlement.
 
+A streamed chat generation that its requester cancels is settled through the same event, on the content its worker
+posted before the cancel, which the Horde measured. The worker owner is credited and the requester debited for that
+content, and the cancel does not count as a dropped job for the worker. A later submit for the settled generation is
+refused, so the generation settles once. The Horde does not measure part of a non-streamed generation, so it settles
+on submit
+([Chat requests: pricing](chat_requests.md#pricing-by-the-text-output-estimate)).
+
 ## Projection: durable work queue
 
 In ledger mode, rows start with `applied = false`. The periodic projector:

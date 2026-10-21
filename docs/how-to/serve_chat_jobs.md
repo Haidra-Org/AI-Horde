@@ -37,6 +37,38 @@ For why chat travels this way, see [Chat requests on the Horde](../explanation/c
 requests as a client, see [Send chat completions through the OpenAI-compatible front](send_chat_completions.md).
 To run this end to end with koboldcpp for the first time, follow [Serve your first chat job with koboldcpp](../tutorial/first_chat_worker.md).
 
+The steps below build one pop loop. A pass through it, with the step that covers each part:
+
+```mermaid
+flowchart TD
+    P[Pop with the chat declaration<br/>step 1] --> K{chat: true?<br/>step 2}
+    K -->|no| T[Serve the text job<br/>step 8]
+    K -->|yes| M{messages_url?}
+    M -->|yes| FM[Fetch the messages<br/>within 120 s, step 5]
+    M -->|no| IM{Image URLs?}
+    IM -->|yes| FI[Fetch each image<br/>step 5]
+    IM -->|no| R
+    FM --> R[Render and fit the conversation<br/>steps 3 and 4]
+    FI --> R
+    R -->|does not fit, cannot render| F[Fault with a reason<br/>step 7]
+    R --> G[Generate]
+    G --> S{stream_progress: true?}
+    S -->|yes| PP[Post progress about once a second<br/>step 6]
+    PP -->|cancelled true| X[Stop generating<br/>and do not submit]
+    PP -->|404, 413, repeated 503| G2[Stop posting, keep generating]
+    PP -->|generation finished| SB
+    G2 --> SB
+    S -->|no| SB[Submit the structured reply<br/>step 6]
+    G -->|backend fails| F
+    SB -->|400 refusal| F
+    SB --> P
+    F --> P
+    T --> P
+    X --> P
+```
+
+A failed fetch is a fault too, sent without `fault_reason`.
+
 ## 1. Declare chat on pop
 
 Add five fields to every pop body, beside the usual `name`, `models`, `max_length` and `max_context_length`
@@ -349,7 +381,10 @@ apikey: <worker owner's key>
 
 - `seq` is 1 for the job's first post and one more for each post after it. Send a post only after the previous one
   was answered. A lost answer is retried with the same `seq` and content, which returns the same
-  `{"accepted_seq": n}` and does not append an entry.
+  `{"accepted_seq": n, "cancelled": false}` and does not append an entry.
+- `"cancelled": true` in a `200` means the client cancelled the request: stop generating and do not submit. The
+  delta in that post was accepted and is not needed again. The job was settled at the cancel on the content
+  posted before it, so the worker is paid for that content without a dropped job.
 - `409 ChatProgressOutOfSequence` carries `expected_seq`. Changed content under an accepted `seq` is refused the same
   way, so never rewrite text already posted.
 - `404 ChatProgressNotStreaming`, `413 ChatProgressCapReached` (1000 posts, or 16 bytes per `max_length` token) and
@@ -361,7 +396,7 @@ apikey: <worker owner's key>
 - Submit the whole reply as above once the last post was answered. The submit is what the request stores and charges,
   and it ends the job's posts.
 
-Verification: each post returns `200 {"accepted_seq": n}`, and the request's stream
+Verification: each post returns `200 {"accepted_seq": n, "cancelled": false}`, and the request's stream
 `horde:chat:stream:<request-id>` on the chat signal database (Redis logical database 7) holds one entry per accepted
 post with `gen`, `seq`, `content`, `reasoning_content` when the post carried reasoning, `worker` and `model`. Covered
 by `tests/integration/test_chat_progress.py` and `tests/unit/test_chat_progress.py`; the contract is in
@@ -405,10 +440,12 @@ after `400 ChatSubmitInvalid` or `400 ChatModelMismatch` counts as an aborted jo
 <HORDE_URL>/api/v2/workers/name/<worker-name>` shows `nonconformant_replies`; a count that keeps rising means the
 backend does not keep a guarantee the worker declares.
 
-A job the requester cancels while the worker holds it is settled at the cancellation, as a text job is: the worker is
-rewarded and the requester charged for dispatched work
-([ADR 0027](../decisions/0027-price-chat-generations-by-the-text-output-estimate.md)). A submit for a cancelled job,
-or for one whose TTL ran out, returns `400 AbortedGen`.
+A streamed job the requester cancels while the worker holds it is settled at the cancellation on the content the
+worker posted, priced by the output estimate with its floor of 20 tokens: the worker is rewarded and the requester
+charged for that content, and the job does not count as dropped
+([ADR 0027](../decisions/0027-price-chat-generations-by-the-text-output-estimate.md)). A submit for a settled job,
+or for one whose TTL ran out, returns `400 AbortedGen`. A job that does not stream is not settled at the cancel;
+submit it as usual and it is rewarded for the reply.
 
 Verification: the faulted submit returns `{"reward": 0}`, and the next pop by any eligible worker receives a new job
 for the same request. Covered by `test_a_faulted_chat_submit_needs_neither_generation_nor_message` and

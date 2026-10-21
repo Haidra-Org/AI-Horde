@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import fakeredis
@@ -211,9 +213,9 @@ def test_progress_in_sequence_is_appended_to_the_request_stream_without_a_signal
     second = _post_progress(client, request_headers["apikey"], pop_result["id"], 2, "ue")
 
     assert [response.get_json() for response in (first, retried, second)] == [
-        {"accepted_seq": 1},
-        {"accepted_seq": 1},
-        {"accepted_seq": 2},
+        {"accepted_seq": 1, "cancelled": False},
+        {"accepted_seq": 1, "cancelled": False},
+        {"accepted_seq": 2, "cancelled": False},
     ]
     entries = [fields for _, fields in lua_redis.xrange(chat_stream_key(request_id))]
     assert entries == [
@@ -311,6 +313,226 @@ def test_a_stale_generation_ends_its_stream(
     assert not progress_redis.exists(chat_lease_key(pop_result["id"]))
 
 
+def test_a_cancel_of_a_streamed_request_tells_its_worker_through_the_next_progress_post(
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    lua_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    """Requests left queued by earlier tests may be popped first, so the request cancelled is the popped one."""
+    _submit_chat_request(client, request_headers, stream=True)
+    pop_result = chat_worker.pop()
+    request_id = lua_redis.hget(chat_lease_key(pop_result["id"]), "request")
+    assert request_id is not None
+    first = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Bl")
+
+    cancel_response = client.delete(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
+    after_cancel = _post_progress(client, request_headers["apikey"], pop_result["id"], 2, "ue")
+
+    assert cancel_response.status_code == 200, cancel_response.get_data(as_text=True)
+    assert first.get_json() == {"accepted_seq": 1, "cancelled": False}
+    assert after_cancel.status_code == 200, after_cancel.get_data(as_text=True)
+    assert after_cancel.get_json() == {"accepted_seq": 2, "cancelled": True}
+    entries = [fields for _, fields in lua_redis.xrange(chat_stream_key(request_id))]
+    assert [(entry["gen"], entry.get("ended"), entry.get("content")) for entry in entries] == [
+        (pop_result["id"], None, "Bl"),
+        (pop_result["id"], "1", None),
+        (pop_result["id"], None, "ue"),
+    ]
+
+
+POSTED_REPLY = "Blue is the colour of a clear sky at noon, of deep water and of the cornflowers in a summer field."
+"""More than 80 characters, so the reply is priced above the output estimate's floor of 20 tokens."""
+
+
+@dataclass(frozen=True)
+class Settlement:
+    """Represents the kudos postings recorded for one generation and the amounts the text formula gives it."""
+
+    credits: list[Decimal]
+    """The positive postings: the worker's pay."""
+
+    debits: list[Decimal]
+    """The negative postings: the requesting user's charge."""
+
+    formula_kudos: Decimal
+    """The text formula's kudos on the expected text."""
+
+    formula_charge: Decimal
+    """``formula_kudos`` with the request's extra burn, as the user is charged it on any settlement."""
+
+    formula_pay: Decimal
+    """``formula_kudos`` with the worker's bridge multiplier, as the worker is paid it."""
+
+    floor_kudos: Decimal
+    """The text formula's kudos on an empty text, the output estimate's floor."""
+
+
+def _serve_own_chat_model(client: FlaskClient, request_headers: dict[str, str]) -> FakeChatWorker:
+    """Bring a worker online for a model no other test requests, so its pops take only this test's requests."""
+    own_model = f"custom/settling-{uuid.uuid4().hex[:8]}"
+    worker = FakeChatWorker(
+        client=client,
+        headers=request_headers,
+        name=f"CICD Settling Scribe {uuid.uuid4().hex[:8]}",
+        models=[own_model],
+    )
+    worker.pop()
+    return worker
+
+
+def _pop_own_request(
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    worker: FakeChatWorker,
+    *,
+    stream: bool,
+) -> tuple[str, str]:
+    """Submit a chat request for the worker's model, pop it and return the generation and request ids."""
+    request_id = _submit_chat_request(client, request_headers, model=worker.models[0], stream=stream, max_tokens=512)
+    generation_id: str = worker.pop()["id"]
+    return generation_id, request_id
+
+
+def _read_settlement(app: Flask, generation_id: str, expected_text: str) -> Settlement:
+    """Read the generation's kudos postings and price the expected text by the text formula on the same generation."""
+    from horde.classes.base.kudos import KudosLedger
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.flask import db
+
+    def price(generation: TextProcessingGeneration, text: str) -> Decimal:
+        generation.generation = text
+        return Decimal(str(generation.get_gen_kudos())).quantize(Decimal("0.01"))
+
+    with app.app_context():
+        amounts = [
+            amount for (amount,) in db.session.query(KudosLedger.amount).filter(KudosLedger.job_id == uuid.UUID(generation_id)).all()
+        ]
+        generation = db.session.get(TextProcessingGeneration, uuid.UUID(generation_id))
+        assert generation is not None
+        # The text is set on the loaded instance only to price it; the rollback leaves the stored row as it was.
+        with db.session.no_autoflush:
+            bridge_multiplier = Decimal(str(generation.worker.get_bridge_kudos_multiplier()))
+            formula_kudos = price(generation, expected_text)
+            formula_charge = Decimal(str(generation.wp.calculate_extra_kudos_burn(float(formula_kudos)))).quantize(Decimal("0.01"))
+            floor_kudos = price(generation, "")
+        db.session.rollback()
+    return Settlement(
+        credits=[amount for amount in amounts if amount > 0],
+        debits=[amount for amount in amounts if amount < 0],
+        formula_kudos=formula_kudos,
+        formula_charge=formula_charge,
+        formula_pay=(formula_kudos * bridge_multiplier).quantize(Decimal("0.01")),
+        floor_kudos=floor_kudos,
+    )
+
+
+def _read_generation_state(app: Flask, generation_id: str) -> tuple[bool, bool, str | None, int, int | None]:
+    """Return the generation's faulted and cancelled flags, its stored text, its worker's dropped jobs and the
+    character count it was settled on."""
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.flask import db
+
+    with app.app_context():
+        generation = db.session.get(TextProcessingGeneration, uuid.UUID(generation_id))
+        assert generation is not None
+        return (
+            generation.faulted,
+            generation.cancelled,
+            generation.generation,
+            generation.worker.aborted_jobs,
+            generation.settled_character_count,
+        )
+
+
+def test_a_cancel_settles_a_streamed_generation_on_the_content_its_worker_posted(
+    app: Flask,
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    lua_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    """The worker is paid and the user charged the text formula on the posted content, reasoning aside. The
+    generation is faulted as cancelled without a dropped job and keeps the posted character count it was settled on,
+    and neither a later submit nor the stale pass pays it again."""
+    from datetime import datetime, timedelta
+
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.database import threads
+    from horde.flask import db
+
+    worker = _serve_own_chat_model(client, request_headers)
+    generation_id, request_id = _pop_own_request(client, request_headers, worker, stream=True)
+    _post_progress(client, request_headers["apikey"], generation_id, 1, "", reasoning_content="The sky is clear today.")
+    _post_progress(client, request_headers["apikey"], generation_id, 2, POSTED_REPLY[:40])
+    _post_progress(client, request_headers["apikey"], generation_id, 3, POSTED_REPLY[40:])
+    aborted_jobs_before = _read_generation_state(app, generation_id)[3]
+
+    cancel_response = client.delete(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
+
+    assert cancel_response.status_code == 200, cancel_response.get_data(as_text=True)
+    settlement = _read_settlement(app, generation_id, POSTED_REPLY)
+    assert settlement.formula_kudos > settlement.floor_kudos
+    assert settlement.credits == [settlement.formula_pay]
+    assert settlement.debits == [-settlement.formula_charge]
+    assert _read_generation_state(app, generation_id) == (True, True, None, aborted_jobs_before, len(POSTED_REPLY))
+    assert lua_redis.hget(chat_lease_key(generation_id), "cancelled") == "1"
+
+    late_submit = worker.submit(build_chat_submit_body(generation_id=generation_id, content=POSTED_REPLY, model_id=worker.models[0]))
+
+    assert late_submit.status_code == 400, late_submit.get_data(as_text=True)
+    assert late_submit.get_json()["rc"] == "AbortedGen"
+
+    with app.app_context():
+        generation = db.session.get(TextProcessingGeneration, uuid.UUID(generation_id))
+        assert generation is not None
+        generation.start_time = datetime.utcnow() - timedelta(seconds=generation.job_ttl + 1)
+        db.session.commit()
+        threads.check_waiting_prompts()
+
+    assert _read_settlement(app, generation_id, POSTED_REPLY).credits == [settlement.formula_pay]
+    assert _read_generation_state(app, generation_id) == (True, True, None, aborted_jobs_before, len(POSTED_REPLY))
+
+
+def test_a_cancel_before_any_post_settles_a_streamed_generation_on_the_formula_floor(
+    app: Flask,
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    worker = _serve_own_chat_model(client, request_headers)
+    generation_id, request_id = _pop_own_request(client, request_headers, worker, stream=True)
+
+    cancel_response = client.delete(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
+
+    assert cancel_response.status_code == 200, cancel_response.get_data(as_text=True)
+    settlement = _read_settlement(app, generation_id, "")
+    assert settlement.formula_kudos == settlement.floor_kudos
+    assert settlement.debits == [-settlement.formula_charge]
+    assert settlement.credits == [settlement.formula_pay]
+    generation_state = _read_generation_state(app, generation_id)
+    assert generation_state[:2] == (True, True)
+    assert generation_state[4] == 0
+
+
+def test_a_cancel_of_a_request_that_does_not_stream_leaves_its_generation_pending_and_unpaid(
+    app: Flask,
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    worker = _serve_own_chat_model(client, request_headers)
+    generation_id, request_id = _pop_own_request(client, request_headers, worker, stream=False)
+
+    cancel_response = client.delete(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
+
+    assert cancel_response.status_code == 200, cancel_response.get_data(as_text=True)
+    settlement = _read_settlement(app, generation_id, "")
+    assert (settlement.credits, settlement.debits) == ([], [])
+    generation_state = _read_generation_state(app, generation_id)
+    assert generation_state[:3] == (False, False, None)
+    assert generation_state[4] is None
+
+
 def test_a_reasoning_delta_is_appended_with_its_reasoning_beside_empty_content(
     client: FlaskClient,
     request_headers: dict[str, str],
@@ -324,7 +546,10 @@ def test_a_reasoning_delta_is_appended_with_its_reasoning_beside_empty_content(
     reasoning = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "", reasoning_content="Think")
     text = _post_progress(client, request_headers["apikey"], pop_result["id"], 2, "Blue")
 
-    assert [response.get_json() for response in (reasoning, text)] == [{"accepted_seq": 1}, {"accepted_seq": 2}]
+    assert [response.get_json() for response in (reasoning, text)] == [
+        {"accepted_seq": 1, "cancelled": False},
+        {"accepted_seq": 2, "cancelled": False},
+    ]
     entries = [
         fields
         for stream_key in lua_redis.scan_iter(match=chat_stream_key("*"))

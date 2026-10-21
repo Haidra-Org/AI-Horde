@@ -479,7 +479,8 @@ The front differs from OpenAI on purpose in these points:
 
 A client request does not change Horde state beyond the request itself. Point the client's base URL back at its
 previous provider to stop using the Horde. A request the client abandons by closing the connection is cancelled on
-the Horde.
+the Horde. A streamed request cancelled while a worker generates is charged for the content the worker streamed
+before the cancel, priced as a reply of that length.
 
 ## Related
 

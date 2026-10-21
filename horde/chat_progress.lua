@@ -4,8 +4,9 @@
 -- ARGV[5]: the stream expiry in seconds; ARGV[6]: the approximate MAXLEN the stream is trimmed to; ARGV[7]: the
 -- reasoning content, empty when the delta carries none.
 -- Returns {outcome, seq}: the accepted seq for 'accepted' and 'duplicate', the expected seq for 'gap', the refused
--- seq for 'over_cap' and 0 for 'no_lease'. Sequence state (seq, bytes, last, last_reasoning) lives in the lease hash
--- and expires with it.
+-- seq for 'over_cap' and 0 for 'no_lease'. 'accepted' and 'duplicate' carry a third element, 1 when the request was
+-- cancelled and 0 otherwise. Sequence state (seq, bytes, last, last_reasoning) lives in the lease hash and expires
+-- with it.
 local lease_key = KEYS[1]
 local stream_key = KEYS[2]
 local seq = tonumber(ARGV[2])
@@ -14,10 +15,16 @@ local reasoning_content = ARGV[7]
 if redis.call('EXISTS', lease_key) == 0 then
     return {'no_lease', 0}
 end
+-- A cancelled lease still takes the delta, since the worker may have generated it before it read the flag; the reply
+-- carries the flag so the worker stops.
+local cancelled = 0
+if redis.call('HGET', lease_key, 'cancelled') == '1' then
+    cancelled = 1
+end
 local last_seq = tonumber(redis.call('HGET', lease_key, 'seq') or '0')
 if last_seq > 0 and seq == last_seq and redis.call('HGET', lease_key, 'last') == content
         and (redis.call('HGET', lease_key, 'last_reasoning') or '') == reasoning_content then
-    return {'duplicate', last_seq}
+    return {'duplicate', last_seq, cancelled}
 end
 if seq ~= last_seq + 1 then
     return {'gap', last_seq + 1}
@@ -49,4 +56,4 @@ if redis.call('HGET', lease_key, 'fake') ~= '1' then
     redis.call('EXPIRE', stream_key, ARGV[5])
 end
 redis.call('HSET', lease_key, 'seq', seq, 'bytes', total_bytes, 'last', content, 'last_reasoning', reasoning_content)
-return {'accepted', seq}
+return {'accepted', seq, cancelled}

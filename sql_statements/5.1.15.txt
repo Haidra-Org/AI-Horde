@@ -26,7 +26,8 @@
 -- The processing_gens columns hold a chat worker's structured reply (the message with any tool calls,
 -- finish reasons and reported token counts), the basis the generation was charged on, the worker's
 -- declaration as it stood when the generation was assigned, the transport the request's images
--- were sent to it with, and the return code its last reply was refused with. A nullable column without
+-- were sent to it with, the return code its last reply was refused with, and the posted character count
+-- a cancelled streamed generation was settled on. A nullable column without
 -- a default and a column with a constant default are both metadata-only adds; the lock timeout fails
 -- rather than queueing an ACCESS EXCLUSIVE lock behind a long transaction. Rerun on failure.
 SET lock_timeout = '5s';
@@ -63,6 +64,7 @@ ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_max_context_length
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_max_length INTEGER;
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS image_transport VARCHAR(16);
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS chat_refusal_rc VARCHAR(32);
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS settled_character_count INTEGER;
 RESET lock_timeout;
 
 -- One operation key per user. Every existing row has no key, so the partial index starts empty, but the

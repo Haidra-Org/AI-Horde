@@ -44,6 +44,8 @@ from horde.chat_progress import (
     ProgressOutcome,
     api_key_digest,
     append_progress,
+    cancel_progress_streams,
+    read_posted_progress,
     read_stream_lease,
 )
 from horde.chat_signal import ChatEvent, publish_chat_event
@@ -78,6 +80,7 @@ from horde.classes.kobold.chat_request import (
     replace_image_urls,
     rewrite_message_texts,
     serialize_messages,
+    streams_progress,
     verify_chat_reply,
 )
 from horde.classes.kobold.genstats import (
@@ -641,6 +644,14 @@ class TextAsyncStatus(Resource):
             return (wp_status, 200)
         if cancellation_claimed:
             record_request_cancellation_forecast(request_id=str(wp.id), cancelled_at=cancelled_at)
+            if wp.is_chat and streams_progress(wp.chat_extras):
+                # The status above loaded the generations; the ones still pending may hold a lease whose worker reads
+                # the cancel from its next progress acknowledgement. Each is settled on what it posted before its lease
+                # is flagged, so the worker is paid for the content the stream holds and the user is charged for it.
+                pending_procgens = [procgen for procgen in wp.processing_gens if not procgen.is_completed() and not procgen.is_faulted()]
+                for procgen in pending_procgens:
+                    procgen.settle_cancelled(read_posted_progress(str(procgen.id), str(wp.id)))
+                cancel_progress_streams([str(procgen.id) for procgen in pending_procgens], str(wp.id))
             if wp.is_chat:
                 publish_chat_event(str(wp.id), ChatEvent.CANCELLED, wp.count_stored_generations())
         return (wp_status, 200)
@@ -1595,6 +1606,9 @@ class TextJobProgress(Resource):
         `seq` starts at 1 and goes up by one per post. A retry sends the same `seq` and content and is acknowledged
         again without appending it twice.
 
+        The acknowledgement carries `cancelled`, true once the request was cancelled. The delta is still accepted;
+        the worker stops generating and does not submit.
+
         Refused with:
 
         - `ChatProgressNotStreaming` (404): the generation is not streamed, already finished or faulted, expired or
@@ -1631,7 +1645,7 @@ class TextJobProgress(Resource):
             raise e.ServiceUnavailable("The progress store is unavailable.", rc=CHAT_PROGRESS_UNAVAILABLE_RC) from None
         metrics.chat_progress_outcomes.add(1, {"horde.outcome": appended.outcome.value})
         if appended.outcome in (ProgressOutcome.ACCEPTED, ProgressOutcome.DUPLICATE):
-            return {"accepted_seq": appended.seq}, 200
+            return {"accepted_seq": appended.seq, "cancelled": appended.cancelled}, 200
         if appended.outcome is ProgressOutcome.GAP:
             return (
                 {

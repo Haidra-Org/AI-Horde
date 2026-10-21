@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 
 import fakeredis
 import pytest
@@ -16,14 +17,18 @@ from horde.chat_progress import (
     CHAT_PROGRESS_BYTES_PER_TOKEN,
     CHAT_PROGRESS_LEASE_GRACE_SECONDS,
     CHAT_PROGRESS_STREAM_TTL_SECONDS,
+    EMPTY_POSTED_PROGRESS,
+    PostedProgress,
     ProgressAppend,
     ProgressOutcome,
     StreamLease,
     api_key_digest,
     append_progress,
+    cancel_progress_streams,
     chat_lease_key,
     chat_stream_key,
     end_progress_stream,
+    read_posted_progress,
     read_stream_lease,
     release_stream_lease,
     write_stream_lease,
@@ -318,3 +323,135 @@ def test_reasoning_counts_toward_the_byte_cap_with_the_content(lua_redis: fakere
     half_cap = CHAT_PROGRESS_BYTES_PER_TOKEN // 2
     assert append_progress(_lease(), 1, "x" * half_cap, "y" * (half_cap + 1)) == ProgressAppend(ProgressOutcome.OVER_CAP, 1)
     assert not lua_redis.exists(chat_stream_key(REQUEST_ID))
+
+
+def test_a_cancel_flags_the_live_lease_keeps_it_and_appends_the_ended_marker(
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease()
+    lease_ttl = progress_redis.ttl(chat_lease_key(GENERATION_ID))
+
+    cancel_progress_streams([GENERATION_ID], REQUEST_ID)
+
+    assert progress_redis.hget(chat_lease_key(GENERATION_ID), "cancelled") == "1"
+    assert 0 < progress_redis.ttl(chat_lease_key(GENERATION_ID)) <= lease_ttl
+    assert _stream_entries(progress_redis) == [{"gen": GENERATION_ID, "ended": "1"}]
+    assert 0 < progress_redis.ttl(chat_stream_key(REQUEST_ID)) <= CHAT_PROGRESS_STREAM_TTL_SECONDS
+
+
+def test_a_cancel_of_a_generation_without_a_lease_leaves_redis_as_it_is(
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    cancel_progress_streams([GENERATION_ID], REQUEST_ID)
+
+    assert not progress_redis.exists(chat_lease_key(GENERATION_ID))
+    assert not progress_redis.exists(chat_stream_key(REQUEST_ID))
+
+
+def test_a_cancel_flags_only_the_generations_that_still_hold_a_lease(
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease()
+    released_generation_id = "0d8e7c41-93a5-4d0b-a1f2-6c3b9e8d7f20"
+
+    cancel_progress_streams([released_generation_id, GENERATION_ID], REQUEST_ID)
+
+    assert not progress_redis.exists(chat_lease_key(released_generation_id))
+    assert _stream_entries(progress_redis) == [{"gen": GENERATION_ID, "ended": "1"}]
+
+
+def test_a_cancel_of_a_fake_generation_flags_its_lease_without_a_marker(
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease(fake=True)
+
+    cancel_progress_streams([GENERATION_ID], REQUEST_ID)
+
+    assert progress_redis.hget(chat_lease_key(GENERATION_ID), "cancelled") == "1"
+    assert not progress_redis.exists(chat_stream_key(REQUEST_ID))
+
+
+def test_a_cancel_redis_refuses_is_logged_and_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = fakeredis.FakeServer()
+    server.connected = False
+    monkeypatch.setattr(chat_progress, "_client", fakeredis.FakeStrictRedis(server=server, decode_responses=True))
+    warnings: list[str] = []
+    monkeypatch.setattr(chat_progress, "logger", SimpleNamespace(warning=warnings.append))
+
+    cancel_progress_streams([GENERATION_ID], REQUEST_ID)
+
+    assert len(warnings) == 1
+    assert REQUEST_ID in warnings[0]
+
+
+def test_a_cancelled_lease_accepts_the_delta_and_its_accept_and_retry_carry_the_flag(
+    lua_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease()
+    append_progress(_lease(), 1, "Hel")
+    cancel_progress_streams([GENERATION_ID], REQUEST_ID)
+
+    accepted = append_progress(_lease(), 2, "lo")
+    retry = append_progress(_lease(), 2, "lo")
+
+    assert accepted == ProgressAppend(ProgressOutcome.ACCEPTED, 2, cancelled=True)
+    assert retry == ProgressAppend(ProgressOutcome.DUPLICATE, 2, cancelled=True)
+    assert [entry.get("ended") or entry["content"] for entry in _stream_entries(lua_redis)] == ["Hel", "1", "lo"]
+
+
+def test_a_refused_post_on_a_cancelled_lease_is_refused_as_before(lua_redis: fakeredis.FakeStrictRedis) -> None:
+    _write_lease()
+    cancel_progress_streams([GENERATION_ID], REQUEST_ID)
+
+    assert append_progress(_lease(), 3, "lo") == ProgressAppend(ProgressOutcome.GAP, 1)
+
+
+def test_a_lease_without_the_flag_acknowledges_the_request_as_not_cancelled(
+    lua_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease()
+
+    assert append_progress(_lease(), 1, "Hel").cancelled is False
+
+
+def test_the_posted_progress_joins_the_generation_content_in_seq_order_without_reasoning(
+    lua_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease(max_length=64)
+    other_generation_id = "0d8e7c41-93a5-4d0b-a1f2-6c3b9e8d7f20"
+    lua_redis.xadd(chat_stream_key(REQUEST_ID), {"gen": other_generation_id, "seq": 1, "content": "Elsewhere"})
+    append_progress(_lease(), 1, "", "Think")
+    append_progress(_lease(), 2, "Hel")
+    append_progress(_lease(), 3, "lo", "more")
+    cancel_progress_streams([GENERATION_ID], REQUEST_ID)
+
+    assert read_posted_progress(GENERATION_ID, REQUEST_ID) == PostedProgress(content="Hello", chars=5)
+
+
+def test_the_posted_progress_falls_back_to_the_lease_bytes_when_the_stream_is_gone(
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease()
+    progress_redis.hset(chat_lease_key(GENERATION_ID), "bytes", 42)
+
+    assert read_posted_progress(GENERATION_ID, REQUEST_ID) == PostedProgress(content="", chars=42)
+
+
+def test_the_posted_progress_of_a_generation_that_posted_nothing_is_empty(
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease()
+
+    assert read_posted_progress(GENERATION_ID, REQUEST_ID) == EMPTY_POSTED_PROGRESS
+
+
+def test_the_posted_progress_redis_refuses_is_logged_and_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = fakeredis.FakeServer()
+    server.connected = False
+    monkeypatch.setattr(chat_progress, "_client", fakeredis.FakeStrictRedis(server=server, decode_responses=True))
+    warnings: list[str] = []
+    monkeypatch.setattr(chat_progress, "logger", SimpleNamespace(warning=warnings.append))
+
+    assert read_posted_progress(GENERATION_ID, REQUEST_ID) == EMPTY_POSTED_PROGRESS
+    assert len(warnings) == 1
+    assert GENERATION_ID in warnings[0]

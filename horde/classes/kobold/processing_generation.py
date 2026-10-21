@@ -11,7 +11,7 @@ from horde.bridge_reference import (
     is_backed_validated,
     parse_bridge_agent,
 )
-from horde.chat_progress import end_progress_stream, release_stream_lease, write_stream_lease
+from horde.chat_progress import PostedProgress, end_progress_stream, release_stream_lease, write_stream_lease
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.processing_generation import ProcessingGeneration, json_column_type
 from horde.classes.kobold.chat_request import (
@@ -128,6 +128,12 @@ class TextProcessingGeneration(ProcessingGeneration):
     """The return code the Horde last refused this generation's reply with, written at the refusal. The worker's
     fault submit that follows is counted by it, so a worker cannot claim the exemption a nonconformant reply has from
     dropped jobs. NULL while no reply was refused and on text generations."""
+    settled_character_count = db.Column(db.Integer, nullable=True)
+    """The posted character count a cancelled streamed generation was priced on, written by
+    [`settle_cancelled`][horde.classes.kobold.processing_generation.TextProcessingGeneration.settle_cancelled] and
+    read by ``get_things_count`` in place of a stored reply. The posted text is not retained and a stored
+    ``generation`` would count the faulted generation as a delivered result, so this count is the record cancels are
+    analysed by. NULL on every other generation."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
@@ -359,6 +365,32 @@ class TextProcessingGeneration(ProcessingGeneration):
         if self.wp.is_completed():
             publish_chat_event(request_id, ChatEvent.DONE, generation_count)
 
+    def settle_cancelled(self, posted: PostedProgress) -> float | None:
+        """Settle a pending streamed generation whose request was cancelled on the content its worker posted.
+
+        The posted content is measured by the server, so it is priced by the output estimate like a submitted reply:
+        the worker is paid for what it turned in and the requesting user is charged the same, and the generation is
+        faulted as cancelled, without a dropped-job penalty. The row is locked and reloaded first, so a submit or fault
+        that lands while the cancel runs settles the generation once: whichever commits first wins, and the other finds
+        it finished or faulted.
+
+        Args:
+            posted: The content the generation posted, from
+                [`read_posted_progress`][horde.chat_progress.read_posted_progress].
+
+        Returns:
+            The kudos the worker was paid, or None when the generation had already finished or faulted.
+        """
+        db.session.refresh(self, with_for_update=True)
+        self.settled_character_count = posted.chars
+        kudos = self.cancel()
+        if kudos is None:
+            # A generation that a submit or fault settled first does not keep the count. cancel commits only when it
+            # settles, so this commit releases the row lock the refresh took.
+            self.settled_character_count = None
+            db.session.commit()
+        return kudos
+
     def get_things_count(self, generation=None):
         """Return the output estimate the generation is charged on: its characters divided by 4, rounded up, at least
         20 and at most the requested ``max_length``.
@@ -369,7 +401,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         Returns:
             The estimate. A stored chat reply is counted by
             [`chat_reply_characters`][horde.classes.kobold.chat_request.chat_reply_characters], so tool calls are
-            charged as output.
+            charged as output. A cancelled streamed generation is counted by the posted characters it was settled on.
         """
         if generation is not None:
             character_count = len(generation)
@@ -377,6 +409,8 @@ class TextProcessingGeneration(ProcessingGeneration):
             character_count = chat_reply_characters(self.message)
         elif self.generation is not None:
             character_count = len(self.generation)
+        elif self.settled_character_count is not None:
+            character_count = self.settled_character_count
         else:
             return 0
         quick_token_count = math.ceil(character_count / 4)

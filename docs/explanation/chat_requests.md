@@ -299,6 +299,8 @@ each tool call's name and arguments) divided by four, floored at 20 tokens and c
 ([ADR 0027](../decisions/0027-price-chat-generations-by-the-text-output-estimate.md),
 [Pricing](../reference/chat_requests.md#pricing)). A short reply to a large `max_tokens` is charged for the short
 reply. The basis is computed in one function and stored on every generation as `charge_basis: output_estimate`.
+A streamed generation the client cancels is settled on the same basis on the content its worker posted before the
+cancel, which the Horde measured, so a volunteer worker is paid for what it turned in.
 
 Pricing on the token counts workers report was the alternative
 ([ADR 0028](../decisions/0028-price-chat-generations-on-reported-completion-tokens.md)). It is fairer per reply and
@@ -401,9 +403,33 @@ the lowest kudos priority, and per-source caps on the front, which aggregate use
 A streamed request without tools whose `response_format` is absent or `text` gets its content as the worker posts
 progress, one chunk per post, about one a second. The batches are kept in a retained Redis stream per request, cheap
 and lost on failover
-([ADR 0024](../decisions/0024-stream-chat-deltas-through-a-retained-redis-stream.md)); the alternative that was not
-built is Postgres progress rows, durable and paid for in primary database writes on the connection pool pops and
-submits share ([ADR 0025](../decisions/0025-stream-chat-deltas-through-postgres-progress-rows.md)).
+([ADR 0024](../decisions/0024-stream-chat-deltas-through-a-retained-redis-stream.md)). Postgres progress rows were the
+alternative, durable and paid for in primary database writes on the connection pool pops and submits share
+([ADR 0025](../decisions/0025-stream-chat-deltas-through-postgres-progress-rows.md)).
+
+A lease in Redis, written at pop, authenticates a generation's posts, so the progress route does not read Postgres.
+The lease's life is the streamed generation's life as the worker sees it
+([Streaming progress](../reference/chat_requests.md#streaming-progress)):
+
+```mermaid
+stateDiagram-v2
+    [*] --> Leased: pop of a streamed job
+    Leased --> Leased: post accepted (200)<br/>or resynced after 409
+    Leased --> Submitted: worker submits the whole reply
+    Leased --> Ended: generation faults
+    Leased --> Cancelled: client or front cancels
+    Leased --> PostsStopped: 413 cap reached
+    PostsStopped --> Submitted: worker still submits
+    Submitted --> [*]: lease deleted, stream left to expire
+    Ended --> [*]: ended marker, lease deleted
+    Cancelled --> [*]: settled on the posted text<br/>next ack carries cancelled true<br/>worker stops and does not submit
+```
+
+A cancel settles the generation on the content its worker posted before it, so the worker is paid for that text and
+the requester charged for it. The settlement does not count a dropped job, so a worker that stops on the flag is
+never penalised for a client leaving. The front relays entries as they arrive and reconciles them with the final
+reply: a reply equal to or extending the relayed text completes the stream, and one that diverges ends it with an
+error event.
 
 A request with tools or a non-text `response_format` waits for the whole reply as a non-streamed request does, then
 sends it as

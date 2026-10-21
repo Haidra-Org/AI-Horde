@@ -1182,6 +1182,11 @@ class TextModels(v2.Models):
                 "accepted_seq": fields.Integer(
                     description="The seq the Horde holds, the posted one; also for an identical retry of the last one.",
                 ),
+                "cancelled": fields.Boolean(
+                    description=(
+                        "True once the request was cancelled. The delta is still accepted; the worker stops generating and does not submit."
+                    ),
+                ),
             },
         )
         self.response_model_chat_progress_out_of_sequence = api.model(
