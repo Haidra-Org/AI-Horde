@@ -35,11 +35,13 @@ from pydantic import ValidationError
 
 from horde import exceptions as e
 from horde.chat_contract import (
+    CHAT_KUDOS_CAP_EXCEEDED_RC,
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_MESSAGE_COUNT,
     ChatHordeOptions,
+    KudosCapExcess,
 )
 from horde.classes.kobold.chat_request import (
     CHAT_IMAGE_PLACEHOLDER,
@@ -260,6 +262,53 @@ class TestMalformedRequests:
         operation_key = uuid.uuid4()
 
         assert parse_chat_request(_body(horde={"operation_key": str(operation_key)})).horde.operation_key == operation_key
+
+
+class TestKudosCap:
+    """``horde.max_kudos``, the client's cap on a request's kudos estimate, and the refusal stating both values."""
+
+    def test_a_positive_integer_cap_is_accepted(self) -> None:
+        assert parse_chat_request(_body(horde={"max_kudos": 40})).horde.max_kudos == 40
+
+    def test_a_request_without_a_cap_has_none(self) -> None:
+        assert parse_chat_request(_body()).horde.max_kudos is None
+
+    @pytest.mark.parametrize("max_kudos", [0, -5, 12.5, "40", True])
+    def test_a_cap_that_is_not_a_positive_integer_is_refused(self, max_kudos: object) -> None:
+        rejection = _rejection(_body(horde={"max_kudos": max_kudos}))
+
+        assert rejection.rc == "BadRequest"
+        assert "max_kudos" in rejection.specific
+
+    def test_the_cap_leaves_the_operation_fingerprint_unchanged(self) -> None:
+        """The cap acts only at creation, so a repeated submission with another cap is the same operation."""
+        capped = build_operation_fingerprint(parse_chat_request(_body(horde={"max_kudos": 40})))
+
+        assert capped == build_operation_fingerprint(parse_chat_request(_body()))
+
+    def test_the_refusal_message_states_both_values_readably(self) -> None:
+        kudos_cap_excess = KudosCapExcess(kudos_estimate=57, max_kudos=40)
+
+        message = kudos_cap_excess.to_message()
+
+        assert "57" in message
+        assert "40" in message
+        assert KudosCapExcess.read_from_message(message) == kudos_cap_excess
+
+    def test_a_message_without_both_values_reads_as_none(self) -> None:
+        assert KudosCapExcess.read_from_message("Refused.") is None
+
+    def test_the_return_code_is_documented(self) -> None:
+        assert CHAT_KUDOS_CAP_EXCEEDED_RC in KNOWN_RC
+
+    def test_the_exception_carries_the_return_code_and_the_message(self) -> None:
+        kudos_cap_excess = KudosCapExcess(kudos_estimate=57, max_kudos=40)
+
+        refusal = e.ChatKudosCapExceeded(kudos_cap_excess)
+
+        assert refusal.code == 400
+        assert refusal.rc == CHAT_KUDOS_CAP_EXCEEDED_RC
+        assert refusal.specific == kudos_cap_excess.to_message()
 
 
 class TestConflictingValues:

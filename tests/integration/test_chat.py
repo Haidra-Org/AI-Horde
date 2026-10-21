@@ -16,6 +16,7 @@ import fakeredis
 import pytest
 
 from horde import chat_signal
+from horde.chat_contract import KudosCapExcess
 from horde.chat_signal import chat_signal_channel
 from tests.integration._fake_chat_worker import (
     FakeChatWorker,
@@ -989,6 +990,56 @@ def test_an_unknown_model_is_refused_as_unknown_rather_than_as_a_context_that_ca
 
     assert response.status_code == 404, response.get_data(as_text=True)
     assert response.get_json()["rc"] == "UnknownChatModel"
+
+
+def _quote_kudos(client, headers: dict[str, str]) -> int:
+    """Return the kudos a dry run of the default chat body quotes, the estimate ``horde.max_kudos`` is checked against."""
+    response = _post_chat(client, headers, _chat_body(dry_run=True))
+    assert response.status_code == 200, response.get_data(as_text=True)
+    # The response model marshals kudos as a number with a fraction, though the route rounds it to a whole one.
+    quoted_kudos = int(response.get_json()["kudos"])
+    assert quoted_kudos > 1
+    return quoted_kudos
+
+
+def test_a_kudos_estimate_over_max_kudos_is_400_stating_both_with_no_row_and_no_tax(app, client, make_api_user) -> None:
+    requester = make_api_user()
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
+    kudos_estimate = _quote_kudos(client, headers)
+    max_kudos = kudos_estimate - 1
+
+    response = _post_chat(client, headers, _chat_body(max_kudos=max_kudos))
+
+    assert response.status_code == 400, response.get_data(as_text=True)
+    refusal = response.get_json()
+    assert refusal["rc"] == "ChatKudosCapExceeded"
+    assert KudosCapExcess.read_from_message(refusal["message"]) == KudosCapExcess(kudos_estimate=kudos_estimate, max_kudos=max_kudos)
+    assert _count_chat_requests(app, requester.id) == 0
+    assert _count_generation_debits(app, requester.id) == 0
+
+
+def test_a_kudos_estimate_at_max_kudos_is_queued(app, client, make_api_user) -> None:
+    requester = make_api_user()
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
+    kudos_estimate = _quote_kudos(client, headers)
+
+    response = _post_chat(client, headers, _chat_body(max_kudos=kudos_estimate))
+
+    assert response.status_code == 202, response.get_data(as_text=True)
+    assert _count_chat_requests(app, requester.id) == 1
+
+
+def test_a_dry_run_over_max_kudos_is_refused_as_its_submission_would_be(app, client, make_api_user) -> None:
+    """A quote does not report a request that its submission would refuse."""
+    requester = make_api_user()
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
+    kudos_estimate = _quote_kudos(client, headers)
+
+    response = _post_chat(client, headers, _chat_body(dry_run=True, max_kudos=kudos_estimate - 1))
+
+    assert response.status_code == 400, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "ChatKudosCapExceeded"
+    assert _count_chat_requests(app, requester.id) == 0
 
 
 def test_a_repeated_operation_key_is_answered_while_admission_is_off(client, make_api_user, monkeypatch) -> None:

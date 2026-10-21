@@ -185,6 +185,7 @@ handle_team_not_found = api.errorhandler(e.TeamNotFound)(e.handle_bad_requests)
 handle_thing_not_found = api.errorhandler(e.ThingNotFound)(e.handle_bad_requests)
 handle_moderation_event_not_found = api.errorhandler(e.ModerationEventNotFound)(e.handle_bad_requests)
 handle_unknown_chat_model = api.errorhandler(e.UnknownChatModel)(e.handle_bad_requests)
+handle_chat_kudos_cap_exceeded = api.errorhandler(e.ChatKudosCapExceeded)(e.handle_bad_requests)
 handle_request_too_large = api.errorhandler(e.RequestTooLarge)(e.handle_bad_requests)
 handle_user_not_found = api.errorhandler(e.UserNotFound)(e.handle_bad_requests)
 handle_duplicate_gen = api.errorhandler(e.DuplicateGen)(e.handle_bad_requests)
@@ -387,13 +388,21 @@ class GenerateTemplate(Resource):
 
     # Extend if extra payload information needs to be sent
     def extrapolate_dry_run_kudos(self):
-        kudos = self.wp.extrapolate_dry_run_kudos(
-            extra_source_images_count=self.get_extra_source_images_count(),
-            kudos_adjustment=STYLE_OWNER_REWARD if self.style_kudos is True else 0,
-        )
+        kudos = self.quote_kudos()
         params_hash = self.get_hashed_params_dict()
         hr.horde_r_setex(f"payload_kudos_{params_hash}", timedelta(days=2), kudos)
         return kudos
+
+    def quote_kudos(self) -> float:
+        """Return the request's kudos quote, the cost a dry run returns, computed from its waiting prompt.
+
+        Returns:
+            float: The worker estimate with its burn for every generation, plus the horde tax activation charges.
+        """
+        return self.wp.extrapolate_dry_run_kudos(
+            extra_source_images_count=self.get_extra_source_images_count(),
+            kudos_adjustment=STYLE_OWNER_REWARD if self.style_kudos is True else 0,
+        )
 
     def get_extra_source_images_count(self):
         if not self.args.extra_source_images:

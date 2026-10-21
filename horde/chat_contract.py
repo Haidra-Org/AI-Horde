@@ -30,6 +30,7 @@ same requests with the same wording: [`check_tool_fields_need_tools`][horde.chat
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from enum import StrEnum
 from typing import Annotated, Any, Literal, NoReturn, Protocol
@@ -44,6 +45,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 from pydantic_core import PydanticCustomError
 
 __all__ = [
+    "CHAT_KUDOS_CAP_EXCEEDED_RC",
     "CHAT_REQUEST_CONFLICT_ERROR_TYPE",
     "CHAT_REQUEST_CONFLICT_RC",
     "INTERNAL_HORDE_OPTION_KEYS",
@@ -56,6 +58,7 @@ __all__ = [
     "MAX_CHAT_TOOL_CALL_ID_LENGTH",
     "MAX_CHAT_TOOL_NAME_LENGTH",
     "JSON_WORD",
+    "KUDOS_CAP_EXCESS_PATTERN",
     "OBJECT_SCHEMA_TYPE",
     "SCHEMA_KEYWORDS_HOLDING_A_SCHEMA",
     "SCHEMA_KEYWORDS_HOLDING_SCHEMA_ARRAYS",
@@ -64,6 +67,7 @@ __all__ = [
     "TOOL_ROLE",
     "UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE",
     "UNSUPPORTED_CHAT_PARAMETER_RC",
+    "ChatAvailabilityMode",
     "ChatContextFit",
     "ChatFunctionCall",
     "ChatFunctionDefinition",
@@ -83,6 +87,7 @@ __all__ = [
     "ChatToolCall",
     "ChatToolChoice",
     "ChatToolChoiceMode",
+    "KudosCapExcess",
     "chat_tool_call_bytes",
     "check_json_word",
     "check_strict_response_schema",
@@ -131,6 +136,16 @@ UNSUPPORTED_CHAT_PARAMETER_RC: str = "UnsupportedChatParameter"
 CHAT_REQUEST_CONFLICT_RC: str = "ChatRequestConflict"
 """Return code for two values of a request that contradict each other, such as differing token limits."""
 
+CHAT_KUDOS_CAP_EXCEEDED_RC: str = "ChatKudosCapExceeded"
+"""Return code for a request whose kudos estimate exceeds the ``horde.max_kudos`` its client set."""
+
+KUDOS_CAP_EXCESS_PATTERN: re.Pattern[str] = re.compile(
+    r"kudos estimate at current pricing is (?P<kudos_estimate>\d+), above its horde\.max_kudos of (?P<max_kudos>\d+)",
+)
+"""The wording of [`KudosCapExcess.to_message`][horde.chat_contract.KudosCapExcess.to_message] that carries both
+values. The native error body holds only the message and the return code, so the OpenAI front reads the values back
+from the message with this pattern."""
+
 INTERNAL_HORDE_OPTION_KEYS: frozenset[str] = frozenset(
     {
         "dry_run",
@@ -148,6 +163,17 @@ class ChatContextFit(StrEnum):
 
     REJECT = "reject"
     """Refuse a request whose messages do not fit the requested context."""
+
+
+class ChatAvailabilityMode(StrEnum):
+    """How a request is treated when the online pool cannot serve it within the client's budget."""
+
+    WAIT = "wait"
+    """Queue and wait for the budget; refuse only when nothing is eligible for the grace period."""
+
+    FAIL_FAST = "fail_fast"
+    """Refuse at the first status read when no eligible worker thread is online and nothing is processing, or when
+    the queue's estimated wait exceeds the remaining budget, with a Retry-After."""
 
 
 class ChatHordeOptions(BaseModel):
@@ -189,6 +215,17 @@ class ChatHordeOptions(BaseModel):
     ``json_object`` response format without the word "json" in any message (see
     [`check_json_word`][horde.chat_contract.check_json_word]). It acts when the request is admitted and is not stored."""
 
+    availability_mode: ChatAvailabilityMode = ChatAvailabilityMode.WAIT
+    """How a request is treated when the online pool cannot serve it within the client's budget. ``fail_fast``
+    refuses at once with a Retry-After instead of waiting for workers to appear. It changes the wait, not the work,
+    so it is not stored and the operation fingerprint leaves it out."""
+
+    max_kudos: StrictInt | None = Field(default=None, ge=1)
+    """The most kudos the request may cost. A request whose kudos estimate at creation exceeds it is refused before it
+    is queued, with the estimate in the refusal. The estimate assumes the full ``max_length`` is generated while the
+    charge is the output estimate, so the check is conservative. It acts only at creation, so it is not stored and the
+    operation fingerprint leaves it out."""
+
     include_reasoning: StrictBool = False
     """Return the model's reasoning as ``reasoning_content`` beside the reply. OpenAI's chat API does not return
     reasoning text, so the OpenAI front hides it unless asked for. It changes what the front delivers and leaves the
@@ -216,6 +253,45 @@ class ChatHordeOptions(BaseModel):
                 "'only' and 'ignore' cannot both be set.",
             )
         return ignore
+
+
+class KudosCapExcess(BaseModel):
+    """Represents a chat request refused because its kudos estimate exceeds the ``horde.max_kudos`` its client set.
+
+    The estimate is the request's kudos quote at the pricing in force at creation, computed from ``max_length``, so it
+    is a ceiling on what the request is charged.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kudos_estimate: int
+    """The request's kudos estimate, rounded as the native route returns it."""
+
+    max_kudos: int
+    """The cap the client set."""
+
+    def to_message(self) -> str:
+        """Return the refusal's message, which states both values in the wording
+        [`KUDOS_CAP_EXCESS_PATTERN`][horde.chat_contract.KUDOS_CAP_EXCESS_PATTERN] reads."""
+        return (
+            f"The request's kudos estimate at current pricing is {self.kudos_estimate}, above its horde.max_kudos of "
+            f"{self.max_kudos}. The estimate assumes the full max_tokens is generated."
+        )
+
+    @classmethod
+    def read_from_message(cls, message: str) -> KudosCapExcess | None:
+        """Return the values a refusal's message states, or None when the message does not state them.
+
+        Args:
+            message: The message of a ``ChatKudosCapExceeded`` refusal.
+        """
+        values_match = KUDOS_CAP_EXCESS_PATTERN.search(message)
+        if values_match is None:
+            return None
+        return cls(
+            kudos_estimate=int(values_match.group("kudos_estimate")),
+            max_kudos=int(values_match.group("max_kudos")),
+        )
 
 
 MAX_CHAT_TOOL_CALL_COUNT: int = 128

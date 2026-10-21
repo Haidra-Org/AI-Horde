@@ -145,8 +145,21 @@ def build_chat_body(**overrides: Any) -> dict[str, Any]:
     return chat_body
 
 
-def waiting_status(*, queue_position: int = 3, wait_time: int = 20, is_possible: bool = True, processing: int = 0) -> dict[str, Any]:
-    """Return the native status of a request still waiting for a worker."""
+def waiting_status(
+    *,
+    queue_position: int = 3,
+    wait_time: int = 20,
+    is_possible: bool = True,
+    processing: int = 0,
+    eligible_worker_threads: int | None = None,
+) -> dict[str, Any]:
+    """Return the native status of a request still waiting for a worker.
+
+    The eligibility fields follow ``is_possible`` (one worker with one thread, or none) unless
+    ``eligible_worker_threads`` is given; the native status reports them on every read.
+    """
+    if eligible_worker_threads is None:
+        eligible_worker_threads = 1 if is_possible else 0
     return {
         "done": False,
         "faulted": False,
@@ -158,8 +171,19 @@ def waiting_status(*, queue_position: int = 3, wait_time: int = 20, is_possible:
         "wait_time": wait_time,
         "kudos": 0,
         "is_possible": is_possible,
+        "eligible_workers": min(eligible_worker_threads, 1),
+        "eligible_worker_threads": eligible_worker_threads,
+        "might_stall": False,
         "generations": [],
     }
+
+
+def legacy_waiting_status(**waiting_overrides: Any) -> dict[str, Any]:
+    """Return the native status of a waiting request from a Horde that does not report the eligibility fields."""
+    status = waiting_status(**waiting_overrides)
+    for eligibility_key in ("eligible_workers", "eligible_worker_threads", "might_stall"):
+        del status[eligibility_key]
+    return status
 
 
 def done_generation(
@@ -229,6 +253,8 @@ class FakeHorde:
         """The database the request's delta stream is appended to, or None when the front does not read deltas."""
         self.status_payload: dict[str, Any] = waiting_status()
         """The body the status route returns."""
+        self.next_status_payloads: list[dict[str, Any]] = []
+        """Bodies the next status reads return in order; each becomes ``status_payload`` when read."""
         self.status_code: int = 200
         """The status code the status route returns."""
         self._redis_client = redis_client
@@ -253,7 +279,9 @@ class FakeHorde:
         """The model list route."""
 
     def _answer_status(self, _request: httpx.Request) -> httpx.Response:
-        """Return the current status response."""
+        """Return the current status response, after taking the next of ``next_status_payloads`` when one is left."""
+        if self.next_status_payloads:
+            self.status_payload = self.next_status_payloads.pop(0)
         return httpx.Response(self.status_code, json=self.status_payload)
 
     async def _answer_cancel(self, request: httpx.Request) -> httpx.Response:

@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
 import fakeredis
+import httpx
 import pytest
 import redis.exceptions
 
@@ -237,6 +238,41 @@ async def test_relayed_deltas_arrive_as_content_chunks_before_the_finish(start_f
     assert relayed == 1
     assert equal_outcomes == 1
     assert relayed_first_content == 1
+
+
+async def test_a_delta_appended_before_the_stream_opens_is_relayed_first(start_front: StartFront) -> None:
+    """The first status read precedes the response; a ``fail_fast`` request without a queue position reads again
+    before it is admitted, and the delta the worker appended during those reads is the stream's first content."""
+    async with start_front(with_deltas=True) as front:
+        first_delta_appended = False
+
+        async def answer_with_a_delta_first(_request: httpx.Request) -> httpx.Response:
+            nonlocal first_delta_appended
+            if not first_delta_appended:
+                first_delta_appended = True
+                await front.horde.append_delta(GENERATION_ID, 1, "Hello ")
+                return httpx.Response(200, json=waiting_status(queue_position=0, wait_time=0))
+            return httpx.Response(200, json=front.horde.status_payload)
+
+        front.horde.status_route.mock(side_effect=answer_with_a_delta_first)
+        front.horde.status_payload = waiting_status(processing=1)
+
+        async def generate() -> None:
+            await asyncio.sleep(RELAY_SETTLE_SECONDS)
+            await front.horde.append_delta(GENERATION_ID, 2, "from the horde.")
+            await asyncio.sleep(RELAY_SETTLE_SECONDS)
+            await finish(front)
+
+        body = await stream_while(front, generate, horde={"availability_mode": "fail_fast"})
+
+    chunks, last_payload = stream_chunks(body)
+    assert last_payload == "[DONE]"
+    assert chunk_deltas(chunks) == [
+        {"role": "assistant"},
+        {"content": "Hello "},
+        {"content": "from the horde."},
+        {},
+    ]
 
 
 @pytest.mark.parametrize(

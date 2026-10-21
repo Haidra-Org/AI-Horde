@@ -34,7 +34,7 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Coroutine, Iterator, Mapping, Sequence
 from enum import StrEnum
 from http import HTTPStatus
 from types import MappingProxyType
@@ -54,11 +54,14 @@ from starlette.background import BackgroundTask
 from starlette.requests import ClientDisconnect
 
 from horde.chat_contract import (
+    CHAT_KUDOS_CAP_EXCEEDED_RC,
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
+    ChatAvailabilityMode,
     ChatImpossibleReason,
     ChatRequestRefusal,
+    KudosCapExcess,
     NonJsonConstantError,
     chat_tool_call_bytes,
     check_json_word,
@@ -128,6 +131,8 @@ from horde.oai.waiter import (
     DeltaStreamReader,
     DeltaSubscription,
     NoEligibleWorkerError,
+    QueueUnavailableError,
+    QueueUnavailableReason,
     WaitBudget,
     WakeSource,
 )
@@ -180,6 +185,11 @@ NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS: int = 30
 """The ``Retry-After`` of a 503 for no eligible worker; long enough for a worker restart or model load to show."""
 
 TIMEOUT_RETRY_AFTER_SECONDS: int = NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS
+
+QUEUE_UNAVAILABLE_RETRY_AFTER_CAP_SECONDS: int = 600
+"""The most ``Retry-After`` a ``fail_fast`` refusal over the wait estimate carries. The estimate is horde-wide and
+the pool changes minute to minute, so a client is told to come back within the native ``NoValidWorkers`` interval
+rather than to sleep through the whole estimate."""
 """The ``Retry-After`` of a 408 ``ChatRequestTimeout``.
 
 A request that waited its whole budget usually met a stalled or saturated Horde; an immediate retry would join the same
@@ -241,6 +251,13 @@ MODEL_NOT_FOUND_CODE: str = "model_not_found"
 NO_ELIGIBLE_WORKER_CODE: str = "no_eligible_worker"
 """The error code of a request no online worker could serve within the fail-fast grace."""
 
+QUEUE_UNAVAILABLE_CODE: str = "queue_unavailable"
+"""The error code of a ``fail_fast`` request refused at its first status read: the online pool had zero eligible
+worker threads, or the Horde's wait estimate exceeded the time left in the budget."""
+
+AVAILABILITY_MODE_PARAM: str = "horde.availability_mode"
+"""The request path of the option a ``queue_unavailable`` refusal follows from."""
+
 NO_WORKER_SUPPORTS_FEATURES_CODE: str = "no_worker_supports_features"
 """The error code of a request the online workers serving its model cannot take because of what they declare: a
 capability or guarantee none declares, or a declared limit the request exceeds. OpenRouter answers the same case,
@@ -250,6 +267,13 @@ NO_WORKER_SUPPORTS_LIMIT_CODE: str = "no_worker_supports_limit"
 """The error code of a request whose ``max_tokens`` or context length exceeds the limit every online worker serving
 its model declares. The front answers 400, as OpenAI does for a ``max_tokens`` over the model's limit; volunteer
 workers come and go, so the refusal is about the online workers at the time, and retrying is the client's choice."""
+
+MAX_KUDOS_EXCEEDED_CODE: str = "max_kudos_exceeded"
+"""The error code of a request whose kudos estimate at current pricing exceeds its ``horde.max_kudos``; the Horde
+refuses it with ``ChatKudosCapExceeded`` before creating it."""
+
+MAX_KUDOS_PARAMETER: str = "horde.max_kudos"
+"""The request path of the client's kudos cap."""
 
 DECLARED_SIZE_LIMITS: Mapping[str, str] = MappingProxyType(
     {
@@ -741,8 +765,10 @@ def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist:
     """Create the front error for a Horde error, keeping its status, ``rc`` and forwarded headers.
 
     A native payload validation failure, which has no ``rc``, is reported as ``BadRequest`` with its first failing
-    field as ``param``.
+    field as ``param``. A refusal over the client's kudos cap is reported as ``max_kudos_exceeded``.
     """
+    if error.return_code == CHAT_KUDOS_CAP_EXCEEDED_RC:
+        return _kudos_cap_error(error, request_id=request_id, job_may_exist=job_may_exist)
     retry_after_header = next(
         (
             header_value
@@ -773,6 +799,28 @@ def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist:
             retry_after=int(retry_after_header) if retry_after_header is not None and retry_after_header.isdigit() else None,
         ),
         headers=error.forwarded_headers,
+        job_may_exist=job_may_exist,
+    )
+
+
+def _kudos_cap_error(error: HordeAPIError, *, request_id: str | None, job_may_exist: bool) -> ChatFrontError:
+    """Create the 400 for a request the Horde refused because its kudos estimate exceeds ``horde.max_kudos``.
+
+    The message is the Horde's, which states the estimate at current pricing and the cap; both are also in
+    ``metadata`` when the message carries them. The Horde did not create the request.
+    """
+    kudos_cap_excess = KudosCapExcess.read_from_message(error.message)
+    return ChatFrontError(
+        status_code=HTTPStatus.BAD_REQUEST,
+        message=error.message,
+        code=MAX_KUDOS_EXCEEDED_CODE,
+        param=MAX_KUDOS_PARAMETER,
+        metadata=ErrorMetadata(
+            request_id=request_id,
+            rc=error.return_code,
+            kudos_estimate=kudos_cap_excess.kudos_estimate if kudos_cap_excess is not None else None,
+            max_kudos=kudos_cap_excess.max_kudos if kudos_cap_excess is not None else None,
+        ),
         job_may_exist=job_may_exist,
     )
 
@@ -1540,15 +1588,66 @@ async def _wait_for_disconnect(request: Request) -> None:
             return
 
 
+async def _run_until_disconnect[T](request: Request, awaitable: Coroutine[object, object, T]) -> asyncio.Task[T]:
+    """Return the task running ``awaitable`` once it ends, cancelled when the client of ``request`` disconnects first.
+
+    The request body must already be read.
+    """
+    wait_task = asyncio.create_task(awaitable)
+    disconnect_task = asyncio.create_task(_wait_for_disconnect(request))
+    try:
+        await asyncio.wait({wait_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        disconnect_task.cancel()
+        if not wait_task.done():
+            wait_task.cancel()
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(wait_task, disconnect_task, return_exceptions=True)
+    return wait_task
+
+
+async def _settle_wait_failure(
+    front_state: FrontState,
+    error: ChatWaitTimeoutError | ChatDoneWithoutGenerationError | NoEligibleWorkerError | QueueUnavailableError | HordeAPIError,
+    *,
+    chat_request: ChatCompletionRequest,
+    open_request: OpenRequest,
+) -> ChatFrontError:
+    """Cancel a request whose wait ended without a terminal outcome, unless the status error leaves no job to cancel,
+    and return the front error that answers it.
+
+    Args:
+        front_state: The front's state.
+        error: The error that ended the wait.
+        chat_request: The client's request, whose model the size limit gap error reads the offer for.
+        open_request: The request to cancel.
+    """
+    request_id = open_request.request_id
+    if isinstance(error, HordeAPIError):
+        if _status_error_needs_cancel(error):
+            await _cancel_shielded(front_state, open_request)
+        return _wait_error(error, request_id=request_id)
+    await _cancel_shielded(front_state, open_request)
+    chat_offer = await _size_limit_gap_chat_offer(
+        front_state,
+        error,
+        model=chat_request.model,
+        credentials=open_request.credentials,
+    )
+    return _wait_error(error, request_id=request_id, chat_offer=chat_offer)
+
+
 def _create_watcher(
     front_state: FrontState,
     *,
     open_request: OpenRequest,
     subscription: CompletionSubscription,
     deadline: float,
+    chat_request: ChatCompletionRequest,
 ) -> ChatRequestWatcher:
     """Create the watcher of a submitted request."""
     settings = front_state.settings
+    availability_mode = chat_request.horde.availability_mode if chat_request.horde is not None else ChatAvailabilityMode.WAIT
     return ChatRequestWatcher(
         horde_client=front_state.horde_client,
         credentials=open_request.credentials,
@@ -1561,11 +1660,12 @@ def _create_watcher(
             fail_fast_grace_seconds=settings.fail_fast_grace_seconds,
         ),
         front_metrics=front_state.front_metrics,
+        availability_mode=availability_mode,
     )
 
 
 def _wait_error(
-    error: ChatWaitTimeoutError | ChatDoneWithoutGenerationError | NoEligibleWorkerError | HordeAPIError,
+    error: ChatWaitTimeoutError | ChatDoneWithoutGenerationError | NoEligibleWorkerError | QueueUnavailableError | HordeAPIError,
     *,
     request_id: str,
     chat_offer: HordeChatModelOffer | None = None,
@@ -1592,6 +1692,8 @@ def _wait_error(
         if _is_size_limit_gap(error.impossible_reason):
             return _size_limit_gap_error(error.impossible_reason, request_id=request_id, chat_offer=chat_offer)
         return _declaration_gap_error(error.impossible_reason, request_id=request_id)
+    if isinstance(error, QueueUnavailableError):
+        return _queue_unavailable_error(error, request_id=request_id)
     if isinstance(error, NoEligibleWorkerError):
         return ChatFrontError(
             status_code=HTTPStatus.SERVICE_UNAVAILABLE,
@@ -1602,6 +1704,47 @@ def _wait_error(
             job_may_exist=True,
         )
     return _horde_error(error, request_id=request_id, job_may_exist=True)
+
+
+def _queue_unavailable_error(error: QueueUnavailableError, *, request_id: str) -> ChatFrontError:
+    """Create the 503 for a ``fail_fast`` request its first status read refused.
+
+    The message states the pool that read reported: the eligible worker threads, the horde-wide wait estimate and the
+    time left in the budget. Workers come and go, so it states the pool at that read and leaves retrying to the client.
+    ``Retry-After`` is the wait estimate for a wait over the budget, capped at
+    ``QUEUE_UNAVAILABLE_RETRY_AFTER_CAP_SECONDS``; it exceeds the time left by construction. With zero eligible
+    threads the estimate does not reflect when a worker returns, so the no-eligible-worker interval applies.
+
+    Args:
+        error: The refusal with the status that decided it.
+        request_id: The Horde request id.
+    """
+    status = error.status
+    if error.reason == QueueUnavailableReason.WAIT_EXCEEDS_BUDGET and status.wait_time is not None:
+        cause = "The estimated wait exceeds the time left in this request's budget."
+        retry_after = min(status.wait_time, QUEUE_UNAVAILABLE_RETRY_AFTER_CAP_SECONDS)
+    else:
+        cause = "The online pool has zero worker threads eligible for this request, and none is processing it."
+        retry_after = NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS
+    pool_facts: list[str] = []
+    if status.eligible_worker_threads is not None:
+        pool_facts.append(f"{status.eligible_worker_threads} eligible worker threads online")
+    if status.wait_time is not None:
+        pool_facts.append(f"a horde-wide estimated wait of {status.wait_time} s")
+    pool_facts.append(f"{max(error.remaining_seconds, 0):.0f} s left in the budget")
+    message = (
+        f"{cause} The first status read reported {', '.join(pool_facts)}. The request was refused under "
+        "horde.availability_mode 'fail_fast' and cancelled. Retry later, or use 'wait' to queue for the budget."
+    )
+    return ChatFrontError(
+        status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+        message=message,
+        code=QUEUE_UNAVAILABLE_CODE,
+        param=AVAILABILITY_MODE_PARAM,
+        metadata=ErrorMetadata(request_id=request_id, retry_after=retry_after),
+        headers={RETRY_AFTER_HEADER: str(retry_after)},
+        job_may_exist=True,
+    )
 
 
 def _declaration_gap_error(impossible_reason: ChatImpossibleReason, *, request_id: str) -> ChatFrontError:
@@ -1824,7 +1967,7 @@ async def _chat_completions(request: Request) -> Response:
     open_request = front_state.open_request(request_id=submission.request_id, credentials=credentials)
     if chat_request.stream:
         try:
-            return _stream_completion(
+            return await _stream_completion(
                 request,
                 chat_request=chat_request,
                 open_request=open_request,
@@ -1888,17 +2031,9 @@ async def _wait_for_completion(
             open_request=open_request,
             subscription=subscription,
             deadline=deadline,
+            chat_request=chat_request,
         )
-        wait_task = asyncio.create_task(watcher.wait_until_finished())
-        disconnect_task = asyncio.create_task(_wait_for_disconnect(request))
-        try:
-            await asyncio.wait({wait_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            disconnect_task.cancel()
-            if not wait_task.done():
-                wait_task.cancel()
-            with anyio.CancelScope(shield=True):
-                await asyncio.gather(wait_task, disconnect_task, return_exceptions=True)
+        wait_task = await _run_until_disconnect(request, watcher.wait_until_finished())
         if wait_task.cancelled():
             logger.info(f"Client of chat request {request_id} disconnected while waiting")
             await _cancel_shielded(front_state, open_request)
@@ -1906,20 +2041,9 @@ async def _wait_for_completion(
             return Response(status_code=CLIENT_CLOSED_REQUEST_STATUS)
         try:
             status = wait_task.result()
-        except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError) as error:
-            await _cancel_shielded(front_state, open_request)
-            chat_offer = await _size_limit_gap_chat_offer(
-                front_state,
-                error,
-                model=chat_request.model,
-                credentials=open_request.credentials,
-            )
-            wait_error = _wait_error(error, request_id=request_id, chat_offer=chat_offer)
+        except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError, QueueUnavailableError, HordeAPIError) as error:
+            wait_error = await _settle_wait_failure(front_state, error, chat_request=chat_request, open_request=open_request)
             return request_trace.error_response(wait_error, watcher=watcher)
-        except HordeAPIError as error:
-            if _status_error_needs_cancel(error):
-                await _cancel_shielded(front_state, open_request)
-            return request_trace.error_response(_wait_error(error, request_id=request_id), watcher=watcher)
     if status.faulted:
         return request_trace.error_response(_faulted_error(request_id, status), watcher=watcher)
     try:
@@ -2142,7 +2266,7 @@ def _relay_error(request_id: str, outcome: RelayOutcome) -> ChatFrontError:
     )
 
 
-def _stream_completion(
+async def _stream_completion(
     request: Request,
     *,
     chat_request: ChatCompletionRequest,
@@ -2151,8 +2275,15 @@ def _stream_completion(
     submitted_at: float,
     deadline: float,
     inflight_slot: InflightSlot,
-) -> EventSourceResponse:
-    """Return the server-sent event response that waits for a submitted request and then delivers it.
+) -> Response:
+    """Return the server-sent event response that waits for a submitted request and then delivers it, or the error
+    response that answers a refusal at its first-read decision.
+
+    The first-read decision ([`wait_for_admission`][horde.oai.waiter.ChatRequestWatcher.wait_for_admission]) runs
+    before the response opens, so a refusal there (``fail_fast``, a declaration or limit gap, a status error) has the
+    HTTP status and ``Retry-After`` header the non-streamed request gets. Errors after it arrive as error events under
+    the stream's 200. The request is registered with the completion listener and the delta reader before that read, so
+    a signal sent after it is not lost.
 
     The in-flight slot is released after an abandoned request's cancel ends, so the cap counts cancelling requests. When
     the client disconnects before the event generator first runs, sse-starlette never starts it, so the response's
@@ -2165,31 +2296,51 @@ def _stream_completion(
     front_state = _front_state(request)
     settings = front_state.settings
     request_id = open_request.request_id
-    latest_watcher: ChatRequestWatcher | None = None
     stream_started = False
     include_usage = bool(chat_request.stream_options and chat_request.stream_options.include_usage)
+    registrations = contextlib.ExitStack()
+    try:
+        subscription = registrations.enter_context(front_state.listener.register(request_id))
+        delta_subscription = registrations.enter_context(_register_deltas(front_state, chat_request, request_id))
+        watcher = _create_watcher(
+            front_state,
+            open_request=open_request,
+            subscription=subscription,
+            deadline=deadline,
+            chat_request=chat_request,
+        )
+        admission_task = await _run_until_disconnect(request, watcher.wait_for_admission())
+        if admission_task.cancelled():
+            logger.info(f"Client of streamed chat request {request_id} disconnected while waiting")
+            await _cancel_shielded(front_state, open_request)
+            request_trace.finish_disconnected(status_code=CLIENT_CLOSED_REQUEST_STATUS, watcher=watcher)
+            registrations.close()
+            inflight_slot.release()
+            front_state.close_request(open_request)
+            return Response(status_code=CLIENT_CLOSED_REQUEST_STATUS)
+        try:
+            admission_task.result()
+        except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError, QueueUnavailableError, HordeAPIError) as error:
+            wait_error = await _settle_wait_failure(front_state, error, chat_request=chat_request, open_request=open_request)
+            registrations.close()
+            inflight_slot.release()
+            front_state.close_request(open_request)
+            return request_trace.error_response(wait_error, watcher=watcher)
+    except BaseException:
+        registrations.close()
+        raise
 
     def build_heartbeat() -> ServerSentEvent:
-        latest_status: HordeChatStatus | None = latest_watcher.latest_status if latest_watcher is not None else None
-        return build_keepalive_event(latest_status)
+        return build_keepalive_event(watcher.latest_status)
 
     async def stream_events() -> AsyncIterator[ServerSentEvent]:
-        nonlocal latest_watcher, stream_started
+        nonlocal stream_started
         stream_started = True
         outcome_settled = False
         relay: DeltaRelay | None = None
         wait_task: asyncio.Task[HordeChatStatus] | None = None
         try:
-            with (
-                front_state.listener.register(request_id) as subscription,
-                _register_deltas(front_state, chat_request, request_id) as delta_subscription,
-            ):
-                latest_watcher = _create_watcher(
-                    front_state,
-                    open_request=open_request,
-                    subscription=subscription,
-                    deadline=deadline,
-                )
+            with registrations:
                 if delta_subscription is not None:
                     relay = DeltaRelay(
                         completion_id=build_completion_id(request_id),
@@ -2198,7 +2349,7 @@ def _stream_completion(
                         include_usage=include_usage,
                         include_reasoning=chat_request.horde is not None and chat_request.horde.include_reasoning,
                     )
-                    wait_task = asyncio.create_task(latest_watcher.wait_until_finished())
+                    wait_task = asyncio.create_task(watcher.wait_until_finished())
                     async for relay_event in _relay_deltas(
                         relay,
                         delta_subscription,
@@ -2211,33 +2362,25 @@ def _stream_completion(
                         await _cancel_shielded(front_state, open_request)
                         outcome_settled = True
                         front_state.front_metrics.record_relay_outcome(relay.broken)
-                        for error_event in request_trace.error_events(_relay_error(request_id, relay.broken), watcher=latest_watcher):
+                        for error_event in request_trace.error_events(_relay_error(request_id, relay.broken), watcher=watcher):
                             yield error_event
                         return
                 try:
-                    status = await (wait_task if wait_task is not None else latest_watcher.wait_until_finished())
-                except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError) as error:
-                    await _cancel_shielded(front_state, open_request)
-                    chat_offer = await _size_limit_gap_chat_offer(
-                        front_state,
-                        error,
-                        model=chat_request.model,
-                        credentials=open_request.credentials,
-                    )
-                    wait_error = _wait_error(error, request_id=request_id, chat_offer=chat_offer)
-                    for error_event in request_trace.error_events(wait_error, watcher=latest_watcher):
+                    status = await (wait_task if wait_task is not None else watcher.wait_until_finished())
+                except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError, QueueUnavailableError) as error:
+                    wait_error = await _settle_wait_failure(front_state, error, chat_request=chat_request, open_request=open_request)
+                    for error_event in request_trace.error_events(wait_error, watcher=watcher):
                         yield error_event
                     return
                 except HordeAPIError as error:
-                    if _status_error_needs_cancel(error):
-                        await _cancel_shielded(front_state, open_request)
+                    wait_error = await _settle_wait_failure(front_state, error, chat_request=chat_request, open_request=open_request)
                     outcome_settled = True
-                    for error_event in request_trace.error_events(_wait_error(error, request_id=request_id), watcher=latest_watcher):
+                    for error_event in request_trace.error_events(wait_error, watcher=watcher):
                         yield error_event
                     return
             outcome_settled = True
             if status.faulted:
-                for error_event in request_trace.error_events(_faulted_error(request_id, status), watcher=latest_watcher):
+                for error_event in request_trace.error_events(_faulted_error(request_id, status), watcher=watcher):
                     yield error_event
                 return
             try:
@@ -2251,7 +2394,7 @@ def _stream_completion(
                 # A guard: the watcher returns no status without a generation unless it is faulted. Should one get
                 # through, it ends as the settled state does, cancelled, rather than as an empty completion.
                 await _cancel_shielded(front_state, open_request)
-                for error_event in request_trace.error_events(_no_generation_error(request_id), watcher=latest_watcher):
+                for error_event in request_trace.error_events(_no_generation_error(request_id), watcher=watcher):
                     yield error_event
                 return
             relayed_content: str | None = None
@@ -2260,7 +2403,7 @@ def _stream_completion(
                 relay_outcome = relay.reconcile(completion)
                 front_state.front_metrics.record_relay_outcome(relay_outcome)
                 if relay_outcome == RelayOutcome.MISMATCH:
-                    for error_event in request_trace.error_events(_relay_error(request_id, relay_outcome), watcher=latest_watcher):
+                    for error_event in request_trace.error_events(_relay_error(request_id, relay_outcome), watcher=watcher):
                         yield error_event
                     return
                 relayed_content = relay.relayed_content
@@ -2277,7 +2420,7 @@ def _stream_completion(
             request_trace.finish(
                 status_code=HTTPStatus.OK,
                 code=COMPLETED_CODE,
-                watcher=latest_watcher,
+                watcher=watcher,
                 estimated_usage=completion.x_horde.estimated_usage,
             )
         finally:
@@ -2292,7 +2435,7 @@ def _stream_completion(
                     await _cancel_shielded(front_state, open_request)
             finally:
                 inflight_slot.release()
-            request_trace.finish_disconnected(status_code=HTTPStatus.OK, watcher=latest_watcher)
+            request_trace.finish_disconnected(status_code=HTTPStatus.OK, watcher=watcher)
             front_state.close_request(open_request)
 
     async def finish_unstarted_stream() -> None:
@@ -2300,8 +2443,9 @@ def _stream_completion(
             if not stream_started:
                 logger.info(f"Client of streamed chat request {request_id} disconnected before the stream started")
                 await _cancel_shielded(front_state, open_request)
-                request_trace.finish_disconnected(status_code=HTTPStatus.OK, watcher=None)
+                request_trace.finish_disconnected(status_code=HTTPStatus.OK, watcher=watcher)
         finally:
+            registrations.close()
             inflight_slot.release()
         front_state.close_request(open_request)
 

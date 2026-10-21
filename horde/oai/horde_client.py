@@ -369,6 +369,18 @@ class HordeChatStatus(BaseModel):
     is_possible: bool = True
     """False when no current worker can serve the request."""
 
+    eligible_workers: int | None = None
+    """How many recently active workers pass the request's capability checks; None from a Horde that does not report
+    it."""
+
+    eligible_worker_threads: int | None = None
+    """The summed advertised concurrency of those workers, busy threads included; None from a Horde that does not
+    report it, which is never read as zero."""
+
+    might_stall: bool | None = None
+    """True when work arriving ahead of the request outpaces the capacity its eligible workers return; None from a
+    Horde that does not report it."""
+
     generations: list[HordeChatGeneration] = Field(default_factory=list)
     """The finished generations, in the Horde's order."""
 

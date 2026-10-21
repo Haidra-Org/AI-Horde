@@ -1090,6 +1090,12 @@ class ErrorMetadata(BaseModel):
     """The operation key the submit carried, when its outcome is unknown or the Horde refused the key; an operator
     finds the request it claimed by it."""
 
+    kudos_estimate: int | None = None
+    """The request's kudos estimate at current pricing, when the Horde refused it as over ``horde.max_kudos``."""
+
+    max_kudos: int | None = None
+    """The ``horde.max_kudos`` the estimate exceeded."""
+
     @model_serializer(mode="wrap")
     def serialize_without_absent_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
         """Convert the metadata to a dict without the details that are not known."""

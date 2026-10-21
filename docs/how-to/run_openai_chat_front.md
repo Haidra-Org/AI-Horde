@@ -268,9 +268,12 @@ retry into a second charged job. Errors before the submit do not carry the heade
 | 502 | `OperationKeyConflict` | `false` | A recovery attempt was refused because the operation key holds a different request. The front re-sends the identical body, so this is a front defect; `metadata` holds the `rc` and `operation_key`. |
 | 503 | `FrontAtCapacity` | | The process or the client's address holds its maximum of open requests. `Retry-After: 5`. |
 | 503 | `no_eligible_worker` | `false` | No online worker could serve the request for `HORDE_OAI_FAIL_FAST_GRACE_SECONDS`; it is cancelled. `Retry-After: 30`. |
+| 503 | `queue_unavailable` | `false` | A `horde.availability_mode: "fail_fast"` request whose first status read showed zero eligible worker threads, or an estimated wait over the time left in its budget; it is cancelled. A first status without queue information, which a request just submitted reads until the horde's cached queue positions refresh, is read again for up to 2 s (`POSITIONED_READ_WAIT_SECONDS`) before the estimate decides. `Retry-After` is the estimated wait, or 30 with zero threads. |
 
-In a stream, an error after the headers arrives as one `data:` event with the same envelope and no choice, then
-`data: [DONE]`. A streamed request has its own budget, `HORDE_OAI_STREAM_TIMEOUT_SECONDS`.
+A streamed request's headers go out after the first status read, so a refusal at that read (a declaration or limit
+gap, `queue_unavailable`, or a status error) is the HTTP error in the table, as on a non-streamed request. In a
+stream, an error after the headers arrives as one `data:` event with the same envelope and no choice, then
+`data: [DONE]`. A streamed request has a separate budget, `HORDE_OAI_STREAM_TIMEOUT_SECONDS`.
 
 A client retry after a lost response is a new request and can create a second charged job; the front does not
 deduplicate requests.

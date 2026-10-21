@@ -126,7 +126,9 @@ id and model (`build_system_fingerprint` in `horde/oai/mapping.py`), null when t
 chunk of a stream carries the same value. A relayed stream computes it from the worker and model of its first delta's
 stream entry and the final chunks carry that value; it is null throughout when the entries do not carry a worker.
 
-A stream sends, after its keepalive comments, these `chat.completion.chunk` events:
+A stream's headers go out once the first status read has passed the checks in
+[No eligible worker](#no-eligible-worker). It then sends, after its keepalive comments, these `chat.completion.chunk`
+events:
 
 1. `delta: {"role": "assistant"}`.
 2. A reasoning chunk with the whole `delta.reasoning_content`, when the message carries it (only under
@@ -224,8 +226,38 @@ declares a completion limit that high; the largest any online worker for the mod
 limit name in its place. Volunteer workers come and go, so the message describes the online workers at the time and
 leaves retrying to the client. Any other gap, including a size limit beside another cause, keeps the 404.
 
-After stream headers either error is the SSE error event.
+A request with `horde.availability_mode: "fail_fast"` is also decided at its first successful status read, with
+nothing processing or finished. Zero `eligible_worker_threads` cancels it at once and returns 503
+`queue_unavailable` with `Retry-After: 30`; a `wait_time` over the time left in the budget
+(`nonstream_timeout_seconds` or `stream_timeout_seconds`) does the same with `Retry-After` set to the `wait_time`, capped at 600 s
+(`QUEUE_UNAVAILABLE_RETRY_AFTER_CAP_SECONDS`), since the pool changes minute to minute.
+`param` is `horde.availability_mode`, and the message states the eligible worker threads, the estimated wait and the
+budget left at that read. A declaration gap on the same read keeps its answer, and a status without
+`eligible_worker_threads`, from a Horde that does not report it, does not refuse on threads. A request just submitted
+is absent from the Horde's cached queue positions, which refresh about every 2 s, so its first status can read
+`queue_position` 0 and `wait_time` 0 whatever is queued ahead. Under `fail_fast` the wait rule therefore decides on
+the first status that carries queue information (a `queue_position` or `wait_time` above zero, or a generation
+processing or finished); until one arrives the front reads again every `signal_recheck_seconds`, for at most
+`POSITIONED_READ_WAIT_SECONDS` (2 s, `horde/oai/waiter.py`) after the first read, and then the latest reading decides.
+Zero threads needs no position and refuses on the first read. Later reads follow the grace as under `wait`. The native `wait_time` is the horde-wide text throughput estimate, not a per-model one, so a
+request for a model few workers serve may wait longer than estimated and one with idle eligible workers may start
+sooner (see [Queue position and wait time](../explanation/request_feasibility_and_queue_pressure.md#queue-position-and-wait-time)).
+
+A streamed request's response opens only after that first-read decision, so a refusal at it (a declaration or limit
+gap, `queue_unavailable`, or a status error such as 404) has the same HTTP status, body and `Retry-After` as on a
+non-streamed request, and the front cancels the request the same way. An error after the stream's 200 headers, such as
+`no_eligible_worker` after the grace, is the SSE error event; its `metadata.retry_after` carries the interval the
+header would.
 An `impossible_reason` of a kind the front does not know is ignored, so the grace applies.
+
+## Kudos cap
+
+A request carrying `horde.max_kudos` is forwarded with it, and the native route refuses it before creating it when
+the kudos estimate exceeds the cap (`ChatKudosCapExceeded`, see [Request body](chat_requests.md#request-body)).
+`_kudos_cap_error` in `horde/oai/app.py` returns 400 `invalid_request_error` with code `max_kudos_exceeded`, `param`
+`horde.max_kudos`, the native message, and `metadata.kudos_estimate` and `metadata.max_kudos`. The native error body
+holds only the message and the `rc`, so both values are read from the message with `KUDOS_CAP_EXCESS_PATTERN` in
+`horde/chat_contract.py`, the module that writes it; a message that does not match leaves them out of `metadata`.
 
 ## Model card fields
 
@@ -265,7 +297,7 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | --- | --- | --- | --- |
 | `horde.oai.requests.admitted` | counter | `streamed` | Chat requests that took an in-flight slot. |
 | `horde.oai.requests.refused` | counter | `status_code`, `code` | Chat requests refused before an in-flight slot: body size (413), body read timeout (408 `RequestBodyTimeout`), validation (400, 404), authorization (401), `FrontAtCapacity` (503). |
-| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed` | Admitted requests answered with an error status before any header: horde refusals at submit, 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 400 `no_worker_supports_limit`, 503 `no_eligible_worker`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. |
+| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed` | Admitted requests answered with an error status before any header: horde refusals at submit, 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 400 `no_worker_supports_limit`, 503 `no_eligible_worker`, 503 `queue_unavailable`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. |
 | `horde.oai.stream.failures` | counter | `code` | Streamed requests whose 200 headers were sent and which ended in an SSE error event. |
 | `horde.oai.inflight` | observable gauge | none | Requests holding an in-flight slot. |
 | `horde.oai.inflight.sources` | observable gauge | none | Distinct client addresses holding at least one slot. |

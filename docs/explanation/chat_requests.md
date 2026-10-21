@@ -55,16 +55,62 @@ tools, images and reported usage would not have a path to the worker
 
 ## How a chat request travels
 
+A request passes through the front, the native API and a volunteer worker, with Postgres, Redis and object storage
+between them. The front does not hold a database connection. It answers from the native status route or, while a
+stream is open, from the retained progress stream.
+
 ```mermaid
 flowchart LR
     C[OpenAI client] -->|/v1/chat/completions| F[Chat front<br/>ASGI process]
-    F -->|POST /v2/generate/chat/async| H[Native chat route]
-    H --> Q[(Text queue<br/>is_chat row)]
-    W[Text worker<br/>chat declaration] -->|text pop| Q
-    W -->|structured submit| H
-    H -->|horde:chat:id| R[(Redis pub/sub)]
-    R --> F
-    F -->|status read| H
+    N[Native client] -->|/v2/generate/chat/*| H
+    F -->|chat async, status, cancel<br/>service passkey| H[Native API<br/>Flask replicas]
+    H --> P[(Postgres<br/>TextWaitingPrompt is_chat<br/>processing_gens)]
+    H -->|images, offloaded messages| O[(Object storage)]
+    H -->|completion signal,<br/>progress leases and streams| R[(Redis)]
+    R -->|signal, XREAD| F
+    W[Text worker<br/>chat declaration] -->|text pop, progress, submit| H
+    W -->|signed URL fetch| O
+```
+
+One request, start to finish. The `opt` blocks run only for a streamed request without tools or structured output,
+and the loop only when the worker posts progress; every other request skips them and is answered from the final
+status.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant F as Front
+    participant H as Native API
+    participant R as Redis
+    participant W as Worker
+    C->>F: POST /v1/chat/completions
+    F->>F: per-source and global caps, validation
+    F->>H: POST /v2/generate/chat/async (operation key)
+    H->>H: moderation, required features, kudos, row
+    H-->>F: request id
+    F->>R: subscribe horde:chat:id
+    F->>H: first status read
+    Note over F: declaration gap, limits gap or fail_fast refusal<br/>is an HTTP error here, before any SSE headers
+    W->>H: text pop with chat declaration
+    H->>H: eligibility, narrow tools, sign URLs
+    opt streamed plain request
+        H->>R: write progress lease
+    end
+    H-->>W: chat job (messages or messages_url)
+    opt streamed plain request
+        loop about once a second
+            W->>H: POST text/progress (seq, delta)
+            H->>R: check lease, append to stream
+            R-->>F: XREAD entry
+            F-->>C: SSE content chunk
+        end
+    end
+    W->>H: structured submit
+    H->>H: verify reply, store generation, charge and reward
+    H->>R: publish generation, done
+    R-->>F: signal
+    F->>H: status read
+    F-->>C: completion, or the final chunks and [DONE]
 ```
 
 The front submits over HTTP, subscribes to the request's completion signal, reads the status once when woken, and
@@ -98,6 +144,56 @@ The native side publishes a small event on `horde:chat:<request id>` when a gene
 ends ([Completion signal](../reference/chat_requests.md#completion-signal)). Publishing is best effort and a message
 does not carry text, so a lost message delays an answer until the front's fallback poll and does not change it. Polling
 alone was the alternative; its status load grows with the number of open waits.
+
+A request on the front moves through these states. An exit after the submit other than an answer or a fault cancels
+the horde request, so a request the client abandons does not keep its place in the queue
+([Errors the front returns](../how-to/run_openai_chat_front.md#errors-the-front-returns)):
+
+```mermaid
+stateDiagram-v2
+    [*] --> Admitted: per-source and global caps
+    [*] --> Refused: 503 FrontAtCapacity
+    Admitted --> Validated: body read and checked
+    Admitted --> Refused: 400, 401, 404, 408 or 413
+    Validated --> Submitted: native submit<br/>lost answers recovered by operation key
+    Validated --> Refused: native refusal or 502
+    Submitted --> Waiting: first status read passes
+    Submitted --> Cancelled: gap or fail_fast refusal<br/>HTTP error before any stream opens
+    Waiting --> Waiting: signal, recheck or fallback poll<br/>relayed deltas on a stream
+    Waiting --> Answered: done with a generation
+    Waiting --> Cancelled: deadline 408, grace 503,<br/>no generation 502, client gone
+    Waiting --> Faulted: 502 ChatRequestFaulted
+    Answered --> [*]
+    Refused --> [*]
+    Cancelled --> [*]
+    Faulted --> [*]
+```
+
+Once a request reaches `Submitted`, every error the front returns carries `x-should-retry: false`, since a retry would
+be a second charged request. A submit whose answer was lost is the one case the front repeats on its own: it sends
+the identical body with the same operation key, and the horde returns the request it already holds
+([ADR 0026](../decisions/0026-classify-client-retries-and-recover-submits-by-operation-key.md)):
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant F as Front
+    participant H as Native API
+    C->>F: POST /v1/chat/completions
+    F->>H: submit, operation key K
+    H->>H: request queued, K claimed for the user
+    H--xF: answer lost (timeout or reset)
+    F->>H: same body, same K, next root
+    H-->>F: 200, the first request's id and kudos
+    Note over H: nothing queued or charged again
+    F-->>C: the completion
+    C->>F: client retry after a lost response
+    F->>H: submit, new operation key K2
+    Note over H: a second, charged request
+```
+
+The front does not deduplicate client retries: a fresh client request gets a fresh key, so only the front's
+repeat of a submit is recovered.
 
 The costs are operational. The front is one more process to deploy, drain and monitor, a request belongs to the
 process that accepted it, and a front that crashes leaves its open requests to run, be charged and go uncollected.
@@ -211,6 +307,37 @@ stored and shown on every generation and never enter the charge, so the alternat
 The cost of the estimate is accuracy: characters approximate tokens poorly for code and
 non-English text, and the floor charges a near-empty reply as 20 tokens.
 
+A client can bound what a request may cost with `horde.max_kudos`. The native route compares it with the dry-run
+quote, which assumes the full `max_length`, and refuses before anything is queued, held or uploaded. The charge follows
+the reply's output estimate, which is usually smaller, so the check is conservative and a refused request might have
+cost less
+([Kudos cap](../reference/chat_front.md#kudos-cap)).
+
+### Reasoning
+
+A reasoning model writes its thinking before the answer. The worker submits it in `reasoning_content`, separate
+from `content`, so a client that does not expect reasoning receives a clean answer, and a block cut
+off by `max_tokens` cannot become the reply. The front hides it unless the request sets `horde.include_reasoning`;
+the native status shows it either way. It is not priced: the charge and reward are computed on the content and tool
+calls, and the worker's `reasoning_tokens` count is shown and never charged, as with every other reported count
+([Reasoning](../reference/chat_requests.md#reasoning)).
+
+### Admission against the online pool
+
+Workers are volunteers, and the models online change minute to minute. By default a request waits for a worker for
+the front's whole budget. A client that prefers an early answer sets `horde.availability_mode: "fail_fast"`, and the
+front decides at the first status read: zero eligible worker threads, or a `wait_time` over the budget left, refuses
+the request with 503 `queue_unavailable` and a `Retry-After`, and cancels it. The refusal describes the pool at that
+moment and leaves the retry to the client; the same request may be served once workers come online. The estimate
+counts the queued work ahead that the request's eligible workers could take and divides it by their throughput
+([Queue position and wait time](request_feasibility_and_queue_pressure.md#queue-position-and-wait-time)), so it is
+an approximation, and a request may still start sooner or wait longer.
+
+A refusal at the first read arrives before a stream opens, as a plain HTTP error, so a streaming client handles it as
+it would any other refused request. The decision waits up to about 2 seconds for a status that carries queue
+information, since a request just submitted is absent from the horde's cached queue positions until they refresh
+([No eligible worker](../reference/chat_front.md#no-eligible-worker)).
+
 ### Images as signed URLs
 
 The horde fetches, checks and normalises each image at submit, stores it as JPEG, and keeps only a reference in the
@@ -309,7 +436,8 @@ price of a resolver and revision store, invisible to model pickers, and lost by 
 - **Failure behaviour.** A worker that cannot serve a job faults it and the job goes to another worker. A request that
   no worker can serve is cancelled and answered 503 `no_eligible_worker`; one that faults is answered 502. Once the
   horde may hold a request, every error carries `x-should-retry: false`, so SDKs do not retry into a second charged
-  job.
+  job. Under `horde.availability_mode: "fail_fast"` a 503 `queue_unavailable` is a refusal about the online pool at
+  the first status read, and the same request may be served once workers come online.
 
 ## What a client cannot rely on
 

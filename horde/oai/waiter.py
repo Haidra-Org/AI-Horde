@@ -39,6 +39,15 @@ A request no worker is eligible for, with nothing processing, ends the wait afte
 worker restart or model load. A status that reports the cause as a declaration gap ends it at once with
 [`DeclarationGapError`][horde.oai.waiter.DeclarationGapError]: a worker coming back does not supply a declaration no
 online worker serving the model makes.
+
+A request in the ``fail_fast`` availability mode is also decided at its first successful status read: with nothing
+processing, it ends with [`QueueUnavailableError`][horde.oai.waiter.QueueUnavailableError] when the pool has zero
+eligible worker threads or when the Horde's wait estimate exceeds the time left in the budget. A request just
+submitted is absent from the Horde's cached queue positions, so a first status without queue information is read
+again until one carries it or [`POSITIONED_READ_WAIT_SECONDS`][horde.oai.waiter.POSITIONED_READ_WAIT_SECONDS] passes,
+and the latest reading then decides. Later reads follow the grace as in the ``wait`` mode.
+[`wait_for_admission`][horde.oai.waiter.ChatRequestWatcher.wait_for_admission] runs the wait up to that decision, so
+a streamed request can answer a refusal before its response opens.
 """
 
 from __future__ import annotations
@@ -60,7 +69,7 @@ import redis.exceptions
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from horde.chat_contract import ChatImpossibleReason
+from horde.chat_contract import ChatAvailabilityMode, ChatImpossibleReason
 from horde.oai.horde_client import HordeAPIError, HordeChatStatus, HordeClient, HordeCredentials, HordeUnavailableError
 from horde.oai.metrics import FrontMetrics
 
@@ -79,6 +88,8 @@ __all__ = [
     "DeltaStreamReader",
     "DeltaSubscription",
     "NoEligibleWorkerError",
+    "QueueUnavailableError",
+    "QueueUnavailableReason",
     "WaitBudget",
     "WakeSource",
     "compute_fallback_poll_seconds",
@@ -138,6 +149,14 @@ Jitter only shortens the interval, so a lost signal still costs at most the stre
 
 TRANSIENT_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 """Horde statuses that a status read survives: the request keeps waiting and tries again at the next poll."""
+
+POSITIONED_READ_WAIT_SECONDS: float = 2.0
+"""How long a ``fail_fast`` request's first-read decision waits for a status that carries queue information.
+
+A request just submitted is absent from the Horde's cached queue positions until the cache next refreshes: the Horde
+stores the positions every second and each process reloads them at most once a second, so a fresh request can read a
+position and wait of zero for about 2 s whatever is queued ahead of it.
+"""
 
 
 class CompletionEventKind(StrEnum):
@@ -236,6 +255,43 @@ class DeclarationGapError(NoEligibleWorkerError):
         super().__init__(message, status=status)
         self.impossible_reason: ChatImpossibleReason = impossible_reason
         """The missing declarations and exceeded limits."""
+
+
+class QueueUnavailableReason(StrEnum):
+    """Why a ``fail_fast`` request was refused at its first status read."""
+
+    NO_ELIGIBLE_THREADS = "no_eligible_threads"
+    """The pool had zero eligible worker threads and nothing processed the request."""
+    WAIT_EXCEEDS_BUDGET = "wait_exceeds_budget"
+    """The Horde's wait estimate exceeded the time left in the request's budget."""
+
+
+class QueueUnavailableError(Exception):
+    """The first status read of a ``fail_fast`` request showed the online pool unable to start it within its budget."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: HordeChatStatus,
+        reason: QueueUnavailableReason,
+        remaining_seconds: float,
+    ) -> None:
+        """Create the error.
+
+        Args:
+            message: What happened.
+            status: The status read that decided the refusal, with the pool's thread count and wait estimate.
+            reason: Which rule refused the request.
+            remaining_seconds: The time left in the request's budget at that read.
+        """
+        super().__init__(message)
+        self.status: HordeChatStatus = status
+        """The status read that decided the refusal."""
+        self.reason: QueueUnavailableReason = reason
+        """Which rule refused the request."""
+        self.remaining_seconds: float = remaining_seconds
+        """The time left in the request's budget at that read."""
 
 
 class WaitBudget(BaseModel):
@@ -637,6 +693,7 @@ class ChatRequestWatcher:
         subscription: CompletionSubscription,
         budget: WaitBudget,
         front_metrics: FrontMetrics,
+        availability_mode: ChatAvailabilityMode = ChatAvailabilityMode.WAIT,
         clock: Callable[[], float] = time.monotonic,
         random_fraction: Callable[[], float] = random.random,
     ) -> None:
@@ -648,6 +705,7 @@ class ChatRequestWatcher:
             subscription: The request's registration with the completion listener.
             budget: The deadline and the intervals of the wait.
             front_metrics: Where each wake is recorded.
+            availability_mode: Whether the first successful status read may refuse the request for the online pool.
             clock: The monotonic clock the deadline is measured on.
             random_fraction: Return a number in ``[0, 1)`` for the poll jitter.
         """
@@ -668,6 +726,12 @@ class ChatRequestWatcher:
         self._credentials = credentials
         self._subscription = subscription
         self._budget = budget
+        self._availability_mode = availability_mode
+        self._first_read_checked = False
+        self._admission_started = False
+        self._admission_status: HordeChatStatus | None = None
+        self._positioned_read_due_at: float = math.inf
+        self._positioned_reread_at: float = math.inf
         self._impossible_since: float | None = None
         self._fault_signal: CompletionEvent | None = None
         self._clock = clock
@@ -681,20 +745,58 @@ class ChatRequestWatcher:
         self._last_read_at: float | None = None
         self._fail_fast_retry_at: float = -math.inf
 
+    async def wait_for_admission(self) -> None:
+        """Read the status right after the submit and wait until the first-read decision is taken.
+
+        Returns once a status passed the first-read checks, or showed the request finished or done without a
+        generation, or once a read failed or a completion signal arrived before a ``fail_fast`` request read a status
+        with queue information; [`wait_until_finished`][horde.oai.waiter.ChatRequestWatcher.wait_until_finished]
+        continues from there without reading again. A second call returns at once.
+
+        Raises:
+            NoEligibleWorkerError: As its subclass ``DeclarationGapError``, the status reports a declaration gap.
+            QueueUnavailableError: In the ``fail_fast`` mode, the deciding status showed zero eligible worker threads
+                or a wait estimate over the time left, with nothing processing.
+            HordeAPIError: A status read failed in a way waiting cannot fix, such as 404.
+        """
+        if self._admission_started:
+            return
+        self._admission_started = True
+        self._positioned_read_due_at = self._clock() + POSITIONED_READ_WAIT_SECONDS
+        status = await self._read_before_deadline(WakeSource.IMMEDIATE)
+        self._admission_status = status
+        while status is not None and not _is_finished(status) and not self._done_without_generation_settled:
+            self._check_fail_fast(status)
+            self._check_first_read(status)
+            if self._first_read_checked:
+                return
+            event = await self._subscription.wait(min(self._positioned_reread_at, self._budget.deadline) - self._clock())
+            if event is not None:
+                # The main loop acts on the signal and the read it earns; the decision then follows that read.
+                self._subscription.requeue([event])
+                return
+            self._positioned_reread_at = math.inf
+            status = await self._read_before_deadline(WakeSource.POLL)
+            self._admission_status = status
+
     async def wait_until_finished(self) -> HordeChatStatus:
         """Return the request's terminal status once it is done or faulted.
 
-        A status observed terminal at or after the deadline is returned, never raised. A request whose ``faulted`` signal
-        is followed by a 404 status read expired on the Horde and is returned as faulted.
+        Runs [`wait_for_admission`][horde.oai.waiter.ChatRequestWatcher.wait_for_admission] first unless it already ran.
+        A status observed terminal at or after the deadline is returned, never raised. A request whose ``faulted``
+        signal is followed by a 404 status read expired on the Horde and is returned as faulted.
 
         Raises:
             ChatWaitTimeoutError: The request was still waiting after the deadline and the final status read.
             ChatDoneWithoutGenerationError: The request settled done, not faulted and without a finished generation.
             NoEligibleWorkerError: No eligible worker, with nothing processing, for longer than the grace, or at once
                 as its subclass ``DeclarationGapError`` when the status reports a declaration gap.
+            QueueUnavailableError: In the ``fail_fast`` mode, the deciding status read showed zero eligible worker
+                threads or a wait estimate over the time left, with nothing processing.
             HordeAPIError: A status read before the deadline failed in a way waiting cannot fix, such as 404.
         """
-        status = await self._read_before_deadline(WakeSource.IMMEDIATE)
+        await self.wait_for_admission()
+        status = self._admission_status
         while True:
             if status is not None and _is_finished(status):
                 return status
@@ -704,6 +806,7 @@ class ChatRequestWatcher:
                 )
             if status is not None:
                 self._check_fail_fast(status)
+                self._check_first_read(status)
             now = self._clock()
             if now >= self._budget.deadline:
                 break
@@ -723,7 +826,10 @@ class ChatRequestWatcher:
             if self._recheck_at is not None and now >= self._recheck_at:
                 self._recheck_at = None
                 status = await self._read_before_deadline(WakeSource.RECHECK)
-            elif now >= self._next_poll_at or now >= self._fail_fast_read_due_at():
+            elif now >= self._next_poll_at or now >= self._fail_fast_read_due_at() or now >= self._positioned_reread_at:
+                # A failed read does not reschedule the positioned re-read, so a Horde that keeps failing cannot spin
+                # the loop; the next successful read decides once the bound has passed.
+                self._positioned_reread_at = math.inf
                 status = await self._read_before_deadline(WakeSource.POLL)
         return await self._read_final_status()
 
@@ -734,6 +840,7 @@ class ChatRequestWatcher:
             self._budget.deadline,
             self._recheck_at if self._recheck_at is not None else math.inf,
             self._fail_fast_read_due_at(),
+            self._positioned_reread_at,
         )
 
     def _fail_fast_read_due_at(self) -> float:
@@ -776,6 +883,59 @@ class ChatRequestWatcher:
                 f"No worker is eligible for chat request {self.request_id} and none is processing it.",
                 status=status,
             )
+
+    def _check_first_read(self, status: HordeChatStatus) -> None:
+        """Mutate the watcher to mark the first successful read seen and, in the ``fail_fast`` mode, raise when that
+        read shows the pool unable to start the request within its budget.
+
+        Only the first read decides, so a request admitted at submission is not refused later on an estimate that
+        moved. A request with a generation processing or finished is not refused: a worker already holds it. A thread
+        count of None, from a Horde that does not report it, does not refuse.
+
+        In the ``fail_fast`` mode a status without queue information does not decide the wait rule until
+        [`POSITIONED_READ_WAIT_SECONDS`][horde.oai.waiter.POSITIONED_READ_WAIT_SECONDS] after the first read: it
+        schedules a re-read instead, and the first status that carries the information, or the latest once the bound
+        has passed, decides. Zero eligible worker threads needs no position and refuses on the first read.
+
+        Raises:
+            QueueUnavailableError: The pool has zero eligible worker threads, or the wait estimate exceeds the time
+                left in the budget.
+        """
+        if self._first_read_checked:
+            return
+        is_fail_fast = self._availability_mode == ChatAvailabilityMode.FAIL_FAST
+        if is_fail_fast and self._awaits_positioned_read(status):
+            self._positioned_reread_at = min(self._clock() + self._budget.signal_recheck_seconds, self._positioned_read_due_at)
+            return
+        self._first_read_checked = True
+        self._positioned_reread_at = math.inf
+        if not is_fail_fast:
+            return
+        if status.processing > 0 or status.finished > 0:
+            return
+        remaining_seconds = self._budget.deadline - self._clock()
+        if _has_zero_eligible_threads(status):
+            raise QueueUnavailableError(
+                f"The pool has zero eligible worker threads for chat request {self.request_id} and nothing is processing it.",
+                status=status,
+                reason=QueueUnavailableReason.NO_ELIGIBLE_THREADS,
+                remaining_seconds=remaining_seconds,
+            )
+        if status.wait_time is not None and status.wait_time > remaining_seconds:
+            raise QueueUnavailableError(
+                f"The estimated wait of chat request {self.request_id}, {status.wait_time} s, exceeds the "
+                f"{remaining_seconds:.0f} s left in its budget.",
+                status=status,
+                reason=QueueUnavailableReason.WAIT_EXCEEDS_BUDGET,
+                remaining_seconds=remaining_seconds,
+            )
+
+    def _awaits_positioned_read(self, status: HordeChatStatus) -> bool:
+        """Return whether the ``fail_fast`` decision waits for a later read because ``status`` carries no queue
+        information and the bound has not passed."""
+        if _has_zero_eligible_threads(status) or _carries_queue_information(status):
+            return False
+        return self._clock() < self._positioned_read_due_at
 
     async def _read_before_deadline(self, wake_source: WakeSource) -> HordeChatStatus | None:
         """Return a status read bounded by the time left before the deadline, or None when the read did not finish.
@@ -992,3 +1152,19 @@ def _is_settled_without_generation(status: HordeChatStatus) -> bool:
     """
     has_outstanding_job = status.processing > 0 or status.waiting > 0
     return _is_done_without_generation(status) and not has_outstanding_job
+
+
+def _has_zero_eligible_threads(status: HordeChatStatus) -> bool:
+    """Return whether ``status`` reports zero eligible worker threads without a declaration gap as the cause."""
+    return status.eligible_worker_threads == 0 and status.impossible_reason is None
+
+
+def _carries_queue_information(status: HordeChatStatus) -> bool:
+    """Return whether ``status`` reflects the request's place in the queue: a position or wait above zero, or a
+    generation processing or finished.
+
+    A request the Horde's cached queue positions do not yet hold reads a position and wait of zero.
+    """
+    is_positioned = status.queue_position is not None and status.queue_position > 0
+    has_wait_estimate = status.wait_time is not None and status.wait_time > 0
+    return is_positioned or has_wait_estimate or status.processing > 0 or status.finished > 0

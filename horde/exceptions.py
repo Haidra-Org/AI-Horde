@@ -6,6 +6,7 @@ from flask import has_request_context, request
 from werkzeug import exceptions as wze
 
 from horde import metrics
+from horde.chat_contract import CHAT_KUDOS_CAP_EXCEEDED_RC, KudosCapExcess
 from horde.logger import logger
 from horde.vars import horde_title
 
@@ -221,6 +222,7 @@ KNOWN_RC = [
     "ChatWorkerFault",
     "ChatModelMismatch",
     "UnknownChatModel",
+    "ChatKudosCapExceeded",
     "ChatImageStorageUnavailable",
     "OperationKeyConflict",
     "RequestTooLarge",
@@ -612,6 +614,15 @@ class UnknownChatModel(wze.NotFound):
             f"The model '{model_name}' is not known to this horde: the text model reference does not list it and "
             "no online worker serves chat jobs with it."
         )
+        self.log = None
+        self.rc = rc
+
+
+class ChatKudosCapExceeded(wze.BadRequest):
+    """A chat request whose kudos estimate exceeds the ``horde.max_kudos`` its client set."""
+
+    def __init__(self, kudos_cap_excess: KudosCapExcess, rc: str = CHAT_KUDOS_CAP_EXCEEDED_RC) -> None:
+        self.specific = kudos_cap_excess.to_message()
         self.log = None
         self.rc = rc
 

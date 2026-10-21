@@ -40,6 +40,7 @@ from tests.unit.oai.conftest import (
     build_chat_body,
     call_raw,
     done_status,
+    legacy_waiting_status,
     raw_chat_scope,
     response_body,
     response_status,
@@ -256,17 +257,36 @@ async def test_disconnect_during_the_wait_holds_the_slot_until_the_cancel_answer
 
 
 async def test_streamed_client_gone_before_the_stream_starts_is_cancelled_once_and_freed(start_front: StartFront) -> None:
+    """The client disconnects after the first status read, while the response start is being sent."""
     async with start_front() as front:
         await call_raw(
             front.app,
             body_chunks=encoded_chat_body(stream=True),
-            disconnect_after_seconds=0,
+            disconnect_after_seconds=0.1,
             response_start_delay_seconds=0.3,
         )
         await wait_for_call(lambda: front.horde.cancel_route.call_count)
         await asyncio.sleep(0.05)
 
-    assert front.horde.status_route.call_count == 0
+    assert front.horde.status_route.call_count == 1
+    assert front.horde.cancel_route.call_count == 1
+    assert_slot_released(front)
+
+
+async def test_streamed_client_gone_while_the_first_read_decision_waits_is_cancelled_once_and_freed(start_front: StartFront) -> None:
+    """A ``fail_fast`` request whose status carries no queue position waits for a positioned read before its response
+    opens; a client that disconnects meanwhile ends the wait without a response start."""
+    async with start_front() as front:
+        front.horde.status_payload = waiting_status(queue_position=0, wait_time=0)
+        _app_task, sent_messages = await call_raw(
+            front.app,
+            body_chunks=encoded_chat_body(stream=True, horde=FAIL_FAST_OPTIONS),
+            disconnect_after_seconds=0.3,
+        )
+        await asyncio.sleep(0.05)
+
+    assert response_status(sent_messages) == 499
+    assert front.horde.status_route.call_count >= 2
     assert front.horde.cancel_route.call_count == 1
     assert_slot_released(front)
 
@@ -691,3 +711,206 @@ async def test_failed_cancels_past_the_cap_drop_the_oldest_with_a_warning(monkey
     assert list(front_state.failed_cancels) == ["request-1", "request-2"]
     assert len(warnings) == 1
     assert "request-0" in warnings[0]
+
+
+FAIL_FAST_OPTIONS: dict[str, str] = {"availability_mode": "fail_fast"}
+"""The ``horde`` object of a request that asks to be refused at once when the online pool cannot start it in time."""
+
+SHORT_GRACE_SETTINGS = FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 0.3})
+"""A grace short enough to pass within a test, so a test can tell a refusal at once from one after the grace."""
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_fail_fast_refuses_at_once_when_the_pool_has_zero_eligible_threads(start_front: StartFront, stream: bool) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = waiting_status(is_possible=False, wait_time=2)
+        started_at = time.monotonic()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream, horde=FAIL_FAST_OPTIONS))
+        elapsed_seconds = time.monotonic() - started_at
+        await asyncio.sleep(0.05)
+        assert_slot_released(front)
+
+    assert elapsed_seconds < FAST_TEST_SETTINGS.fail_fast_grace_seconds / 2
+    assert front.horde.cancel_route.call_count == 1
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "30"
+    assert response.headers["content-type"] == "application/json"
+    error = response.json()["error"]
+    assert error["code"] == "queue_unavailable"
+    assert error["param"] == "horde.availability_mode"
+    assert error["metadata"] == {"request_id": REQUEST_ID, "retry_after": 30}
+    assert "0 eligible worker threads online" in error["message"]
+
+
+async def test_fail_fast_refuses_with_the_wait_estimate_as_retry_after_when_it_exceeds_the_budget(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = waiting_status(wait_time=600, eligible_worker_threads=4)
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde=FAIL_FAST_OPTIONS))
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "600"
+    assert front.horde.cancel_route.call_count == 1
+    error = response.json()["error"]
+    assert error["code"] == "queue_unavailable"
+    assert error["metadata"] == {"request_id": REQUEST_ID, "retry_after": 600}
+    assert "4 eligible worker threads online" in error["message"]
+    assert "estimated wait of 600 s" in error["message"]
+
+
+async def test_fail_fast_admits_a_request_when_threads_are_online_and_the_wait_fits(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = waiting_status(wait_time=2)
+        finisher = asyncio.create_task(front.horde.finish_later(0.2))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde=FAIL_FAST_OPTIONS))
+        await finisher
+
+    assert response.status_code == 200
+    assert front.horde.cancel_route.call_count == 0
+
+
+async def test_fail_fast_admits_a_request_a_worker_already_processes_whatever_the_estimate(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = waiting_status(wait_time=600, processing=1)
+        finisher = asyncio.create_task(front.horde.finish_later(0.2))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde=FAIL_FAST_OPTIONS))
+        await finisher
+
+    assert response.status_code == 200
+    assert front.horde.cancel_route.call_count == 0
+
+
+async def test_fail_fast_decides_only_at_the_first_status_read(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = waiting_status(wait_time=2)
+        request_task = asyncio.create_task(front.client.post("/v1/chat/completions", json=build_chat_body(horde=FAIL_FAST_OPTIONS)))
+        await wait_for_call(lambda: front.horde.status_route.call_count)
+        front.horde.status_payload = waiting_status(is_possible=False, wait_time=600)
+        await front.horde.publish("generation")
+        await asyncio.sleep(0.2)
+        await front.horde.finish_later(0)
+        response = await request_task
+
+    assert front.horde.status_route.call_count >= 2
+    assert response.status_code == 200
+    assert front.horde.cancel_route.call_count == 0
+
+
+async def test_wait_mode_keeps_waiting_on_a_wait_estimate_over_the_budget(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = waiting_status(wait_time=600)
+        finisher = asyncio.create_task(front.horde.finish_later(0.2))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"availability_mode": "wait"}))
+        await finisher
+
+    assert response.status_code == 200
+    assert front.horde.cancel_route.call_count == 0
+
+
+async def test_wait_mode_refuses_zero_eligible_threads_only_after_the_grace(start_front: StartFront) -> None:
+    async with start_front(SHORT_GRACE_SETTINGS) as front:
+        front.horde.status_payload = waiting_status(is_possible=False, wait_time=2)
+        started_at = time.monotonic()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        elapsed_seconds = time.monotonic() - started_at
+
+    assert elapsed_seconds >= SHORT_GRACE_SETTINGS.fail_fast_grace_seconds
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "no_eligible_worker"
+
+
+async def test_fail_fast_does_not_refuse_on_threads_a_horde_omits(start_front: StartFront) -> None:
+    async with start_front(SHORT_GRACE_SETTINGS) as front:
+        front.horde.status_payload = legacy_waiting_status(is_possible=False, wait_time=2)
+        started_at = time.monotonic()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde=FAIL_FAST_OPTIONS))
+        elapsed_seconds = time.monotonic() - started_at
+
+    assert elapsed_seconds >= SHORT_GRACE_SETTINGS.fail_fast_grace_seconds
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "no_eligible_worker"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_fail_fast_answers_a_declaration_gap_ahead_of_the_thread_rule(start_front: StartFront, stream: bool) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = {
+            **waiting_status(is_possible=False, wait_time=600),
+            "impossible_reason": {"kind": "declaration_gap", "missing_declarations": ["tools"], "exceeded_limits": []},
+        }
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream, horde=FAIL_FAST_OPTIONS))
+
+    assert response.status_code == 404
+    assert response.headers["content-type"] == "application/json"
+    assert response.json()["error"]["code"] == "no_worker_supports_features"
+    assert front.horde.cancel_route.call_count == 1
+
+
+UNPOSITIONED_STATUS: dict[str, Any] = waiting_status(queue_position=0, wait_time=0)
+"""The status of a request the Horde's cached queue positions do not hold yet: no position and no wait estimate."""
+
+SHORT_POSITIONED_READ_WAIT_SECONDS: float = 0.3
+"""A positioned-read bound short enough to pass within a test and long enough for several re-reads."""
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_fail_fast_decides_on_the_first_status_with_a_queue_position(start_front: StartFront, stream: bool) -> None:
+    async with start_front() as front:
+        front.horde.next_status_payloads = [
+            UNPOSITIONED_STATUS,
+            waiting_status(queue_position=4, wait_time=600, eligible_worker_threads=2),
+        ]
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream, horde=FAIL_FAST_OPTIONS))
+
+    assert front.horde.status_route.call_count == 2
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "600"
+    error = response.json()["error"]
+    assert error["code"] == "queue_unavailable"
+    assert error["param"] == "horde.availability_mode"
+    assert error["metadata"] == {"request_id": REQUEST_ID, "retry_after": 600}
+    assert front.horde.cancel_route.call_count == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_fail_fast_admits_once_the_positioned_read_bound_passes_on_unpositioned_reads(
+    start_front: StartFront,
+    monkeypatch: pytest.MonkeyPatch,
+    stream: bool,
+) -> None:
+    monkeypatch.setattr(waiter, "POSITIONED_READ_WAIT_SECONDS", SHORT_POSITIONED_READ_WAIT_SECONDS)
+    async with start_front() as front:
+        front.horde.status_payload = UNPOSITIONED_STATUS
+        finisher = asyncio.create_task(front.horde.finish_later(SHORT_POSITIONED_READ_WAIT_SECONDS + 0.2))
+        started_at = time.monotonic()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream, horde=FAIL_FAST_OPTIONS))
+        elapsed_seconds = time.monotonic() - started_at
+        await finisher
+
+    assert response.status_code == 200
+    assert elapsed_seconds >= SHORT_POSITIONED_READ_WAIT_SECONDS
+    assert front.horde.status_route.call_count >= 3
+    assert front.horde.cancel_route.call_count == 0
+
+
+async def test_wait_mode_admits_an_unpositioned_first_status_without_reading_again(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = UNPOSITIONED_STATUS
+        finisher = asyncio.create_task(front.horde.finish_later(0.3))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"availability_mode": "wait"}))
+        await finisher
+
+    assert response.status_code == 200
+    assert front.horde.status_route.call_count == 2
+    assert front.horde.cancel_route.call_count == 0
+
+
+async def test_fail_fast_refuses_zero_eligible_threads_on_an_unpositioned_first_status(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = waiting_status(queue_position=0, wait_time=0, is_possible=False)
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=True, horde=FAIL_FAST_OPTIONS))
+
+    assert front.horde.status_route.call_count == 1
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "30"
+    assert response.json()["error"]["code"] == "queue_unavailable"
+    assert front.horde.cancel_route.call_count == 1

@@ -316,8 +316,10 @@ so the cap only rejects values no generation could produce."""
 
 OPERATION_FINGERPRINT_EXCLUDED_HORDE_KEYS = frozenset(
     {
+        "availability_mode",
         "dry_run",
         "include_reasoning",
+        "max_kudos",
         "operation_key",
     },
 )

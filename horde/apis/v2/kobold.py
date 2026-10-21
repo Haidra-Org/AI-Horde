@@ -33,6 +33,7 @@ from horde.chat_contract import (
     MAX_CHAT_BODY_BYTES,
     MAX_CHAT_IMAGE_COUNT_UNTRUSTED,
     ChatContextFit,
+    KudosCapExcess,
     refuse_json_constant,
 )
 from horde.chat_progress import (
@@ -250,6 +251,7 @@ class TextAsyncGenerate(GenerateTemplate):
 
     def initiate_waiting_prompt(self):
         self.wp = TextWaitingPrompt(**self.get_waiting_prompt_arguments())
+        self.refuse_over_kudos_cap()
         self.upload_source_images_or_delete_waiting_prompt()
         _, total_threads = database.count_active_workers("text")
         highest_multiplier = 0
@@ -305,6 +307,16 @@ class TextAsyncGenerate(GenerateTemplate):
                 if not (self.existing_style and self.existing_style.sharedkey and self.existing_style.sharedkey.id == self.sharedkey.id):
                     self.wp.delete()
                     raise e.BadRequest(fail_message)
+
+    def refuse_over_kudos_cap(self) -> None:
+        """Refuse the request when its kudos estimate exceeds a cap its client set, deleting its row first.
+
+        Runs as soon as the row exists, since the estimate is computed from it, and before anything is uploaded or any
+        kudos is reserved. A text request does not carry a cap.
+
+        Subclass Integration:
+            Override where a request type accepts a client cap on its kudos estimate.
+        """
 
     def get_size_too_big_message(self):
         return (
@@ -796,6 +808,8 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         - `UnknownChatModel` (404): a model that the text model reference does not list and that no online chat
           worker serves.
         - `OperationKeyConflict` (400): `horde.operation_key` reused with a changed request.
+        - `ChatKudosCapExceeded` (400): a kudos estimate at current pricing over `horde.max_kudos`; the message states
+          the estimate and the cap.
         - `ChatAdmissionDisabled` (503): the horde is not accepting new chat requests.
         - `ChatImageStorageUnavailable` (503): the request's images could not be stored.
 
@@ -1127,6 +1141,34 @@ class ChatAsyncGenerate(TextAsyncGenerate):
             lambda message_text: prompt_checker.nsfw_model_prompt_replace(message_text, self.models),
         )
         self.prompt = flatten_messages(self.messages, self.chat_extras)
+
+    def dry_run_answerable_from_cache(self) -> bool:
+        """Report whether a cached quote can answer this dry run.
+
+        Returns:
+            bool: Whether the cached quote is the whole answer. A request with ``horde.max_kudos`` is not, since the
+                cap is checked where the quote is computed.
+        """
+        return super().dry_run_answerable_from_cache() and self.chat_request.horde.max_kudos is None
+
+    def refuse_over_kudos_cap(self) -> None:
+        """Refuse the request when its kudos estimate exceeds ``horde.max_kudos``, deleting its row first.
+
+        The estimate is the quote a dry run returns, rounded as the response rounds it. It is computed from
+        ``max_length``, so the check is conservative: the charge, which is the output estimate, does not exceed it. A
+        dry run is refused the same way, so a quote never reports a request its submission would refuse.
+
+        Raises:
+            horde.exceptions.ChatKudosCapExceeded: The estimate exceeds the cap; the message states both.
+        """
+        max_kudos = self.chat_request.horde.max_kudos
+        if max_kudos is None:
+            return
+        kudos_estimate = round(self.quote_kudos())
+        if kudos_estimate <= max_kudos:
+            return
+        self.wp.delete()
+        raise e.ChatKudosCapExceeded(KudosCapExcess(kudos_estimate=kudos_estimate, max_kudos=max_kudos))
 
     def get_waiting_prompt_arguments(self):
         """Return the arguments the chat request's TextWaitingPrompt is created with.

@@ -14,6 +14,7 @@ import httpx
 import pytest
 import respx
 
+from horde.chat_contract import KudosCapExcess
 from horde.oai.app import create_app
 from horde.oai.horde_client import HordeAPIError, HordeClient, HordeCredentials
 from horde.oai.metrics import REFUSED_NAME
@@ -172,6 +173,28 @@ async def test_horde_refusal_at_submit_keeps_its_status_and_rc(
     assert error["code"] == expected_code
     assert error["metadata"] == {"rc": horde_rc}
     assert SHOULD_RETRY not in response.headers
+    assert front.inflight == 0
+
+
+async def test_a_refusal_over_the_kudos_cap_is_400_on_max_kudos_with_both_values(start_front: StartFront) -> None:
+    """The Horde refuses the request before creating it, so the front answers 400 without a request id."""
+    horde_message = KudosCapExcess(kudos_estimate=57, max_kudos=40).to_message()
+    async with start_front() as front:
+        front.horde.submit_route.respond(400, json={"message": horde_message, "rc": "ChatKudosCapExceeded"})
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"max_kudos": 40}))
+
+    assert front.horde.submitted_body()["horde"]["max_kudos"] == 40
+    assert response.status_code == 400
+    assert SHOULD_RETRY not in response.headers
+    assert response.json() == {
+        "error": {
+            "message": horde_message,
+            "type": "invalid_request_error",
+            "param": "horde.max_kudos",
+            "code": "max_kudos_exceeded",
+            "metadata": {"rc": "ChatKudosCapExceeded", "kudos_estimate": 57, "max_kudos": 40},
+        },
+    }
     assert front.inflight == 0
 
 
@@ -421,14 +444,9 @@ async def test_a_declaration_gap_is_404_on_the_first_status_without_the_grace_an
     assert front.horde.cancel_route.call_count == 1
     assert response.headers[SHOULD_RETRY] == "false"
     assert "retry-after" not in response.headers
-    if stream:
-        assert response.status_code == 200
-        payloads = data_payloads(parse_sse_events(response.text))
-        error = json.loads(payloads[0])["error"]
-        assert payloads[-1] == "[DONE]"
-    else:
-        assert response.status_code == 404
-        error = response.json()["error"]
+    assert response.status_code == 404
+    assert response.headers["content-type"] == "application/json"
+    error = response.json()["error"]
     assert error["code"] == "no_worker_supports_features"
     assert error["type"] == "not_found_error"
     assert "declares tool_choice_enforced" in error["message"]
@@ -464,12 +482,8 @@ async def test_an_exceeded_completion_limit_is_400_on_max_tokens_stating_the_lar
     assert front.horde.cancel_route.call_count == 1
     assert response.headers[SHOULD_RETRY] == "false"
     assert "retry-after" not in response.headers
-    if stream:
-        assert response.status_code == 200
-        error = json.loads(data_payloads(parse_sse_events(response.text))[0])["error"]
-    else:
-        assert response.status_code == 400
-        error = response.json()["error"]
+    assert response.status_code == 400
+    error = response.json()["error"]
     assert error == {
         "message": (
             "No worker eligible for this request currently declares a completion limit that high; the largest any online "
@@ -557,10 +571,14 @@ async def test_no_eligible_worker_does_not_fail_while_a_worker_is_processing(sta
 
 
 async def test_stream_error_event_writes_explicit_nulls_and_no_choice(start_front: StartFront) -> None:
+    """A status read after the first one fails with 404, so the error arrives after the stream's headers."""
     async with start_front() as front:
+        request_task = asyncio.create_task(front.client.post("/v1/chat/completions", json=build_chat_body(stream=True)))
+        await wait_for_call(lambda: front.horde.status_route.call_count)
         front.horde.status_code = 404
         front.horde.status_payload = {"detail": "gone"}
-        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=True))
+        await front.horde.publish("generation")
+        response = await request_task
 
     assert response.status_code == 200
     payloads = data_payloads(parse_sse_events(response.text))
@@ -797,14 +815,8 @@ async def test_status_read_the_wait_cannot_fix_cancels_unless_the_request_is_gon
 
     assert front.horde.cancel_route.call_count == expected_cancels
     assert response.headers[SHOULD_RETRY] == "false"
-    if stream:
-        assert response.status_code == 200
-        payloads = data_payloads(parse_sse_events(response.text))
-        assert json.loads(payloads[0])["error"]["metadata"] == {"request_id": REQUEST_ID, "rc": "StatusRefused"}
-        assert payloads[-1] == "[DONE]"
-    else:
-        assert response.status_code == horde_status
-        assert response.json()["error"]["metadata"] == {"request_id": REQUEST_ID, "rc": "StatusRefused"}
+    assert response.status_code == horde_status
+    assert response.json()["error"]["metadata"] == {"request_id": REQUEST_ID, "rc": "StatusRefused"}
     assert front.inflight == 0
     assert not front.app.state.front.open_requests
 

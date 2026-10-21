@@ -183,6 +183,8 @@ The `horde` object carries the Horde options OpenAI does not have a key for:
 | `conformance` | `strict` | `strict` sends the request only to workers that follow every part of the OpenAI contract it relies on. `best_effort` also accepts workers that may deviate; see [Conformance](#conformance). |
 | `openai_guards` | `false` | `true` turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format whose messages never mention "json" is 400 `ChatRequestConflict`. |
 | `include_reasoning` | `false` | `true` returns the model's reasoning as `reasoning_content`; see [Reasoning](#reasoning). |
+| `max_kudos` | none | A positive integer cap on the request's kudos estimate. A request whose estimate at current pricing exceeds it is refused with 400 `max_kudos_exceeded` before it is queued, so it is not charged; `metadata.kudos_estimate` and `metadata.max_kudos` hold both values. The estimate assumes the full `max_tokens` is generated, while the charge is for the output estimate, so the check is conservative. |
+| `availability_mode` | `wait` | `wait` queues the request for the front's budget. `fail_fast` refuses it at once with 503 `queue_unavailable` and a `Retry-After` when the online pool has zero eligible worker threads, or when the Horde's estimated wait exceeds the budget; see [Errors and retries](#errors-and-retries). |
 
 Any other key in `horde`, including `dry_run` and `operation_key`, is 400 `UnsupportedChatParameter`. Restrictions
 narrow the eligible workers, so a combination no online worker satisfies ends with `no_eligible_worker`.
@@ -335,9 +337,12 @@ it, and content arrives in one chunk. Every chunk carries the same `id`; the fin
 rebuilds the calls from the single tool-call chunk; in the Python SDK, `client.chat.completions.stream(...)` with
 `get_final_completion()` returns the assembled message.
 
-A stream's headers go out once the Horde holds the request, so its status is 200 whatever the outcome. A failure after
-that is one `data: {"error": {...}}` event, with the same envelope as an error response and no `choices`, followed by
-`data: [DONE]`. A hand-written parser checks each `data:` payload for a top-level `error`.
+A stream's headers go out after the front's first status read of the request. A refusal at that read
+(`queue_unavailable`, `no_worker_supports_features`, `no_worker_supports_limit`, or a Horde error such as 404) is an
+HTTP error with its status, body and `Retry-After`, as for a non-streamed request. Once the headers are out the status
+is 200 whatever the outcome, and a failure is one `data: {"error": {...}}` event, with the same envelope as an error
+response and no `choices`, followed by `data: [DONE]`. A hand-written parser checks each `data:` payload for a
+top-level `error`.
 
 Live content can end in such an event after some text arrived: code `ChatStreamDiverged` when the worker stopped and
 the Horde would start the reply over with another, or when the final reply does not continue the text sent, and
@@ -362,6 +367,7 @@ The front's own codes:
 | --- | --- | --- | --- |
 | 400 | `UnsupportedChatParameter`, `ChatRequestConflict`, `BadRequest` | | See [Keys the front refuses](#keys-the-front-refuses). |
 | 401 | `InvalidAuthorizationHeader` | | `Authorization` is not `Bearer <key>`. |
+| 400 | `max_kudos_exceeded` | | The request's kudos estimate at current pricing exceeds `horde.max_kudos`; the request was neither queued nor charged. `param` is `horde.max_kudos`, and `metadata.kudos_estimate` and `metadata.max_kudos` hold both values. |
 | 404 | `model_not_found` | | The model id contains `:`. |
 | 404 | `no_worker_supports_features` | `false` | Online workers serve the model, but none declares a capability or guarantee the request needs, or the request exceeds a limit each declares, such as the temperature limit with tools. Returned on the first status read, without the grace period; the request is cancelled. |
 | 408 | `RequestBodyTimeout` | | The body arrived too slowly; the request was not submitted. |
@@ -373,6 +379,7 @@ The front's own codes:
 | 502 | `HordeUnavailable` | `false` | The submit was sent and no answer came; `metadata.submit_outcome` is `"unknown"`. |
 | 503 | `FrontAtCapacity` | | The front or your address holds its maximum of open requests. `Retry-After: 5`. |
 | 503 | `no_eligible_worker` | `false` | No online worker could serve the request for the front's grace period; it is cancelled. `Retry-After: 30`. |
+| 503 | `queue_unavailable` | `false` | Under `horde.availability_mode: "fail_fast"`, the first status read showed zero eligible worker threads, or an estimated wait over the time left in the budget; it is cancelled. A request just submitted can read no queue position at first, so the front reads again for up to 2 s until one shows the queue. `Retry-After` is the estimated wait, or 30 with zero threads. `param` is `horde.availability_mode`. |
 
 A request that faulted after the Horde refused its workers' replies reports the last refusal:
 
@@ -409,9 +416,11 @@ Retry rules:
 - An error with `x-should-retry: false` came after the Horde held the request, or may have. OpenAI SDKs read the
   header and do not retry. A retry is a new request and can create a second charged job, since the front does not
   deduplicate client requests.
-- `no_eligible_worker` means the request as sent has no worker online: check the model card for the model's workers,
-  `supported_parameters` and `max_completion_tokens`, and change the request or wait for workers; the same request
-  fails the same way.
+- `no_eligible_worker` means the request as sent does not have a worker online: check the model card for the model's
+  workers, `supported_parameters` and `max_completion_tokens`, and change the request or wait for workers; the same
+  request fails the same way.
+- `queue_unavailable` states the pool at the first status read: eligible worker threads, the estimated wait and the
+  budget left. Retry after `Retry-After`, or send `availability_mode: "wait"` to queue for the budget.
 - `no_worker_supports_features` lists what is missing. Drop or change the feature, lower the temperature, or send
   `horde.conformance: "best_effort"` when the missing values are guarantees; the same request fails the same way
   until a worker declaring them comes online.

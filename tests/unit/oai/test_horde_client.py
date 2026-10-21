@@ -19,6 +19,7 @@ from horde.oai.horde_client import (
     HTTP_MAX_CONNECTIONS,
     UNHEALTHY_URL_BACKOFF_SECONDS,
     CancelSlotUnavailableError,
+    HordeChatStatus,
     HordeClient,
     HordeCredentials,
     HordeUnavailableError,
@@ -26,7 +27,7 @@ from horde.oai.horde_client import (
     create_http_client,
 )
 from horde.oai.waiter import ChatRequestWatcher, ChatWaitTimeoutError, CompletionSubscription, WaitBudget
-from tests.unit.oai.conftest import REQUEST_ID, UNRECORDED_METRICS, done_status
+from tests.unit.oai.conftest import REQUEST_ID, UNRECORDED_METRICS, done_status, legacy_waiting_status, waiting_status
 
 pytestmark = pytest.mark.asyncio
 
@@ -337,3 +338,19 @@ async def test_submits_proceed_while_status_reads_hold_every_read_slot() -> None
 async def test_credentials_representation_omits_the_api_key() -> None:
     assert "test-key" not in repr(CREDENTIALS)
     assert "test-key" not in str(CREDENTIALS)
+
+
+async def test_chat_status_reads_the_pool_eligibility_fields() -> None:
+    status = HordeChatStatus.model_validate(waiting_status(eligible_worker_threads=3))
+
+    assert status.eligible_workers == 1
+    assert status.eligible_worker_threads == 3
+    assert status.might_stall is False
+
+
+async def test_chat_status_from_a_horde_omitting_the_eligibility_fields_leaves_them_none() -> None:
+    status = HordeChatStatus.model_validate(legacy_waiting_status(is_possible=False))
+
+    assert status.eligible_workers is None
+    assert status.eligible_worker_threads is None
+    assert status.might_stall is None

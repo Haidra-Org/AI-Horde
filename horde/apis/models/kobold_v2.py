@@ -19,6 +19,7 @@ from horde.apis.models import v2
 from horde.chat_contract import (
     MAX_CHAT_TOOL_CALL_COUNT,
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
+    ChatAvailabilityMode,
     ChatContextFit,
 )
 from horde.chat_progress import CHAT_PROGRESS_BYTES_PER_TOKEN
@@ -1267,6 +1268,22 @@ class TextModels(v2.Models):
                         "How closely the serving worker has to follow the OpenAI chat contract. strict only uses "
                         "workers that declare every guarantee the request needs; best_effort drops that requirement "
                         "and keeps the feature and limit checks."
+                    ),
+                ),
+                "availability_mode": fields.String(
+                    default=ChatAvailabilityMode.WAIT.value,
+                    enum=[mode.value for mode in ChatAvailabilityMode],
+                    description=(
+                        "wait queues the request for its budget; fail_fast refuses at the first status read, with a "
+                        "Retry-After, when no eligible worker thread is online and nothing is processing or when the "
+                        "estimated wait exceeds the remaining budget."
+                    ),
+                ),
+                "max_kudos": fields.Integer(
+                    min=1,
+                    description=(
+                        "The most kudos the request may cost. A request whose kudos estimate exceeds it is refused "
+                        "before it is queued, with the estimate in the refusal."
                     ),
                 ),
                 "include_reasoning": fields.Boolean(
