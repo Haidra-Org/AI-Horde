@@ -528,7 +528,10 @@ that predates chat never sees a chat request, and a text request goes to a chat 
 
 When no worker is eligible and nothing is processing, the chat status route also reports `impossible_reason` if the
 cause is the workers' declarations: every online chat worker serving the model that passes the queue query's rules
-was refused for a missing capability or guarantee (rule 2) or for `tools_max_temperature` (rule 3).
+was refused for a missing capability or guarantee (rule 2) or for a chat limit the request exceeds (rule 3):
+`max_context_length`, `max_length` or `tools_max_temperature`. The availability pass leaves the size limits out of
+the query so that a worker below them reaches `can_generate` and its refusal counts; the queue query and the check at
+creation still apply them in SQL.
 
 ```json
 {"kind": "declaration_gap", "missing_declarations": ["tool_choice_enforced"], "exceeded_limits": []}
@@ -536,10 +539,13 @@ was refused for a missing capability or guarantee (rule 2) or for `tools_max_tem
 
 `missing_declarations` lists the values the request needs that a refused worker does not declare, with
 `image_transports` for a worker that declares `vision` without an image transport. `exceeded_limits` lists the
-limits the request exceeds, such as `tools_max_temperature`. The field is `null` otherwise, including when no online
+limits the request exceeds, such as `max_length` or `tools_max_temperature`. The field is `null` otherwise, including when no online
 worker serves the model or one is refused for any other reason, since those can change while the request waits.
 It is computed from the refusal reasons the availability pass already collects, only when that pass finds no
-eligible worker, and is cached with the availability for 60 seconds.
+eligible worker, and is cached with the availability for 60 seconds. Workers come and go, so the reason describes the
+online workers at the time of the poll. The OpenAI front answers a gap of only `max_length` or
+`max_context_length` with a 400 and every other gap with a 404 (see
+[No eligible worker](chat_front.md#no-eligible-worker)).
 
 When a chat request is assigned, the generation records the worker's `model_id`, chat context and chat length as
 `assigned_model`, `assigned_max_context_length` and `assigned_max_length`, so a later change to the declaration does

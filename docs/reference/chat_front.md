@@ -198,9 +198,20 @@ While the native status reports `is_possible` false with nothing processing, the
 for a worker to appear, then cancels the request and returns 503 `no_eligible_worker` with `Retry-After: 30`. When
 the status carries an `impossible_reason` of kind `declaration_gap` (see
 [Impossible reason](chat_requests.md#impossible-reason)), it cancels at once and returns 404
-`no_worker_supports_features`, OpenRouter's status for no endpoint supporting the requested features, with no
-`Retry-After`. The message lists the missing declarations or the exceeded limit, and adds that guarantees are not
-required under `best_effort` when a guarantee is missing. After stream headers the same error is the SSE error event.
+`no_worker_supports_features`, OpenRouter's status for no endpoint supporting the requested features, without
+a `Retry-After`. The message lists the missing declarations or the exceeded limit, and adds that guarantees are not
+required under `best_effort` when a guarantee is missing.
+
+A gap of only `max_length` or `max_context_length` in `exceeded_limits` is a request over the size limits every
+online worker serving the model declares. The front returns 400 `invalid_request_error` with code
+`no_worker_supports_limit` instead, with `param` `max_tokens`, or `horde.max_context_length` when only the context
+length is exceeded, and without a `Retry-After`. Each exceeded limit reads "No worker eligible for this request currently
+declares a completion limit that high; the largest any online worker for the model declares now is 1024 tokens." (or
+"a context length"), with the value from the model list's `chat` entry; when the model list has no entry for the model, the sentence states the
+limit name in its place. Volunteer workers come and go, so the message describes the online workers at the time and
+leaves retrying to the client. Any other gap, including a size limit beside another cause, keeps the 404.
+
+After stream headers either error is the SSE error event.
 An `impossible_reason` of a kind the front does not know is ignored, so the grace applies.
 
 ## Model card fields
@@ -241,7 +252,7 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | --- | --- | --- | --- |
 | `horde.oai.requests.admitted` | counter | `streamed` | Chat requests that took an in-flight slot. |
 | `horde.oai.requests.refused` | counter | `status_code`, `code` | Chat requests refused before an in-flight slot: body size (413), body read timeout (408 `RequestBodyTimeout`), validation (400, 404), authorization (401), `FrontAtCapacity` (503). |
-| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed` | Admitted requests answered with an error status before any header: horde refusals at submit, 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 503 `no_eligible_worker`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. |
+| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed` | Admitted requests answered with an error status before any header: horde refusals at submit, 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 400 `no_worker_supports_limit`, 503 `no_eligible_worker`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. |
 | `horde.oai.stream.failures` | counter | `code` | Streamed requests whose 200 headers were sent and which ended in an SSE error event. |
 | `horde.oai.inflight` | observable gauge | none | Requests holding an in-flight slot. |
 | `horde.oai.inflight.sources` | observable gauge | none | Distinct client addresses holding at least one slot. |

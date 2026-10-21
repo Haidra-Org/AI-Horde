@@ -76,6 +76,7 @@ from horde.oai.horde_client import (
     HordeActiveModel,
     HordeAPIError,
     HordeAsyncSubmission,
+    HordeChatModelOffer,
     HordeChatStatus,
     HordeClient,
     HordeCredentials,
@@ -244,6 +245,20 @@ NO_WORKER_SUPPORTS_FEATURES_CODE: str = "no_worker_supports_features"
 """The error code of a request the online workers serving its model cannot take because of what they declare: a
 capability or guarantee none declares, or a declared limit the request exceeds. OpenRouter answers the same case,
 no endpoint supporting the requested features, with a 404."""
+
+NO_WORKER_SUPPORTS_LIMIT_CODE: str = "no_worker_supports_limit"
+"""The error code of a request whose ``max_tokens`` or context length exceeds the limit every online worker serving
+its model declares. The front answers 400, as OpenAI does for a ``max_tokens`` over the model's limit; volunteer
+workers come and go, so the refusal is about the online workers at the time, and retrying is the client's choice."""
+
+DECLARED_SIZE_LIMITS: Mapping[str, str] = MappingProxyType(
+    {
+        "max_length": "completion limit",
+        "max_context_length": "context length",
+    },
+)
+"""The declared chat limits a request exceeds by asking for more tokens, with the wording of each in the 400 message.
+Each key is also the field of the model list's chat entry holding the largest value the online workers declare."""
 
 GUARANTEE_NAMES: frozenset[str] = frozenset(guarantee.value for guarantee in ChatGuarantee)
 """The declared values that are guarantees, which ``horde.conformance: best_effort`` stops requiring."""
@@ -1553,8 +1568,15 @@ def _wait_error(
     error: ChatWaitTimeoutError | ChatDoneWithoutGenerationError | NoEligibleWorkerError | HordeAPIError,
     *,
     request_id: str,
+    chat_offer: HordeChatModelOffer | None = None,
 ) -> ChatFrontError:
-    """Create the front error for a wait that ended without a terminal outcome."""
+    """Create the front error for a wait that ended without a terminal outcome.
+
+    Args:
+        error: The error that ended the wait.
+        request_id: The Horde request id.
+        chat_offer: What the online workers serving the model declare, for the largest limit a size limit gap states.
+    """
     if isinstance(error, ChatDoneWithoutGenerationError):
         return _no_generation_error(request_id)
     if isinstance(error, ChatWaitTimeoutError):
@@ -1567,6 +1589,8 @@ def _wait_error(
             job_may_exist=True,
         )
     if isinstance(error, DeclarationGapError):
+        if _is_size_limit_gap(error.impossible_reason):
+            return _size_limit_gap_error(error.impossible_reason, request_id=request_id, chat_offer=chat_offer)
         return _declaration_gap_error(error.impossible_reason, request_id=request_id)
     if isinstance(error, NoEligibleWorkerError):
         return ChatFrontError(
@@ -1606,6 +1630,88 @@ def _declaration_gap_error(impossible_reason: ChatImpossibleReason, *, request_i
         metadata=ErrorMetadata(request_id=request_id),
         job_may_exist=True,
     )
+
+
+def _is_size_limit_gap(impossible_reason: ChatImpossibleReason) -> bool:
+    """Return whether a declaration gap consists only of size limits the request exceeds.
+
+    Such a request is refused for what it asks, so the front answers it as an invalid request rather than as a
+    missing capability.
+    """
+    return (
+        not impossible_reason.missing_declarations
+        and bool(impossible_reason.exceeded_limits)
+        and set(impossible_reason.exceeded_limits) <= DECLARED_SIZE_LIMITS.keys()
+    )
+
+
+def _size_limit_gap_error(
+    impossible_reason: ChatImpossibleReason,
+    *,
+    request_id: str,
+    chat_offer: HordeChatModelOffer | None,
+) -> ChatFrontError:
+    """Create the 400 for a request over the size limits every online worker serving its model declares.
+
+    The message states the largest value the online workers declare when the model list has the model, and the
+    limit's native name otherwise. ``param`` is ``max_tokens`` when the completion limit is exceeded, and the context
+    length's request key when only that limit is. Workers come and go, so the message states what the online workers
+    declare and leaves retrying to the client.
+
+    Args:
+        impossible_reason: The gap, with only size limits in ``exceeded_limits``.
+        request_id: The Horde request id.
+        chat_offer: What the online workers serving the model declare, when the model list has the model.
+    """
+    sentences: list[str] = []
+    for limit_name, limit_wording in DECLARED_SIZE_LIMITS.items():
+        if limit_name not in impossible_reason.exceeded_limits:
+            continue
+        largest_declared = getattr(chat_offer, limit_name) if chat_offer is not None else None
+        if largest_declared is None:
+            sentences.append(f"No worker eligible for this request currently declares a {limit_wording} ({limit_name}) that high.")
+        else:
+            sentences.append(
+                f"No worker eligible for this request currently declares a {limit_wording} that high; "
+                f"the largest any online worker for the model declares now is {largest_declared} tokens.",
+            )
+    sentences.append("The request was cancelled.")
+    param_limit = "max_length" if "max_length" in impossible_reason.exceeded_limits else "max_context_length"
+    return ChatFrontError(
+        status_code=HTTPStatus.BAD_REQUEST,
+        message=" ".join(sentences),
+        code=NO_WORKER_SUPPORTS_LIMIT_CODE,
+        param=NATIVE_FIELD_PARAMETERS[param_limit],
+        metadata=ErrorMetadata(request_id=request_id),
+        job_may_exist=True,
+    )
+
+
+async def _size_limit_gap_chat_offer(
+    front_state: FrontState,
+    error: Exception,
+    *,
+    model: str,
+    credentials: HordeCredentials,
+) -> HordeChatModelOffer | None:
+    """Return the model's chat entry from the model list when a wait ended on a size limit gap, or None.
+
+    The list is read through the process cache. A failed read leaves the 400 without the declared value, since the
+    request is refused either way.
+
+    Args:
+        front_state: The process state holding the model list cache.
+        error: The error that ended the wait.
+        model: The requested model.
+        credentials: The client's credentials, used for the model list read.
+    """
+    if not isinstance(error, DeclarationGapError) or not _is_size_limit_gap(error.impossible_reason):
+        return None
+    try:
+        active_models = await front_state.model_list_cache.get(front_state.horde_client, credentials)
+    except (HordeAPIError, HordeUnavailableError):
+        return None
+    return next((active_model.chat for active_model in active_models if active_model.name == model), None)
 
 
 def _status_error_needs_cancel(error: HordeAPIError) -> bool:
@@ -1802,7 +1908,14 @@ async def _wait_for_completion(
             status = wait_task.result()
         except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError) as error:
             await _cancel_shielded(front_state, open_request)
-            return request_trace.error_response(_wait_error(error, request_id=request_id), watcher=watcher)
+            chat_offer = await _size_limit_gap_chat_offer(
+                front_state,
+                error,
+                model=chat_request.model,
+                credentials=open_request.credentials,
+            )
+            wait_error = _wait_error(error, request_id=request_id, chat_offer=chat_offer)
+            return request_trace.error_response(wait_error, watcher=watcher)
         except HordeAPIError as error:
             if _status_error_needs_cancel(error):
                 await _cancel_shielded(front_state, open_request)
@@ -2072,7 +2185,14 @@ def _stream_completion(
                     status = await (wait_task if wait_task is not None else latest_watcher.wait_until_finished())
                 except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError) as error:
                     await _cancel_shielded(front_state, open_request)
-                    for error_event in request_trace.error_events(_wait_error(error, request_id=request_id), watcher=latest_watcher):
+                    chat_offer = await _size_limit_gap_chat_offer(
+                        front_state,
+                        error,
+                        model=chat_request.model,
+                        credentials=open_request.credentials,
+                    )
+                    wait_error = _wait_error(error, request_id=request_id, chat_offer=chat_offer)
+                    for error_event in request_trace.error_events(wait_error, watcher=latest_watcher):
                         yield error_event
                     return
                 except HordeAPIError as error:

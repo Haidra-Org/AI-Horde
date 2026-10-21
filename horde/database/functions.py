@@ -92,9 +92,17 @@ def _text_worker_softprompt_names(worker: TextWorker) -> list[str]:
     return [softprompt.softprompt for softprompt in worker.softprompts]
 
 
-CHAT_DECLARATION_REFUSALS = frozenset({"chat_features", ChatLimitField.TOOLS_MAX_TEMPERATURE.value})
+CHAT_DECLARATION_REFUSALS = frozenset(
+    {
+        "chat_features",
+        ChatLimitField.TOOLS_MAX_TEMPERATURE.value,
+        "max_context_length",
+        "max_length",
+    },
+)
 """The `TextWorker.can_generate` refusal reasons that come from the worker's chat declaration rather than from its
-current state or the request's other options."""
+current state or the request's other options. For a chat request, ``max_context_length`` and ``max_length`` are the
+declared chat limits, so they belong here with the declared features."""
 
 
 def find_chat_declaration_gap(
@@ -1951,6 +1959,7 @@ def _iter_eligible_workers_for_request(
     Args:
         waiting_prompt: The request.
         refusals: When given, receives each worker the query found that ``can_generate`` refused, with the reason.
+            The query then keeps chat workers below the request's chat limits, so the refusals include them.
     """
 
     with logfire.span(
@@ -2049,9 +2058,14 @@ def _iter_eligible_workers_for_request(
             final_worker_list = final_worker_list.filter(
                 TextWorker.accepts_chat_jobs.is_(True),
                 TextWorker.chat_model_id.in_(models_list),
-                waiting_prompt.max_length <= TextWorker.chat_max_length,
-                waiting_prompt.max_context_length <= TextWorker.chat_max_context_length,
             )
+            # A worker below the request's chat limits is a declaration gap only if it reaches can_generate, which
+            # refuses it with the limit; a caller not collecting refusals lets SQL drop it instead.
+            if refusals is None:
+                final_worker_list = final_worker_list.filter(
+                    waiting_prompt.max_length <= TextWorker.chat_max_length,
+                    waiting_prompt.max_context_length <= TextWorker.chat_max_context_length,
+                )
             if not waiting_prompt.slow_workers:
                 final_worker_list = final_worker_list.filter(TextWorker.speed >= 2)
         elif isinstance(waiting_prompt, TextWaitingPrompt):

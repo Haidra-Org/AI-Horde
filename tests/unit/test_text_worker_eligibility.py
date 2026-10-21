@@ -17,6 +17,7 @@ from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, Ch
 
 from horde.apis.v2.base import GenerateTemplate
 from horde.apis.v2.kobold import TextAsyncGenerate
+from horde.chat_contract import ChatImpossibleReason
 from horde.classes.base.user import UserRoleTypes
 from horde.classes.base.worker import WorkerModel
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
@@ -300,6 +301,44 @@ def test_availability_counts_a_chat_worker_by_its_chat_limits(
     availability = functions.get_worker_availability_for_request(_make_chat_request(user))
 
     assert availability.worker_count == 1
+
+
+@pytest.mark.parametrize(
+    ("request_params", "exceeded_limits"),
+    [
+        ({"max_length": 2048}, ("max_length",)),
+        ({"max_context_length": 16384}, ("max_context_length",)),
+    ],
+)
+def test_availability_reports_a_request_over_every_chat_limit_as_a_declaration_gap(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    request_params: dict[str, Any],
+    exceeded_limits: tuple[str, ...],
+) -> None:
+    user = make_user()
+    _make_chat_worker(user)
+
+    availability = functions.get_worker_availability_for_request(_make_chat_request(user, request_params))
+
+    assert availability.worker_count == 0
+    assert availability.impossible_reason == ChatImpossibleReason(exceeded_limits=exceeded_limits)
+
+
+def test_a_request_over_one_worker_chat_limit_is_not_a_gap_while_another_worker_fits(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    user = make_user()
+    _make_chat_worker(user)
+    _make_chat_worker(user, chat_max_length=4096)
+
+    availability = functions.get_worker_availability_for_request(_make_chat_request(user, {"max_length": 2048}))
+
+    assert availability.worker_count == 1
+    assert availability.impossible_reason is None
 
 
 IMAGE_CHAT_MESSAGES = [

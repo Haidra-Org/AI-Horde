@@ -1606,6 +1606,25 @@ def test_a_tool_request_hotter_than_every_worker_tool_temperature_limit_reports_
     _cancel(client, request_headers, "chat", request_id)
 
 
+def test_a_request_over_every_worker_chat_output_limit_reports_the_limit(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, max_tokens=400)
+
+    assert chat_worker.pop(chat_max_length=300)["id"] is None
+    status = _chat_status(client, request_headers, request_id)
+
+    assert status["is_possible"] is False
+    assert status["impossible_reason"] == {
+        "kind": "declaration_gap",
+        "missing_declarations": [],
+        "exceeded_limits": ["max_length"],
+    }
+    _cancel(client, request_headers, "chat", request_id)
+
+
 @pytest.mark.parametrize("conformance", ["strict", "best_effort"])
 def test_tools_beside_a_response_format_without_a_worker_serving_the_combination_report_the_gap(
     client,

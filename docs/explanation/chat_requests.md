@@ -138,14 +138,27 @@ only how faithfully the reply follows the request.
 
 The contract is held in three layers, each independent of the others. Routing sends a request only to a worker
 whose declaration covers it. Dispatch narrows what a job carries where the contract allows: under `tool_choice: none`
-the worker receives no tool definitions, so `none` needs no guarantee, and a `tool_choice` that specifies a function reaches the worker as
-that one function under `required`. The stored request keeps the client's values, and the submit checks the reply
-against them.
+the worker does not receive tool definitions, so `none` does not need a guarantee, and a `tool_choice` that specifies
+a function reaches the worker as that one function under `required`. The stored request keeps the client's values,
+and the submit checks the reply against them.
 
-The submit check trusts no declaration, so a false one costs the worker refused submissions rather than the requester
-a wrong reply. It verifies only what the payload proves. Under `strict` a call under `none`, a missing or other call
-under a forced choice, and content that is not the requested JSON or does not match a `strict` schema are refused;
-several calls under `parallel_tool_calls: false` are cut to the first, since an OpenAI client would only ever see one.
+```mermaid
+flowchart TD
+    A[Request created<br/>chat_required_features stored] --> B{Route: does an online<br/>worker's declaration cover<br/>features, guarantees, limits?}
+    B -->|no worker declares it| G[404 declaration gap<br/>or 400 limits gap]
+    B -->|none online for the model| Q[Request waits<br/>the front answers 503 after its grace]
+    B -->|yes| D[Narrow: build the job<br/>tool_choice none sends no tools<br/>a named function goes as required]
+    D --> S{Verify the submit against<br/>the stored request}
+    S -->|conforms| OK[Generation stored,<br/>charged and rewarded]
+    S -->|refused| RF[Job faulted on the worker<br/>request goes back to the queue]
+    RF -->|another attempt| B
+    RF -->|repeated faults| X[Request faulted<br/>the front answers 502]
+```
+
+The submit check does not trust declarations, so a false one costs the worker refused submissions and does not give
+the requester a wrong reply. It verifies only what the payload proves. Under `strict` a call under `none`, a missing
+or other call under a forced choice, and content that is not the requested JSON or does not match a `strict` schema
+are refused; several calls under `parallel_tool_calls: false` are cut to the first, since an OpenAI client would only ever see one.
 Under either mode a call to a function the client did not offer, or two calls sharing an id, is refused, because no
 client can dispatch or answer such a reply. A refused submit faults the job on the worker and counts towards faulting
 the request, so the check refuses only what OpenAI would never return. A trimmed prompt or a hidden tool-selection pass

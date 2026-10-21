@@ -34,7 +34,7 @@ from tests.unit.oai.conftest import (
     wait_for_call,
     waiting_status,
 )
-from tests.unit.oai.test_chat_front import data_payloads, parse_sse_events
+from tests.unit.oai.test_chat_front import MODEL_LIST, data_payloads, parse_sse_events
 
 pytestmark = pytest.mark.asyncio
 
@@ -446,6 +446,92 @@ async def test_an_exceeded_limit_is_404_naming_the_limit(start_front: StartFront
     assert error["code"] == "no_worker_supports_features"
     assert "exceeds the tools_max_temperature limit" in error["message"]
     assert "best_effort" not in error["message"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_an_exceeded_completion_limit_is_400_on_max_tokens_stating_the_largest_declared(
+    start_front: StartFront,
+    stream: bool,
+) -> None:
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=MODEL_LIST)
+        front.horde.status_payload = gap_status(missing_declarations=[], exceeded_limits=["max_length"])
+        started_at = time.monotonic()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream))
+        elapsed_seconds = time.monotonic() - started_at
+
+    assert elapsed_seconds < FAST_TEST_SETTINGS.fail_fast_grace_seconds / 2
+    assert front.horde.cancel_route.call_count == 1
+    assert response.headers[SHOULD_RETRY] == "false"
+    assert "retry-after" not in response.headers
+    if stream:
+        assert response.status_code == 200
+        error = json.loads(data_payloads(parse_sse_events(response.text))[0])["error"]
+    else:
+        assert response.status_code == 400
+        error = response.json()["error"]
+    assert error == {
+        "message": (
+            "No worker eligible for this request currently declares a completion limit that high; the largest any online "
+            "worker for the model declares now is 1024 tokens. The request was cancelled."
+        ),
+        "type": "invalid_request_error",
+        "param": "max_tokens",
+        "code": "no_worker_supports_limit",
+        "metadata": {"request_id": REQUEST_ID},
+    }
+
+
+async def test_an_exceeded_context_limit_alone_is_400_on_the_context_length(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=MODEL_LIST)
+        front.horde.status_payload = gap_status(missing_declarations=[], exceeded_limits=["max_context_length"])
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["param"] == "horde.max_context_length"
+    assert error["message"].startswith(
+        "No worker eligible for this request currently declares a context length that high; "
+        "the largest any online worker for the model declares now is 8192 tokens.",
+    )
+
+
+async def test_both_exceeded_size_limits_are_400_on_max_tokens_stating_each(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=MODEL_LIST)
+        front.horde.status_payload = gap_status(missing_declarations=[], exceeded_limits=["max_context_length", "max_length"])
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["param"] == "max_tokens"
+    assert "completion limit that high; the largest any online worker for the model declares now is 1024 tokens." in error["message"]
+    assert "context length that high; the largest any online worker for the model declares now is 8192 tokens." in error["message"]
+
+
+async def test_an_exceeded_size_limit_of_a_model_missing_from_the_list_states_the_limit_name(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = gap_status(missing_declarations=[], exceeded_limits=["max_length"])
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == (
+        "No worker eligible for this request currently declares a completion limit (max_length) that high. The request was cancelled."
+    )
+
+
+async def test_an_exceeded_size_limit_beside_another_gap_keeps_the_404(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=MODEL_LIST)
+        front.horde.status_payload = gap_status(missing_declarations=["tools"], exceeded_limits=["max_length"])
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 404
+    error = response.json()["error"]
+    assert error["code"] == "no_worker_supports_features"
+    assert "declares tools" in error["message"]
+    assert "exceeds the max_length limit" in error["message"]
 
 
 async def test_an_impossible_reason_of_an_unknown_kind_waits_out_the_grace(start_front: StartFront) -> None:
