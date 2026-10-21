@@ -524,6 +524,7 @@ class ProcessingGeneration(db.Model):
         if not restarts_job and not request_faulted:
             request_stranded = self.wp.mark_faulted_when_stranded()
         db.session.commit()
+        self.end_progress_after_fault()
         if request_faulted:
             self.wp.report_repeated_faults()
         if request_stranded:
@@ -539,6 +540,13 @@ class ProcessingGeneration(db.Model):
     def restarts_after_fault(self) -> bool:
         """Return whether a worker's fault of this generation puts its job back on the request; it always does."""
         return True
+
+    def end_progress_after_fault(self) -> None:
+        """Tell a reader of this generation's progress that the attempt ended; a generation does not stream progress by default.
+
+        Runs once the fault is committed and before the request's own fault is reported, so a reader learns that the
+        attempt ended before it learns that the request did.
+        """
 
     def log_worker_abort(self) -> None:
         """Count this generation's abort on its worker as a dropped job."""

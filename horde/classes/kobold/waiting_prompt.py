@@ -97,10 +97,11 @@ class TextWaitingPrompt(WaitingPrompt):
     other text request. Deferred, so only the request a worker is assigned loads it. ``prompt`` then holds the
     flattened messages, which only the token estimate, kudos and moderation read."""
     chat_extras = db.deferred(db.Column(json_column_type(none_as_null=True), nullable=True))
-    """The ``tools``, ``tool_choice``, ``parallel_tool_calls`` and ``response_format`` a chat request applies, from
-    [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras], each only when set and in the shape
-    the client sent; NULL when it applies none and on every other text request. Deferred like ``messages``, and added
-    to the job payload at pop as stored."""
+    """The ``tools``, ``tool_choice``, ``parallel_tool_calls`` and ``response_format`` a chat request applies, and the
+    ``stream_progress`` hint, from
+    [`build_stored_chat_extras`][horde.classes.kobold.chat_request.build_stored_chat_extras], each only when set and in
+    the shape the client sent; NULL when it has none and on every other text request. Deferred like ``messages``, and
+    added to the job payload at pop as stored."""
     chat_required_features = db.Column(text_array_column_type, nullable=True)
     """The capability and guarantee names a chat request needs under its conformance mode, from
     [`required_chat_features`][horde.classes.kobold.chat_request.required_chat_features], written once when the

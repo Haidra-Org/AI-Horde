@@ -11,6 +11,7 @@ from horde.bridge_reference import (
     is_backed_validated,
     parse_bridge_agent,
 )
+from horde.chat_progress import end_progress_stream, release_stream_lease, write_stream_lease
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.processing_generation import ProcessingGeneration, json_column_type
 from horde.classes.kobold.chat_request import (
@@ -18,6 +19,7 @@ from horde.classes.kobold.chat_request import (
     MAX_CHAT_REFUSAL_RC_LENGTH,
     ChargeBasis,
     chat_reply_characters,
+    streams_progress,
 )
 from horde.classes.kobold.genstats import record_text_statistic
 from horde.flask import db
@@ -123,6 +125,40 @@ class TextProcessingGeneration(ProcessingGeneration):
     """The return code the Horde last refused this generation's reply with, written at the refusal. The worker's
     fault submit that follows is counted by it, so a worker cannot claim the exemption a nonconformant reply has from
     dropped jobs. NULL while no reply was refused and on text generations."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._write_stream_lease()
+
+    def _write_stream_lease(self) -> None:
+        """Write the stream lease of a chat generation whose client streams the reply.
+
+        Runs once the generation and its TTL are committed, so the lease lives exactly as long as the job may. The
+        request row and its extras are the ones the pop already loaded to build the job payload. A fake generation
+        gets a lease too, so its worker's posts are answered as a real generation's would be.
+        """
+        if not self.wp.is_chat or not streams_progress(self.wp.chat_extras):
+            return
+        owner = self.worker.user
+        write_stream_lease(
+            str(self.id),
+            request_id=str(self.wp_id),
+            worker_id=str(self.worker_id),
+            model=self.model,
+            owner_id=owner.id,
+            owner_api_key=owner.api_key,
+            max_length=self.wp.max_length,
+            job_ttl=self.job_ttl,
+            fake=bool(self.fake),
+        )
+
+    def end_progress_after_fault(self) -> None:
+        """Append the ended marker for a faulted chat generation that holds a stream lease, and delete the lease.
+
+        Reads the lease rather than the request's extras, so the stale-generation thread does not load a deferred column.
+        """
+        if self.wp.is_chat:
+            end_progress_stream(str(self.id), str(self.wp_id))
 
     def _censorship_state(self) -> str:
         """Determine the state string for this procgen based on its censorship flags."""
@@ -300,6 +336,9 @@ class TextProcessingGeneration(ProcessingGeneration):
         if kudos in (-1, 0):
             return kudos
         if self.wp.is_chat:
+            # The submit route verified the reply against the extras, so reading the hint does not load anything more.
+            if streams_progress(self.wp.chat_extras):
+                release_stream_lease(str(self.id))
             self._publish_chat_progress()
         return kudos
 

@@ -230,5 +230,5 @@ the notice text.
 - [Send chat completions through the OpenAI-compatible front](send_chat_completions.md): every accepted and refused
   key, the `horde` object, images, errors and limits.
 - [Chat front reference](../reference/chat_front.md): the response, stream chunk and model card shapes.
-- The [chat requests explanation](../explanation/chat_requests.md): why the front refuses unknown keys and delivers
-  the reply in one chunk.
+- The [chat requests explanation](../explanation/chat_requests.md): why the front refuses unknown keys and streams
+  the reply as deltas for plain requests and whole for tools or structured output.

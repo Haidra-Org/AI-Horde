@@ -103,7 +103,7 @@ dev = [
     "pytest-asyncio",
     "pytest-cov",
     "sqlparse",
-    "fakeredis",
+    "fakeredis[lua]",
     "freezegun",
     "testcontainers[postgres,redis]",
     "mypy",

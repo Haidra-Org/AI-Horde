@@ -46,6 +46,7 @@ directory is read too. A variable that is set but invalid stops the start with a
 | `HORDE_OAI_LISTEN` | `0.0.0.0` | Address to bind. |
 | `HORDE_OAI_PORT` | `7002` | Port to bind. |
 | `HORDE_OAI_REDIS_URL` | unset | Redis URL of the horde's primary Redis, such as `redis://redis:6379/7`. Pub/sub ignores the logical database, so only the host matters. Unset, every request waits on the fallback poll alone. |
+| `HORDE_OAI_STREAM_REDIS_DB` | `7` | The logical database, on the host of `HORDE_OAI_REDIS_URL`, the horde appends chat content deltas to: its chat signal database. The front reads it on a separate client, whatever database the URL selects. Unused without `HORDE_OAI_REDIS_URL`. |
 | `HORDE_OAI_REDIS_LIVENESS_SECONDS` | `30` | How long the signal subscription may receive nothing before the front sends a PING, and how long the PONG may take. A missing PONG sets `signal_subscribed: false` on `/healthz` and the front subscribes again, so a connection a network fault black-holes does not pass for an idle one. The front also turns on TCP keepalive for this connection. |
 | `HORDE_OAI_PROXY_PASSKEY` | unset | The front operator's service account proxy passkey. When set, the front sends it as `Proxy-Authorization` with the client's address as `Proxied-For`, so IP timeouts and suspicion apply to the client. |
 | `HORDE_OAI_MAX_INFLIGHT` | `1000` | Open requests per process before 503 `FrontAtCapacity`. A request holds its slot until it ends, including its cancel, so when the horde stalls the cap trips at this value divided by the request budget per second; it detects a stall and does not limit throughput. It also sizes the cancel pool: one cancel slot per 20 open requests, at least 16. |
@@ -161,10 +162,11 @@ The front's log carries one line per request:
 on most requests means signals are not arriving.
 
 Add `"stream": true` (and optionally `"stream_options": {"include_usage": true}`) to receive server-sent events
-instead: `: horde queue_position=7 wait_time=42` comments while the request waits, then a role chunk, one content
-chunk with the whole text, a finish chunk carrying `x_horde`, the usage chunk with `choices: []` when asked for, and
-`data: [DONE]`. The horde generates the whole text before it reports it, so the content arrives in one chunk. The
-response carries `Cache-Control: no-cache`, `X-Accel-Buffering: no` and `x-should-retry: false`.
+instead: `: horde queue_position=7 wait_time=42` comments while the request waits, then a role chunk, content
+chunks, a finish chunk carrying `x_horde`, the usage chunk with `choices: []` when asked for, and
+`data: [DONE]`. A plain request gets its content as the worker posts progress, one chunk per post; a request with
+tools or structured output gets the whole text in one chunk. The response carries `Cache-Control: no-cache`,
+`X-Accel-Buffering: no` and `x-should-retry: false`.
 
 The same request works from an OpenAI SDK by pointing its base URL at `http://<front-host>:7002/v1` and using the horde
 API key as the SDK's API key.

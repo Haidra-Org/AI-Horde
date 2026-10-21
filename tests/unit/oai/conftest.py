@@ -5,7 +5,7 @@
 """Fixtures running the chat front in process against a mocked Horde and an in-process fake Redis.
 
 [`FakeHorde`][tests.unit.oai.conftest.FakeHorde] answers the Horde routes the front calls through ``respx`` and lets a
-test change the status a request reports and publish its completion signal. The front is driven through
+test change the status a request reports, publish its completion signal and append to its delta stream. The front is driven through
 ``httpx.ASGITransport``, which runs the app to completion before returning, so a streamed response arrives whole.
 [`call_raw`][tests.unit.oai.conftest.call_raw] drives the app over raw ASGI where a test controls the body's arrival or
 the client's disconnect. Each front records its metrics on its own meter provider with an in-memory reader, read
@@ -33,7 +33,7 @@ from opentelemetry.sdk.metrics.export import Gauge, Histogram, InMemoryMetricRea
 from horde.oai.app import create_app
 from horde.oai.metrics import METER_NAME, FrontMetrics, histogram_views
 from horde.oai.settings import FrontSettings
-from horde.oai.waiter import CHAT_SIGNAL_CHANNEL_PREFIX
+from horde.oai.waiter import CHAT_SIGNAL_CHANNEL_PREFIX, DELTA_STREAM_KEY_PREFIX
 
 HORDE_URL: str = "http://horde.test/api"
 """The Horde API root the mocked routes live under."""
@@ -169,13 +169,15 @@ def done_generation(
     native_finish_reason: str | None = "length",
     prompt_tokens: int | None = 21,
     completion_tokens: int | None = 6,
+    worker_id: str = "worker-1",
+    model: str = MODEL_NAME,
 ) -> dict[str, Any]:
     """Return one finished generation in the native chat status shape."""
     return {
         "text": content,
         "message": {"role": "assistant", "content": content},
-        "model": MODEL_NAME,
-        "worker_id": "worker-1",
+        "model": model,
+        "worker_id": worker_id,
         "worker_name": "Test Worker",
         "state": "ok",
         "seed": 7,
@@ -208,8 +210,16 @@ def done_status(**generation_overrides: Any) -> dict[str, Any]:
 class FakeHorde:
     """A mocked Horde whose status for the one request a test changes as it goes."""
 
-    def __init__(self, router: respx.MockRouter, redis_client: fakeredis.FakeAsyncRedis) -> None:
-        """Mock the Horde routes on ``router``; signals are published on ``redis_client``."""
+    def __init__(
+        self,
+        router: respx.MockRouter,
+        redis_client: fakeredis.FakeAsyncRedis,
+        stream_redis_client: fakeredis.FakeAsyncRedis | None = None,
+    ) -> None:
+        """Mock the Horde routes on ``router``; signals are published on ``redis_client`` and deltas appended on
+        ``stream_redis_client``."""
+        self.stream_redis_client: fakeredis.FakeAsyncRedis | None = stream_redis_client
+        """The database the request's delta stream is appended to, or None when the front does not read deltas."""
         self.status_payload: dict[str, Any] = waiting_status()
         """The body the status route returns."""
         self.status_code: int = 200
@@ -261,6 +271,52 @@ class FakeHorde:
             json.dumps({"id": REQUEST_ID, "event": event, "generations": 1, **fault_details}),
         )
 
+    async def append_delta(
+        self,
+        generation_id: str,
+        seq: int,
+        content: str,
+        *,
+        worker_id: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        """Append a content delta of ``generation_id`` to the request's delta stream, as the progress route does.
+
+        ``worker_id`` and ``model`` are the lease fields the append copies into the entry; None leaves the field out, as
+        an entry from a Horde that does not write it.
+        """
+        fields = {"gen": generation_id, "seq": str(seq), "content": content}
+        if worker_id is not None:
+            fields["worker"] = worker_id
+        if model is not None:
+            fields["model"] = model
+        await self._append_stream_entry(fields)
+
+    async def end_generation(self, generation_id: str) -> None:
+        """Append the marker that ``generation_id`` faulted, as the Horde does when it restarts the request."""
+        await self._append_stream_entry({"gen": generation_id, "ended": "1"})
+
+    async def delete_stream(self) -> None:
+        """Delete the request's delta stream, as its expiry or a Redis failover that lost the key does."""
+        assert self.stream_redis_client is not None, "The front was started without a delta stream database."
+        await self.stream_redis_client.delete(f"{DELTA_STREAM_KEY_PREFIX}{REQUEST_ID}")
+
+    async def expire_stream(self, milliseconds: int) -> None:
+        """Set the request's delta stream to expire after ``milliseconds``."""
+        assert self.stream_redis_client is not None, "The front was started without a delta stream database."
+        await self.stream_redis_client.pexpire(f"{DELTA_STREAM_KEY_PREFIX}{REQUEST_ID}", milliseconds)
+
+    async def append_entry_with_id(self, entry_id: str, fields: dict[str, str]) -> None:
+        """Append ``fields`` to the request's delta stream under the explicit ``entry_id``, as a stream recreated after
+        a failover may hold ids below those already read."""
+        assert self.stream_redis_client is not None, "The front was started without a delta stream database."
+        await self.stream_redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}{REQUEST_ID}", fields, id=entry_id)
+
+    async def _append_stream_entry(self, fields: dict[str, str]) -> None:
+        """Append ``fields`` as one entry of the request's delta stream."""
+        assert self.stream_redis_client is not None, "The front was started without a delta stream database."
+        await self.stream_redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}{REQUEST_ID}", fields)
+
     async def finish_later(self, delay_seconds: float, *, signal: bool = True, **generation_overrides: Any) -> None:
         """Mark the request done after ``delay_seconds`` and publish ``done`` when ``signal`` is set."""
         await asyncio.sleep(delay_seconds)
@@ -295,7 +351,7 @@ class RunningFront:
 
 
 StartFront = Callable[..., AbstractAsyncContextManager[RunningFront]]
-"""Start a front with optional settings and Redis overrides; see the ``start_front`` fixture."""
+"""Start a front with optional settings, Redis and delta stream overrides; see the ``start_front`` fixture."""
 
 
 @pytest_asyncio.fixture
@@ -303,18 +359,25 @@ async def start_front() -> AsyncIterator[StartFront]:
     """Return a context manager factory that runs a front against a mocked Horde for one test."""
 
     @asynccontextmanager
-    async def run_front(settings: FrontSettings = FAST_TEST_SETTINGS, *, with_redis: bool = True) -> AsyncIterator[RunningFront]:
+    async def run_front(
+        settings: FrontSettings = FAST_TEST_SETTINGS,
+        *,
+        with_redis: bool = True,
+        with_deltas: bool = False,
+    ) -> AsyncIterator[RunningFront]:
         redis_client = fakeredis.FakeAsyncRedis()
+        stream_redis_client = fakeredis.FakeAsyncRedis() if with_deltas else None
         metric_reader = InMemoryMetricReader()
         meter_provider = MeterProvider(metric_readers=[metric_reader], views=histogram_views())
         with respx.mock(assert_all_called=False) as router:
-            horde = FakeHorde(router, redis_client)
+            horde = FakeHorde(router, redis_client, stream_redis_client)
             async with httpx.AsyncClient() as horde_http_client:
                 app = create_app(
                     settings,
                     http_client=horde_http_client,
                     cancel_http_client=horde_http_client,
                     redis_client=redis_client if with_redis else None,
+                    stream_redis_client=stream_redis_client,
                     meter=meter_provider.get_meter(METER_NAME),
                 )
                 transport = httpx.ASGITransport(app=app)
@@ -324,6 +387,8 @@ async def start_front() -> AsyncIterator[StartFront]:
                             assert await app.state.front.listener.wait_until_subscribed(SUBSCRIBE_TIMEOUT_SECONDS)
                         yield RunningFront(app=app, client=front_client, horde=horde, metric_reader=metric_reader)
         await redis_client.close()
+        if stream_redis_client is not None:
+            await stream_redis_client.close()
 
     yield run_front
 

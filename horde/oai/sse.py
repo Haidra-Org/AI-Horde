@@ -4,10 +4,12 @@
 
 """Render a streamed chat answer as server-sent events.
 
-The Horde produces the whole text before it reports a generation, so a stream is buffered: keepalive comments while
-the request waits (``: horde queue_position=7 wait_time=42``), then the finished completion as a role chunk, a
-content chunk when the reply has text, a tool-call chunk when it has calls, a finish chunk carrying ``x_horde``, the
-usage chunk when the client asked for it, and ``[DONE]``. The tool-call chunk carries every call whole with its
+A buffered stream sends keepalive comments while the request waits (``: horde queue_position=7 wait_time=42``), then
+the finished completion as a role chunk, a content chunk when the reply has text, a tool-call chunk when it has calls,
+a finish chunk carrying ``x_horde``, the usage chunk when the client asked for it, and ``[DONE]``. A relayed stream
+sends the role chunk and one content chunk per delta while the worker generates
+([`build_delta_events`][horde.oai.sse.build_delta_events]); its finished completion then sends only the content the
+deltas did not cover, and the chunks after it. The tool-call chunk carries every call whole with its
 ``index``, so a client that accumulates deltas rebuilds the calls. Nullable choice fields remain explicit; absent delta
 members are omitted.
 
@@ -36,6 +38,7 @@ __all__ = [
     "DONE_MARKER",
     "KEEPALIVE_COMMENT_PREFIX",
     "build_completion_events",
+    "build_delta_events",
     "build_error_events",
     "build_keepalive_event",
 ]
@@ -64,13 +67,63 @@ def build_keepalive_event(status: HordeChatStatus | None) -> ServerSentEvent:
     return ServerSentEvent(comment=" ".join(comment_parts))
 
 
-def build_completion_events(completion: ChatCompletionResponse, *, include_usage: bool) -> list[ServerSentEvent]:
+def build_delta_events(
+    *,
+    completion_id: str,
+    created: int,
+    model: str,
+    content: str,
+    first: bool,
+    include_usage: bool,
+    system_fingerprint: str | None,
+) -> list[ServerSentEvent]:
+    """Create the events that relay one content delta of the first choice while the worker generates.
+
+    Args:
+        completion_id: The completion id every chunk of the stream carries.
+        created: When the request was submitted, in Unix seconds.
+        model: The model the client asked for.
+        content: The delta's text.
+        first: Whether this is the stream's first delta, which the role chunk precedes.
+        include_usage: Whether the client asked for usage, which writes a null ``usage`` in every chunk.
+        system_fingerprint: The fingerprint of the relayed generation's worker and model; None when the delta stream
+            does not carry the worker.
+    """
+    deltas = [ChatCompletionChunkDelta(content=content)]
+    if first:
+        deltas.insert(0, ChatCompletionChunkDelta(role="assistant"))
+    return [
+        _chunk_event(
+            ChatCompletionChunk(
+                completion_id=completion_id,
+                created=created,
+                model=model,
+                choices=[ChatCompletionChunkChoice(index=0, delta=delta)],
+                system_fingerprint=system_fingerprint,
+            ),
+            include_usage=include_usage,
+        )
+        for delta in deltas
+    ]
+
+
+def build_completion_events(
+    completion: ChatCompletionResponse,
+    *,
+    include_usage: bool,
+    relayed_content: str | None = None,
+) -> list[ServerSentEvent]:
     """Create the events that deliver a finished completion, ending with ``[DONE]``.
 
     Args:
         completion: The finished completion.
         include_usage: Whether to send the usage chunk the client asked for with ``stream_options.include_usage``.
+        relayed_content: The text already relayed as deltas, which the caller checked starts the content of the
+            completion's one choice; the role chunk is then left out and the content chunk carries only the rest, or
+            is left out when the relayed text is the whole content. None when the relay did not send a delta.
     """
+    if relayed_content is not None:
+        return _build_relayed_completion_events(completion, include_usage=include_usage, relayed_content=relayed_content)
     role_chunk = _build_chunk(
         completion,
         choices=[
@@ -103,6 +156,34 @@ def build_completion_events(completion: ChatCompletionResponse, *, include_usage
                 ],
             ),
         )
+    events = [
+        _chunk_event(role_chunk, include_usage=include_usage),
+        *(_chunk_event(body_chunk, include_usage=include_usage) for body_chunk in body_chunks),
+    ]
+    return [*events, *_build_closing_events(completion, include_usage=include_usage)]
+
+
+def _build_relayed_completion_events(
+    completion: ChatCompletionResponse,
+    *,
+    include_usage: bool,
+    relayed_content: str,
+) -> list[ServerSentEvent]:
+    """Create the events that finish a stream whose first choice's text was partly or wholly relayed as deltas."""
+    choice = completion.choices[0]
+    remainder = (choice.message.content or "")[len(relayed_content) :]
+    events: list[ServerSentEvent] = []
+    if remainder:
+        content_chunk = _build_chunk(
+            completion,
+            choices=[ChatCompletionChunkChoice(index=choice.index, delta=ChatCompletionChunkDelta(content=remainder))],
+        )
+        events.append(_chunk_event(content_chunk, include_usage=include_usage))
+    return [*events, *_build_closing_events(completion, include_usage=include_usage)]
+
+
+def _build_closing_events(completion: ChatCompletionResponse, *, include_usage: bool) -> list[ServerSentEvent]:
+    """Create the finish chunk carrying ``x_horde``, the usage chunk when asked for, and ``[DONE]``."""
     finish_chunk = _build_chunk(
         completion,
         choices=[
@@ -116,11 +197,7 @@ def build_completion_events(completion: ChatCompletionResponse, *, include_usage
         ],
         x_horde=True,
     )
-    events = [
-        _chunk_event(role_chunk, include_usage=include_usage),
-        *(_chunk_event(body_chunk, include_usage=include_usage) for body_chunk in body_chunks),
-        _chunk_event(finish_chunk, include_usage=include_usage),
-    ]
+    events = [_chunk_event(finish_chunk, include_usage=include_usage)]
     if include_usage:
         usage_chunk = ChatCompletionChunk(
             completion_id=completion.completion_id,

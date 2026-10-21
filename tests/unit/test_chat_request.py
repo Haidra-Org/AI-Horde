@@ -45,6 +45,7 @@ from horde.classes.kobold.chat_request import (
     CHAT_IMAGE_PLACEHOLDER,
     CHAT_IMAGE_REFERENCE_PREFIX,
     CHAT_REQUEST_CONFLICT_RC,
+    CHAT_STREAM_PROGRESS_KEY,
     CHAT_SUBMIT_INVALID_RC,
     CHAT_SUBMIT_NONCONFORMANT_RC,
     DEFAULT_CHAT_MAX_TOKENS,
@@ -57,6 +58,8 @@ from horde.classes.kobold.chat_request import (
     build_chat_messages_offload,
     build_chat_request_traits,
     build_model_names,
+    build_operation_fingerprint,
+    build_stored_chat_extras,
     build_stored_reply,
     build_text_params,
     build_worker_chat_extras,
@@ -77,6 +80,7 @@ from horde.classes.kobold.chat_request import (
     rewrite_message_texts,
     select_chat_transport,
     serialize_messages,
+    streams_progress,
     verify_chat_reply,
 )
 from horde.classes.kobold.processing_generation import is_empty_submission
@@ -659,6 +663,41 @@ class TestWorkerChatExtras:
 
     def test_a_request_without_extras_forwards_nothing(self) -> None:
         assert build_worker_chat_extras(None) == {}
+
+
+class TestStreamHint:
+    """``stream: true`` is stored as the stream hint and reaches the job payload, without changing the request."""
+
+    def test_a_streamed_request_stores_the_hint(self) -> None:
+        chat_extras = build_stored_chat_extras(parse_chat_request(_body(stream=True)))
+
+        assert chat_extras == {CHAT_STREAM_PROGRESS_KEY: True}
+        assert streams_progress(chat_extras)
+
+    @pytest.mark.parametrize("stream", [False, None])
+    def test_a_request_that_does_not_stream_stores_no_hint(self, stream: bool | None) -> None:
+        chat_extras = build_stored_chat_extras(parse_chat_request(_body(stream=stream)))
+
+        assert chat_extras is None
+        assert not streams_progress(chat_extras)
+
+    def test_the_hint_is_stored_beside_the_applied_keys(self) -> None:
+        chat_request = parse_chat_request(_body(stream=True, response_format={"type": "json_object"}))
+
+        assert build_stored_chat_extras(chat_request) == {
+            "response_format": {"type": "json_object"},
+            CHAT_STREAM_PROGRESS_KEY: True,
+        }
+
+    def test_the_hint_reaches_the_job_payload(self) -> None:
+        chat_extras = build_stored_chat_extras(parse_chat_request(_body(stream=True)))
+
+        assert build_worker_chat_extras(chat_extras) == {"stream_progress": True}
+
+    def test_the_hint_leaves_the_operation_fingerprint_unchanged(self) -> None:
+        streamed = build_operation_fingerprint(parse_chat_request(_body(stream=True)))
+
+        assert streamed == build_operation_fingerprint(parse_chat_request(_body()))
 
 
 class TestRequiredFeatures:

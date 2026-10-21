@@ -1272,7 +1272,9 @@ class ChatCompletionChunk(BaseModel):
     """The token counts, in the usage chunk only."""
 
     system_fingerprint: str | None = None
-    """The completion's ``system_fingerprint``; the same in every chunk of a stream."""
+    """The completion's ``system_fingerprint``; the same in every chunk of a stream. A relayed stream computes it from
+    the worker and model its first delta carries, and is null throughout only when the delta stream does not carry the
+    worker."""
 
     x_horde: HordeResponseDetails | None = None
     """The Horde-specific details, in the finish chunk only."""

@@ -11,6 +11,12 @@ channel for the whole process and hands each message to the request registered f
 requests share one Redis connection; messages for requests this process is not waiting on are dropped. A
 subscription that receives nothing is pinged, and one whose PONG does not arrive is dropped and made again.
 
+[`DeltaStreamReader`][horde.oai.waiter.DeltaStreamReader] reads the content deltas a worker posts while it generates.
+The Horde appends them to the stream ``horde:chat:stream:<request id>``; one task per process reads the streams of
+every registered request with a single blocking ``XREAD`` and queues each entry on that request's
+[`DeltaSubscription`][horde.oai.waiter.DeltaSubscription]. The block is short, so a request registered meanwhile
+joins the next read and one connection serves every request.
+
 [`ChatRequestWatcher`][horde.oai.waiter.ChatRequestWatcher] is the one wait implementation both response modes use.
 After the submit it reads the status once (the request may have finished before the registration), then sleeps until
 a signal, the jittered fallback poll, the fail-fast check or the deadline, and reads the status once on each wake.
@@ -69,6 +75,9 @@ __all__ = [
     "CompletionSignalListener",
     "CompletionSubscription",
     "DeclarationGapError",
+    "DeltaEntry",
+    "DeltaStreamReader",
+    "DeltaSubscription",
     "NoEligibleWorkerError",
     "WaitBudget",
     "WakeSource",
@@ -90,6 +99,29 @@ PONG_MESSAGE_TYPE: str = "pong"
 
 LISTENER_RECONNECT_DELAY_SECONDS: float = 2.0
 """How long the listener waits before subscribing again after a Redis error, so an outage does not spin the loop."""
+
+DELTA_STREAM_KEY_PREFIX: str = "horde:chat:stream:"
+"""The prefix of the stream the Horde appends a chat request's content deltas to; the request id follows it."""
+
+DELTA_STREAM_START_ID: str = "0-0"
+"""The stream id a registered request's first read starts after, so it receives every entry the stream holds."""
+
+DELTA_READ_BLOCK_MILLISECONDS: int = 250
+"""How long one ``XREAD`` blocks waiting for an entry.
+
+The reader reads the registered key set again after each block, so a newly registered request waits at most this long
+to join, and a delta reaches its client within it.
+"""
+
+DELTA_READ_COUNT: int = 100
+"""The most entries one ``XREAD`` returns per stream; a reader that fell behind catches up over several reads."""
+
+DELTA_READ_TIMEOUT_SECONDS: float = 5.0
+"""How long one ``XREAD`` may take before the connection is treated as dead and the read is made again.
+
+A blocking read answers within its block, so a read this far past it is on a connection a network fault
+black-holed; no PING is needed.
+"""
 
 MAX_STRETCHED_POLL_SECONDS: float = 60.0
 """The longest a stretched fallback poll interval grows, so a lost signal costs at most about a minute of extra wait."""
@@ -414,6 +446,175 @@ class CompletionSignalListener:
             channel_name = channel.decode("utf-8", "replace") if isinstance(channel, bytes) else str(channel)
             self.dispatch(channel_name, message.get("data", b""))
         raise redis.exceptions.ConnectionError("The chat signal subscription ended.")
+
+
+class DeltaEntry(BaseModel):
+    """Represents one entry of a request's delta stream: a content delta, or the marker that a generation ended."""
+
+    model_config = ConfigDict(frozen=True)
+
+    generation_id: str = Field(validation_alias="gen")
+    """The generation the entry belongs to: one attempt at the request."""
+
+    seq: int | None = None
+    """The delta's sequence number, from 1 per generation; None on an ended marker."""
+
+    content: str | None = None
+    """The text since the generation's previous delta; None on an ended marker."""
+
+    worker_id: str | None = Field(default=None, validation_alias="worker")
+    """The worker generating the delta; None on an ended marker and on a delta from a Horde that does not write it."""
+
+    model: str | None = None
+    """The model generating the delta; None on an ended marker and on a delta from a Horde that does not write it."""
+
+    ended: bool = False
+    """Whether the entry marks that the generation faulted and does not post more deltas."""
+
+
+class DeltaSubscription:
+    """Receive the delta stream entries of one request from the reader."""
+
+    def __init__(self, request_id: str) -> None:
+        """Create the subscription.
+
+        Args:
+            request_id: The Horde request id.
+        """
+        self.request_id: str = request_id
+        """The Horde request id."""
+        self.last_entry_id: str = DELTA_STREAM_START_ID
+        """The id of the last stream entry read for the request; the next read starts after it."""
+        self._entries: asyncio.Queue[DeltaEntry] = asyncio.Queue()
+
+    def deliver(self, entry: DeltaEntry) -> None:
+        """Mutate the subscription by queueing ``entry`` for the streaming request."""
+        self._entries.put_nowait(entry)
+
+    async def get(self) -> DeltaEntry:
+        """Return the next entry, waiting until one arrives."""
+        return await self._entries.get()
+
+    def take_queued(self) -> list[DeltaEntry]:
+        """Return every entry already queued, oldest first, without waiting."""
+        entries: list[DeltaEntry] = []
+        with contextlib.suppress(asyncio.QueueEmpty):
+            while True:
+                entries.append(self._entries.get_nowait())
+        return entries
+
+
+class DeltaStreamReader:
+    """Read the delta streams of every registered request over one Redis connection and queue their entries.
+
+    With no Redis client the reader is disabled: registering yields None and the request is delivered whole.
+
+    Concurrency:
+        Registration and delivery run on the event loop, so the registry does not need a lock.
+    """
+
+    def __init__(self, redis_client: redis.asyncio.Redis | None) -> None:
+        """Create the reader.
+
+        Args:
+            redis_client: The client for the Redis database the Horde appends delta streams to, or None.
+        """
+        self._redis_client = redis_client
+        self._subscriptions: dict[str, DeltaSubscription] = {}
+        self._registered = asyncio.Event()
+        self._reader_task: asyncio.Task[None] | None = None
+
+    @property
+    def enabled(self) -> bool:
+        """Return whether the reader has a Redis client to read from."""
+        return self._redis_client is not None
+
+    async def start(self) -> None:
+        """Start reading in a background task; does nothing without a Redis client."""
+        if self._redis_client is None or self._reader_task is not None:
+            return
+        self._reader_task = asyncio.create_task(self._read_forever(self._redis_client), name="horde-oai-delta-reader")
+
+    async def stop(self) -> None:
+        """Stop the background reader."""
+        if self._reader_task is None:
+            return
+        self._reader_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._reader_task
+        self._reader_task = None
+
+    @contextlib.contextmanager
+    def register(self, request_id: str) -> Iterator[DeltaSubscription | None]:
+        """Context manager that routes ``request_id``'s stream entries to a new subscription until it exits.
+
+        Yields None when the reader is disabled.
+
+        Args:
+            request_id: The Horde request id; one request has at most one registration.
+        """
+        if self._redis_client is None:
+            yield None
+            return
+        subscription = DeltaSubscription(request_id)
+        self._subscriptions[request_id] = subscription
+        self._registered.set()
+        try:
+            yield subscription
+        finally:
+            if self._subscriptions.get(request_id) is subscription:
+                del self._subscriptions[request_id]
+
+    async def read_once(self, redis_client: redis.asyncio.Redis) -> None:
+        """Read the registered streams once, blocking up to the read block, and queue each entry on its subscription.
+
+        A malformed entry is skipped with a warning; the read position still moves past it.
+
+        Raises:
+            redis.exceptions.RedisError: The read failed.
+            TimeoutError: The read did not answer within the read timeout.
+        """
+        stream_ids = {
+            f"{DELTA_STREAM_KEY_PREFIX}{request_id}": subscription.last_entry_id for request_id, subscription in self._subscriptions.items()
+        }
+        if not stream_ids:
+            return
+        replies = await asyncio.wait_for(
+            redis_client.xread(
+                stream_ids,
+                count=DELTA_READ_COUNT,
+                block=DELTA_READ_BLOCK_MILLISECONDS,
+            ),
+            DELTA_READ_TIMEOUT_SECONDS,
+        )
+        for stream_key, stream_entries in replies or ():
+            request_id = _decode_text(stream_key).removeprefix(DELTA_STREAM_KEY_PREFIX)
+            subscription = self._subscriptions.get(request_id)
+            if subscription is None:
+                continue
+            for entry_id, entry_fields in stream_entries:
+                subscription.last_entry_id = _decode_text(entry_id)
+                fields = {_decode_text(field): _decode_text(value) for field, value in entry_fields.items()}
+                try:
+                    entry = DeltaEntry.model_validate(fields)
+                except ValidationError as error:
+                    logger.warning(f"Ignoring a malformed delta of chat request {request_id}: {error}")
+                    continue
+                subscription.deliver(entry)
+
+    async def _read_forever(self, redis_client: redis.asyncio.Redis) -> None:
+        """Read the registered streams until cancelled, waiting while none is registered and reading again after a
+        Redis error."""
+        while True:
+            if not self._subscriptions:
+                self._registered.clear()
+                await self._registered.wait()
+                continue
+            try:
+                await self.read_once(redis_client)
+            except (redis.exceptions.RedisError, OSError, TimeoutError) as error:
+                logger.warning(f"Reading chat delta streams failed; streamed requests are delivered whole until it returns: {error}")
+                await asyncio.sleep(LISTENER_RECONNECT_DELAY_SECONDS)
 
 
 class ChatRequestWatcher:

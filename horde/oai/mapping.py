@@ -23,7 +23,7 @@ from typing import cast
 
 from horde_sdk.generation_parameters.text.chat_policy import ChatFeature, ChatGuarantee
 
-from horde.chat_contract import ChatTool, ChatToolCall
+from horde.chat_contract import ChatTextResponseFormat, ChatTool, ChatToolCall
 from horde.oai.horde_client import HordeActiveModel, HordeChatGeneration, HordeChatStatus
 from horde.oai.schema import (
     ChatCompletionChoice,
@@ -61,6 +61,7 @@ __all__ = [
     "flatten_messages",
     "generation_content",
     "generation_tool_calls",
+    "relays_deltas",
 ]
 
 CHARACTERS_PER_ESTIMATED_TOKEN: int = 3
@@ -100,7 +101,14 @@ NATIVE_BODY_EXCLUDED_KEYS: frozenset[str] = frozenset(
         "metadata",
     },
 )
-"""Request keys the front applies or drops itself and never forwards: streaming is the front's, annotations are unused."""
+"""Request keys the front applies or drops itself and never forwards: streaming is the front's, annotations are unused.
+
+``stream: true`` is written back for a request whose deltas the front relays; see
+[`build_native_chat_body`][horde.oai.mapping.build_native_chat_body]."""
+
+NATIVE_STREAM_KEY: str = "stream"
+"""The native body key that stores the stream hint, which makes the Horde write the progress lease at pop and tell
+the worker to post its deltas."""
 
 HORDE_OPTIONS_KEY: str = "horde"
 """The native body key of the Horde extension object."""
@@ -197,7 +205,12 @@ def build_system_fingerprint(worker_id: str | None, model: str) -> str | None:
     return f"{SYSTEM_FINGERPRINT_PREFIX}{serving_digest[:SYSTEM_FINGERPRINT_HEX_CHARACTERS]}"
 
 
-def build_native_chat_body(chat_request: ChatCompletionRequest, *, operation_key: uuid.UUID) -> dict[str, object]:
+def build_native_chat_body(
+    chat_request: ChatCompletionRequest,
+    *,
+    operation_key: uuid.UUID,
+    relay_deltas: bool = False,
+) -> dict[str, object]:
     """Create the native ``POST /v2/generate/chat/async`` body for a validated request.
 
     Omitted and null keys stay omitted, so the native route fills its defaults; ``developer`` messages, message
@@ -210,6 +223,8 @@ def build_native_chat_body(chat_request: ChatCompletionRequest, *, operation_key
         chat_request: The validated request, after the default no-op keys were dropped.
         operation_key: The key claiming this submission for its user, sent as ``horde.operation_key``; a re-sent
             submit carries the same key and body so the native route returns the request it already created.
+        relay_deltas: Whether the front relays the request's content deltas, which forwards ``stream: true`` so the
+            Horde asks the worker to post them.
     """
     native_body = chat_request.model_dump(
         mode="json",
@@ -222,12 +237,31 @@ def build_native_chat_body(chat_request: ChatCompletionRequest, *, operation_key
     for native_message, message in zip(native_messages, chat_request.messages, strict=True):
         if message.content is None:
             native_message["content"] = None
+    if relay_deltas:
+        native_body[NATIVE_STREAM_KEY] = True
     horde_options = native_body.get(HORDE_OPTIONS_KEY)
     native_body[HORDE_OPTIONS_KEY] = {
         **(horde_options if isinstance(horde_options, dict) else {}),
         OPERATION_KEY_OPTION: str(operation_key),
     }
     return native_body
+
+
+def relays_deltas(chat_request: ChatCompletionRequest) -> bool:
+    """Return whether the front relays the worker's content deltas for ``chat_request`` as they are generated.
+
+    Only a streamed request without ``tools`` and with no ``response_format`` other than ``text`` is relayed. The
+    Horde verifies a reply's tool calls and, under strict conformance, its structured output only once the reply is
+    complete, so text relayed before that check could belong to a reply it then refuses; tool calls also do not
+    stream on most chat templates. Every other streamed request is delivered whole when it finishes.
+
+    Args:
+        chat_request: The validated request, after the default no-op keys were dropped.
+    """
+    if chat_request.stream is not True or chat_request.tools:
+        return False
+    response_format = chat_request.response_format
+    return response_format is None or isinstance(response_format, ChatTextResponseFormat)
 
 
 def build_model_card(active_model: HordeActiveModel) -> ModelCard | None:

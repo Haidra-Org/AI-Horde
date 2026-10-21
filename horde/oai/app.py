@@ -34,7 +34,7 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from enum import StrEnum
 from http import HTTPStatus
 from types import MappingProxyType
@@ -86,11 +86,14 @@ from horde.oai.horde_client import (
 from horde.oai.mapping import (
     CompletionWithoutGenerationError,
     build_completion,
+    build_completion_id,
     build_error_envelope,
     build_model_card,
     build_native_chat_body,
+    build_system_fingerprint,
+    relays_deltas,
 )
-from horde.oai.metrics import CancelOutcome, FrontMetrics, get_front_meter
+from horde.oai.metrics import CancelOutcome, FrontMetrics, RelayOutcome, get_front_meter
 from horde.oai.schema import (
     BAD_REQUEST_CODE,
     CHAT_REQUEST_CONFLICT_CODE,
@@ -111,7 +114,7 @@ from horde.oai.schema import (
     find_refused_parameter,
 )
 from horde.oai.settings import FrontSettings
-from horde.oai.sse import build_completion_events, build_error_events, build_keepalive_event
+from horde.oai.sse import build_completion_events, build_delta_events, build_error_events, build_keepalive_event
 from horde.oai.waiter import (
     TRANSIENT_STATUS_CODES,
     ChatDoneWithoutGenerationError,
@@ -120,6 +123,9 @@ from horde.oai.waiter import (
     CompletionSignalListener,
     CompletionSubscription,
     DeclarationGapError,
+    DeltaEntry,
+    DeltaStreamReader,
+    DeltaSubscription,
     NoEligibleWorkerError,
     WaitBudget,
     WakeSource,
@@ -128,6 +134,7 @@ from horde.oai.waiter import (
 __all__ = [
     "CancelState",
     "ChatFrontError",
+    "DeltaRelay",
     "FrontState",
     "InflightLimiter",
     "InflightSlot",
@@ -202,6 +209,11 @@ FAULTED_CODE: str = "ChatRequestFaulted"
 NO_GENERATION_CODE: str = "ChatRequestNoGeneration"
 """The error code of a request the Horde settled done, not faulted and without a finished generation, such as one
 cancelled before any generation, which leaves no reply to deliver."""
+
+STREAM_DIVERGED_CODE: str = "ChatStreamDiverged"
+"""The error code of a relayed stream that cannot finish with the text it already sent: the generation it relayed
+was replaced or ended, a delta of it arrived out of sequence, or the final reply does not start with the relayed
+text."""
 
 WORKER_FAULT_RC: str = "ChatWorkerFault"
 """The return code the Horde stores with a faulted request's reason when a worker reported why it faulted a job,
@@ -515,6 +527,7 @@ class FrontState:
         settings: FrontSettings,
         horde_client: HordeClient,
         listener: CompletionSignalListener,
+        delta_reader: DeltaStreamReader,
         front_metrics: FrontMetrics,
     ) -> None:
         """Create the state and register the in-flight gauges on ``front_metrics``.
@@ -523,6 +536,7 @@ class FrontState:
             settings: The front's settings.
             horde_client: The Horde client.
             listener: The completion signal listener.
+            delta_reader: The reader of the content delta streams.
             front_metrics: The front's instruments.
         """
         self.settings: FrontSettings = settings
@@ -531,6 +545,8 @@ class FrontState:
         """The Horde client."""
         self.listener: CompletionSignalListener = listener
         """The completion signal listener."""
+        self.delta_reader: DeltaStreamReader = delta_reader
+        """The reader of the content delta streams."""
         self.inflight_limiter: InflightLimiter = InflightLimiter(
             max_inflight=settings.max_inflight,
             max_inflight_per_source=settings.max_inflight_per_source,
@@ -582,6 +598,7 @@ def create_app(
     http_client: httpx.AsyncClient | None = None,
     cancel_http_client: httpx.AsyncClient | None = None,
     redis_client: redis.asyncio.Redis | None = None,
+    stream_redis_client: redis.asyncio.Redis | None = None,
     meter: Meter | None = None,
 ) -> FastAPI:
     """Create the chat front application.
@@ -594,12 +611,16 @@ def create_app(
             [`cancel_max_connections`][horde.oai.horde_client.cancel_max_connections] that the app closes on shutdown.
         redis_client: The client for the Horde's chat signal database; None creates one from ``settings.redis_url``
             when it is set, and otherwise requests wait on the fallback poll alone.
+        stream_redis_client: The client for the Redis database the Horde appends content delta streams to; None
+            creates one from ``settings.redis_url`` on ``settings.stream_redis_db`` when ``redis_url`` is set and no
+            ``redis_client`` is given, and otherwise streamed requests are delivered whole.
         meter: The meter the front's instruments are created on; None takes it from the global meter provider, which
             ``logfire.configure`` installs.
 
     Returns:
-        The application; its lifespan starts the signal listener and the failed cancel retry sweep and, on stop,
-        cancels every open request within ``settings.shutdown_cancel_seconds`` before closing the subscription.
+        The application; its lifespan starts the signal listener, the delta reader and the failed cancel retry sweep
+        and, on stop, cancels every open request within ``settings.shutdown_cancel_seconds`` before closing the
+        subscription and the reader.
     """
     cancel_connections = cancel_max_connections(settings.max_inflight)
     owned_http_clients: list[httpx.AsyncClient] = []
@@ -616,6 +637,9 @@ def create_app(
         redis_client = redis.asyncio.Redis.from_url(settings.redis_url, socket_keepalive=True)
     if redis_client is None:
         logger.warning("HORDE_OAI_REDIS_URL is not set; chat requests wait on the fallback poll alone.")
+    if stream_redis_client is None and owns_redis_client and settings.redis_url is not None:
+        stream_redis_client = _create_stream_redis_client(settings.redis_url, db=settings.stream_redis_db)
+    owns_stream_redis_client = owns_redis_client and stream_redis_client is not None
     front_metrics = FrontMetrics(meter if meter is not None else get_front_meter())
     front_state = FrontState(
         settings=settings,
@@ -631,12 +655,14 @@ def create_app(
             max_concurrent_cancels=cancel_connections,
         ),
         listener=CompletionSignalListener(redis_client, liveness_seconds=settings.redis_liveness_seconds),
+        delta_reader=DeltaStreamReader(stream_redis_client),
         front_metrics=front_metrics,
     )
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await front_state.listener.start()
+        await front_state.delta_reader.start()
         cancel_retry_task = asyncio.create_task(_retry_failed_cancels_forever(front_state), name="horde-oai-cancel-retry")
         try:
             yield
@@ -647,8 +673,11 @@ def create_app(
                 await cancel_retry_task
             await _cancel_open_requests(front_state)
             await front_state.listener.stop()
+            await front_state.delta_reader.stop()
             if owns_redis_client and redis_client is not None:
                 await redis_client.close()
+            if owns_stream_redis_client and stream_redis_client is not None:
+                await stream_redis_client.close(close_connection_pool=True)
             for owned_http_client in owned_http_clients:
                 await owned_http_client.aclose()
 
@@ -669,6 +698,17 @@ def create_app(
     app.add_api_route("/v1/models/{model_id:path}", _get_model, methods=["GET"], response_model=None)
     app.add_api_route("/healthz", _health, methods=["GET"], response_model=None)
     return app
+
+
+def _create_stream_redis_client(redis_url: str, *, db: int) -> redis.asyncio.Redis:
+    """Return a client for logical database ``db`` on the host of ``redis_url``, whatever database the URL selects.
+
+    ``Redis.from_url`` lets a database in the URL override one passed beside it, so the pool's database is set after
+    parsing. A client given a pool leaves it open on ``close()`` unless ``close_connection_pool`` is set.
+    """
+    connection_pool = redis.asyncio.ConnectionPool.from_url(redis_url, socket_keepalive=True)
+    connection_pool.connection_kwargs["db"] = db
+    return redis.asyncio.Redis(connection_pool=connection_pool)
 
 
 def _front_state(request: Request) -> FrontState:
@@ -1360,14 +1400,19 @@ class RequestTrace:
         self._submitted_monotonic = time.monotonic()
         return submitted_at
 
-    def record_first_content(self) -> None:
-        """Record the time from the submit acknowledgement, when a stream's headers go out, to the first content."""
+    def record_first_content(self, *, relayed: bool = False) -> None:
+        """Record the time from the submit acknowledgement, when a stream's headers go out, to the first content.
+
+        Args:
+            relayed: Whether the first content is a delta relayed while the worker generates.
+        """
         if self._first_content_recorded or self._submitted_monotonic is None:
             return
         self._first_content_recorded = True
         self._front_metrics.record_first_content(
             duration_seconds=time.monotonic() - self._submitted_monotonic,
             streamed=self.streamed,
+            relayed=relayed,
         )
 
     def record_completion(self, completion: ChatCompletionResponse, status: HordeChatStatus) -> None:
@@ -1654,7 +1699,11 @@ async def _chat_completions(request: Request) -> Response:
     try:
         submission = await _submit(
             front_state,
-            native_body=build_native_chat_body(chat_request, operation_key=operation_key),
+            native_body=build_native_chat_body(
+                chat_request,
+                operation_key=operation_key,
+                relay_deltas=_relays_deltas(front_state, chat_request),
+            ),
             operation_key=operation_key,
             credentials=credentials,
             deadline=deadline,
@@ -1782,6 +1831,172 @@ async def _wait_for_completion(
     return JSONResponse(content=completion.model_dump(mode="json"))
 
 
+class DeltaRelay:
+    """Relay one streamed request's content deltas and reconcile the relayed text with its final reply.
+
+    The first delta, sequence 1 of a generation, exposes the stream and pins that generation. After exposure an entry
+    of another generation, the pinned generation's ended marker or a delta out of sequence breaks the relay: the
+    Horde restarts a faulted job from the beginning, and a reissued attempt is never spliced into a choice the client
+    already holds part of (ADR 0024). Before exposure such entries are dropped and the request is delivered whole.
+    """
+
+    def __init__(self, *, completion_id: str, created: int, model: str, include_usage: bool) -> None:
+        """Create the relay of a stream that has not sent anything yet.
+
+        Args:
+            completion_id: The completion id every chunk of the stream carries.
+            created: When the request was submitted, in Unix seconds.
+            model: The model the client asked for, which the relayed chunks carry and the fingerprint uses when a delta
+                omits the model.
+            include_usage: Whether the client asked for usage, which writes a null ``usage`` in every chunk.
+        """
+        self.generation_id: str | None = None
+        """The generation whose deltas are relayed; None before exposure."""
+        self.broken: RelayOutcome | None = None
+        """Why the relay broke after exposure; None while it holds."""
+        self.system_fingerprint: str | None = None
+        """The fingerprint of the pinned generation's worker and model, from its first delta; None before exposure or
+        when the delta stream does not carry the worker."""
+        self._completion_id = completion_id
+        self._created = created
+        self._model = model
+        self._include_usage = include_usage
+        self._next_seq = 1
+        self._relayed_parts: list[str] = []
+
+    @property
+    def exposed(self) -> bool:
+        """Return whether a delta was sent to the client."""
+        return self.generation_id is not None
+
+    @property
+    def relayed_content(self) -> str:
+        """Return the text sent to the client as deltas."""
+        return "".join(self._relayed_parts)
+
+    def take(self, entries: Sequence[DeltaEntry]) -> list[ServerSentEvent]:
+        """Return the events relaying ``entries``, read together in stream order, and set ``broken`` when one breaks
+        the relay; entries after the breaking one are dropped.
+
+        Before exposure, a generation whose ended marker is among ``entries`` is not exposed, so a reader that fell
+        behind does not show a client the start of an attempt it already knows failed.
+        """
+        ended_generations = {entry.generation_id for entry in entries if entry.ended}
+        events: list[ServerSentEvent] = []
+        for entry in entries:
+            if not entry.ended and entry.content is None:
+                continue
+            if not self.exposed:
+                if entry.ended or entry.seq != 1 or entry.generation_id in ended_generations:
+                    continue
+                self.generation_id = entry.generation_id
+                self.system_fingerprint = build_system_fingerprint(entry.worker_id, entry.model or self._model)
+            elif entry.generation_id != self.generation_id:
+                self.broken = RelayOutcome.REPLACED_ATTEMPT
+            elif entry.ended:
+                self.broken = RelayOutcome.ENDED
+            elif entry.seq != self._next_seq:
+                self.broken = RelayOutcome.GAP
+            if self.broken is not None:
+                break
+            content = entry.content or ""
+            events.extend(
+                build_delta_events(
+                    completion_id=self._completion_id,
+                    created=self._created,
+                    model=self._model,
+                    content=content,
+                    first=not self._relayed_parts,
+                    include_usage=self._include_usage,
+                    system_fingerprint=self.system_fingerprint,
+                ),
+            )
+            self._relayed_parts.append(content)
+            self._next_seq += 1
+        return events
+
+    def align_fingerprint(self, completion: ChatCompletionResponse) -> ChatCompletionResponse:
+        """Return ``completion`` carrying the relayed chunks' ``system_fingerprint``, so one stream carries one value.
+
+        The relay pins one generation, and another generation's entry breaks it, so a reconciled final reply normally
+        comes from the pinned generation and its fingerprint is already equal. When they differ, the relayed value is
+        kept: the client already holds chunks carrying it, and the text it received came from the pinned generation.
+        A relay without a fingerprint leaves the completion as it is.
+        """
+        if self.system_fingerprint is None or completion.system_fingerprint == self.system_fingerprint:
+            return completion
+        return completion.model_copy(update={"system_fingerprint": self.system_fingerprint})
+
+    def reconcile(self, completion: ChatCompletionResponse) -> RelayOutcome:
+        """Return how the final reply relates to the relayed text: equal, an extension of it, or a mismatch.
+
+        A completion with other than one choice is a mismatch, since only the first choice is relayed.
+        """
+        if len(completion.choices) != 1:
+            return RelayOutcome.MISMATCH
+        final_content = completion.choices[0].message.content or ""
+        relayed_content = self.relayed_content
+        if final_content == relayed_content:
+            return RelayOutcome.EQUAL
+        if final_content.startswith(relayed_content):
+            return RelayOutcome.PREFIX
+        return RelayOutcome.MISMATCH
+
+
+async def _relay_deltas(
+    relay: DeltaRelay,
+    delta_subscription: DeltaSubscription,
+    wait_task: asyncio.Task[HordeChatStatus],
+    request_trace: RequestTrace,
+    front_metrics: FrontMetrics,
+) -> AsyncIterator[ServerSentEvent]:
+    """Yield the events relaying the request's deltas until ``wait_task`` ends or the relay breaks.
+
+    Entries still queued when ``wait_task`` ends are left; the final reply's reconciliation sends what they held.
+    """
+    get_task: asyncio.Task[DeltaEntry] | None = None
+    try:
+        while not wait_task.done() and relay.broken is None:
+            if get_task is None:
+                get_task = asyncio.create_task(delta_subscription.get())
+            await asyncio.wait({wait_task, get_task}, return_when=asyncio.FIRST_COMPLETED)
+            if not get_task.done():
+                continue
+            entries = [get_task.result(), *delta_subscription.take_queued()]
+            get_task = None
+            was_exposed = relay.exposed
+            relay_events = relay.take(entries)
+            if relay.exposed and not was_exposed:
+                request_trace.record_first_content(relayed=True)
+                front_metrics.record_relayed()
+            for relay_event in relay_events:
+                yield relay_event
+    finally:
+        if get_task is not None and not get_task.done():
+            get_task.cancel()
+
+
+def _relay_error(request_id: str, outcome: RelayOutcome) -> ChatFrontError:
+    """Create the error event's error for a relayed stream that cannot finish with the text it sent."""
+    if outcome == RelayOutcome.MISMATCH:
+        message = (
+            f"The final reply of request {request_id} does not continue the text already streamed, so it cannot be "
+            "delivered on this stream."
+        )
+    else:
+        message = (
+            f"The worker generating request {request_id} stopped after part of the reply was streamed. A new attempt "
+            "would start the reply over, which cannot continue the streamed text, so the request was cancelled."
+        )
+    return ChatFrontError(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        message=message,
+        code=STREAM_DIVERGED_CODE,
+        metadata=ErrorMetadata(request_id=request_id),
+        job_may_exist=True,
+    )
+
+
 def _stream_completion(
     request: Request,
     *,
@@ -1797,12 +2012,17 @@ def _stream_completion(
     The in-flight slot is released after an abandoned request's cancel ends, so the cap counts cancelling requests. When
     the client disconnects before the event generator first runs, sse-starlette never starts it, so the response's
     background task cancels the request and releases the slot instead.
+
+    A request [`relays_deltas`][horde.oai.mapping.relays_deltas] selects sends the worker's content deltas as they
+    arrive through a [`DeltaRelay`][horde.oai.app.DeltaRelay]; once one is sent, the final reply only finishes the
+    stream when it starts with the relayed text, and otherwise the stream ends with an error event.
     """
     front_state = _front_state(request)
     settings = front_state.settings
     request_id = open_request.request_id
     latest_watcher: ChatRequestWatcher | None = None
     stream_started = False
+    include_usage = bool(chat_request.stream_options and chat_request.stream_options.include_usage)
 
     def build_heartbeat() -> ServerSentEvent:
         latest_status: HordeChatStatus | None = latest_watcher.latest_status if latest_watcher is not None else None
@@ -1812,16 +2032,44 @@ def _stream_completion(
         nonlocal latest_watcher, stream_started
         stream_started = True
         outcome_settled = False
+        relay: DeltaRelay | None = None
+        wait_task: asyncio.Task[HordeChatStatus] | None = None
         try:
-            with front_state.listener.register(request_id) as subscription:
+            with (
+                front_state.listener.register(request_id) as subscription,
+                _register_deltas(front_state, chat_request, request_id) as delta_subscription,
+            ):
                 latest_watcher = _create_watcher(
                     front_state,
                     open_request=open_request,
                     subscription=subscription,
                     deadline=deadline,
                 )
+                if delta_subscription is not None:
+                    relay = DeltaRelay(
+                        completion_id=build_completion_id(request_id),
+                        created=int(submitted_at),
+                        model=chat_request.model,
+                        include_usage=include_usage,
+                    )
+                    wait_task = asyncio.create_task(latest_watcher.wait_until_finished())
+                    async for relay_event in _relay_deltas(
+                        relay,
+                        delta_subscription,
+                        wait_task,
+                        request_trace,
+                        front_state.front_metrics,
+                    ):
+                        yield relay_event
+                    if relay.broken is not None:
+                        await _cancel_shielded(front_state, open_request)
+                        outcome_settled = True
+                        front_state.front_metrics.record_relay_outcome(relay.broken)
+                        for error_event in request_trace.error_events(_relay_error(request_id, relay.broken), watcher=latest_watcher):
+                            yield error_event
+                        return
                 try:
-                    status = await latest_watcher.wait_until_finished()
+                    status = await (wait_task if wait_task is not None else latest_watcher.wait_until_finished())
                 except (ChatWaitTimeoutError, ChatDoneWithoutGenerationError, NoEligibleWorkerError) as error:
                     await _cancel_shielded(front_state, open_request)
                     for error_event in request_trace.error_events(_wait_error(error, request_id=request_id), watcher=latest_watcher):
@@ -1853,9 +2101,22 @@ def _stream_completion(
                 for error_event in request_trace.error_events(_no_generation_error(request_id), watcher=latest_watcher):
                     yield error_event
                 return
+            relayed_content: str | None = None
+            if relay is not None and relay.exposed:
+                relay_outcome = relay.reconcile(completion)
+                front_state.front_metrics.record_relay_outcome(relay_outcome)
+                if relay_outcome == RelayOutcome.MISMATCH:
+                    for error_event in request_trace.error_events(_relay_error(request_id, relay_outcome), watcher=latest_watcher):
+                        yield error_event
+                    return
+                relayed_content = relay.relayed_content
+                completion = relay.align_fingerprint(completion)
             request_trace.record_completion(completion, status)
-            include_usage = bool(chat_request.stream_options and chat_request.stream_options.include_usage)
-            for completion_event in build_completion_events(completion, include_usage=include_usage):
+            for completion_event in build_completion_events(
+                completion,
+                include_usage=include_usage,
+                relayed_content=relayed_content,
+            ):
                 yield completion_event
             request_trace.finish(
                 status_code=HTTPStatus.OK,
@@ -1865,6 +2126,10 @@ def _stream_completion(
             )
         finally:
             try:
+                if wait_task is not None and not wait_task.done():
+                    wait_task.cancel()
+                    with anyio.CancelScope(shield=True):
+                        await asyncio.gather(wait_task, return_exceptions=True)
                 if not outcome_settled:
                     if open_request.cancel_state == CancelState.NOT_ATTEMPTED:
                         logger.info(f"Client of streamed chat request {request_id} disconnected while waiting")
@@ -1891,6 +2156,27 @@ def _stream_completion(
         ping_message_factory=build_heartbeat,
         background=BackgroundTask(finish_unstarted_stream),
     )
+
+
+def _relays_deltas(front_state: FrontState, chat_request: ChatCompletionRequest) -> bool:
+    """Return whether the front relays the request's content deltas: the delta reader has a Redis client and
+    [`relays_deltas`][horde.oai.mapping.relays_deltas] selects the request."""
+    return front_state.delta_reader.enabled and relays_deltas(chat_request)
+
+
+@contextlib.contextmanager
+def _register_deltas(
+    front_state: FrontState,
+    chat_request: ChatCompletionRequest,
+    request_id: str,
+) -> Iterator[DeltaSubscription | None]:
+    """Context manager that registers the request with the delta reader when its deltas are relayed, and yields
+    None otherwise."""
+    if not _relays_deltas(front_state, chat_request):
+        yield None
+        return
+    with front_state.delta_reader.register(request_id) as delta_subscription:
+        yield delta_subscription
 
 
 async def _fetch_model_cards(request: Request) -> list[ModelCard]:

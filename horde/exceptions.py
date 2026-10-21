@@ -224,6 +224,10 @@ KNOWN_RC = [
     "ChatImageStorageUnavailable",
     "OperationKeyConflict",
     "RequestTooLarge",
+    "ChatProgressNotStreaming",
+    "ChatProgressOutOfSequence",
+    "ChatProgressCapReached",
+    "ChatProgressUnavailable",
 ]
 
 
@@ -245,6 +249,15 @@ class ServiceUnavailable(wze.ServiceUnavailable):
     """A route that is switched off on this horde, refused with 503 so a client can retry elsewhere or later."""
 
     def __init__(self, message: str, log: str | None = None, rc: str = "ServiceUnavailable") -> None:
+        self.specific = message
+        self.log = log
+        self.rc = rc
+
+
+class NotFound(wze.NotFound):
+    """Something a route acts on that does not exist or no longer accepts the call, refused with 404."""
+
+    def __init__(self, message: str, log: str | None = None, rc: str = "NotFound") -> None:
         self.specific = message
         self.log = log
         self.rc = rc

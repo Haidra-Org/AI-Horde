@@ -195,6 +195,7 @@ handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_reques
 handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 handle_service_unavailable = api.errorhandler(e.ServiceUnavailable)(e.handle_bad_requests)
+handle_not_found = api.errorhandler(e.NotFound)(e.handle_bad_requests)
 locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 
 

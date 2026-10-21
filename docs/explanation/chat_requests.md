@@ -25,10 +25,11 @@ In brief:
   jobs, the model, limits that fit, and every optional feature the request uses.
 - An OpenAI-compatible front, a separate process, speaks `/v1/chat/completions` to clients and the native chat routes
   to the horde, waking on a Redis signal when a reply lands.
-- A parameter the service does not implement is refused with its key in the message, never dropped, so a client always receives the
-  answer it asked for or an error. Unknown keys inside messages, tool definitions and `tool_choice` are the
-  exception: they are dropped, as OpenAI does.
-- Replies arrive whole: streaming is emulated, and one request yields one choice.
+- A parameter the service does not implement is refused with its key in the message, so a client receives the answer
+  it asked for or an error. Unknown keys inside messages, tool definitions and `tool_choice` are the exception: they
+  are dropped, as OpenAI does.
+- A streamed request without tools or structured output receives its text as the worker posts progress; any other
+  request receives its reply whole. One request yields one choice.
 
 Every field is specified in the [chat requests reference](../reference/chat_requests.md) and the
 [chat front reference](../reference/chat_front.md). The decisions below are recorded as ADRs; each section links the
@@ -257,16 +258,17 @@ the lowest kudos priority, and per-source caps on the front, which aggregate use
 
 ### Streaming
 
-A streamed request waits for the whole reply like any other, then sends it as server-sent events: a role chunk, one
-content chunk, a tool-call chunk when there are calls, a finish chunk, optional usage, and `[DONE]`
-([Response shape](../reference/chat_front.md#response-shape)). Clients that require streaming work; they do not see
-tokens as they are generated.
+A streamed request without tools whose `response_format` is absent or `text` gets its content as the worker posts
+progress, one chunk per post, about one a second. The batches are kept in a retained Redis stream per request, cheap
+and lost on failover
+([ADR 0024](../decisions/0024-stream-chat-deltas-through-a-retained-redis-stream.md)); the alternative that was not
+built is Postgres progress rows, durable and paid for in primary database writes on the connection pool pops and
+submits share ([ADR 0025](../decisions/0025-stream-chat-deltas-through-postgres-progress-rows.md)).
 
-Delta streaming needs a worker progress route and somewhere to keep ordered batches. Two records hold the options,
-both open: a retained Redis stream per request, cheap and lost on failover
-([ADR 0024](../decisions/0024-stream-chat-deltas-through-a-retained-redis-stream.md)), and Postgres progress rows,
-durable and paid for in primary database writes on the connection pool pops and submits share
-([ADR 0025](../decisions/0025-stream-chat-deltas-through-postgres-progress-rows.md)).
+A request with tools or a non-text `response_format` waits for the whole reply as a non-streamed request does, then
+sends it as
+server-sent events: a role chunk, one content chunk, a tool-call chunk when there are calls, a finish chunk, optional
+usage, and `[DONE]` ([Response shape](../reference/chat_front.md#response-shape)).
 
 ### Service selection
 
@@ -298,7 +300,8 @@ price of a resolver and revision store, invisible to model pickers, and lost by 
 
 ## What a client cannot rely on
 
-- **Delta streaming.** Content arrives in one chunk after generation finishes.
+- **Delta streaming.** It covers plain text requests only; a request with tools or structured output streams the reply
+  whole after generation, and a relayed stream is best effort, since a lost stream still ends with the full reply.
 - **Multiple choices.** `n` other than 1 is refused.
 - **Worker selection by quantisation or pinned model.** `horde.quantizations` and `horde.pinned_model` are unknown
   keys and return `400 UnsupportedChatParameter`.

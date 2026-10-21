@@ -39,10 +39,12 @@ model list routes over the horde's native `/v2/generate/chat` routes (see
 | Refused and no-op parameters | `horde/oai/schema.py` | `find_refused_parameter`, `drop_default_no_ops` |
 | Native body, completion, usage estimate | `horde/oai/mapping.py` | `build_native_chat_body`, `build_completion`, `estimate_tokens` |
 | Model list entries | `horde/oai/mapping.py` | `build_model_card` |
-| Streamed chunks and keepalive | `horde/oai/sse.py` | `build_completion_events`, `build_keepalive_event`, `build_error_events` |
+| Streamed chunks and keepalive | `horde/oai/sse.py` | `build_completion_events`, `build_delta_events`, `build_keepalive_event`, `build_error_events` |
+| Delta relay and reconciliation | `horde/oai/app.py`, `horde/oai/mapping.py` | `DeltaRelay`, `_relay_deltas`, `relays_deltas` |
 | `Client-Agent` attribution | `horde/oai/attribution.py` | `build_client_agent` |
 | Native HTTP client and root rotation | `horde/oai/horde_client.py` | `HordeClient`, `create_http_client`, `cancel_max_connections` |
 | Completion signal subscription and liveness ping | `horde/oai/waiter.py` | `CompletionSignalListener` |
+| Delta stream reader | `horde/oai/waiter.py` | `DeltaStreamReader`, `DeltaSubscription`, `DeltaEntry` |
 | Per-request wait, poll and deadline | `horde/oai/waiter.py` | `ChatRequestWatcher`, `WaitBudget`, `WakeSource` |
 | No eligible worker and declaration gap | `horde/oai/waiter.py`, `horde/oai/app.py` | `NoEligibleWorkerError`, `DeclarationGapError`, `_wait_error` |
 | Instruments and bucket boundaries | `horde/oai/metrics.py` | `FrontMetrics`, `histogram_views` |
@@ -66,7 +68,7 @@ unknown keys, as OpenAI does: an unknown key inside `stream_options` or `respons
 | --- | --- |
 | `model`, `messages`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `n`, `horde` | Validated and forwarded; null counts as omitted. |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Validated against the `horde/chat_contract.py` shapes and forwarded verbatim; a `json_schema` response format is forwarded with its `schema` key and needs one. Dropped at their default: empty or null `tools`, `{"type": "text"}`; a null `tool_choice` or `parallel_tool_calls` is not forwarded. |
-| `stream`, `stream_options`, `user`, `metadata` | Applied or accepted by the front and not forwarded. |
+| `stream`, `stream_options`, `user`, `metadata` | Applied or accepted by the front and not forwarded, except `stream: true` on a request whose deltas are relayed (see [Relayed deltas](#relayed-deltas)). |
 | `logprobs`, `top_logprobs`, `store`, `service_tier` | Dropped at their default (`false`, `0`, `false`, `auto` or `default`); any other value is 400. |
 
 `ChatCompletionRequest` bounds the sampling values to OpenAI's ranges (the SDK's `OPENAI_SAMPLING_RANGES`): `temperature` 0 to
@@ -116,7 +118,8 @@ calls, each `{"id", "type": "function", "function": {"name", "arguments"}}` as t
 `stop`, `length`, `content_filter` or `tool_calls`. `x_horde.notice` marks a reply with neither visible text nor tool
 calls. `system_fingerprint` is `fp_` and the first 10 hex characters of the SHA-256 of the first generation's worker
 id and model (`build_system_fingerprint` in `horde/oai/mapping.py`), null when the generation has no worker id; every
-chunk of a stream carries the same value.
+chunk of a stream carries the same value. A relayed stream computes it from the worker and model of its first delta's
+stream entry and the final chunks carry that value; it is null throughout when the entries do not carry a worker.
 
 A stream sends, after its keepalive comments, these `chat.completion.chunk` events:
 
@@ -127,6 +130,46 @@ A stream sends, after its keepalive comments, these `chat.completion.chunk` even
 4. `delta: {}` with `finish_reason`, `native_finish_reason` and `x_horde`.
 5. `choices: []` with `usage`, when `stream_options.include_usage` was true.
 6. `data: [DONE]`.
+
+### Relayed deltas
+
+`relays_deltas` in `horde/oai/mapping.py` selects a request with `stream: true`, no `tools` and no `response_format`
+other than `text`. The horde verifies tool calls and, under strict conformance, structured output only once the reply
+is complete, so text relayed before that check could belong to a reply it then refuses. When the front has a Redis
+client (`HORDE_OAI_REDIS_URL`), it forwards `stream: true` for such a request, which makes the horde write the
+progress lease at pop and set `stream_progress` on the job (see
+[Streaming progress](chat_requests.md#streaming-progress)). Every other streamed request, and every request on a
+front without Redis or served by a worker that does not post progress, is delivered whole as above.
+
+One `DeltaStreamReader` task per process reads `horde:chat:stream:<request id>` on `HORDE_OAI_STREAM_REDIS_DB` for
+every registered request with one `XREAD BLOCK 250`, from the stream's start, and queues each entry on the request.
+A read that takes longer than 5 seconds (`DELTA_READ_TIMEOUT_SECONDS`) is abandoned and made again, which covers a
+connection a network fault black-holes; the reader does not send a PING. A failed read is made again after 2 seconds
+from the last entry read, and the stream retains its entries, so the reader does not skip any.
+
+A stream that is deleted or expires does not produce entries or an error, and a stream recreated with ids below the
+last id read, such as after a failover that lost the key, does not produce those entries. Either way the deltas stop:
+the request is delivered whole when the front has not sent anything, and otherwise the final reply completes the
+stream through the reconciliation below.
+
+The first delta with `seq` 1 sends the role chunk, exposes the stream and pins its `gen`. Each delta is then one
+chunk with `delta.content`, the request's `model` and the `system_fingerprint` of the `worker` and `model` the first
+delta's entry carries (the request's model when the entry omits it). Keepalive comments continue between deltas.
+After exposure:
+
+| Event | Result |
+| --- | --- |
+| Final reply equal to the relayed text | The finish chunk, the usage chunk when asked for, and `[DONE]` |
+| Final reply starting with the relayed text | The rest as one content chunk, then the finish chunk |
+| Final reply not starting with the relayed text | SSE error event `ChatStreamDiverged`, then `[DONE]` |
+| An entry of another `gen`, the pinned `gen`'s `ended` marker, or a `seq` out of order | SSE error event `ChatStreamDiverged`, then `[DONE]`; the front cancels the request |
+| The request faults | SSE error event `ChatRequestFaulted`, as for a buffered stream |
+
+A restarted attempt starts the reply over, so it is never spliced into a choice the client holds part of
+([ADR 0024](../decisions/0024-stream-chat-deltas-through-a-retained-redis-stream.md)). Before exposure, an `ended`
+marker, and a delta read together with its generation's `ended` marker, are dropped and the request is delivered
+whole. The error event is `{"error": {...}}` with `type` `api_error`, `code` `ChatStreamDiverged` and
+`metadata.request_id`, followed by `data: [DONE]`.
 
 The front answers browser preflights and allows any origin on every response (`Access-Control-Allow-Origin: *`),
 exposing `Retry-After` and `x-should-retry`, so a web client such as KoboldAI Lite can call it with a bearer key.
@@ -146,6 +189,7 @@ returns 502 `ChatRequestNoGeneration`. The front does not return a completion wi
 | `system_fingerprint` | Hash of the serving worker id and model | The backend configuration |
 | Streamed tool calls | Each call whole in one chunk | Arguments in fragments |
 | First streamed chunk | `delta` holds only `role` | `delta` also holds `content` |
+| Delta granularity | One chunk per worker progress post, about one a second, for plain text requests only; others whole | One chunk per token or few tokens |
 | `json_object` without "json" in the messages | Served, unless `horde.openai_guards` is set | Refused |
 
 ## No eligible worker
@@ -205,14 +249,16 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | `horde.oai.request.body_bytes` | histogram, bytes | none | Size of each request body received whole; oversized bodies are counted as refusals instead. |
 | `horde.oai.native.duration` | histogram, seconds | `call_type`, `outcome` | Latency of each native call from taking a call slot to the answer. The histogram count is the call count. `call_type` is `submit`, `recovery`, `status`, `cancel` or `models`; `outcome` is `ok`, `refused` (horde status 400 or above), `unreachable` or `abandoned` (the request's budget ended first). |
 | `horde.oai.queue_wait` | histogram, seconds | `model` | The horde's `queue_wait_seconds` of each delivered generation: request creation to assignment. |
-| `horde.oai.first_content.duration` | histogram, seconds | `streamed` | From the submit acknowledgement, when a stream's headers go out, to the first content sent: the first completion chunk, or the non-streamed body. |
+| `horde.oai.first_content.duration` | histogram, seconds | `streamed`, `relayed` | From the submit acknowledgement, when a stream's headers go out, to the first content sent: the first relayed delta (`relayed` true), the first completion chunk, or the non-streamed body. |
 | `horde.oai.request.duration` | histogram, seconds | `streamed`, `status_code`, `code` | From an admitted request's arrival to its end. A stream records 200 whatever its outcome; `code` is the error code, `ok` for a delivered completion or `client_closed` for a client that disconnected before delivery. |
 | `horde.oai.wakes` | counter | `wake_source`, `found_finished`, `found_done_without_generation` | Each status read of a waiting request, by what caused it: `immediate` (the read after the submit), `signal`, `recheck`, `poll`, `deadline`; and `disconnect`, recorded without a read when the client disconnects. `found_done_without_generation` marks a read showing the request done, not faulted and without a generation. |
 | `horde.oai.submit.outcome_unknown` | counter | none | Requests answered with `submit_outcome: "unknown"`. |
 | `horde.oai.submit.recoveries` | counter | `existing_claim` | Lost submits recovered by re-sending; `existing_claim` true is a claim match (horde answered 200). |
 | `horde.oai.client_retry_hints` | counter | none | Chat requests carrying `x-stainless-retry-count` above zero. |
 | `horde.oai.completions` | counter | `model`, `estimated_usage` | Delivered completions; `estimated_usage` true when a count was estimated because the worker did not report it. |
-| `horde.oai.completions.empty` | counter | `model` | Delivered completions with a generation holding no visible text, the case `x_horde.notice` reports. |
+| `horde.oai.completions.empty` | counter | `model` | Delivered completions whose generation does not hold visible text, the case `x_horde.notice` reports. |
+| `horde.oai.stream.relayed` | counter | none | Streamed requests that sent at least one relayed delta. |
+| `horde.oai.stream.relay_outcomes` | counter | `outcome` | How relayed streams ended: `equal`, `prefix`, `mismatch`, `replaced_attempt`, `ended` or `gap`; see [Relayed deltas](#relayed-deltas). |
 | `horde.oai.cancels` | counter | `outcome` | Cancels sent to the horde: `acknowledged`, `failed`, `timed_out` when the HTTP call took longer than `HORDE_OAI_CANCEL_TIMEOUT_SECONDS`, `not_started` when no cancel slot became free within that time and the cancel was not sent, or `already_gone` when the horde answered 404 because the request no longer exists. A cancel that ended `failed`, `timed_out` or `not_started` is sent again every `HORDE_OAI_CANCEL_RETRY_SECONDS` and once more by the shutdown drain, each attempt counted; a request is dropped from the retries 20 minutes after its submit (`horde.oai.app.HORDE_CHAT_REQUEST_EXPIRY_SECONDS`), and at most `horde.oai.app.MAX_FAILED_CANCELS` answered requests are held, oldest dropped first. |
 
 The front does not measure settlement lag between delivery and the native terminal state, since it does not observe

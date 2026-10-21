@@ -2,10 +2,12 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import hmac
 import json
 import math
 from datetime import datetime
 
+import redis
 from botocore.exceptions import BotoCoreError, ClientError
 from flask import request
 from flask_restx import Resource, marshal_with, reqparse
@@ -33,6 +35,16 @@ from horde.chat_contract import (
     ChatContextFit,
     refuse_json_constant,
 )
+from horde.chat_progress import (
+    CHAT_PROGRESS_CAP_REACHED_RC,
+    CHAT_PROGRESS_NOT_STREAMING_RC,
+    CHAT_PROGRESS_OUT_OF_SEQUENCE_RC,
+    CHAT_PROGRESS_UNAVAILABLE_RC,
+    ProgressOutcome,
+    api_key_digest,
+    append_progress,
+    read_stream_lease,
+)
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base import settings
 from horde.classes.base.style_application import count_literal_text_template_fields, format_text_style_prompt
@@ -46,13 +58,13 @@ from horde.classes.kobold.chat_request import (
     CHAT_WORKER_FAULT_RC,
     MAX_NATIVE_FINISH_REASON_LENGTH,
     ChatMessagesOffload,
-    build_chat_extras,
     ChatSubmittedMessage,
     build_chat_image_key,
     build_chat_messages_key,
     build_chat_messages_offload,
     build_model_names,
     build_operation_fingerprint,
+    build_stored_chat_extras,
     build_stored_reply,
     build_text_params,
     build_worker_targeting,
@@ -102,7 +114,7 @@ from horde.model_reference import model_reference
 from horde.patreon import patrons
 from horde.r2 import upload_chat_image, upload_chat_messages
 from horde.request_scheduling import record_request_cancellation_forecast
-from horde.utils import get_db_uuid, hash_dictionary
+from horde.utils import get_db_uuid, hash_api_key, hash_dictionary
 from horde.validation import ParamValidator
 from horde.vars import horde_title
 
@@ -737,7 +749,8 @@ class ChatAsyncGenerate(TextAsyncGenerate):
     """The object the request's messages are offloaded as, from ``prepare_messages_offload``, or None when they stay
     inline: offloading is disabled, the messages are small, or the request is a dry run."""
     chat_extras = None
-    """The tools and response format the request applies, from ``build_chat_extras``, or None."""
+    """The tools and response format the request applies and its stream hint, from ``build_stored_chat_extras``, or
+    None."""
 
     @api.expect(parsers.chat_generate_parser, models.input_model_chat_generation)
     @api.marshal_with(
@@ -878,7 +891,7 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         # Checked against the text params model, so a chat request accepts exactly the ranges a text request does.
         models.input_model_generation_payload.validate(text_params, self.api.refresolver, self.api.format_checker)
         self.messages = serialize_messages(chat_request)
-        self.chat_extras = build_chat_extras(chat_request)
+        self.chat_extras = build_stored_chat_extras(chat_request)
         horde_options = chat_request.horde
         worker_ids, worker_blacklist = build_worker_targeting(chat_request)
         return ParseResult(
@@ -1503,6 +1516,80 @@ class TextJobSubmit(JobSubmitTemplate):
             "prompt_tokens": self.args.prompt_tokens,
             "completion_tokens": self.args.completion_tokens,
         }
+
+
+class TextJobProgress(Resource):
+    decorators = [limiter.limit("60/second")]
+
+    @api.expect(parsers.chat_progress_parser, models.input_model_chat_progress, validate=True)
+    @api.response(200, "Delta Accepted", models.response_model_chat_progress)
+    @api.response(400, "Validation Error", models.response_model_validation_errors)
+    @api.response(403, "Access Denied", models.response_model_error)
+    @api.response(404, "Generation Not Streaming", models.response_model_error)
+    @api.response(409, "Delta Out Of Sequence", models.response_model_chat_progress_out_of_sequence)
+    @api.response(413, "Generation Cap Reached", models.response_model_error)
+    @api.response(503, "Progress Store Unavailable", models.response_model_error)
+    def post(self):
+        """Post the content a chat job generated since the previous post.
+
+        This endpoint is used by registered workers only, for a chat job whose payload carries `stream_progress:
+        true`. A post is authenticated against the lease the pop wrote, not the database. The final reply is still
+        sent to the submit endpoint, which ends the generation's posts.
+
+        `seq` starts at 1 and goes up by one per post. A retry sends the same `seq` and content and is acknowledged
+        again without appending it twice.
+
+        Refused with:
+
+        - `ChatProgressNotStreaming` (404): the generation is not streamed, already finished or faulted, expired or
+          unknown. Stop posting; still submit.
+        - `WrongCredentials` (403): the API key is not the key of the worker's owner.
+        - `ChatProgressOutOfSequence` (409): `seq` is not the next one, or repeats the last one with other content.
+          The body carries `expected_seq`.
+        - `ChatProgressCapReached` (413): the generation posted its most deltas or bytes. Stop posting; still submit.
+        - `ChatProgressUnavailable` (503): the progress store could not be reached.
+        """
+        header_args = parsers.chat_progress_parser.parse_args()
+        progress_body = request.get_json()
+        generation_id = progress_body["id"]
+        try:
+            lease = read_stream_lease(generation_id)
+            if lease is None:
+                metrics.chat_progress_outcomes.add(1, {"horde.outcome": ProgressOutcome.NO_LEASE.value})
+                raise e.NotFound(
+                    f"Generation {generation_id} does not take progress: it is not streamed, finished, faulted or expired.",
+                    rc=CHAT_PROGRESS_NOT_STREAMING_RC,
+                )
+            if not hmac.compare_digest(lease.key_digest, api_key_digest(hash_api_key(header_args["apikey"]))):
+                metrics.chat_progress_outcomes.add(1, {"horde.outcome": ProgressOutcome.FORBIDDEN.value})
+                raise e.Forbidden("Wrong credentials to post progress for this generation.", rc="WrongCredentials")
+            appended = append_progress(lease, progress_body["seq"], progress_body["delta"]["content"])
+        except redis.RedisError as redis_error:
+            metrics.chat_progress_outcomes.add(1, {"horde.outcome": ProgressOutcome.UNAVAILABLE.value})
+            logger.warning(f"Unable to take progress for chat generation {generation_id}: {redis_error}")
+            raise e.ServiceUnavailable("The progress store is unavailable.", rc=CHAT_PROGRESS_UNAVAILABLE_RC) from None
+        metrics.chat_progress_outcomes.add(1, {"horde.outcome": appended.outcome.value})
+        if appended.outcome in (ProgressOutcome.ACCEPTED, ProgressOutcome.DUPLICATE):
+            return {"accepted_seq": appended.seq}, 200
+        if appended.outcome is ProgressOutcome.GAP:
+            return (
+                {
+                    "message": f"Expected seq {appended.seq} for generation {generation_id}.",
+                    "rc": CHAT_PROGRESS_OUT_OF_SEQUENCE_RC,
+                    "expected_seq": appended.seq,
+                },
+                409,
+            )
+        if appended.outcome is ProgressOutcome.OVER_CAP:
+            raise e.RequestTooLarge(
+                f"Generation {generation_id} reached its progress cap at seq {appended.seq}.",
+                rc=CHAT_PROGRESS_CAP_REACHED_RC,
+            )
+        # The lease expired or was deleted between the read and the append.
+        raise e.NotFound(
+            f"Generation {generation_id} does not take progress: it is not streamed, finished, faulted or expired.",
+            rc=CHAT_PROGRESS_NOT_STREAMING_RC,
+        )
 
 
 class TextHordeStatsTotals(Resource):

@@ -21,6 +21,7 @@ from horde.chat_contract import (
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
     ChatContextFit,
 )
+from horde.chat_progress import CHAT_PROGRESS_BYTES_PER_TOKEN
 from horde.classes.base.style_application import MAX_TEMPLATE_FIELD_WORDS
 from horde.classes.base.style_contract import MAX_TEMPLATE_FIELDS
 from horde.classes.kobold.chat_request import (
@@ -232,6 +233,15 @@ class TextParsers(v2.Parsers):
             help="The client name and version.",
             location="headers",
         )
+        # A progress post's body is validated against its model; only the worker owner's key is parsed.
+        self.chat_progress_parser = reqparse.RequestParser()
+        self.chat_progress_parser.add_argument(
+            "apikey",
+            type=str,
+            required=True,
+            help="The worker's owner API key.",
+            location="headers",
+        )
 
 
 class TextModels(v2.Models):
@@ -431,6 +441,12 @@ class TextModels(v2.Models):
                 ),
                 "parallel_tool_calls": fields.Boolean(
                     description="The request's parallel_tool_calls; only when the client sent it with tools.",
+                ),
+                "stream_progress": fields.Boolean(
+                    description=(
+                        "true when the client streams the reply, so the worker may post content deltas to "
+                        "/v2/generate/text/progress while it generates; absent otherwise."
+                    ),
                 ),
                 "response_format": fields.Raw(
                     description=(
@@ -908,6 +924,7 @@ class TextModels(v2.Models):
                 ),
             },
         )
+        self._define_chat_progress_models(api)
         self._define_chat_models(api)
 
         # Styles
@@ -1092,6 +1109,57 @@ class TextModels(v2.Models):
             },
         )
 
+    def _define_chat_progress_models(self, api):
+        """Define the models of the route a chat worker posts content deltas to while it generates.
+
+        Args:
+            api: The namespace the models are registered on.
+        """
+        self.input_model_chat_progress_delta = api.model(
+            "ChatProgressDelta",
+            {
+                "content": fields.String(
+                    required=True,
+                    min_length=1,
+                    # No post can pass the largest byte cap a lease holds, so a longer one is refused before Redis.
+                    max_length=MAX_LENGTH_LIMIT * CHAT_PROGRESS_BYTES_PER_TOKEN,
+                    description="The text generated since the previous delta, as the client will see it.",
+                ),
+            },
+        )
+        self.input_model_chat_progress = api.model(
+            "ChatProgressInput",
+            {
+                # A generation id is a UUID's text form.
+                "id": fields.String(required=True, max_length=36, description="The generation id the pop returned."),
+                "seq": fields.Integer(
+                    required=True,
+                    min=1,
+                    description=(
+                        "The delta's sequence number: 1 for the first, then one more for each. A retry sends the same "
+                        "seq and content again."
+                    ),
+                ),
+                "delta": fields.Nested(self.input_model_chat_progress_delta, required=True),
+            },
+        )
+        self.response_model_chat_progress = api.model(
+            "ChatProgressAccepted",
+            {
+                "accepted_seq": fields.Integer(
+                    description="The seq the Horde holds, the posted one; also for an identical retry of the last one.",
+                ),
+            },
+        )
+        self.response_model_chat_progress_out_of_sequence = api.model(
+            "ChatProgressOutOfSequence",
+            {
+                "message": fields.String(description="Why the delta was refused."),
+                "rc": fields.String(description="ChatProgressOutOfSequence."),
+                "expected_seq": fields.Integer(description="The seq the Horde accepts next for this generation."),
+            },
+        )
+
     def _define_chat_models(self, api):
         """Define the models of the chat routes, which take an OpenAI chat-completions body.
 
@@ -1206,7 +1274,12 @@ class TextModels(v2.Models):
                     max=2,
                     description="Presence penalty. A non-zero value only goes to workers that declare the feature.",
                 ),
-                "stream": fields.Boolean(description="Accepted and not applied on this route."),
+                "stream": fields.Boolean(
+                    description=(
+                        "true asks the worker to post content deltas while it generates, which a streaming reader "
+                        "relays; the reply and its status are the same either way."
+                    ),
+                ),
                 "stream_options": fields.Raw(description="Accepted and not applied on this route."),
                 "user": fields.String(description="Accepted and not applied."),
                 "metadata": fields.Raw(description="Accepted and not applied."),

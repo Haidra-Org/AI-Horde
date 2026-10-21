@@ -604,6 +604,11 @@ submit_outcomes = logfire.metric_counter(
     unit="1",
     description="/generate/submit outcomes",
 )
+chat_progress_outcomes = logfire.metric_counter(
+    "horde.chat_progress.outcomes",
+    unit="1",
+    description="/generate/text/progress outcomes, one of horde.chat_progress.ProgressOutcome",
+)
 
 # --- styles ------------------------------------------------------------------
 style_applications = logfire.metric_counter(

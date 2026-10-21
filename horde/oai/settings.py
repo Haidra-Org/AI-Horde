@@ -71,6 +71,14 @@ class FrontSettings(BaseSettings):
     so it is left out of the settings' representation.
     """
 
+    stream_redis_db: int = Field(default=7, ge=0)
+    """The logical database, on the host of ``redis_url``, the Horde appends chat content deltas to.
+
+    The default is the Horde's chat signal database (``chat_signal_db`` in ``horde/redis_ctrl.py``), where its progress
+    route writes ``horde:chat:stream:<request id>``. Pub/sub ignores the database, so ``redis_url`` may select any;
+    streams are keys and live in one, so the delta reader selects this database on a client of its own.
+    """
+
     redis_liveness_seconds: float = Field(default=30.0, gt=0)
     """How long the signal subscription may receive nothing before it sends a PING, and how long the PONG may take.
 

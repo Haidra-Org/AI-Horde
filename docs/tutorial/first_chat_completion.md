@@ -163,8 +163,8 @@ x_horde: ...
 usage: CompletionUsage(completion_tokens=3, prompt_tokens=21, total_tokens=24, ...)
 ```
 
-The whole text arrives in one content chunk, because a Horde worker generates the full reply before reporting it.
-While the request waits, the front sends keepalive comments that the SDK reads and discards.
+A reply this short arrives in one content chunk. A longer reply arrives in several when the worker posts progress,
+about one chunk a second. While the request waits, the front sends keepalive comments that the SDK reads and discards.
 
 ## 6. Complete a tool round
 

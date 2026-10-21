@@ -129,6 +129,7 @@ __all__ = [
     "CHAT_IMAGE_PLACEHOLDER",
     "CHAT_IMAGE_REFERENCE_PREFIX",
     "CHAT_REQUEST_CONFLICT_RC",
+    "CHAT_STREAM_PROGRESS_KEY",
     "CHAT_SUBMIT_INVALID_RC",
     "CHAT_SUBMIT_NONCONFORMANT_RC",
     "CHAT_WORKER_FAULT_MESSAGES",
@@ -154,6 +155,7 @@ __all__ = [
     "build_chat_request_traits",
     "build_model_names",
     "build_operation_fingerprint",
+    "build_stored_chat_extras",
     "build_stored_reply",
     "build_text_params",
     "build_worker_chat_extras",
@@ -176,6 +178,7 @@ __all__ = [
     "rewrite_message_texts",
     "select_chat_transport",
     "serialize_messages",
+    "streams_progress",
     "verify_chat_reply",
 ]
 
@@ -203,6 +206,10 @@ reaches this width; a longer message is stored cut to it."""
 DEFAULT_CHAT_MAX_TOKENS = 512
 """``max_length`` for a chat request that sets neither token limit. OpenAI clients usually omit it, and the text
 default of 80 tokens is too short for a chat reply."""
+
+CHAT_STREAM_PROGRESS_KEY = "stream_progress"
+"""The stored extras key, and the job payload key, of the stream hint: ``true`` when the client streams the reply,
+so the worker posts deltas to the progress route while it generates. Absent otherwise."""
 
 SUPPORTED_REQUEST_KEYS = frozenset(
     {
@@ -502,7 +509,8 @@ class ChatCompletionRequest(BaseModel):
     """OpenAI's presence penalty. A non-zero value needs a worker that declares ``presence_penalty``."""
 
     stream: StrictBool | None = None
-    """Accepted and not applied here; streaming is served by the OpenAI-compatible front."""
+    """Whether a client streams the reply. ``true`` is stored as the stream hint, which asks the worker to post
+    deltas while it generates; the reply and its status are the same either way."""
 
     stream_options: dict[str, Any] | None = None
     """Accepted and not applied here; streaming is served by the OpenAI-compatible front."""
@@ -995,6 +1003,41 @@ def build_chat_extras(chat_request: ChatCompletionRequest) -> dict[str, Any] | N
     if response_format is not None and response_format.type != ChatResponseFormatType.TEXT.value:
         chat_extras["response_format"] = _dump_response_format(response_format)
     return chat_extras or None
+
+
+def build_stored_chat_extras(chat_request: ChatCompletionRequest) -> dict[str, Any] | None:
+    """Return the extras a chat request is stored with: the applied keys and the stream hint.
+
+    The stream hint, [`CHAT_STREAM_PROGRESS_KEY`][horde.classes.kobold.chat_request.CHAT_STREAM_PROGRESS_KEY], is
+    stored only when the client sent ``stream: true``. It reaches the job payload through
+    [`build_worker_chat_extras`][horde.classes.kobold.chat_request.build_worker_chat_extras] and decides at pop whether
+    the worker receives a stream lease. It does not change the reply, so the operation fingerprint, which hashes
+    [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras], leaves it out.
+
+    Args:
+        chat_request: The validated request.
+
+    Returns:
+        The keys of [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras] and the stream hint
+        when set; None when there are none.
+    """
+    chat_extras = build_chat_extras(chat_request) or {}
+    if chat_request.stream:
+        chat_extras[CHAT_STREAM_PROGRESS_KEY] = True
+    return chat_extras or None
+
+
+def streams_progress(chat_extras: Mapping[str, Any] | None) -> bool:
+    """Return whether a chat request's stored extras carry the stream hint.
+
+    Args:
+        chat_extras: The request's stored extras, from
+            [`build_stored_chat_extras`][horde.classes.kobold.chat_request.build_stored_chat_extras].
+
+    Returns:
+        True when the client asked for a stream.
+    """
+    return bool((chat_extras or {}).get(CHAT_STREAM_PROGRESS_KEY))
 
 
 def _is_image_part(content_part: Mapping[str, Any]) -> bool:
@@ -1627,11 +1670,11 @@ def build_worker_chat_extras(chat_extras: Mapping[str, Any] | None) -> dict[str,
     Under ``tool_choice: none`` no tool key is forwarded, so a backend that ignores ``none`` has no definition to
     call. Under a ``tool_choice`` that specifies one function only that function is forwarded, with ``tool_choice: required``, so a
     backend that knows only the modes still has to call that function. ``auto`` and ``required`` are forwarded as
-    stored.
+    stored, and so is the stream hint.
 
     Args:
         chat_extras: The request's stored extras, from
-            [`build_chat_extras`][horde.classes.kobold.chat_request.build_chat_extras].
+            [`build_stored_chat_extras`][horde.classes.kobold.chat_request.build_stored_chat_extras].
 
     Returns:
         The keys to add to the job payload; empty when the request applies none.

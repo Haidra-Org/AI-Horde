@@ -58,6 +58,10 @@ those workers keep receiving text jobs.
 | Stored declaration               | `horde/classes/kobold/worker.py`                | `TextWorker.check_in`                                 |
 | Worker eligibility               | `horde/classes/kobold/worker.py`                | `TextWorker.chat_refusal_reason`                      |
 | Queue filter                     | `horde/database/text_functions.py`              | `get_sorted_text_wp_filtered_to_worker`               |
+| Stream hint                      | `horde/classes/kobold/chat_request.py`          | `build_stored_chat_extras`, `CHAT_STREAM_PROGRESS_KEY`, `streams_progress` |
+| Stream lease at pop and fault    | `horde/classes/kobold/processing_generation.py` | `TextProcessingGeneration._write_stream_lease`, `TextProcessingGeneration.end_progress_after_fault` |
+| Progress route                   | `horde/apis/v2/kobold.py`                       | `TextJobProgress`                                     |
+| Lease, append script and stream  | `horde/chat_progress.py`                        | `write_stream_lease`, `append_progress`, `end_progress_stream`, `APPEND_PROGRESS_SCRIPT` |
 | Structured submit                | `horde/apis/v2/kobold.py`                       | `TextJobSubmit.prepare_chat_submission`               |
 | Reply verification               | `horde/classes/kobold/chat_request.py`          | `verify_chat_reply`                                   |
 | Stored reply and charge basis    | `horde/classes/kobold/processing_generation.py` | `TextProcessingGeneration.get_submission_columns`     |
@@ -171,7 +175,8 @@ learns the id of a request that is queued and charged.
 | `seed`                                   | Forwarded to the worker, which has to declare the `seed` feature                 |
 | `stop`                                   | `stop_sequence`; a single string becomes a one-element list                      |
 | `n`                                      | Only `1`                                                                         |
-| `stream`, `stream_options`, `user`, `metadata` | Accepted, not applied                                                      |
+| `stream`                                 | `true` stores the stream hint; see [Streaming progress](#streaming-progress)     |
+| `stream_options`, `user`, `metadata`     | Accepted and not applied                                                         |
 | `tools`, `tool_choice`, `parallel_tool_calls` | Stored and forwarded to the worker; see [Tools](#tools)                     |
 | `response_format`                        | Stored and forwarded to the worker; see [Tools](#tools)                          |
 | `horde`                                  | Extension object, below                                                          |
@@ -726,6 +731,58 @@ The entry's `queued` and `jobs` are the model's queue, which chat requests share
 from the same `models_cache` the plain list reads, filtered as usual; the chat object comes from one query over the
 online chat workers. Both responses go through the route's two-second cache, keyed by the query string. `created`
 changes when the earliest of those workers goes offline; the Horde does not keep a first-seen time per model.
+
+## Streaming progress
+
+A request sent with `stream: true` is stored with the stream hint, `stream_progress: true` in `chat_extras`, and its
+job payload carries the same key. The hint does not change the reply and is not in the operation fingerprint. A worker posts
+the text it generated so far to `POST /v2/generate/text/progress` only for a job whose payload carries the hint, and
+still submits the whole reply to the submit route.
+
+| Field           | Value                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| `apikey` header | The worker owner's API key, as on submit                                                  |
+| `id`            | The generation id from the pop                                                            |
+| `seq`           | 1 for the first post of the generation, then one more for each                            |
+| `delta.content` | The text since the previous post, at least one character                                  |
+
+An accepted post returns `200` with `{"accepted_seq": <seq>}`. A post that repeats the last accepted `seq` with the
+same content returns the same body and does not append an entry, so a worker retries a post whose answer it lost by sending it
+again unchanged.
+
+| Status | Return code                 | Meaning                                                                      |
+| ------ | --------------------------- | ---------------------------------------------------------------------------- |
+| `404`  | `ChatProgressNotStreaming`  | The generation has no lease: not streamed, already submitted or faulted, expired or unknown. Stop posting; still submit |
+| `403`  | `WrongCredentials`          | The API key is not the key of the worker's owner                             |
+| `409`  | `ChatProgressOutOfSequence` | `seq` is not the next one, or repeats the last one with other content. The body adds `expected_seq` |
+| `413`  | `ChatProgressCapReached`    | The generation reached its entry or byte cap. Stop posting; still submit     |
+| `503`  | `ChatProgressUnavailable`   | Redis could not be reached                                                   |
+
+When a generation carrying the hint is assigned, the pop writes the lease `horde:chat:lease:<generation id>` on the
+chat signal database: a hash of `request`, `worker`, `model`, `owner` (the owner's user id), `key` (a SHA-256 of the owner's
+stored key hash), `max_bytes` and `fake`. It expires `CHAT_PROGRESS_LEASE_GRACE_SECONDS` (90) after the job's TTL,
+which covers the stale-generation thread's 60 second tick. The route reads only the lease and does not read Postgres; a key reset
+during the job therefore takes effect for posts only once the lease ends. A fake generation's posts are answered as a
+real one's and not appended.
+
+One Lua script checks and appends a post atomically. The lease hash also holds the last accepted `seq`, the bytes
+accepted so far and the last content. An accepted delta is appended to the stream `horde:chat:stream:<request id>`
+with fields `gen` (the generation id), `seq`, `content`, and the lease's `worker` and `model`, from which the front
+computes the reply's `system_fingerprint` at the first delta. A lease without a `model` field gives entries without
+one. Caps, in `horde/chat_progress.py`:
+
+| Constant                            | Value                     | Reason                                                                 |
+| ----------------------------------- | ------------------------- | ---------------------------------------------------------------------- |
+| `MAX_CHAT_PROGRESS_ENTRIES`         | 1000 per generation       | One post per second covers past the front's 600 second stream budget   |
+| `CHAT_PROGRESS_BYTES_PER_TOKEN`     | 16 bytes per `max_length` token | A token decodes to a few characters of at most four UTF-8 bytes  |
+| `CHAT_PROGRESS_STREAM_TTL_SECONDS`  | 900, reset on each append | The front's stream budget plus 300 seconds for a stalled reader        |
+| `CHAT_PROGRESS_STREAM_MAX_ENTRIES`  | 4000, approximate trim    | Room for every attempt a request gets before its faults fault it       |
+
+A successful submit deletes the lease and leaves the stream to expire, so a reader reconciles what it relayed with
+the final reply. When a generation with a lease faults, on a faulted submit or in the stale-generation thread, the
+stream gets an entry with `gen` and `ended: 1` and the lease is deleted. The route never publishes on the
+completion signal channel. Writing and deleting the lease and the `ended` entry are best effort: a Redis failure is
+logged and never fails the pop, submit or fault.
 
 ## Completion signal
 

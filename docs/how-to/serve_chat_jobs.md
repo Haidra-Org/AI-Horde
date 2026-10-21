@@ -146,6 +146,8 @@ A chat job's payload differs from a text payload in these ways:
   `max_length` tokens and render within `max_context_length`.
 - `tools`, `tool_choice`, `parallel_tool_calls` and `response_format` are present only when the request applies them
   (see [step 4](#4-serve-tools-and-structured-output)).
+- `stream_progress: true` is present only when the client streams the reply (see
+  [Streaming progress](#streaming-progress)).
 
 Verification: log the pop's `chat` key and the payload keys. A chat payload has `messages` and no `prompt`. Covered by
 `test_a_chat_request_completes_with_its_structured_reply_and_signals`, which checks the whole payload, and
@@ -326,6 +328,38 @@ Verification: the submit returns `{"reward": <kudos>}`, and the requester's `GET
 `test_a_strict_single_call_request_shows_only_the_first_of_several_calls`.
 
 Reversal: none. An accepted submit is settled; a second submit for the same job returns `400 DuplicateGen`.
+
+### Streaming progress
+
+Post progress only for a job whose payload carries `stream_progress: true`; other jobs do not have a lease and every
+post returns `404`. While the backend generates, post the text produced since the previous post, about once a second:
+
+```http
+POST <HORDE_URL>/api/v2/generate/text/progress
+apikey: <worker owner's key>
+
+{"id": "<job-id>", "seq": 1, "delta": {"content": "Blue"}}
+```
+
+- `seq` is 1 for the job's first post and one more for each post after it. Send a post only after the previous one
+  was answered. A lost answer is retried with the same `seq` and content, which returns the same
+  `{"accepted_seq": n}` and does not append an entry.
+- `409 ChatProgressOutOfSequence` carries `expected_seq`. Changed content under an accepted `seq` is refused the same
+  way, so never rewrite text already posted.
+- `404 ChatProgressNotStreaming`, `413 ChatProgressCapReached` (1000 posts, or 16 bytes per `max_length` token) and
+  repeated `503 ChatProgressUnavailable` mean stop posting. None of them affects the job.
+- Post the text the client will see: no reasoning blocks, tool-call markup or stop sequence the final reply strips.
+  Send only `content`; tool calls stay in the submit.
+- Submit the whole reply as above once the last post was answered. The submit is what the request stores and charges,
+  and it ends the job's posts.
+
+Verification: each post returns `200 {"accepted_seq": n}`, and the request's stream
+`horde:chat:stream:<request-id>` on the chat signal database (Redis logical database 7) holds one entry per accepted
+post with `gen`, `seq`, `content`, `worker` and `model`. Covered by `tests/integration/test_chat_progress.py` and
+`tests/unit/test_chat_progress.py`; the contract is in
+[Streaming progress](../reference/chat_requests.md#streaming-progress).
+
+Reversal: stop posting. The request completes from the submit alone.
 
 ## 7. Fault a job
 

@@ -305,13 +305,22 @@ With `"stream": true` the response is server-sent events in this order:
 6. A usage chunk with `choices: []` and `usage`, when `stream_options.include_usage` is true.
 7. `data: [DONE]`.
 
-The worker generates the whole reply before the Horde reports it, so content arrives in one chunk. Every chunk
-carries the same `id`, `system_fingerprint` and the served `model`. An SDK that accumulates tool-call deltas by `index` rebuilds the calls from the single tool-call chunk; in the Python SDK, `client.chat.completions.stream(...)` with
+A request without `tools` and with no `response_format` other than `text` gets its content live when the worker
+supports it: after the role chunk, one content chunk per batch the worker posts, about one a second, then only the
+text those chunks did not cover before the finish chunk. Otherwise, as with tools or structured output, the worker
+generates the whole reply before the
+Horde reports it, and content arrives in one chunk. Every chunk carries the same `id`; the finish and usage chunks
+carry the served `model`, and every chunk carries the same `system_fingerprint`. An SDK that accumulates tool-call deltas by `index` rebuilds the calls from the single tool-call chunk; in the Python SDK, `client.chat.completions.stream(...)` with
 `get_final_completion()` returns the assembled message.
 
 A stream's headers go out once the Horde holds the request, so its status is 200 whatever the outcome. A failure after
 that is one `data: {"error": {...}}` event, with the same envelope as an error response and no `choices`, followed by
 `data: [DONE]`. A hand-written parser checks each `data:` payload for a top-level `error`.
+
+Live content can end in such an event after some text arrived: code `ChatStreamDiverged` when the worker stopped and
+the Horde would start the reply over with another, or when the final reply does not continue the text sent, and
+`ChatRequestFaulted` when the request faults. Discard the partial text; the request is not retried on the same
+stream. The OpenAI SDKs raise on the event.
 
 Verification: with `stream_options.include_usage`, a served request yields four chunks for a text reply (role,
 content, finish, usage) and the finish chunk carries `x_horde.request_id`.
@@ -430,6 +439,7 @@ The front differs from OpenAI on purpose in these points:
   same id.
 - A stream carries each reply's tool calls whole in one chunk, where OpenAI streams the arguments in fragments.
 - The first streamed chunk carries only `role` in its `delta`, with no `content` key.
+- Live content arrives in batches of about a second, and only for requests without tools or structured output.
 - A `json_object` request whose messages never mention JSON is served, where OpenAI refuses it, unless
   `horde.openai_guards` is set.
 

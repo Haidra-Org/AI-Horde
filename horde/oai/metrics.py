@@ -41,6 +41,7 @@ __all__ = [
     "MetricAttribute",
     "NativeCallOutcome",
     "NativeCallType",
+    "RelayOutcome",
     "get_front_meter",
     "histogram_views",
 ]
@@ -92,7 +93,7 @@ QUEUE_WAIT_NAME: str = "horde.oai.queue_wait"
 """Histogram: seconds from a request's creation to a generation's assignment, as the Horde reports it."""
 
 FIRST_CONTENT_NAME: str = "horde.oai.first_content.duration"
-"""Histogram: seconds from the submit acknowledgement to the first content sent."""
+"""Histogram: seconds from the submit acknowledgement to the first content sent, by whether it was a relayed delta."""
 
 REQUEST_DURATION_NAME: str = "horde.oai.request.duration"
 """Histogram: seconds from an admitted request's arrival to its end."""
@@ -119,6 +120,12 @@ EMPTY_RETURNS_NAME: str = "horde.oai.completions.empty"
 CANCELS_NAME: str = "horde.oai.cancels"
 """Counter: cancels sent, by outcome."""
 
+RELAYED_NAME: str = "horde.oai.stream.relayed"
+"""Counter: streamed requests that sent at least one content delta before their final reply."""
+
+RELAY_OUTCOMES_NAME: str = "horde.oai.stream.relay_outcomes"
+"""Counter: how relayed streams ended, by outcome."""
+
 HISTOGRAM_BUCKETS: Mapping[str, tuple[float, ...]] = {
     BODY_BYTES_NAME: BUCKETS_BODY_BYTES,
     NATIVE_CALL_DURATION_NAME: BUCKETS_SECONDS,
@@ -143,6 +150,7 @@ class MetricAttribute(StrEnum):
     MODEL = "horde.model"
     ESTIMATED_USAGE = "horde.estimated_usage"
     EXISTING_CLAIM = "horde.existing_claim"
+    RELAYED = "horde.relayed"
 
 
 class NativeCallType(StrEnum):
@@ -178,6 +186,25 @@ class CancelOutcome(StrEnum):
     """No cancel slot became free in time, so the cancel was not sent and is retried later."""
     ALREADY_GONE = "already_gone"
     """The Horde answered 404: the request no longer exists, such as after its expiry, so the cancel is not retried."""
+
+
+class RelayOutcome(StrEnum):
+    """How a stream that relayed content deltas ended."""
+
+    EQUAL = "equal"
+    """The final reply's content is the relayed text."""
+    PREFIX = "prefix"
+    """The final reply's content extends the relayed text; the rest was sent as one content chunk."""
+    MISMATCH = "mismatch"
+    """The final reply's content does not start with the relayed text; the stream ended with an error event."""
+    REPLACED_ATTEMPT = "replaced_attempt"
+    """A delta of another generation arrived; the stream ended with an error event and the request was cancelled."""
+    ENDED = "ended"
+    """The relayed generation's ended marker arrived; the stream ended with an error event and the request was
+    cancelled."""
+    GAP = "gap"
+    """A delta of the relayed generation arrived out of sequence; the stream ended with an error event and the request
+    was cancelled."""
 
 
 class InflightCounts(Protocol):
@@ -293,6 +320,16 @@ class FrontMetrics:
             description="Completions holding a generation without visible text, by model",
         )
         self._cancels = meter.create_counter(CANCELS_NAME, unit="1", description="Cancels sent to the Horde by outcome")
+        self._relayed = meter.create_counter(
+            RELAYED_NAME,
+            unit="1",
+            description="Streamed requests that sent content deltas before their final reply",
+        )
+        self._relay_outcomes = meter.create_counter(
+            RELAY_OUTCOMES_NAME,
+            unit="1",
+            description="How streams that relayed content deltas ended, by outcome",
+        )
 
     def observe_inflight(self, inflight_counts: InflightCounts) -> None:
         """Mutate the meter by registering the in-flight gauges, which read ``inflight_counts`` at each collection.
@@ -366,9 +403,22 @@ class FrontMetrics:
         """Record a generation's wait from request creation to assignment, as the Horde reported it."""
         self._queue_wait.record(queue_wait_seconds, {MetricAttribute.MODEL: model})
 
-    def record_first_content(self, *, duration_seconds: float, streamed: bool) -> None:
-        """Record the time from the submit acknowledgement to the first content sent."""
-        self._first_content.record(duration_seconds, {MetricAttribute.STREAMED: streamed})
+    def record_first_content(self, *, duration_seconds: float, streamed: bool, relayed: bool = False) -> None:
+        """Record the time from the submit acknowledgement to the first content sent.
+
+        Args:
+            duration_seconds: The time from the submit acknowledgement to the first content.
+            streamed: Whether the request is streamed.
+            relayed: Whether the first content was a delta relayed while the worker generated, rather than the final
+                reply.
+        """
+        self._first_content.record(
+            duration_seconds,
+            {
+                MetricAttribute.STREAMED: streamed,
+                MetricAttribute.RELAYED: relayed,
+            },
+        )
 
     def record_request_duration(self, *, duration_seconds: float, streamed: bool, status_code: int, code: str) -> None:
         """Record an admitted request's time from arrival to its end.
@@ -427,3 +477,11 @@ class FrontMetrics:
     def record_cancel(self, outcome: CancelOutcome) -> None:
         """Record how a cancel sent to the Horde ended."""
         self._cancels.add(1, {MetricAttribute.OUTCOME: str(outcome)})
+
+    def record_relayed(self) -> None:
+        """Record a streamed request that sent its first content delta."""
+        self._relayed.add(1)
+
+    def record_relay_outcome(self, outcome: RelayOutcome) -> None:
+        """Record how a stream that relayed content deltas ended."""
+        self._relay_outcomes.add(1, {MetricAttribute.OUTCOME: str(outcome)})
