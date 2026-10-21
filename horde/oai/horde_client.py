@@ -285,6 +285,9 @@ class HordeChatMessage(BaseModel):
     tool_calls: list[ChatToolCall] | None = None
     """The tool calls the worker returned, in the shape the native route validated them in."""
 
+    reasoning_content: str | None = None
+    """The model's reasoning, when the worker submitted it; never part of ``content``."""
+
 
 class HordeChatGeneration(BaseModel):
     """Represents one generation in a Horde chat status."""
@@ -323,6 +326,9 @@ class HordeChatGeneration(BaseModel):
 
     completion_tokens: int | None = None
     """The generated token count, when the worker reported it."""
+
+    reasoning_tokens: int | None = None
+    """How many of the generated tokens were reasoning, when the worker reported it."""
 
     charge_basis: str | None = None
     """Which count the generation was charged and rewarded on."""

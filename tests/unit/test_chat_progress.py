@@ -280,3 +280,41 @@ def test_a_lease_deleted_after_it_was_read_refuses_the_append(lua_redis: fakered
 
     assert append_progress(lease, 1, "Hel") == ProgressAppend(ProgressOutcome.NO_LEASE, 0)
     assert not lua_redis.exists(chat_stream_key(REQUEST_ID))
+
+
+def test_a_delta_with_reasoning_is_appended_with_the_reasoning_beside_the_content(lua_redis: fakeredis.FakeStrictRedis) -> None:
+    _write_lease()
+
+    first = append_progress(_lease(), 1, "", "Think")
+    second = append_progress(_lease(), 2, "Hi")
+
+    assert (first, second) == (
+        ProgressAppend(ProgressOutcome.ACCEPTED, 1),
+        ProgressAppend(ProgressOutcome.ACCEPTED, 2),
+    )
+    assert _stream_entries(lua_redis) == [
+        {"gen": GENERATION_ID, "seq": "1", "content": "", "reasoning_content": "Think", "worker": "worker-1", "model": MODEL},
+        {"gen": GENERATION_ID, "seq": "2", "content": "Hi", "worker": "worker-1", "model": MODEL},
+    ]
+
+
+def test_an_identical_retry_of_a_reasoning_delta_is_acknowledged_and_a_changed_one_refused(
+    lua_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease()
+    append_progress(_lease(), 1, "", "Think")
+
+    retry = append_progress(_lease(), 1, "", "Think")
+    changed = append_progress(_lease(), 1, "", "Thought")
+
+    assert retry == ProgressAppend(ProgressOutcome.DUPLICATE, 1)
+    assert changed == ProgressAppend(ProgressOutcome.GAP, 2)
+    assert len(_stream_entries(lua_redis)) == 1
+
+
+def test_reasoning_counts_toward_the_byte_cap_with_the_content(lua_redis: fakeredis.FakeStrictRedis) -> None:
+    _write_lease(max_length=1)
+
+    half_cap = CHAT_PROGRESS_BYTES_PER_TOKEN // 2
+    assert append_progress(_lease(), 1, "x" * half_cap, "y" * (half_cap + 1)) == ProgressAppend(ProgressOutcome.OVER_CAP, 1)
+    assert not lua_redis.exists(chat_stream_key(REQUEST_ID))

@@ -317,11 +317,12 @@ so the cap only rejects values no generation could produce."""
 OPERATION_FINGERPRINT_EXCLUDED_HORDE_KEYS = frozenset(
     {
         "dry_run",
+        "include_reasoning",
         "operation_key",
     },
 )
-"""The ``horde`` keys left out of the operation fingerprint: the key is the claim itself, and a dry run never
-claims one."""
+"""The ``horde`` keys left out of the operation fingerprint: the key is the claim itself, a dry run never
+claims one, and ``include_reasoning`` changes what the front delivers and leaves the work unchanged."""
 
 MAX_NATIVE_FINISH_REASON_LENGTH = 32
 """The longest backend finish reason a worker may report, which is the width of its column."""
@@ -571,6 +572,10 @@ class ChatSubmittedMessage(BaseModel):
 
     tool_calls: list[ChatToolCall] | None = Field(default=None, min_length=1, max_length=MAX_CHAT_TOOL_CALL_COUNT)
     """The tool calls the model made, as the backend minted them."""
+
+    reasoning_content: StrictStr | None = None
+    """The model's hidden reasoning, such as a ``<think>`` block the backend split off, never part of ``content``. It
+    is stored and shown beside the reply and is not charged or verified as one."""
 
     @model_validator(mode="after")
     def validate_content_or_tool_calls(self) -> ChatSubmittedMessage:
@@ -1394,11 +1399,14 @@ def build_stored_reply(message: ChatSubmittedMessage) -> dict[str, Any]:
         message: The validated submitted message.
 
     Returns:
-        ``{role, content}``, with ``tool_calls`` only when the message carries them; ``content`` is null only then.
+        ``{role, content}``, with ``tool_calls`` only when the message carries them, ``content`` null only then, and
+        ``reasoning_content`` only when the worker submitted it.
     """
     stored_reply = message.model_dump(mode="json")
     if message.tool_calls is None:
         del stored_reply["tool_calls"]
+    if message.reasoning_content is None:
+        del stored_reply["reasoning_content"]
     replaced_reply: dict[str, Any] = _replace_nuls(stored_reply)
     return replaced_reply
 
@@ -1525,7 +1533,7 @@ def build_operation_fingerprint(chat_request: ChatCompletionRequest) -> str:
 
     The hash covers the request as the horde applies it: the messages as stored (``developer`` rewritten to
     ``system``, unset keys left out), the text params the request maps onto, the model list, and every ``horde``
-    option with its default filled in, except ``operation_key`` and ``dry_run``, and under ``extras`` the tools and
+    option with its default filled in, except ``operation_key``, ``dry_run`` and ``include_reasoning``, and under ``extras`` the tools and
     response format the request applies, only when it applies any. Two bodies that differ only in how
     they say the same thing, such as ``max_tokens`` against ``max_completion_tokens`` or an option sent at its
     default against one left out, share a fingerprint. Keys that are accepted and not applied (``stream``,
@@ -1862,6 +1870,11 @@ def verify_chat_reply(
     The reduction comes first, so a call it drops is not checked. Under ``best_effort`` the reply otherwise passes
     through as submitted.
 
+    ``reasoning_content`` is not the reply, so no conformance rule reads it. It is bounded by the SDK's
+    ``MAX_CHAT_TEXT_BYTES``, the most message text a request may carry: the charge is computed on the reply alone, so
+    no kudos cost bounds what a worker stores as reasoning, and a client sending it back as history is held to that
+    cap anyway.
+
     Args:
         message: The validated submitted message.
         chat_extras: The request's stored extras, from
@@ -1873,10 +1886,12 @@ def verify_chat_reply(
         The message, holding only its first tool call when the reduction applied, and unchanged otherwise.
 
     Raises:
-        horde.exceptions.BadRequest: With ``ChatSubmitInvalid`` for a call to a function the request did not offer or
-            a repeated call id; with ``ChatSubmitNonconformant`` for a reply a ``strict`` request's ``tool_choice`` or
-            ``response_format`` rules out.
+        horde.exceptions.BadRequest: With ``ChatSubmitInvalid`` for a call to a function the request did not offer, a
+            repeated call id or reasoning over the text cap; with ``ChatSubmitNonconformant`` for a reply a ``strict``
+            request's ``tool_choice`` or ``response_format`` rules out.
     """
+    if message.reasoning_content is not None and len(message.reasoning_content.encode("utf-8")) > MAX_CHAT_TEXT_BYTES:
+        _refuse_invalid_reply(f"'message.reasoning_content' may be at most {MAX_CHAT_TEXT_BYTES} bytes.")
     chat_extras = chat_extras or {}
     is_strict = conformance is ChatConformance.STRICT
     parallel_tool_calls = chat_extras.get("parallel_tool_calls", DEFAULT_PARALLEL_TOOL_CALLS)

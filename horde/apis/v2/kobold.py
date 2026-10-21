@@ -1515,6 +1515,7 @@ class TextJobSubmit(JobSubmitTemplate):
             "native_finish_reason": self.args.native_finish_reason,
             "prompt_tokens": self.args.prompt_tokens,
             "completion_tokens": self.args.completion_tokens,
+            "reasoning_tokens": self.args.reasoning_tokens,
         }
 
 
@@ -1548,10 +1549,15 @@ class TextJobProgress(Resource):
           The body carries `expected_seq`.
         - `ChatProgressCapReached` (413): the generation posted its most deltas or bytes. Stop posting; still submit.
         - `ChatProgressUnavailable` (503): the progress store could not be reached.
+        - `BadRequest` (400): the delta carries neither content nor reasoning_content.
         """
         header_args = parsers.chat_progress_parser.parse_args()
         progress_body = request.get_json()
         generation_id = progress_body["id"]
+        delta_content = progress_body["delta"]["content"]
+        delta_reasoning = progress_body["delta"].get("reasoning_content") or ""
+        if not delta_content and not delta_reasoning:
+            raise e.BadRequest("A progress delta carries content, reasoning_content or both.")
         try:
             lease = read_stream_lease(generation_id)
             if lease is None:
@@ -1563,7 +1569,7 @@ class TextJobProgress(Resource):
             if not hmac.compare_digest(lease.key_digest, api_key_digest(hash_api_key(header_args["apikey"]))):
                 metrics.chat_progress_outcomes.add(1, {"horde.outcome": ProgressOutcome.FORBIDDEN.value})
                 raise e.Forbidden("Wrong credentials to post progress for this generation.", rc="WrongCredentials")
-            appended = append_progress(lease, progress_body["seq"], progress_body["delta"]["content"])
+            appended = append_progress(lease, progress_body["seq"], delta_content, delta_reasoning)
         except redis.RedisError as redis_error:
             metrics.chat_progress_outcomes.add(1, {"horde.outcome": ProgressOutcome.UNAVAILABLE.value})
             logger.warning(f"Unable to take progress for chat generation {generation_id}: {redis_error}")

@@ -108,6 +108,9 @@ class TextProcessingGeneration(ProcessingGeneration):
     """The prompt token count a chat worker reported. NULL when not reported, which a reported 0 is not."""
     completion_tokens = db.Column(db.Integer, nullable=True)
     """The generated token count a chat worker reported. NULL when not reported, which a reported 0 is not."""
+    reasoning_tokens = db.Column(db.Integer, nullable=True)
+    """How many of the generated tokens a chat worker reported as reasoning. NULL when not reported. Shown and never
+    charged or rewarded: the charge basis is the reply the Horde measures."""
     charge_basis = db.Column(db.String(16), nullable=True)
     """The ``ChargeBasis`` the generation was charged and rewarded on, ``output_estimate`` for every chat generation.
     NULL on text generations, which are charged on the same basis without recording it."""
@@ -189,6 +192,7 @@ class TextProcessingGeneration(ProcessingGeneration):
             ret_dict["native_finish_reason"] = self.native_finish_reason
             ret_dict["prompt_tokens"] = self.prompt_tokens
             ret_dict["completion_tokens"] = self.completion_tokens
+            ret_dict["reasoning_tokens"] = self.reasoning_tokens
             ret_dict["charge_basis"] = self.charge_basis
             ret_dict["queue_wait_seconds"] = max((self.start_time - self.wp.created).total_seconds(), 0)
         return ret_dict
@@ -210,7 +214,8 @@ class TextProcessingGeneration(ProcessingGeneration):
 
         Args:
             **kwargs: The submission's keyword arguments, which for a chat job carry ``message``,
-                ``finish_reason``, ``native_finish_reason``, ``prompt_tokens`` and ``completion_tokens``.
+                ``finish_reason``, ``native_finish_reason``, ``prompt_tokens``, ``completion_tokens`` and
+                ``reasoning_tokens``.
 
         Returns:
             Those values and the charge basis for a chat generation; nothing for a text generation.
@@ -223,6 +228,7 @@ class TextProcessingGeneration(ProcessingGeneration):
             "native_finish_reason": kwargs.get("native_finish_reason"),
             "prompt_tokens": kwargs.get("prompt_tokens"),
             "completion_tokens": kwargs.get("completion_tokens"),
+            "reasoning_tokens": kwargs.get("reasoning_tokens"),
             "charge_basis": self.get_charge_basis().value,
         }
 

@@ -116,7 +116,12 @@ An unserved role (such as `function`) or content part type (such as `input_audio
 is null only when the worker returned tool calls without text; `tool_calls` is written only when the worker returned
 calls, each `{"id", "type": "function", "function": {"name", "arguments"}}` as the worker sent it. `finish_reason` is
 `stop`, `length`, `content_filter` or `tool_calls`. `x_horde.notice` marks a reply with neither visible text nor tool
-calls. `system_fingerprint` is `fp_` and the first 10 hex characters of the SHA-256 of the first generation's worker
+calls. `reasoning_content`, the model's reasoning as DeepSeek and OpenRouter return it, is written only when the
+request sets `horde.include_reasoning` and the worker submitted reasoning; it is never part of `content`.
+`usage.completion_tokens_details.reasoning_tokens`, OpenAI's shape, is the reasoning count the worker reported,
+written whether or not the reasoning is returned and left out when no worker reported one. Like the other reported
+counts it is informational: the Horde charges and rewards on the reply it measures. `system_fingerprint` is `fp_` and
+the first 10 hex characters of the SHA-256 of the first generation's worker
 id and model (`build_system_fingerprint` in `horde/oai/mapping.py`), null when the generation has no worker id; every
 chunk of a stream carries the same value. A relayed stream computes it from the worker and model of its first delta's
 stream entry and the final chunks carry that value; it is null throughout when the entries do not carry a worker.
@@ -124,12 +129,14 @@ stream entry and the final chunks carry that value; it is null throughout when t
 A stream sends, after its keepalive comments, these `chat.completion.chunk` events:
 
 1. `delta: {"role": "assistant"}`.
-2. A content chunk with the whole `delta.content`, when the reply has text.
-3. A tool-call chunk with `delta.tool_calls`, when the reply has calls, each call whole with its 0-based `index`,
-   `id`, `type` and `function`. It carries no content, because some clients read tool calls only from such chunks.
-4. `delta: {}` with `finish_reason`, `native_finish_reason` and `x_horde`.
-5. `choices: []` with `usage`, when `stream_options.include_usage` was true.
-6. `data: [DONE]`.
+2. A reasoning chunk with the whole `delta.reasoning_content`, when the message carries it (only under
+   `horde.include_reasoning`).
+3. A content chunk with the whole `delta.content`, when the reply has text.
+4. A tool-call chunk with `delta.tool_calls`, when the reply has calls, each call whole with its 0-based `index`,
+   `id`, `type` and `function`. It does not carry content, because some clients read tool calls only from such chunks.
+5. `delta: {}` with `finish_reason`, `native_finish_reason` and `x_horde`.
+6. `choices: []` with `usage`, when `stream_options.include_usage` was true.
+7. `data: [DONE]`.
 
 ### Relayed deltas
 
@@ -152,10 +159,15 @@ last id read, such as after a failover that lost the key, does not produce those
 the request is delivered whole when the front has not sent anything, and otherwise the final reply completes the
 stream through the reconciliation below.
 
-The first delta with `seq` 1 sends the role chunk, exposes the stream and pins its `gen`. Each delta is then one
-chunk with `delta.content`, the request's `model` and the `system_fingerprint` of the `worker` and `model` the first
-delta's entry carries (the request's model when the entry omits it). Keepalive comments continue between deltas.
-After exposure:
+The first delta with `seq` 1 pins its `gen`, and the first delta that sends anything sends the role chunk and exposes
+the stream. A delta then sends a chunk with `delta.reasoning_content` when it carries reasoning and the request sets
+`horde.include_reasoning`, and a chunk with `delta.content` when it carries text; each chunk carries the request's
+`model` and the `system_fingerprint` of the `worker` and `model` the first delta's entry carries (the request's model
+when the entry omits it). Without `horde.include_reasoning` the reasoning is dropped, and a delta carrying only
+reasoning advances the sequence without sending anything, so the text after a reasoning block is still relayed.
+Keepalive comments continue between deltas. Reasoning is not part of the reconciliation below; the final reply sends
+the part of its reasoning the deltas did not cover, before the rest of the text, when it starts with the relayed
+reasoning, and does not send it otherwise. After exposure:
 
 | Event | Result |
 | --- | --- |
@@ -167,8 +179,8 @@ After exposure:
 
 A restarted attempt starts the reply over, so it is never spliced into a choice the client holds part of
 ([ADR 0024](../decisions/0024-stream-chat-deltas-through-a-retained-redis-stream.md)). Before exposure, an `ended`
-marker, and a delta read together with its generation's `ended` marker, are dropped and the request is delivered
-whole. The error event is `{"error": {...}}` with `type` `api_error`, `code` `ChatStreamDiverged` and
+marker, and a delta read together with its generation's `ended` marker, are dropped; such a marker or a gap in the
+pinned `gen` unpins it, and the next attempt's first delta can pin again, or the request is delivered whole. The error event is `{"error": {...}}` with `type` `api_error`, `code` `ChatStreamDiverged` and
 `metadata.request_id`, followed by `data: [DONE]`.
 
 The front answers browser preflights and allows any origin on every response (`Access-Control-Allow-Origin: *`),
@@ -191,6 +203,7 @@ returns 502 `ChatRequestNoGeneration`. The front does not return a completion wi
 | First streamed chunk | `delta` holds only `role` | `delta` also holds `content` |
 | Delta granularity | One chunk per worker progress post, about one a second, for plain text requests only; others whole | One chunk per token or few tokens |
 | `json_object` without "json" in the messages | Served, unless `horde.openai_guards` is set | Refused |
+| Reasoning text | Hidden; `horde.include_reasoning` returns it as `message.reasoning_content` and `delta.reasoning_content` | Not returned; `usage.completion_tokens_details.reasoning_tokens` only |
 
 ## No eligible worker
 

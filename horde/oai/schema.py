@@ -99,6 +99,7 @@ __all__ = [
     "ChatCompletionUsage",
     "ChatMessage",
     "ChatRole",
+    "CompletionTokensDetails",
     "ErrorMetadata",
     "FinishReason",
     "HordeModelDetails",
@@ -914,7 +915,8 @@ def _drop_absent_fields(model: BaseModel, handler: SerializerFunctionWrapHandler
 class ChatCompletionResponseMessage(BaseModel):
     """Represents the assistant message of one completion choice.
 
-    ``content`` is always written, null included; ``tool_calls`` only when the worker returned calls.
+    ``content`` is always written, null included; ``tool_calls`` only when the worker returned calls;
+    ``reasoning_content`` only when the client asked for it with ``horde.include_reasoning`` and the worker submitted it.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -928,12 +930,17 @@ class ChatCompletionResponseMessage(BaseModel):
     tool_calls: list[ChatToolCall] | None = None
     """The tool calls the worker returned, unchanged."""
 
+    reasoning_content: str | None = None
+    """The model's reasoning, as DeepSeek and OpenRouter return it; never part of ``content``."""
+
     @model_serializer(mode="wrap")
     def serialize_without_absent_tool_calls(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
-        """Convert the message to a dict, leaving ``tool_calls`` out when the worker returned none."""
+        """Convert the message to a dict, leaving ``tool_calls`` and ``reasoning_content`` out when absent."""
         serialised: dict[str, object] = handler(self)
         if self.tool_calls is None:
             serialised.pop("tool_calls", None)
+        if self.reasoning_content is None:
+            serialised.pop("reasoning_content", None)
         return serialised
 
 
@@ -958,8 +965,17 @@ class ChatCompletionChoice(BaseModel):
     """Always null; log probabilities are not served."""
 
 
+class CompletionTokensDetails(BaseModel):
+    """Represents the breakdown of a completion's generated tokens, in OpenAI's ``completion_tokens_details`` shape."""
+
+    model_config = ConfigDict(frozen=True)
+
+    reasoning_tokens: int
+    """How many of the generated tokens were reasoning, as the worker reported them."""
+
+
 class ChatCompletionUsage(BaseModel):
-    """Represents the token counts of a completion."""
+    """Represents the token counts of a completion; ``completion_tokens_details`` only when a worker reported them."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -971,6 +987,18 @@ class ChatCompletionUsage(BaseModel):
 
     total_tokens: int
     """The sum of the prompt and completion tokens."""
+
+    completion_tokens_details: CompletionTokensDetails | None = None
+    """The reasoning tokens among the completion tokens, when the worker reported them. Informational: the Horde
+    charges and rewards on the reply it measures."""
+
+    @model_serializer(mode="wrap")
+    def serialize_without_absent_details(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+        """Convert the usage to a dict, leaving ``completion_tokens_details`` out when no worker reported them."""
+        serialised: dict[str, object] = handler(self)
+        if self.completion_tokens_details is None:
+            serialised.pop("completion_tokens_details", None)
+        return serialised
 
 
 class HordeResponseDetails(BaseModel):
@@ -1219,6 +1247,9 @@ class ChatCompletionChunkDelta(BaseModel):
 
     content: str | None = None
     """The generated text in the content chunk, otherwise absent."""
+
+    reasoning_content: str | None = None
+    """The model's reasoning in a reasoning chunk, sent only under ``horde.include_reasoning``, otherwise absent."""
 
     tool_calls: list[ChatCompletionChunkToolCall] | None = None
     """The tool calls in the content chunk when the worker returned any, otherwise absent."""

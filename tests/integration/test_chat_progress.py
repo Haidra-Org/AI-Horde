@@ -86,13 +86,23 @@ def _submit_chat_request(client: FlaskClient, request_headers: dict[str, str], *
     return request_id
 
 
-def _post_progress(client: FlaskClient, apikey: str, generation_id: str, seq: int, content: str) -> TestResponse:
+def _post_progress(
+    client: FlaskClient,
+    apikey: str,
+    generation_id: str,
+    seq: int,
+    content: str,
+    reasoning_content: str | None = None,
+) -> TestResponse:
+    delta = {"content": content}
+    if reasoning_content is not None:
+        delta["reasoning_content"] = reasoning_content
     return client.post(
         PROGRESS_ROUTE,
         json={
             "id": generation_id,
             "seq": seq,
-            "delta": {"content": content},
+            "delta": delta,
         },
         headers={"apikey": apikey},
     )
@@ -299,3 +309,43 @@ def test_a_stale_generation_ends_its_stream(
     entries = [fields for _, fields in progress_redis.xrange(chat_stream_key(request_id))]
     assert entries == [{"gen": pop_result["id"], "ended": "1"}]
     assert not progress_redis.exists(chat_lease_key(pop_result["id"]))
+
+
+def test_a_reasoning_delta_is_appended_with_its_reasoning_beside_empty_content(
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    lua_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    """Requests left queued by earlier tests may be popped first, so the entries are read by the popped generation."""
+    _submit_chat_request(client, request_headers, stream=True)
+    pop_result = chat_worker.pop()
+
+    reasoning = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "", reasoning_content="Think")
+    text = _post_progress(client, request_headers["apikey"], pop_result["id"], 2, "Blue")
+
+    assert [response.get_json() for response in (reasoning, text)] == [{"accepted_seq": 1}, {"accepted_seq": 2}]
+    entries = [
+        fields
+        for stream_key in lua_redis.scan_iter(match=chat_stream_key("*"))
+        for _, fields in lua_redis.xrange(stream_key)
+        if fields.get("gen") == pop_result["id"]
+    ]
+    assert [(entry["content"], entry.get("reasoning_content")) for entry in entries] == [("", "Think"), ("Blue", None)]
+
+
+@pytest.mark.parametrize("reasoning_content", [None, ""])
+def test_a_delta_without_content_or_reasoning_is_refused(
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    lua_redis: fakeredis.FakeStrictRedis,
+    reasoning_content: str | None,
+) -> None:
+    _submit_chat_request(client, request_headers, stream=True)
+    pop_result = chat_worker.pop()
+
+    response = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "", reasoning_content=reasoning_content)
+
+    assert response.status_code == 400, response.get_data(as_text=True)
+    assert lua_redis.hget(chat_lease_key(pop_result["id"]), "seq") is None

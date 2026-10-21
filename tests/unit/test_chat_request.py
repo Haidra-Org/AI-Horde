@@ -699,6 +699,12 @@ class TestStreamHint:
 
         assert streamed == build_operation_fingerprint(parse_chat_request(_body()))
 
+    def test_asking_for_reasoning_leaves_the_operation_fingerprint_unchanged(self) -> None:
+        """``horde.include_reasoning`` changes what the front delivers and leaves the work unchanged."""
+        with_reasoning = build_operation_fingerprint(parse_chat_request(_body(horde={"include_reasoning": True})))
+
+        assert with_reasoning == build_operation_fingerprint(parse_chat_request(_body()))
+
 
 class TestRequiredFeatures:
     """The capabilities a request needs, which apply under every conformance mode."""
@@ -1325,6 +1331,28 @@ class TestSubmittedReply:
 
         assert build_stored_reply(reply) == {"role": "assistant", "content": "a\ufffdb"}
 
+    def test_reasoning_is_stored_beside_the_content_with_nul_replaced(self) -> None:
+        reply = ChatSubmittedMessage.model_validate({"role": "assistant", "content": "Hi.", "reasoning_content": "Greet\x00."})
+
+        assert build_stored_reply(reply) == {"role": "assistant", "content": "Hi.", "reasoning_content": "Greet\ufffd."}
+
+    def test_a_reply_without_reasoning_is_stored_without_a_reasoning_key(self) -> None:
+        reply = ChatSubmittedMessage.model_validate({"role": "assistant", "content": "Hi."})
+
+        assert "reasoning_content" not in build_stored_reply(reply)
+
+    def test_reasoning_alone_does_not_make_a_reply(self) -> None:
+        """Reasoning is never the reply, so a message with neither content nor tool calls is refused with it."""
+        with pytest.raises(ValidationError):
+            ChatSubmittedMessage.model_validate({"role": "assistant", "content": None, "reasoning_content": "Thinking."})
+
+    def test_reasoning_is_not_charged(self) -> None:
+        reply = build_stored_reply(
+            ChatSubmittedMessage.model_validate({"role": "assistant", "content": "four", "reasoning_content": "x" * 400})
+        )
+
+        assert chat_reply_characters(reply) == 4
+
     def test_the_charged_characters_include_each_tool_call_name_and_arguments(self) -> None:
         reply = {"role": "assistant", "content": "Checking.", "tool_calls": [LOOKUP_CALL, LOOKUP_CALL]}
 
@@ -1378,6 +1406,25 @@ def _verification_refusal(
 
 class TestReplyVerification:
     """A submitted reply is checked against the client's stored extras under the request's conformance mode."""
+
+    def test_reasoning_is_not_checked_against_the_response_format(self) -> None:
+        """A ``strict`` JSON request accepts JSON content whatever the reasoning before it holds."""
+        reply = ChatSubmittedMessage.model_validate({"role": "assistant", "content": "{}", "reasoning_content": "not json"})
+
+        assert verify_chat_reply(reply, _stored_extras(response_format={"type": "json_object"}), ChatConformance.STRICT) == reply
+
+    @pytest.mark.parametrize("conformance", [ChatConformance.STRICT, ChatConformance.BEST_EFFORT])
+    def test_reasoning_over_the_text_cap_is_refused_as_invalid(self, conformance: ChatConformance) -> None:
+        reply = ChatSubmittedMessage.model_validate(
+            {"role": "assistant", "content": "Hi.", "reasoning_content": "x" * (MAX_CHAT_TEXT_BYTES + 1)},
+        )
+
+        assert _verification_refusal(reply, None, conformance).rc == "ChatSubmitInvalid"
+
+    def test_reasoning_at_the_text_cap_is_accepted(self) -> None:
+        reply = ChatSubmittedMessage.model_validate({"role": "assistant", "content": "Hi.", "reasoning_content": "x" * MAX_CHAT_TEXT_BYTES})
+
+        assert verify_chat_reply(reply, None, ChatConformance.STRICT) == reply
 
     def test_both_submit_return_codes_are_known(self) -> None:
         assert {CHAT_SUBMIT_INVALID_RC, CHAT_SUBMIT_NONCONFORMANT_RC} <= set(KNOWN_RC)

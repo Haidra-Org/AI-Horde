@@ -5,13 +5,14 @@
 """Render a streamed chat answer as server-sent events.
 
 A buffered stream sends keepalive comments while the request waits (``: horde queue_position=7 wait_time=42``), then
-the finished completion as a role chunk, a content chunk when the reply has text, a tool-call chunk when it has calls,
+the finished completion as a role chunk, a reasoning chunk when the message carries ``reasoning_content`` (only under
+``horde.include_reasoning``), a content chunk when the reply has text, a tool-call chunk when it has calls,
 a finish chunk carrying ``x_horde``, the usage chunk when the client asked for it, and ``[DONE]``. A relayed stream
-sends the role chunk and one content chunk per delta while the worker generates
-([`build_delta_events`][horde.oai.sse.build_delta_events]); its finished completion then sends only the content the
-deltas did not cover, and the chunks after it. The tool-call chunk carries every call whole with its
-``index``, so a client that accumulates deltas rebuilds the calls. Nullable choice fields remain explicit; absent delta
-members are omitted.
+sends the role chunk and, per delta, a reasoning chunk when it relays reasoning and a content chunk when the delta
+has text, while the worker generates ([`build_delta_events`][horde.oai.sse.build_delta_events]); its finished
+completion then sends only the reasoning and content the deltas did not cover, and the chunks after it. The
+tool-call chunk carries every call whole with its ``index``, so a client that accumulates deltas rebuilds the calls.
+Nullable choice fields remain explicit; absent delta members are omitted.
 
 An error after the headers is one ``data:`` event carrying the same ``{"error": {...}}`` envelope as a response
 before headers, with null fields written explicitly and no choice, followed by ``[DONE]``.
@@ -76,22 +77,30 @@ def build_delta_events(
     first: bool,
     include_usage: bool,
     system_fingerprint: str | None,
+    reasoning_content: str = "",
 ) -> list[ServerSentEvent]:
-    """Create the events that relay one content delta of the first choice while the worker generates.
+    """Create the events that relay one delta of the first choice while the worker generates.
+
+    Reasoning and text travel in separate chunks, the reasoning first, as DeepSeek streams them.
 
     Args:
         completion_id: The completion id every chunk of the stream carries.
         created: When the request was submitted, in Unix seconds.
         model: The model the client asked for.
-        content: The delta's text.
+        content: The delta's text; no content chunk is sent when it is empty.
         first: Whether this is the stream's first delta, which the role chunk precedes.
         include_usage: Whether the client asked for usage, which writes a null ``usage`` in every chunk.
         system_fingerprint: The fingerprint of the relayed generation's worker and model; None when the delta stream
             does not carry the worker.
+        reasoning_content: The delta's reasoning to relay; empty when there is none or the client did not ask for it.
     """
-    deltas = [ChatCompletionChunkDelta(content=content)]
+    deltas: list[ChatCompletionChunkDelta] = []
     if first:
-        deltas.insert(0, ChatCompletionChunkDelta(role="assistant"))
+        deltas.append(ChatCompletionChunkDelta(role="assistant"))
+    if reasoning_content:
+        deltas.append(ChatCompletionChunkDelta(reasoning_content=reasoning_content))
+    if content:
+        deltas.append(ChatCompletionChunkDelta(content=content))
     return [
         _chunk_event(
             ChatCompletionChunk(
@@ -112,6 +121,7 @@ def build_completion_events(
     *,
     include_usage: bool,
     relayed_content: str | None = None,
+    relayed_reasoning: str = "",
 ) -> list[ServerSentEvent]:
     """Create the events that deliver a finished completion, ending with ``[DONE]``.
 
@@ -121,9 +131,18 @@ def build_completion_events(
         relayed_content: The text already relayed as deltas, which the caller checked starts the content of the
             completion's one choice; the role chunk is then left out and the content chunk carries only the rest, or
             is left out when the relayed text is the whole content. None when the relay did not send a delta.
+        relayed_reasoning: The reasoning already relayed as deltas, used only with ``relayed_content``. The reasoning
+            chunk carries the rest of the choice's reasoning when it starts with this, and is left out otherwise or
+            when the relayed reasoning is all of it; reasoning is not reconciled, so a final reasoning that differs is
+            not sent again.
     """
     if relayed_content is not None:
-        return _build_relayed_completion_events(completion, include_usage=include_usage, relayed_content=relayed_content)
+        return _build_relayed_completion_events(
+            completion,
+            include_usage=include_usage,
+            relayed_content=relayed_content,
+            relayed_reasoning=relayed_reasoning,
+        )
     role_chunk = _build_chunk(
         completion,
         choices=[
@@ -133,6 +152,19 @@ def build_completion_events(
     # Text and tool calls travel in separate chunks, as OpenAI streams them: clients such as KoboldAI Lite read
     # tool-call deltas only from chunks that carry no content, so a chunk holding both would lose the calls.
     body_chunks: list[ChatCompletionChunk] = []
+    if any(choice.message.reasoning_content is not None for choice in completion.choices):
+        body_chunks.append(
+            _build_chunk(
+                completion,
+                choices=[
+                    ChatCompletionChunkChoice(
+                        index=choice.index,
+                        delta=ChatCompletionChunkDelta(reasoning_content=choice.message.reasoning_content),
+                    )
+                    for choice in completion.choices
+                ],
+            ),
+        )
     if any(choice.message.content is not None for choice in completion.choices):
         body_chunks.append(
             _build_chunk(
@@ -168,11 +200,22 @@ def _build_relayed_completion_events(
     *,
     include_usage: bool,
     relayed_content: str,
+    relayed_reasoning: str,
 ) -> list[ServerSentEvent]:
     """Create the events that finish a stream whose first choice's text was partly or wholly relayed as deltas."""
     choice = completion.choices[0]
-    remainder = (choice.message.content or "")[len(relayed_content) :]
     events: list[ServerSentEvent] = []
+    final_reasoning = choice.message.reasoning_content or ""
+    reasoning_remainder = final_reasoning[len(relayed_reasoning) :] if final_reasoning.startswith(relayed_reasoning) else ""
+    if reasoning_remainder:
+        reasoning_chunk = _build_chunk(
+            completion,
+            choices=[
+                ChatCompletionChunkChoice(index=choice.index, delta=ChatCompletionChunkDelta(reasoning_content=reasoning_remainder)),
+            ],
+        )
+        events.append(_chunk_event(reasoning_chunk, include_usage=include_usage))
+    remainder = (choice.message.content or "")[len(relayed_content) :]
     if remainder:
         content_chunk = _build_chunk(
             completion,

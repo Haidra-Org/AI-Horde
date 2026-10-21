@@ -186,6 +186,8 @@ def test_unreported_token_counts_and_backend_reason_are_null_on_the_status(
     assert generation["native_finish_reason"] is None
     assert generation["prompt_tokens"] is None
     assert generation["completion_tokens"] is None
+    assert generation["reasoning_tokens"] is None
+    assert "reasoning_content" not in generation["message"]
 
 
 def test_the_structured_reply_is_written_with_the_generation_and_charged_as_text(
@@ -840,6 +842,7 @@ def test_a_chat_dry_run_prices_the_request_without_queueing_it(client, request_h
     [
         ("prompt_tokens", -1),
         ("completion_tokens", 10_000_001),
+        ("reasoning_tokens", -1),
         ("finish_reason", "tool_call"),
         ("native_finish_reason", "x" * 33),
     ],
@@ -2243,3 +2246,72 @@ def test_a_request_on_its_third_attempt_is_not_done_while_the_job_is_processing(
 
     assert (status["done"], status["faulted"], status["processing"], status["restarted"]) == (False, False, 1, 2)
     _cancel(client, request_headers, "chat", request_id)
+
+
+def test_reasoning_is_stored_and_shown_beside_the_reply_and_neither_it_nor_its_count_is_charged(
+    app,
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """The Horde charges and rewards on the reply it measures, so a reply with reasoning earns what the same reply
+    without it earns."""
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.flask import db
+
+    reasoning_request_id = _submit_chat_request(client, request_headers, max_tokens=400)
+    reasoning_pop = chat_worker.pop()
+    reasoning_submit = chat_worker.submit(
+        build_chat_submit_body(
+            generation_id=reasoning_pop["id"],
+            content="Blue.",
+            model_id=CHAT_MODEL,
+            completion_tokens=300,
+            reasoning_content="The user asked for a colour. " * 40,
+            reasoning_tokens=297,
+        ),
+    )
+    assert reasoning_submit.status_code == 200, reasoning_submit.get_data(as_text=True)
+
+    _submit_chat_request(client, request_headers, max_tokens=400)
+    plain_pop = chat_worker.pop()
+    plain_submit = chat_worker.submit(build_chat_submit_body(generation_id=plain_pop["id"], content="Blue.", model_id=CHAT_MODEL))
+    assert plain_submit.status_code == 200, plain_submit.get_data(as_text=True)
+
+    [generation] = _chat_status(client, request_headers, reasoning_request_id)["generations"]
+    assert generation["text"] == "Blue."
+    assert generation["message"] == {
+        "role": "assistant",
+        "content": "Blue.",
+        "reasoning_content": "The user asked for a colour. " * 40,
+    }
+    assert generation["completion_tokens"] == 300
+    assert generation["reasoning_tokens"] == 297
+    with app.app_context():
+        stored = db.session.get(TextProcessingGeneration, uuid.UUID(reasoning_pop["id"]))
+        assert stored.generation == "Blue."
+        assert stored.reasoning_tokens == 297
+    assert reasoning_submit.get_json()["reward"] == plain_submit.get_json()["reward"]
+
+
+def test_a_submit_with_reasoning_over_the_text_cap_is_refused_as_invalid(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_TEXT_BYTES
+
+    _submit_chat_request(client, request_headers)
+    pop_result = chat_worker.pop()
+
+    response = chat_worker.submit(
+        build_chat_submit_body(
+            generation_id=pop_result["id"],
+            content="Blue.",
+            model_id=CHAT_MODEL,
+            reasoning_content="x" * (MAX_CHAT_TEXT_BYTES + 1),
+        ),
+    )
+
+    assert response.status_code == 400, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "ChatSubmitInvalid"

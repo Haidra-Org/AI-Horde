@@ -189,6 +189,12 @@ class ChatHordeOptions(BaseModel):
     ``json_object`` response format without the word "json" in any message (see
     [`check_json_word`][horde.chat_contract.check_json_word]). It acts when the request is admitted and is not stored."""
 
+    include_reasoning: StrictBool = False
+    """Return the model's reasoning as ``reasoning_content`` beside the reply. OpenAI's chat API does not return
+    reasoning text, so the OpenAI front hides it unless asked for. It changes what the front delivers and leaves the
+    work unchanged, so it is not stored and the operation fingerprint leaves it out; the native status shows the
+    reasoning a worker submitted regardless."""
+
     dry_run: StrictBool = False
     """Return the kudos cost without queueing; native callers only."""
 

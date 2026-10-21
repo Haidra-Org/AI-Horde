@@ -56,6 +56,7 @@ ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS finish_reason VARCHAR(32);
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS native_finish_reason VARCHAR(32);
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER;
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS completion_tokens INTEGER;
+ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER;
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS charge_basis VARCHAR(16);
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_model VARCHAR;
 ALTER TABLE processing_gens ADD COLUMN IF NOT EXISTS assigned_max_context_length INTEGER;

@@ -443,6 +443,109 @@ async def test_stream_client_selects_the_stream_database_whatever_the_url_select
     assert connection_kwargs["password"] == "secret"
 
 
+REASONING_TEXT: str = "The user wants a greeting."
+"""The reasoning the worker posts before the reply's text and submits with it."""
+
+
+async def test_reasoning_deltas_are_relayed_before_the_text_when_the_client_asks_for_them(start_front: StartFront) -> None:
+    """The reasoning is not part of the reconciliation: the final reply equals the relayed text."""
+    async with start_front(with_deltas=True) as front:
+
+        async def generate() -> None:
+            await asyncio.sleep(FIRST_DELTA_DELAY_SECONDS)
+            await front.horde.append_delta(GENERATION_ID, 1, "", reasoning_content="The user wants ")
+            await front.horde.append_delta(GENERATION_ID, 2, "", reasoning_content="a greeting.")
+            await front.horde.append_delta(GENERATION_ID, 3, GENERATED_TEXT)
+            await asyncio.sleep(RELAY_SETTLE_SECONDS)
+            await finish(front, reasoning_content=REASONING_TEXT)
+
+        body = await stream_while(front, generate, horde={"include_reasoning": True})
+        equal_outcomes = front.metric_total(RELAY_OUTCOMES_NAME, horde_outcome="equal")
+
+    chunks, last_payload = stream_chunks(body)
+    assert last_payload == "[DONE]"
+    assert chunk_deltas(chunks) == [
+        {"role": "assistant"},
+        {"reasoning_content": "The user wants "},
+        {"reasoning_content": "a greeting."},
+        {"content": GENERATED_TEXT},
+        {},
+    ]
+    assert equal_outcomes == 1
+
+
+async def test_reasoning_deltas_are_dropped_and_the_text_still_relayed_when_the_client_did_not_ask(start_front: StartFront) -> None:
+    """A delta carrying only reasoning advances the sequence without sending anything, so the text that follows it is
+    relayed as the stream's first delta."""
+    async with start_front(with_deltas=True) as front:
+
+        async def generate() -> None:
+            await asyncio.sleep(FIRST_DELTA_DELAY_SECONDS)
+            await front.horde.append_delta(GENERATION_ID, 1, "", reasoning_content=REASONING_TEXT)
+            await front.horde.append_delta(GENERATION_ID, 2, "Hello ")
+            await asyncio.sleep(RELAY_SETTLE_SECONDS)
+            await finish(front, reasoning_content=REASONING_TEXT)
+
+        body = await stream_while(front, generate)
+        relayed = front.metric_total(RELAYED_NAME)
+        prefix_outcomes = front.metric_total(RELAY_OUTCOMES_NAME, horde_outcome="prefix")
+
+    chunks, last_payload = stream_chunks(body)
+    assert last_payload == "[DONE]"
+    assert chunk_deltas(chunks) == [
+        {"role": "assistant"},
+        {"content": "Hello "},
+        {"content": "from the horde."},
+        {},
+    ]
+    assert relayed == 1
+    assert prefix_outcomes == 1
+
+
+async def test_the_final_reply_sends_the_reasoning_the_deltas_did_not_cover(start_front: StartFront) -> None:
+    async with start_front(with_deltas=True) as front:
+
+        async def generate() -> None:
+            await asyncio.sleep(FIRST_DELTA_DELAY_SECONDS)
+            await front.horde.append_delta(GENERATION_ID, 1, "", reasoning_content="The user wants ")
+            await asyncio.sleep(RELAY_SETTLE_SECONDS)
+            await finish(front, reasoning_content=REASONING_TEXT)
+
+        body = await stream_while(front, generate, horde={"include_reasoning": True})
+
+    chunks, _ = stream_chunks(body)
+    assert chunk_deltas(chunks) == [
+        {"role": "assistant"},
+        {"reasoning_content": "The user wants "},
+        {"reasoning_content": "a greeting."},
+        {"content": GENERATED_TEXT},
+        {},
+    ]
+
+
+async def test_a_pinned_attempt_that_ended_before_sending_anything_leaves_the_next_attempt_relayable(start_front: StartFront) -> None:
+    """An attempt whose dropped reasoning was all it posted before it faulted does not hold the relay."""
+    async with start_front(with_deltas=True) as front:
+
+        async def generate() -> None:
+            await asyncio.sleep(FIRST_DELTA_DELAY_SECONDS)
+            await front.horde.append_delta(GENERATION_ID, 1, "", reasoning_content=REASONING_TEXT)
+            await front.horde.end_generation(GENERATION_ID)
+            await front.horde.append_delta(REPLACEMENT_GENERATION_ID, 1, GENERATED_TEXT)
+            await asyncio.sleep(RELAY_SETTLE_SECONDS)
+            await finish(front)
+
+        body = await stream_while(front, generate)
+        relayed = front.metric_total(RELAYED_NAME)
+        cancels = front.horde.cancels_received
+
+    chunks, last_payload = stream_chunks(body)
+    assert last_payload == "[DONE]"
+    assert chunk_deltas(chunks) == [{"role": "assistant"}, {"content": GENERATED_TEXT}, {}]
+    assert relayed == 1
+    assert cancels == 0
+
+
 LOWER_ENTRY_ID: str = "1-1"
 """An entry id below every id the stream assigned earlier, as a stream recreated after a failover that lost the key
 may assign."""

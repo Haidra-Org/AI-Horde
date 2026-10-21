@@ -171,11 +171,17 @@ def done_generation(
     completion_tokens: int | None = 6,
     worker_id: str = "worker-1",
     model: str = MODEL_NAME,
+    reasoning_content: str | None = None,
+    reasoning_tokens: int | None = None,
 ) -> dict[str, Any]:
-    """Return one finished generation in the native chat status shape."""
+    """Return one finished generation in the native chat status shape; the message carries ``reasoning_content``
+    only when it is set, as the native status does."""
+    message: dict[str, Any] = {"role": "assistant", "content": content}
+    if reasoning_content is not None:
+        message["reasoning_content"] = reasoning_content
     return {
         "text": content,
-        "message": {"role": "assistant", "content": content},
+        "message": message,
         "model": model,
         "worker_id": worker_id,
         "worker_name": "Test Worker",
@@ -185,6 +191,7 @@ def done_generation(
         "native_finish_reason": native_finish_reason,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
+        "reasoning_tokens": reasoning_tokens,
         "charge_basis": CHARGE_BASIS,
         "queue_wait_seconds": 1.5,
     }
@@ -279,13 +286,17 @@ class FakeHorde:
         *,
         worker_id: str | None = None,
         model: str | None = None,
+        reasoning_content: str | None = None,
     ) -> None:
         """Append a content delta of ``generation_id`` to the request's delta stream, as the progress route does.
 
         ``worker_id`` and ``model`` are the lease fields the append copies into the entry; None leaves the field out, as
-        an entry from a Horde that does not write it.
+        an entry from a Horde that does not write it. ``reasoning_content`` is written only when set, as the append
+        script writes it.
         """
         fields = {"gen": generation_id, "seq": str(seq), "content": content}
+        if reasoning_content is not None:
+            fields["reasoning_content"] = reasoning_content
         if worker_id is not None:
             fields["worker"] = worker_id
         if model is not None:

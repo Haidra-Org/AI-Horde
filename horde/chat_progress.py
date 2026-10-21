@@ -9,11 +9,12 @@ holding the request, the worker, the model, the worker's owner, a digest of the 
 The progress route authenticates a post against that lease alone, so a post does not read Postgres.
 
 [`append_progress`][horde.chat_progress.append_progress] appends one delta to ``horde:chat:stream:<request id>`` with
-the fields ``gen`` (the generation id), ``seq``, ``content``, ``worker`` and ``model``, the last two copied from the
-lease, in one Lua script that also enforces the sequence and the caps. The worker and model let the front compute the
-reply's ``system_fingerprint`` from the first delta; an entry appended under a lease without a model leaves it out.
-The lease hash holds the generation's last accepted ``seq``, the bytes accepted so far and the last
-content, so the check does not need a second key or a read of the stream. When a generation with a lease faults,
+the fields ``gen`` (the generation id), ``seq``, ``content``, ``reasoning_content`` when the delta carries
+reasoning, ``worker`` and ``model``, the last two copied from the lease, in one Lua script that also enforces the
+sequence and the caps. The worker and model let the front compute the reply's ``system_fingerprint`` from the first
+delta; an entry appended under a lease without a model leaves it out. The lease hash holds the generation's last
+accepted ``seq``, the bytes accepted so far and the last content and reasoning, so the check does not need a second
+key or a read of the stream. When a generation with a lease faults,
 [`end_progress_stream`][horde.chat_progress.end_progress_stream] appends ``gen`` and ``ended`` (``1``) and deletes the
 lease, so a reader learns at once that the attempt it follows is gone.
 
@@ -111,6 +112,10 @@ LEASE_LAST_CONTENT_FIELD = "last"
 """Lease field the append script keeps the last accepted content in, to tell a retry from a change. One delta is
 small next to the byte cap, so the copy costs less than reading the stream back."""
 
+LEASE_LAST_REASONING_FIELD = "last_reasoning"
+"""Lease field the append script keeps the last accepted reasoning content in, empty when it carried none, so a retry
+is told from a change as for ``last``."""
+
 STREAM_GENERATION_FIELD = "gen"
 """Stream entry field holding the generation id, the attempt the entry belongs to."""
 
@@ -118,7 +123,10 @@ STREAM_SEQ_FIELD = "seq"
 """Stream entry field holding the delta's sequence number, from 1 per generation."""
 
 STREAM_CONTENT_FIELD = "content"
-"""Stream entry field holding the delta's text."""
+"""Stream entry field holding the delta's text; empty when the delta carries only reasoning."""
+
+STREAM_REASONING_CONTENT_FIELD = "reasoning_content"
+"""Stream entry field holding the delta's reasoning, never part of ``content``; absent when the delta carries none."""
 
 STREAM_WORKER_FIELD = "worker"
 """Stream entry field holding the worker id, copied from the lease."""
@@ -192,7 +200,8 @@ written and reviewed as Lua. It appends one delta under the generation's lease. 
 ``ARGV``: the generation id,
 ``seq``, the content, [`MAX_CHAT_PROGRESS_ENTRIES`][horde.chat_progress.MAX_CHAT_PROGRESS_ENTRIES],
 [`CHAT_PROGRESS_STREAM_TTL_SECONDS`][horde.chat_progress.CHAT_PROGRESS_STREAM_TTL_SECONDS] and
-[`CHAT_PROGRESS_STREAM_MAX_ENTRIES`][horde.chat_progress.CHAT_PROGRESS_STREAM_MAX_ENTRIES]. Replies with the outcome
+[`CHAT_PROGRESS_STREAM_MAX_ENTRIES`][horde.chat_progress.CHAT_PROGRESS_STREAM_MAX_ENTRIES] and the reasoning content,
+empty when the delta carries none. Replies with the outcome
 and a ``seq``, as [`ProgressAppend`][horde.chat_progress.ProgressAppend] holds them. The sequence state lives in the
 lease hash, so the script reads one key besides the stream it writes and expires with the lease."""
 
@@ -336,13 +345,16 @@ def read_stream_lease(generation_id: str) -> StreamLease | None:
     )
 
 
-def append_progress(lease: StreamLease, seq: int, content: str) -> ProgressAppend:
+def append_progress(lease: StreamLease, seq: int, content: str, reasoning_content: str = "") -> ProgressAppend:
     """Append one delta of a leased generation to its request's stream, enforcing the sequence and the caps.
+
+    The reasoning counts toward the byte cap with the content, and a retry repeats both.
 
     Args:
         lease: The generation's lease, read by [`read_stream_lease`][horde.chat_progress.read_stream_lease].
         seq: The delta's sequence number, from 1.
-        content: The delta's text.
+        content: The delta's text; empty when the delta carries only reasoning.
+        reasoning_content: The delta's reasoning; empty when it carries none.
 
     Returns:
         The outcome and its ``seq``.
@@ -362,6 +374,7 @@ def append_progress(lease: StreamLease, seq: int, content: str) -> ProgressAppen
             MAX_CHAT_PROGRESS_ENTRIES,
             CHAT_PROGRESS_STREAM_TTL_SECONDS,
             CHAT_PROGRESS_STREAM_MAX_ENTRIES,
+            reasoning_content,
         ],
     )
     outcome, reply_seq = reply

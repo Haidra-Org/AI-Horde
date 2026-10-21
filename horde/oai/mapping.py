@@ -32,6 +32,7 @@ from horde.oai.schema import (
     ChatCompletionResponseMessage,
     ChatCompletionUsage,
     ChatMessage,
+    CompletionTokensDetails,
     ErrorMetadata,
     FinishReason,
     HordeModelDetails,
@@ -60,6 +61,7 @@ __all__ = [
     "estimate_tokens",
     "flatten_messages",
     "generation_content",
+    "generation_reasoning",
     "generation_tool_calls",
     "relays_deltas",
 ]
@@ -362,6 +364,13 @@ def generation_content(generation: HordeChatGeneration) -> str | None:
     return generation.text or ""
 
 
+def generation_reasoning(generation: HordeChatGeneration) -> str | None:
+    """Return the reasoning of a generation's message, or None when the worker submitted none."""
+    if generation.message is None:
+        return None
+    return generation.message.reasoning_content
+
+
 def generation_tool_calls(generation: HordeChatGeneration) -> list[ChatToolCall] | None:
     """Return the tool calls of a generation's message, or None when it carries none."""
     if generation.message is None or not generation.message.tool_calls:
@@ -385,12 +394,15 @@ def build_completion(
     Args:
         request_id: The Horde request id.
         created: When the request was submitted, in Unix seconds.
-        chat_request: The client's request, used for the model fallback and the prompt estimate.
+        chat_request: The client's request, used for the model fallback, the prompt estimate and
+            ``horde.include_reasoning``.
         status: The Horde's terminal status of the request.
 
     Returns:
         One choice per generation, in the Horde's order; ``model``, ``system_fingerprint`` and the ``x_horde`` worker
-        details are the first generation's.
+        details are the first generation's. A message carries ``reasoning_content`` only under
+        ``horde.include_reasoning``. ``usage.completion_tokens_details.reasoning_tokens`` is the sum of the reasoning
+        counts the workers reported, present when any reported one, whether or not the reasoning is returned.
 
     Raises:
         CompletionWithoutGenerationError: ``status`` has no finished generation. A completion built from it would be a
@@ -402,7 +414,9 @@ def build_completion(
     completion_tokens = 0
     estimated_usage = False
     prompt_tokens: int | None = None
+    reasoning_tokens: int | None = None
     has_empty_return = False
+    include_reasoning = chat_request.horde is not None and chat_request.horde.include_reasoning
     for generation_index, generation in enumerate(status.generations):
         generated_text = generation_content(generation)
         tool_calls = generation_tool_calls(generation)
@@ -412,7 +426,11 @@ def build_completion(
         choices.append(
             ChatCompletionChoice(
                 index=generation_index,
-                message=ChatCompletionResponseMessage(content=generated_text, tool_calls=tool_calls),
+                message=ChatCompletionResponseMessage(
+                    content=generated_text,
+                    tool_calls=tool_calls,
+                    reasoning_content=generation_reasoning(generation) if include_reasoning else None,
+                ),
                 finish_reason=FinishReason.CONTENT_FILTER if is_filtered else _finish_reason(generation.finish_reason),
                 native_finish_reason=generation.native_finish_reason,
             ),
@@ -424,6 +442,8 @@ def build_completion(
             completion_tokens += generation.completion_tokens
         if prompt_tokens is None and generation.prompt_tokens is not None:
             prompt_tokens = generation.prompt_tokens
+        if generation.reasoning_tokens is not None:
+            reasoning_tokens = (reasoning_tokens or 0) + generation.reasoning_tokens
     if prompt_tokens is None:
         prompt_tokens = estimate_tokens(
             flatten_messages(chat_request.messages, tools=chat_request.tools),
@@ -440,6 +460,7 @@ def build_completion(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
+            completion_tokens_details=None if reasoning_tokens is None else CompletionTokensDetails(reasoning_tokens=reasoning_tokens),
         ),
         system_fingerprint=build_system_fingerprint(first_generation.worker_id, model),
         x_horde=HordeResponseDetails(

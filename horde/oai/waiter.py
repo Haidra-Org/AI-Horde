@@ -460,7 +460,12 @@ class DeltaEntry(BaseModel):
     """The delta's sequence number, from 1 per generation; None on an ended marker."""
 
     content: str | None = None
-    """The text since the generation's previous delta; None on an ended marker."""
+    """The text since the generation's previous delta; None on an ended marker, empty on a delta carrying only
+    reasoning."""
+
+    reasoning_content: str | None = None
+    """The reasoning since the generation's previous delta, never part of ``content``; None when the delta carries
+    none."""
 
     worker_id: str | None = Field(default=None, validation_alias="worker")
     """The worker generating the delta; None on an ended marker and on a delta from a Horde that does not write it."""

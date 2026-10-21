@@ -203,6 +203,7 @@ and values:
 | `context_fit`                                   | `grow` or `reject`    | `grow`  | With `grow`, the context grows only up to the largest chat context an online chat worker serving the model declares |
 | `conformance`                                   | `strict` or `best_effort` | `strict` | With `strict`, only workers declaring every guarantee the request needs serve it; `best_effort` drops that requirement. See [Guarantees](#guarantees) |
 | `openai_guards`                                 | boolean               | `false` | Turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format without the word "json" (any case) in some message text returns `400 ChatRequestConflict` with OpenAI's message. Acts on admission only; not stored |
+| `include_reasoning`                             | boolean               | `false` | Read by the OpenAI front, which returns the model's reasoning only when it is set. The native route accepts it and does not store it; it is not in the operation fingerprint, and the native status shows a submitted `reasoning_content` either way |
 | `dry_run`                                       | boolean               | `false` | Return the kudos cost without queueing                         |
 | `operation_key`                                 | UUID                  | none    | Claims the submission for its user; see [Operation key](#operation-key) |
 
@@ -580,10 +581,11 @@ defaults never apply to a chat job.
 
 | Field                  | Type                                      | Required | Meaning                                                    |
 | ---------------------- | ----------------------------------------- | -------- | ---------------------------------------------------------- |
-| `message`              | `{role: "assistant", content, tool_calls?}` | yes    | The reply; an empty `content` is a completed reply. `tool_calls` holds 1 to 128 calls as minted by the backend; `content` may be null only with them |
+| `message`              | `{role: "assistant", content, tool_calls?, reasoning_content?}` | yes    | The reply; an empty `content` is a completed reply. `tool_calls` holds 1 to 128 calls as minted by the backend; `content` may be null only with them. `reasoning_content` is the model's reasoning, never part of `content`; see [Reasoning](#reasoning) |
 | `finish_reason`        | `stop`, `length`, `content_filter` or `tool_calls` | yes | Why the worker stopped; `tool_calls` needs a non-empty `message.tool_calls`. A forced `tool_choice` may finish with `stop` and calls |
 | `native_finish_reason` | string, at most 32 characters             | no       | The backend's reason                                       |
 | `prompt_tokens`, `completion_tokens` | integer, 0 to 10,000,000    | no       | Omit a count the backend did not report; stored as null     |
+| `reasoning_tokens`     | integer, 0 to 10,000,000                  | no       | How many of `completion_tokens` were reasoning. Omit it when the backend did not report it; stored as null |
 | `model_id`             | string                                    | yes      | Has to be the generation's `assigned_model`                 |
 | `state`                | `ok`, `censored`, `csam`, `faulted`       | no       | As for text jobs                                           |
 | `fault_reason`         | string                                    | no       | With `state` `faulted` only: why the worker faulted the job; see [Worker fault reasons](#worker-fault-reasons) |
@@ -620,6 +622,18 @@ together, so a submit that loses to a cancel or a duplicate does not write any o
 string (`build_stored_reply`); `generation` holds the content, or an empty string when it is null. An empty `content`
 completes the generation, is charged and rewarded, and counts towards the per-model empty-generation counter unless
 the reply carries tool calls, which are a complete reply.
+
+### Reasoning
+
+A reasoning model, such as Qwen3, emits a `<think>` block before the answer. The worker submits it as
+`message.reasoning_content` and never inside `content`, an unclosed block cut off at `max_length` included. The Horde
+stores it in `message` beside `content`, with NUL replaced, only when it was submitted, and the status shows it there.
+It is not the reply: `generation` holds the content alone, the charge and reward are computed on the content and tool
+calls (`chat_reply_characters`), and the conformance rules do not read it. Its UTF-8 length is capped at the SDK's
+`MAX_CHAT_TEXT_BYTES` (1 MiB), the most message text a request may carry, since the kudos cost does not bound what is
+stored as reasoning; a longer one returns `400 ChatSubmitInvalid`. `reasoning_tokens` is stored in a separate column and shown on
+the status. Like the other reported counts it never changes the charge or reward, since the Horde pays only for the
+output it measures.
 
 ### Reply verification
 
@@ -712,9 +726,10 @@ function name and arguments (`chat_reply_characters`, read by `TextProcessingGen
 formula's token count is those characters divided by 4, rounded up, at least 20 and at most the requested `max_length`, so a short reply to a large `max_tokens` is not
 charged the full request. Reported token counts are stored and shown on the status route and never change the charge.
 The basis is computed in one place, `TextProcessingGeneration.get_charge_basis`. The status route returns, per
-generation, `message` (with `tool_calls` when the worker submitted them), `finish_reason` as submitted,
-`native_finish_reason`, `prompt_tokens`, `completion_tokens`, `charge_basis` and `queue_wait_seconds`, the seconds from
-the request's creation to the generation's assignment. The text status route returns none of them.
+generation, `message` (with `tool_calls` and `reasoning_content` when the worker submitted them), `finish_reason` as
+submitted, `native_finish_reason`, `prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `charge_basis` and
+`queue_wait_seconds`, the seconds from
+the request's creation to the generation's assignment. The text status route does not return any of them.
 
 ## Chat model list
 
@@ -750,14 +765,17 @@ still submits the whole reply to the submit route.
 | `apikey` header | The worker owner's API key, as on submit                                                  |
 | `id`            | The generation id from the pop                                                            |
 | `seq`           | 1 for the first post of the generation, then one more for each                            |
-| `delta.content` | The text since the previous post, at least one character                                  |
+| `delta.content` | The text since the previous post; empty only when `delta.reasoning_content` is set        |
+| `delta.reasoning_content` | Optional: the reasoning since the previous post, never part of `delta.content`  |
 
-An accepted post returns `200` with `{"accepted_seq": <seq>}`. A post that repeats the last accepted `seq` with the
-same content returns the same body and does not append an entry, so a worker retries a post whose answer it lost by sending it
+A delta with neither non-empty `content` nor non-empty `reasoning_content` returns `400 BadRequest`. Reasoning counts
+toward the byte cap with the content. An accepted post returns `200` with `{"accepted_seq": <seq>}`. A post that
+repeats the last accepted `seq` with the same content and reasoning returns the same body and does not append an entry, so a worker retries a post whose answer it lost by sending it
 again unchanged.
 
 | Status | Return code                 | Meaning                                                                      |
 | ------ | --------------------------- | ---------------------------------------------------------------------------- |
+| `400`  | `BadRequest`                | The delta carries neither content nor reasoning                              |
 | `404`  | `ChatProgressNotStreaming`  | The generation has no lease: not streamed, already submitted or faulted, expired or unknown. Stop posting; still submit |
 | `403`  | `WrongCredentials`          | The API key is not the key of the worker's owner                             |
 | `409`  | `ChatProgressOutOfSequence` | `seq` is not the next one, or repeats the last one with other content. The body adds `expected_seq` |
@@ -772,8 +790,9 @@ during the job therefore takes effect for posts only once the lease ends. A fake
 real one's and not appended.
 
 One Lua script checks and appends a post atomically. The lease hash also holds the last accepted `seq`, the bytes
-accepted so far and the last content. An accepted delta is appended to the stream `horde:chat:stream:<request id>`
-with fields `gen` (the generation id), `seq`, `content`, and the lease's `worker` and `model`, from which the front
+accepted so far and the last content and reasoning. An accepted delta is appended to the stream
+`horde:chat:stream:<request id>` with fields `gen` (the generation id), `seq`, `content`, `reasoning_content` when the
+delta carries reasoning, and the lease's `worker` and `model`, from which the front
 computes the reply's `system_fingerprint` at the first delta. A lease without a `model` field gives entries without
 one. Caps, in `horde/chat_progress.py`:
 
@@ -821,7 +840,7 @@ the request id, so it checks the status once after subscribing to cover an event
 `waiting_prompts.messages` (JSONB, deferred in the ORM); `workers.accepts_chat_jobs` (boolean, not null, default
 false), `accepts_prompt_jobs` (boolean, not null, default true), `chat_features` (text array), `chat_max_context_length`, `chat_max_length`, `chat_model_id` and
 `image_transports` (text array); and `processing_gens.message` (JSONB), `finish_reason` and `native_finish_reason`
-(varchar 32), `prompt_tokens`, `completion_tokens`, `charge_basis` (varchar 16), `assigned_model`,
+(varchar 32), `prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `charge_basis` (varchar 16), `assigned_model`,
 `assigned_max_context_length`, `assigned_max_length` and `image_transport` (varchar 16); and
 `waiting_prompts.operation_key` (UUID), `operation_fingerprint` (char 64),
 `context_adjustments` (JSONB), `chat_extras` (JSONB, deferred in the ORM), `chat_required_features` (text array),

@@ -270,6 +270,11 @@ Send `message`, `finish_reason` and `model_id` in place of `generation`
 
 - `message.content` is the reply text. An empty string is a completed reply. It may be null only when
   `message.tool_calls` carries the model's calls.
+- `message.reasoning_content` is the model's reasoning, such as the `<think>` block a reasoning model emits before
+  the answer. Send it in this field. Do not put it inside `content`: split a closed block off the reply, and when
+  generation stops at `max_length` inside a block that never closed, submit that text as `reasoning_content` with
+  an empty `content` and `finish_reason` `length`. Leave the field out when the model produced no reasoning. It is
+  stored and shown beside the reply, is not charged, and may take up to 1 MiB of UTF-8.
 - `finish_reason` is one of `stop`, `length`, `content_filter` and `tool_calls`. Map the backend's reason onto them:
   `length` when generation reached `max_length`, `tool_calls` when the reply carries calls, `content_filter` when the
   backend withheld or cut the reply on a content rule, and `stop` otherwise. `tool_calls` needs a non-empty
@@ -277,18 +282,19 @@ Send `message`, `finish_reason` and `model_id` in place of `generation`
   does: the horde stores `stop` for a reply to a `tool_choice` that specifies a function, which is what OpenAI returns.
 - `native_finish_reason` is the backend's reason, at most 32 characters. It is optional and shown to the client
   beside `finish_reason`.
-- `prompt_tokens` and `completion_tokens` are sent only when the backend reported them. Leave a count out rather
-  than sending zero; the horde stores a missing count as null and shows it to the client, and the counts never change
-  the charge ([Pricing](../reference/chat_requests.md#pricing)).
+- `prompt_tokens` and `completion_tokens` are sent only when the backend reported them, and `reasoning_tokens`, how
+  many of the completion tokens were reasoning, only when the backend counted it. Leave a count out and do not send
+  zero; the horde stores a missing count as null and shows it to the client, and the counts never change the
+  charge or the reward ([Pricing](../reference/chat_requests.md#pricing)).
 - `model_id` is the model the job was assigned, the `model_id` the worker declared when it popped the job.
 - `state` is `ok`, `censored`, `csam` or `faulted`, as for text jobs.
 
 The horde refuses a submit it cannot store as a reply:
 
 - `400 ChatSubmitInvalid` for a submit without a valid `message` or `finish_reason`, with both `generation` and
-  `message`, with `tool_calls` as the reason and no calls, or with a `native_finish_reason` over 32 characters. The
-  client receives the reply as an OpenAI choice, which needs a message and a finish reason, and a `tool_calls` reason
-  tells the client to look for calls.
+  `message`, with `tool_calls` as the reason and no calls, with a `native_finish_reason` over 32 characters, or with
+  a `reasoning_content` over 1 MiB. The client receives the reply as an OpenAI choice, which needs a message and a
+  finish reason, and a `tool_calls` reason tells the client to look for calls.
 - `400 ChatSubmitInvalid` for `message` on a text job's submit, whose reply is `generation`.
 - `400 ChatSubmitInvalid` for a call to a function the request's `tools` do not define, or two calls with the same
   `id`, under either conformance mode. The client dispatches a call by its name and answers it by its id. A request
@@ -347,16 +353,18 @@ apikey: <worker owner's key>
 - `409 ChatProgressOutOfSequence` carries `expected_seq`. Changed content under an accepted `seq` is refused the same
   way, so never rewrite text already posted.
 - `404 ChatProgressNotStreaming`, `413 ChatProgressCapReached` (1000 posts, or 16 bytes per `max_length` token) and
-  repeated `503 ChatProgressUnavailable` mean stop posting. None of them affects the job.
-- Post the text the client will see: no reasoning blocks, tool-call markup or stop sequence the final reply strips.
-  Send only `content`; tool calls stay in the submit.
+  repeated `503 ChatProgressUnavailable` mean stop posting. They do not affect the job.
+- Post the text the client will see in `content`, leaving out reasoning blocks, tool-call markup and any stop
+  sequence the final reply strips. Post reasoning as it is generated in `delta.reasoning_content`, with an empty
+  `content` until the answer starts; a post carries content, reasoning or both, and their bytes count toward the cap
+  together. The front relays reasoning only to a client that asked for it. Tool calls stay in the submit.
 - Submit the whole reply as above once the last post was answered. The submit is what the request stores and charges,
   and it ends the job's posts.
 
 Verification: each post returns `200 {"accepted_seq": n}`, and the request's stream
 `horde:chat:stream:<request-id>` on the chat signal database (Redis logical database 7) holds one entry per accepted
-post with `gen`, `seq`, `content`, `worker` and `model`. Covered by `tests/integration/test_chat_progress.py` and
-`tests/unit/test_chat_progress.py`; the contract is in
+post with `gen`, `seq`, `content`, `reasoning_content` when the post carried reasoning, `worker` and `model`. Covered
+by `tests/integration/test_chat_progress.py` and `tests/unit/test_chat_progress.py`; the contract is in
 [Streaming progress](../reference/chat_requests.md#streaming-progress).
 
 Reversal: stop posting. The request completes from the submit alone.

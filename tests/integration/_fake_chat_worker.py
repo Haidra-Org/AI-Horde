@@ -107,6 +107,8 @@ def build_chat_submit_body(
     completion_tokens: int | None = None,
     native_finish_reason: str | None = None,
     tool_calls: list[dict[str, Any]] | None = None,
+    reasoning_content: str | None = None,
+    reasoning_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Return a chat job's submit body, without ``generation``.
 
@@ -119,6 +121,8 @@ def build_chat_submit_body(
         completion_tokens: The generated token count; left out when None.
         native_finish_reason: The backend's own stop reason; left out when None.
         tool_calls: The tool calls the model made; left out of the message when None.
+        reasoning_content: The model's reasoning; left out of the message when None.
+        reasoning_tokens: The reasoning token count; left out when None.
 
     Returns:
         The JSON body for ``POST /v2/generate/text/submit``.
@@ -126,6 +130,8 @@ def build_chat_submit_body(
     message: dict[str, Any] = {"role": "assistant", "content": content}
     if tool_calls is not None:
         message["tool_calls"] = tool_calls
+    if reasoning_content is not None:
+        message["reasoning_content"] = reasoning_content
     submit_body: dict[str, Any] = {
         "id": generation_id,
         "message": message,
@@ -136,6 +142,7 @@ def build_chat_submit_body(
     optional_fields = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
+        "reasoning_tokens": reasoning_tokens,
         "native_finish_reason": native_finish_reason,
     }
     submit_body.update({key: value for key, value in optional_fields.items() if value is not None})

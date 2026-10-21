@@ -634,3 +634,85 @@ async def test_models_list_a_tool_constraint_only_with_its_declared_guarantee(
 
     (model_card,) = response.json()["data"]
     assert model_card["supported_parameters"] == ["max_tokens", "temperature", "top_p", "stop", *expected_tool_parameters]
+
+
+REASONING_TEXT: str = "The user wants a greeting."
+"""The reasoning a worker submitted beside the reply."""
+
+
+@pytest.mark.parametrize("include_reasoning", [True, False])
+async def test_reasoning_is_returned_on_the_message_only_when_the_client_asks_for_it(
+    start_front: StartFront,
+    include_reasoning: bool,
+) -> None:
+    """OpenAI's chat API does not return reasoning, so the front hides it unless ``horde.include_reasoning`` is set."""
+    async with start_front() as front:
+        front.horde.status_payload = done_status(reasoning_content=REASONING_TEXT)
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(horde={"include_reasoning": include_reasoning}),
+        )
+
+    assert response.status_code == 200
+    expected_message: dict[str, object] = {"role": "assistant", "content": GENERATED_TEXT}
+    if include_reasoning:
+        expected_message["reasoning_content"] = REASONING_TEXT
+    assert response.json()["choices"][0]["message"] == expected_message
+
+
+async def test_include_reasoning_is_forwarded_to_the_native_route(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"include_reasoning": True}))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["horde"]["include_reasoning"] is True
+
+
+@pytest.mark.parametrize("include_reasoning", [True, False])
+async def test_reported_reasoning_tokens_appear_in_the_usage_details_whether_or_not_reasoning_is_returned(
+    start_front: StartFront,
+    include_reasoning: bool,
+) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status(reasoning_content=REASONING_TEXT, completion_tokens=40, reasoning_tokens=34)
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(horde={"include_reasoning": include_reasoning}),
+        )
+
+    assert response.json()["usage"] == {
+        "prompt_tokens": 21,
+        "completion_tokens": 40,
+        "total_tokens": 61,
+        "completion_tokens_details": {"reasoning_tokens": 34},
+    }
+
+
+async def test_usage_omits_completion_details_when_the_worker_did_not_report_reasoning_tokens(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status(reasoning_content=REASONING_TEXT)
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"include_reasoning": True}))
+
+    assert "completion_tokens_details" not in response.json()["usage"]
+
+
+@pytest.mark.parametrize("include_reasoning", [True, False])
+async def test_a_streamed_reply_sends_the_reasoning_chunk_before_the_content_only_when_asked_for(
+    start_front: StartFront,
+    include_reasoning: bool,
+) -> None:
+    chat_body = build_chat_body(stream=True, stream_options={"include_usage": True}, horde={"include_reasoning": include_reasoning})
+    async with start_front() as front:
+        front.horde.status_payload = done_status(reasoning_content=REASONING_TEXT, reasoning_tokens=3)
+        response = await front.client.post("/v1/chat/completions", json=chat_body)
+
+    payloads = data_payloads(parse_sse_events(response.text))
+    assert payloads[-1] == "[DONE]"
+    chunks = [json.loads(payload) for payload in payloads[:-1]]
+    expected_deltas: list[dict[str, object]] = [{"role": "assistant"}]
+    if include_reasoning:
+        expected_deltas.append({"reasoning_content": REASONING_TEXT})
+    expected_deltas.extend([{"content": GENERATED_TEXT}, {}])
+    assert [chunk["choices"][0]["delta"] for chunk in chunks if chunk["choices"]] == expected_deltas
+    assert chunks[-1]["usage"]["completion_tokens_details"] == {"reasoning_tokens": 3}

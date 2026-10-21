@@ -5,7 +5,7 @@
 from typing import Any
 
 from flask_restx import fields, reqparse
-from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_TOOL_COUNT, MAX_CHAT_TOOL_SPEC_BYTES
+from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_TEXT_BYTES, MAX_CHAT_TOOL_COUNT, MAX_CHAT_TOOL_SPEC_BYTES
 from horde_sdk.generation_parameters.text.chat_policy import (
     DEFAULT_CHAT_CONFORMANCE,
     ChatConformance,
@@ -191,6 +191,13 @@ class TextParsers(v2.Parsers):
             type=int,
             required=False,
             help="How many tokens the worker generated.",
+            location="json",
+        )
+        self.job_submit_parser.add_argument(
+            "reasoning_tokens",
+            type=int,
+            required=False,
+            help="How many of the generated tokens were the model's reasoning.",
             location="json",
         )
         self.job_submit_parser.add_argument(
@@ -871,6 +878,14 @@ class TextModels(v2.Models):
                         "minted. A tool call is a complete reply and is charged as output with the content."
                     ),
                 ),
+                "reasoning_content": fields.String(
+                    description=(
+                        "Optional: the model's hidden reasoning, such as a <think> block the backend split off, "
+                        f"at most {MAX_CHAT_TEXT_BYTES} UTF-8 bytes. Never part of content, including an unclosed "
+                        "block cut off at max_length. Stored and shown beside the reply; not charged and not "
+                        "checked against the request's tool_choice or response_format."
+                    ),
+                ),
             },
         )
         self.input_model_job_submit = api.inherit(
@@ -908,6 +923,14 @@ class TextModels(v2.Models):
                     description=(
                         "Chat jobs only, optional: how many tokens the worker generated. Stored and shown, never "
                         "charged; omit it when the backend did not count them."
+                    ),
+                ),
+                "reasoning_tokens": fields.Integer(
+                    min=0,
+                    max=MAX_REPORTED_TOKEN_COUNT,
+                    description=(
+                        "Chat jobs only, optional: how many of the generated tokens were the model's reasoning. Stored "
+                        "and shown, never charged or rewarded; omit it when the backend did not count them."
                     ),
                 ),
                 "model_id": fields.String(
@@ -1120,10 +1143,19 @@ class TextModels(v2.Models):
             {
                 "content": fields.String(
                     required=True,
-                    min_length=1,
                     # No post can pass the largest byte cap a lease holds, so a longer one is refused before Redis.
                     max_length=MAX_LENGTH_LIMIT * CHAT_PROGRESS_BYTES_PER_TOKEN,
-                    description="The text generated since the previous delta, as the client will see it.",
+                    description=(
+                        "The text generated since the previous delta, as the client will see it. Empty only when "
+                        "reasoning_content carries the delta."
+                    ),
+                ),
+                "reasoning_content": fields.String(
+                    max_length=MAX_LENGTH_LIMIT * CHAT_PROGRESS_BYTES_PER_TOKEN,
+                    description=(
+                        "Optional: the reasoning generated since the previous delta, never part of content. It counts "
+                        "toward the byte cap with content."
+                    ),
                 ),
             },
         )
@@ -1237,6 +1269,13 @@ class TextModels(v2.Models):
                         "and keeps the feature and limit checks."
                     ),
                 ),
+                "include_reasoning": fields.Boolean(
+                    default=False,
+                    description=(
+                        "For the OpenAI front: when true, it returns the model's reasoning as reasoning_content. The "
+                        "native status shows a submitted reasoning_content either way, and the work does not change."
+                    ),
+                ),
                 "dry_run": fields.Boolean(default=False, description="When true, return the kudos cost without queueing."),
                 "operation_key": fields.String(
                     description=(
@@ -1319,8 +1358,9 @@ class TextModels(v2.Models):
             {
                 "message": fields.Raw(
                     description=(
-                        "The assistant message the worker submitted, with role and content, and tool_calls when the "
-                        "model called tools (content is then null or text)."
+                        "The assistant message the worker submitted, with role and content, tool_calls when the "
+                        "model called tools (content is then null or text), and reasoning_content, the model's hidden "
+                        "reasoning, only when the worker submitted it."
                     ),
                 ),
                 "finish_reason": fields.String(
@@ -1332,6 +1372,12 @@ class TextModels(v2.Models):
                 ),
                 "prompt_tokens": fields.Integer(description="The prompt token count the worker reported; null when not reported."),
                 "completion_tokens": fields.Integer(description="The generated token count the worker reported; null when not reported."),
+                "reasoning_tokens": fields.Integer(
+                    description=(
+                        "How many of the generated tokens were reasoning, as the worker reported it; null when not "
+                        "reported. Never charged or rewarded."
+                    ),
+                ),
                 "charge_basis": fields.String(
                     enum=[charge_basis.value for charge_basis in ChargeBasis],
                     description="What the generation was charged and rewarded on.",

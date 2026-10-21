@@ -182,6 +182,7 @@ The `horde` object carries the Horde options OpenAI does not have a key for:
 | `context_fit` | `grow` | `grow` raises the context to fit the messages, up to the largest chat context an online worker for the model declares. `reject` refuses messages that do not fit the context. |
 | `conformance` | `strict` | `strict` sends the request only to workers that follow every part of the OpenAI contract it relies on. `best_effort` also accepts workers that may deviate; see [Conformance](#conformance). |
 | `openai_guards` | `false` | `true` turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format whose messages never mention "json" is 400 `ChatRequestConflict`. |
+| `include_reasoning` | `false` | `true` returns the model's reasoning as `reasoning_content`; see [Reasoning](#reasoning). |
 
 Any other key in `horde`, including `dry_run` and `operation_key`, is 400 `UnsupportedChatParameter`. Restrictions
 narrow the eligible workers, so a combination no online worker satisfies ends with `no_eligible_worker`.
@@ -190,6 +191,24 @@ With the Python SDK, send the object as `extra_body={"horde": {...}}`; other cli
 
 Verification: `x_horde.worker_id` of the response is one of the `only` ids, and `x_horde.context_adjustments` lists
 `{"from", "to", "reason": "grow"}` when `grow` raised the context, null otherwise.
+
+## Reasoning
+
+A reasoning model, such as Qwen3, thinks before it answers. The front hides that reasoning by default, as OpenAI's
+chat API does, and the answer in `content` never includes it. To receive it, send:
+
+```json
+{"horde": {"include_reasoning": true}}
+```
+
+The assistant message then carries `reasoning_content` beside `content`, as DeepSeek and OpenRouter return it, when
+the worker submitted reasoning. A stream sends it as `delta.reasoning_content` chunks before the content. Whether or
+not you ask for it, `usage.completion_tokens_details.reasoning_tokens` reports how many of the completion tokens
+were reasoning when the worker counted them. The option does not change the work, its cost or the operation the
+request is for.
+
+Verification: a request to a reasoning model with `include_reasoning: true` returns `choices[0].message.reasoning_content`;
+the same request without it returns a message without a `reasoning_content` key.
 
 ## Images
 
@@ -298,19 +317,22 @@ With `"stream": true` the response is server-sent events in this order:
 1. Keepalive comment lines while the request waits, such as `: horde queue_position=7 wait_time=42`, at an interval
    the deployment sets (5 seconds by default).
 2. A role chunk, `delta: {"role": "assistant"}`.
-3. A content chunk with the whole `delta.content`, when the reply has text.
-4. A tool-call chunk with `delta.tool_calls`, when the reply has calls: every call whole, each with its 0-based
+3. A reasoning chunk with the whole `delta.reasoning_content`, when you sent `horde.include_reasoning` and the model
+   reasoned.
+4. A content chunk with the whole `delta.content`, when the reply has text.
+5. A tool-call chunk with `delta.tool_calls`, when the reply has calls: every call whole, each with its 0-based
    `index`, `id`, `type` and `function`, and no content in the same chunk.
-5. A finish chunk, `delta: {}`, with `finish_reason`, `native_finish_reason` and `x_horde`.
-6. A usage chunk with `choices: []` and `usage`, when `stream_options.include_usage` is true.
-7. `data: [DONE]`.
+6. A finish chunk, `delta: {}`, with `finish_reason`, `native_finish_reason` and `x_horde`.
+7. A usage chunk with `choices: []` and `usage`, when `stream_options.include_usage` is true.
+8. `data: [DONE]`.
 
 A request without `tools` and with no `response_format` other than `text` gets its content live when the worker
-supports it: after the role chunk, one content chunk per batch the worker posts, about one a second, then only the
-text those chunks did not cover before the finish chunk. Otherwise, as with tools or structured output, the worker
-generates the whole reply before the
-Horde reports it, and content arrives in one chunk. Every chunk carries the same `id`; the finish and usage chunks
-carry the served `model`, and every chunk carries the same `system_fingerprint`. An SDK that accumulates tool-call deltas by `index` rebuilds the calls from the single tool-call chunk; in the Python SDK, `client.chat.completions.stream(...)` with
+supports it: after the role chunk, one content chunk per batch the worker posts, about one a second, with reasoning
+chunks before them under `horde.include_reasoning`, then only the text those chunks did not cover before the finish
+chunk. Otherwise, as with tools or structured output, the worker generates the whole reply before the Horde reports
+it, and content arrives in one chunk. Every chunk carries the same `id`; the finish and usage chunks carry the served
+`model`, and every chunk carries the same `system_fingerprint`. An SDK that accumulates tool-call deltas by `index`
+rebuilds the calls from the single tool-call chunk; in the Python SDK, `client.chat.completions.stream(...)` with
 `get_final_completion()` returns the assembled message.
 
 A stream's headers go out once the Horde holds the request, so its status is 200 whatever the outcome. A failure after
@@ -442,6 +464,7 @@ The front differs from OpenAI on purpose in these points:
 - Live content arrives in batches of about a second, and only for requests without tools or structured output.
 - A `json_object` request whose messages never mention JSON is served, where OpenAI refuses it, unless
   `horde.openai_guards` is set.
+- Reasoning text is returned as `reasoning_content` under `horde.include_reasoning`, where OpenAI never returns it.
 
 ## Reversal
 

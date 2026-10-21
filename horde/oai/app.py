@@ -1947,13 +1947,18 @@ async def _wait_for_completion(
 class DeltaRelay:
     """Relay one streamed request's content deltas and reconcile the relayed text with its final reply.
 
-    The first delta, sequence 1 of a generation, exposes the stream and pins that generation. After exposure an entry
-    of another generation, the pinned generation's ended marker or a delta out of sequence breaks the relay: the
-    Horde restarts a faulted job from the beginning, and a reissued attempt is never spliced into a choice the client
-    already holds part of (ADR 0024). Before exposure such entries are dropped and the request is delivered whole.
+    The first delta, sequence 1 of a generation, pins that generation. The first delta that sends the client anything
+    exposes the stream. After exposure an entry of another generation, the pinned generation's ended marker or a delta
+    out of sequence breaks the relay: the Horde restarts a faulted job from the beginning, and a reissued attempt is
+    never spliced into a choice the client already holds part of (ADR 0024). Before exposure such entries unpin the
+    generation, and the next generation's first delta can pin it again, or the request is delivered whole.
+
+    A delta's reasoning is relayed only when the client asked for it with ``horde.include_reasoning``; otherwise it is
+    dropped, and a delta carrying only reasoning advances the sequence without sending anything. Reasoning is never
+    part of the reconciliation with the final reply.
     """
 
-    def __init__(self, *, completion_id: str, created: int, model: str, include_usage: bool) -> None:
+    def __init__(self, *, completion_id: str, created: int, model: str, include_usage: bool, include_reasoning: bool = False) -> None:
         """Create the relay of a stream that has not sent anything yet.
 
         Args:
@@ -1962,30 +1967,45 @@ class DeltaRelay:
             model: The model the client asked for, which the relayed chunks carry and the fingerprint uses when a delta
                 omits the model.
             include_usage: Whether the client asked for usage, which writes a null ``usage`` in every chunk.
+            include_reasoning: Whether the client asked for reasoning with ``horde.include_reasoning``.
         """
         self.generation_id: str | None = None
-        """The generation whose deltas are relayed; None before exposure."""
+        """The generation whose deltas are relayed; None before its first delta."""
         self.broken: RelayOutcome | None = None
         """Why the relay broke after exposure; None while it holds."""
         self.system_fingerprint: str | None = None
-        """The fingerprint of the pinned generation's worker and model, from its first delta; None before exposure or
+        """The fingerprint of the pinned generation's worker and model, from its first delta; None before that or
         when the delta stream does not carry the worker."""
         self._completion_id = completion_id
         self._created = created
         self._model = model
         self._include_usage = include_usage
+        self._include_reasoning = include_reasoning
+        self._exposed = False
         self._next_seq = 1
         self._relayed_parts: list[str] = []
+        self._relayed_reasoning_parts: list[str] = []
 
     @property
     def exposed(self) -> bool:
         """Return whether a delta was sent to the client."""
-        return self.generation_id is not None
+        return self._exposed
 
     @property
     def relayed_content(self) -> str:
         """Return the text sent to the client as deltas."""
         return "".join(self._relayed_parts)
+
+    @property
+    def relayed_reasoning(self) -> str:
+        """Return the reasoning sent to the client as deltas; empty unless the client asked for reasoning."""
+        return "".join(self._relayed_reasoning_parts)
+
+    def _unpin(self) -> None:
+        """Mutate the relay so it does not follow a generation, before anything was sent."""
+        self.generation_id = None
+        self.system_fingerprint = None
+        self._next_seq = 1
 
     def take(self, entries: Sequence[DeltaEntry]) -> list[ServerSentEvent]:
         """Return the events relaying ``entries``, read together in stream order, and set ``broken`` when one breaks
@@ -1997,13 +2017,19 @@ class DeltaRelay:
         ended_generations = {entry.generation_id for entry in entries if entry.ended}
         events: list[ServerSentEvent] = []
         for entry in entries:
-            if not entry.ended and entry.content is None:
+            if not entry.ended and entry.content is None and entry.reasoning_content is None:
                 continue
             if not self.exposed:
-                if entry.ended or entry.seq != 1 or entry.generation_id in ended_generations:
+                pinned_entry = entry.generation_id == self.generation_id
+                if pinned_entry and (entry.ended or entry.seq != self._next_seq or entry.generation_id in ended_generations):
+                    self._unpin()
                     continue
-                self.generation_id = entry.generation_id
-                self.system_fingerprint = build_system_fingerprint(entry.worker_id, entry.model or self._model)
+                if entry.generation_id != self.generation_id:
+                    if entry.ended or entry.seq != 1 or entry.generation_id in ended_generations:
+                        continue
+                    self.generation_id = entry.generation_id
+                    self.system_fingerprint = build_system_fingerprint(entry.worker_id, entry.model or self._model)
+                    self._next_seq = 1
             elif entry.generation_id != self.generation_id:
                 self.broken = RelayOutcome.REPLACED_ATTEMPT
             elif entry.ended:
@@ -2013,19 +2039,25 @@ class DeltaRelay:
             if self.broken is not None:
                 break
             content = entry.content or ""
+            reasoning_content = (entry.reasoning_content or "") if self._include_reasoning else ""
+            self._next_seq += 1
+            if not content and not reasoning_content:
+                continue
             events.extend(
                 build_delta_events(
                     completion_id=self._completion_id,
                     created=self._created,
                     model=self._model,
                     content=content,
-                    first=not self._relayed_parts,
+                    first=not self._exposed,
                     include_usage=self._include_usage,
                     system_fingerprint=self.system_fingerprint,
+                    reasoning_content=reasoning_content,
                 ),
             )
+            self._exposed = True
             self._relayed_parts.append(content)
-            self._next_seq += 1
+            self._relayed_reasoning_parts.append(reasoning_content)
         return events
 
     def align_fingerprint(self, completion: ChatCompletionResponse) -> ChatCompletionResponse:
@@ -2164,6 +2196,7 @@ def _stream_completion(
                         created=int(submitted_at),
                         model=chat_request.model,
                         include_usage=include_usage,
+                        include_reasoning=chat_request.horde is not None and chat_request.horde.include_reasoning,
                     )
                     wait_task = asyncio.create_task(latest_watcher.wait_until_finished())
                     async for relay_event in _relay_deltas(
@@ -2222,6 +2255,7 @@ def _stream_completion(
                     yield error_event
                 return
             relayed_content: str | None = None
+            relayed_reasoning = ""
             if relay is not None and relay.exposed:
                 relay_outcome = relay.reconcile(completion)
                 front_state.front_metrics.record_relay_outcome(relay_outcome)
@@ -2230,12 +2264,14 @@ def _stream_completion(
                         yield error_event
                     return
                 relayed_content = relay.relayed_content
+                relayed_reasoning = relay.relayed_reasoning
                 completion = relay.align_fingerprint(completion)
             request_trace.record_completion(completion, status)
             for completion_event in build_completion_events(
                 completion,
                 include_usage=include_usage,
                 relayed_content=relayed_content,
+                relayed_reasoning=relayed_reasoning,
             ):
                 yield completion_event
             request_trace.finish(
