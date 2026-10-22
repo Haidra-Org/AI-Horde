@@ -152,12 +152,15 @@ class RequestWorkerAvailability:
         might_stall: Cached assignment-pressure advisory for the request.
         impossible_reason: Why no worker is eligible when the cause is the workers' chat declarations; None
             otherwise.
+        served_model_names: The models at least one eligible worker serves, for a text request; empty for other
+            request types, whose status does not read it.
     """
 
     worker_count: int
     thread_count: int
     might_stall: bool = False
     impossible_reason: ChatImpossibleReason | None = None
+    served_model_names: frozenset[str] = frozenset()
 
     @property
     def is_possible(self) -> bool:
@@ -1768,21 +1771,145 @@ _wp_queue_positions_cache = {"image": {}, "text": {}}
 _wp_queue_positions_time = {"image": 0.0, "text": 0.0}
 
 
-def get_wp_queue_stats(wp):
+@dataclass(frozen=True)
+class QueuedRequest:
+    """Represents one waiting request in the cached prioritized queue."""
+
+    queued_things: float
+    """The request's outstanding work, ``things * n`` over the type's thing divisor, rounded as the stored positions
+    round it."""
+    n: int
+    """The request's outstanding generations."""
+    model_names: frozenset[str]
+    """The models the request accepts; empty when it accepts any, or when the cached entry does not carry them."""
+
+
+@dataclass(frozen=True)
+class CachedWPQueue:
+    """Represents the prioritized queue of one request type as last read from the cache."""
+
+    requests: tuple[QueuedRequest, ...]
+    """The waiting requests, highest priority first."""
+    index_by_id: dict[str, int]
+    """The index in ``requests`` of each request id."""
+
+
+_wp_queue_cache: dict[str, CachedWPQueue | None] = {"image": None, "text": None}
+"""The prioritized queue each process last parsed, per request type; None until it reads one, and always None for
+image, whose status reads only the positions. It is refreshed together with ``_wp_queue_positions_cache``, so the two
+copies describe the same stored queue."""
+
+
+def _parse_cached_wp_queue(wp_type: str) -> CachedWPQueue | None:
+    """Return the prioritized queue of ``wp_type`` the primary stored, or None when it is not stored or cannot be parsed.
+
+    Args:
+        wp_type: The request type whose queue is wanted.
+    """
+    cached_queue = hr.horde_r_get(f"{wp_type}_wp_cache")
+    if cached_queue is None:
+        return None
+    try:
+        queue_rows = json.loads(cached_queue)
+        thing_divisor = hv.thing_divisors[wp_type]
+        requests = tuple(
+            QueuedRequest(
+                queued_things=round(row["things"] * row["n"] / thing_divisor, 2),
+                n=row["n"],
+                model_names=frozenset(row.get("models", ())),
+            )
+            for row in queue_rows
+        )
+        return CachedWPQueue(
+            requests=requests,
+            index_by_id={row["id"]: index for index, row in enumerate(queue_rows)},
+        )
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def _refresh_wp_queue_caches(wp_type: str) -> None:
+    """Mutate the in-process copies of the stored queue positions, and of the stored text queue, at most once per second.
+
+    The primary rewrites both every second, so a process reads them at most once per second per type rather than on
+    every status read.
+
+    Args:
+        wp_type: The request type whose copies are refreshed.
+    """
+    now = time.time()
+    if now - _wp_queue_positions_time.get(wp_type, 0) <= 1:
+        return
+    cached_positions = hr.horde_r_get(f"{wp_type}_wp_queue_positions")
+    if cached_positions is None:
+        return
+    try:
+        parsed = json.loads(cached_positions)
+    except (TypeError, ValueError):
+        return
+    if wp_type == "text":
+        _wp_queue_cache[wp_type] = _parse_cached_wp_queue(wp_type)
+    _wp_queue_positions_cache[wp_type] = parsed
+    _wp_queue_positions_time[wp_type] = now
+
+
+def _get_competing_wp_queue_stats(wp: WaitingPrompt, served_model_names: frozenset[str]) -> tuple[int, float, int] | None:
+    """Return the queue statistics of ``wp`` counting only the requests ahead its eligible workers could take.
+
+    A request ahead competes when it accepts any model or a model in ``served_model_names``. This approximates the
+    workers' candidate queues: a worker serving several models can still prefer work this request cannot use.
+
+    Args:
+        wp: The request.
+        served_model_names: The models at least one worker eligible for ``wp`` serves.
+
+    Returns:
+        The position among competing requests, the work and the generations of those requests including ``wp``, as
+        ``get_wp_queue_stats`` reports them; ``(-1, 0, 0)`` when the queue does not hold ``wp``; None when no queue is
+        stored.
+    """
+    _refresh_wp_queue_caches(wp.wp_type)
+    cached_queue = _wp_queue_cache.get(wp.wp_type)
+    if cached_queue is None:
+        return None
+    own_index = cached_queue.index_by_id.get(str(wp.id))
+    if own_index is None:
+        return (-1, 0, 0)
+    competing_ahead = 0
+    things_ahead_in_queue = 0.0
+    n_ahead_in_queue = 0
+    for queued_request in cached_queue.requests[:own_index]:
+        if queued_request.model_names and queued_request.model_names.isdisjoint(served_model_names):
+            continue
+        competing_ahead += 1
+        things_ahead_in_queue += queued_request.queued_things
+        n_ahead_in_queue += queued_request.n
+    own_request = cached_queue.requests[own_index]
+    things_ahead_in_queue += own_request.queued_things
+    n_ahead_in_queue += own_request.n
+    return (competing_ahead, round(things_ahead_in_queue, 2), n_ahead_in_queue)
+
+
+def get_wp_queue_stats(wp, *, served_model_names: frozenset[str] | None = None):
+    """Return the queue position of ``wp``, the work queued up to and including it, and the generations in that work.
+
+    Args:
+        wp: The request.
+        served_model_names: When given, only the requests ahead that accept any model or one of these count. The text
+            status passes the models its eligible workers serve. When no queue is stored, the horde-wide statistics
+            are returned instead.
+
+    Returns:
+        The zero-based position, the work, and the generation count; ``(-1, 0, 0)`` when ``wp`` is not queued.
+    """
     if not wp.needs_gen():
         return (-1, 0, 0)
+    if served_model_names is not None:
+        competing_stats = _get_competing_wp_queue_stats(wp, served_model_names)
+        if competing_stats is not None:
+            return competing_stats
     wp_type = wp.wp_type
-    now = time.time()
-    # Refresh in-process cache at most once per second per wp_type
-    if now - _wp_queue_positions_time.get(wp_type, 0) > 1:
-        cached_positions = hr.horde_r_get(f"{wp_type}_wp_queue_positions")
-        if cached_positions is not None:
-            try:
-                parsed = json.loads(cached_positions)
-                _wp_queue_positions_cache[wp_type] = parsed
-                _wp_queue_positions_time[wp_type] = now
-            except (TypeError, ValueError):
-                pass
+    _refresh_wp_queue_caches(wp_type)
     positions = _wp_queue_positions_cache.get(wp_type, {})
     wp_stats = positions.get(str(wp.id))
     if wp_stats is not None:
@@ -2250,6 +2377,7 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
                     thread_count=int(parsed_availability["threads"]),
                     might_stall=might_stall,
                     impossible_reason=_parse_cached_impossible_reason(parsed_availability.get("impossible_reason")),
+                    served_model_names=frozenset(parsed_availability["served_models"]),
                 )
                 _record_worker_availability_cache_lookup(waiting_prompt, "hit")
                 return cached_result
@@ -2269,6 +2397,7 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
         thread_count=thread_count,
         might_stall=_assess_request_might_stall(waiting_prompt, eligible_workers, thread_count),
         impossible_reason=impossible_reason,
+        served_model_names=_collect_served_model_names(waiting_prompt, eligible_workers),
     )
     _cache_worker_availability(waiting_prompt, availability, declaration_generation)
     return availability
@@ -2362,9 +2491,28 @@ def check_new_request_has_valid_workers(waiting_prompt: WaitingPrompt) -> bool:
         worker_count=len(eligible_workers),
         thread_count=thread_count,
         might_stall=_assess_request_might_stall(waiting_prompt, eligible_workers, thread_count),
+        served_model_names=_collect_served_model_names(waiting_prompt, eligible_workers),
     )
     _cache_worker_availability(waiting_prompt, availability, declaration_generation)
     return True
+
+
+def _collect_served_model_names(waiting_prompt: WaitingPrompt, eligible_workers: list[EligibleWorker]) -> frozenset[str]:
+    """Return the models at least one of a text request's eligible workers serves; empty for other request types.
+
+    Only the text status narrows its queue to these models. An image worker serves many models, so collecting them
+    for every image request would enlarge each cached availability entry for a value nothing reads.
+
+    Args:
+        waiting_prompt: Request the workers are eligible for.
+        eligible_workers: Workers that passed the request's dispatch gates.
+
+    Returns:
+        The union of the eligible workers' model names.
+    """
+    if waiting_prompt.wp_type != "text":
+        return frozenset()
+    return frozenset(model_name for eligible_worker in eligible_workers for model_name in eligible_worker.eligibility_inputs.model_names)
 
 
 def _assess_request_might_stall(
@@ -2486,6 +2634,7 @@ def _cache_worker_availability(
                 "might_stall": availability.might_stall,
                 "impossible_reason": impossible_reason.model_dump(mode="json") if impossible_reason is not None else None,
                 "declaration_generation": declaration_generation,
+                "served_models": sorted(availability.served_model_names),
             },
         ),
     )
@@ -2566,6 +2715,15 @@ def retrieve_prioritized_wp_queue(wp_type):
     return deserialized_wp_list
 
 
+def _prioritized_wp_criteria(waiting_prompt_type):
+    """Return the criteria a request of ``waiting_prompt_type`` meets to be in the prioritized queue."""
+    return (
+        waiting_prompt_type.n > 0,
+        waiting_prompt_type.faulted == False,  # noqa E712
+        waiting_prompt_type.active == True,  # noqa E712
+    )
+
+
 def query_prioritized_wps(wp_type="image"):
     waiting_prompt_type = WP_CLASS_MAP[wp_type]
     return (
@@ -2577,14 +2735,35 @@ def query_prioritized_wps(wp_type="image"):
             waiting_prompt_type.created,
             waiting_prompt_type.expiry,
         )
-        .filter(
-            waiting_prompt_type.n > 0,
-            waiting_prompt_type.faulted == False,  # noqa E712
-            waiting_prompt_type.active == True,  # noqa E712
-        )
+        .filter(*_prioritized_wp_criteria(waiting_prompt_type))
         .order_by(waiting_prompt_type.extra_priority.desc(), waiting_prompt_type.created.asc())
         .all()
     )
+
+
+def query_prioritized_wp_model_names(wp_type: str) -> dict[str, list[str]]:
+    """Return the models each request in the prioritized queue of ``wp_type`` accepts, by request id.
+
+    The rows are read in one statement rather than per request. A request that accepts any model has no rows and is
+    absent from the result.
+
+    Args:
+        wp_type: The request type whose queue is read.
+
+    Returns:
+        The model names of each request id that lists any.
+    """
+    waiting_prompt_type = WP_CLASS_MAP[wp_type]
+    model_rows = (
+        db.session.query(WPModels.wp_id, WPModels.model)
+        .join(waiting_prompt_type, waiting_prompt_type.id == WPModels.wp_id)
+        .filter(*_prioritized_wp_criteria(waiting_prompt_type))
+        .all()
+    )
+    model_names_by_wp_id: dict[str, list[str]] = {}
+    for wp_id, model_name in model_rows:
+        model_names_by_wp_id.setdefault(str(wp_id), []).append(model_name)
+    return model_names_by_wp_id
 
 
 def prune_expired_stats():

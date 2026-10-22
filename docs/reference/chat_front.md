@@ -255,9 +255,9 @@ is absent from the Horde's cached queue positions, which refresh about every 2 s
 the first status that carries queue information (a `queue_position` or `wait_time` above zero, or a generation
 processing or finished); until one arrives the front reads again every `signal_recheck_seconds`, for at most
 `POSITIONED_READ_WAIT_SECONDS` (2 s, `horde/oai/waiter.py`) after the first read, and then the latest reading decides.
-Zero threads needs no position and refuses on the first read. Later reads follow the grace as under `wait`. The native `wait_time` is the horde-wide text throughput estimate, not a per-model one, so a
-request for a model few workers serve may wait longer than estimated and one with idle eligible workers may start
-sooner (see [Queue position and wait time](../explanation/request_feasibility_and_queue_pressure.md#queue-position-and-wait-time)).
+With zero threads the request does not need a position and is refused on the first read. Later reads follow the grace as under `wait`. The native `wait_time` counts the queued requests ahead that the request's eligible workers could
+take, by model overlap, and divides that work by the throughput of its `eligible_worker_threads`. It approximates the
+workers' candidate queues, so a request may still wait longer or start sooner than estimated (see [Queue position and wait time](../explanation/request_feasibility_and_queue_pressure.md#queue-position-and-wait-time)).
 
 A streamed request's response opens only after that first-read decision, so a refusal at it (a declaration or limit
 gap, `queue_unavailable`, or a status error such as 404) has the same HTTP status, body and `Retry-After` as on a
@@ -385,7 +385,7 @@ request refused at submit does not have an id; its message starts `Unsubmitted c
 | `served_model` | The model of the delivered completion; null when none was delivered. |
 | `retry_after` | The `Retry-After` the error response or event carried, in seconds; null when it carried none. |
 | `queue_reason` | `queue_unavailable` only: `no_eligible_threads` or `wait_exceeds_budget`. |
-| `wait_time` | `queue_unavailable` only: the horde-wide wait estimate the deciding status read reported; null when it had none. |
+| `wait_time` | `queue_unavailable` only: the wait estimate the deciding status read reported; null when it had none. |
 | `eligible_worker_threads` | `queue_unavailable` only: the eligible worker threads that read reported; null when it had none. |
 | `first_read_wait_time` | `fail_fast` only: the wait estimate of the status read that took the first-read decision, whether it admitted or refused the request; null in the `wait` mode, before a decision, or when the read had none. |
 | `first_read_eligible_worker_threads` | `fail_fast` only: the eligible worker threads that read reported; null as for `first_read_wait_time`. |

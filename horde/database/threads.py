@@ -51,6 +51,7 @@ from horde.database.functions import (
     get_all_users_passkeys,
     get_available_models,
     prune_expired_stats,
+    query_prioritized_wp_model_names,
     query_prioritized_wps,
     refresh_worker_performances_cache,
     retrieve_regex_replacements,
@@ -123,10 +124,15 @@ def assign_monthly_kudos():
 
 @logger.catch(reraise=True)
 def store_prioritized_wp_queue():
-    """Stores the retrieved WP queue as json for 1 second horde-wide"""
+    """Store the prioritized queue of each request type and each request's position in it, horde-wide.
+
+    A text entry also lists the models its request accepts, so a text status can count only the requests ahead that
+    its eligible workers could take. Image entries do not: the image status reads only the precomputed positions.
+    """
     with get_app().app_context():
         for wp_type in ["image", "text"]:
             wp_queue = query_prioritized_wps(wp_type)
+            model_names_by_wp_id = query_prioritized_wp_model_names(wp_type) if wp_type == "text" else None
             thing_divisor = hv.thing_divisors[wp_type]
             serialized_wp_list = []
             queue_positions = {}
@@ -140,6 +146,8 @@ def store_prioritized_wp_queue():
                     "extra_priority": wp.extra_priority,
                     "created": wp.created.strftime("%Y-%m-%d %H:%M:%S"),
                 }
+                if model_names_by_wp_id is not None:
+                    wp_json["models"] = model_names_by_wp_id.get(str(wp.id), [])
                 serialized_wp_list.append(wp_json)
                 queued_things = round(wp.things * wp.n / thing_divisor, 2)
                 things_ahead_in_queue += queued_things

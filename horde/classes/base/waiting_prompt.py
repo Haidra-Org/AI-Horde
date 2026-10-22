@@ -937,6 +937,7 @@ class WaitingPrompt(db.Model):
         eligible_workers: int | None = None,
         eligible_worker_threads: int | None = None,
         might_stall: bool = False,
+        forecast_queue_stats: tuple[int, float, int] | None = None,
     ) -> dict[str, Any]:
         """Return the request's current generation and queue status.
 
@@ -948,13 +949,18 @@ class WaitingPrompt(db.Model):
 
         Args:
             request_avg: Horde-wide average generation throughput.
-            active_worker_count: Counts of active workers and their threads.
+            active_worker_count: Counts of the workers and threads whose throughput the wait estimate assumes: the
+                horde's active workers, or for a text request the workers eligible for it.
             has_valid_workers: Whether the request is currently feasible.
-            wp_queue_stats: Global queue position, work, and generation counts.
+            wp_queue_stats: Queue position, and the work and generation counts up to and including this request: of
+                the whole queue, or for a text request of the requests its eligible workers could take.
             lite: Whether to omit completed generation payloads.
             eligible_workers: Exact number of workers eligible for this request.
             eligible_worker_threads: Advertised threads across eligible workers.
             might_stall: Cached assignment-pressure advisory for this request.
+            forecast_queue_stats: The horde-wide queue statistics the scheduling forecast reads, when
+                ``wp_queue_stats`` counts only part of the queue; ``wp_queue_stats`` otherwise. The forecast keeps
+                the global queue because compatible workers do not share one candidate queue.
 
         Returns:
             Materialized request status ready for API serialization.
@@ -1045,14 +1051,15 @@ class WaitingPrompt(db.Model):
             thing_divisor = hv.thing_divisors[self.wp_type]
             own_queued_work = self.things * ret_dict["waiting"] / thing_divisor
             already_started = ret_dict["finished"] > 0 or ret_dict["restarted"] > 0 or completion.n < self.jobs
-            if queued_things >= own_queued_work and queued_n >= ret_dict["waiting"]:
+            _, forecast_queued_things, forecast_queued_n = forecast_queue_stats or wp_queue_stats
+            if forecast_queued_things >= own_queued_work and forecast_queued_n >= ret_dict["waiting"]:
                 try:
                     forecast = calculate_scheduling_forecast(
                         forecasted_at=status_time,
                         request_expires_at=self.expiry,
-                        queued_work=queued_things,
+                        queued_work=forecast_queued_things,
                         own_work=own_queued_work,
-                        queued_jobs=queued_n,
+                        queued_jobs=forecast_queued_n,
                         own_jobs=ret_dict["waiting"],
                         average_work_per_second=request_avg / thing_divisor,
                         eligible_worker_threads=eligible_worker_threads,

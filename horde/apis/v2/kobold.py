@@ -511,6 +511,45 @@ def add_impossible_reason(wp_status: dict[str, object], worker_availability: dat
         wp_status["impossible_reason"] = worker_availability.impossible_reason.model_dump(mode="json")
 
 
+def read_text_request_status(wp: TextWaitingPrompt) -> dict[str, object]:
+    """Return a text or chat request's full status, estimating its wait from the capacity eligible to serve it.
+
+    The queue ahead counts only the requests whose models overlap a model an eligible worker serves, and the
+    throughput is that of the eligible worker threads. The horde-wide queue and active thread count would quote a
+    request for a lightly queued model the whole horde's backlog, and the active thread count is cached for minutes,
+    so a pool that has just come back would be quoted the single thread that checked in first.
+
+    With no eligible thread there is no throughput to estimate from. The status then keeps the horde-wide estimate,
+    and ``is_possible`` and ``eligible_worker_threads`` report that no worker can take the request.
+
+    Args:
+        wp: The request.
+
+    Returns:
+        The status, with ``impossible_reason`` when a declaration gap leaves no worker eligible.
+    """
+    worker_availability = database.get_worker_availability_for_request(wp)
+    horde_wide_queue_stats = database.get_wp_queue_stats(wp)
+    if worker_availability.thread_count > 0:
+        wp_queue_stats = database.get_wp_queue_stats(wp, served_model_names=worker_availability.served_model_names)
+        active_worker_count = (worker_availability.worker_count, worker_availability.thread_count)
+    else:
+        wp_queue_stats = horde_wide_queue_stats
+        active_worker_count = database.count_active_workers("text")
+    wp_status = wp.get_status(
+        request_avg=database.get_request_avg("text"),
+        has_valid_workers=worker_availability.is_possible,
+        wp_queue_stats=wp_queue_stats,
+        active_worker_count=active_worker_count,
+        eligible_workers=worker_availability.worker_count,
+        eligible_worker_threads=worker_availability.thread_count,
+        might_stall=worker_availability.might_stall,
+        forecast_queue_stats=horde_wide_queue_stats,
+    )
+    add_impossible_reason(wp_status, worker_availability)
+    return wp_status
+
+
 class TextAsyncStatus(Resource):
     chat_requests = False
     """Whether this route serves chat requests. Each family's routes report the other family's requests as not found."""
@@ -577,17 +616,7 @@ class TextAsyncStatus(Resource):
             tuple: The status and the status code.
         """
         wp = self.find_request(request_id, "Status")
-        worker_availability = database.get_worker_availability_for_request(wp)
-        wp_status = wp.get_status(
-            request_avg=database.get_request_avg("text"),
-            has_valid_workers=worker_availability.is_possible,
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers("text"),
-            eligible_workers=worker_availability.worker_count,
-            eligible_worker_threads=worker_availability.thread_count,
-            might_stall=worker_availability.might_stall,
-        )
-        add_impossible_reason(wp_status, worker_availability)
+        wp_status = read_text_request_status(wp)
         # wp_status is a fully materialized plain dict; release the pooled
         # connection before flask_restx marshalling/JSON serialization and the
         # response write, so it is not held across non-DB work.
@@ -628,17 +657,7 @@ class TextAsyncStatus(Resource):
             tuple: The status as it was before cancelling, and the status code.
         """
         wp = self.find_request(request_id, "Delete")
-        worker_availability = database.get_worker_availability_for_request(wp)
-        wp_status = wp.get_status(
-            request_avg=database.get_request_avg("text"),
-            has_valid_workers=worker_availability.is_possible,
-            wp_queue_stats=database.get_wp_queue_stats(wp),
-            active_worker_count=database.count_active_workers("text"),
-            eligible_workers=worker_availability.worker_count,
-            eligible_worker_threads=worker_availability.thread_count,
-            might_stall=worker_availability.might_stall,
-        )
-        add_impossible_reason(wp_status, worker_availability)
+        wp_status = read_text_request_status(wp)
         logger.info(f"Request with ID {wp.id} has been cancelled.")
         # FIXME: I pevent it at the moment due to the race conditions
         # The WPCleaner is going to clean it up anyway

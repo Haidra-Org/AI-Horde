@@ -189,8 +189,8 @@ NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS: int = 30
 TIMEOUT_RETRY_AFTER_SECONDS: int = NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS
 
 QUEUE_UNAVAILABLE_RETRY_AFTER_CAP_SECONDS: int = 600
-"""The most ``Retry-After`` a ``fail_fast`` refusal over the wait estimate carries. The estimate is horde-wide and
-the pool changes minute to minute, so a client is told to come back within the native ``NoValidWorkers`` interval
+"""The most ``Retry-After`` a ``fail_fast`` refusal over the wait estimate carries. The estimate is an approximation
+and the pool changes minute to minute, so a client is told to come back within the native ``NoValidWorkers`` interval
 rather than to sleep through the whole estimate."""
 """The ``Retry-After`` of a 408 ``ChatRequestTimeout``.
 
@@ -1803,7 +1803,7 @@ def _wait_error(
 def _queue_unavailable_error(error: QueueUnavailableError, *, request_id: str) -> ChatFrontError:
     """Create the 503 for a ``fail_fast`` request its first status read refused.
 
-    The message states the pool that read reported: the eligible worker threads, the horde-wide wait estimate and the
+    The message states the pool that read reported: the eligible worker threads, the wait estimate and the
     time left in the budget. Workers come and go, so it states the pool at that read and leaves retrying to the client.
     ``Retry-After`` is the wait estimate for a wait over the budget, capped at
     ``QUEUE_UNAVAILABLE_RETRY_AFTER_CAP_SECONDS``; it exceeds the time left by construction. With zero eligible
@@ -1824,7 +1824,7 @@ def _queue_unavailable_error(error: QueueUnavailableError, *, request_id: str) -
     if status.eligible_worker_threads is not None:
         pool_facts.append(f"{status.eligible_worker_threads} eligible worker threads online")
     if status.wait_time is not None:
-        pool_facts.append(f"a horde-wide estimated wait of {status.wait_time} s")
+        pool_facts.append(f"an estimated wait of {status.wait_time} s")
     pool_facts.append(f"{max(error.remaining_seconds, 0):.0f} s left in the budget")
     message = (
         f"{cause} The first status read reported {', '.join(pool_facts)}. The request was refused under "

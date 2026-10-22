@@ -17,17 +17,18 @@ import pytest
 from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, ChatFeature, ChatGuarantee
 
 from horde.apis.v2.base import GenerateTemplate
+from horde.apis.v2.kobold import TextAsyncGenerate, read_text_request_status
 from horde.chat_contract import ChatImpossibleReason
 from horde.classes.base.user import UserRoleTypes
 from horde.classes.base.worker import WorkerBlackList, WorkerModel
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.database import functions
 from horde.classes.kobold.worker import (
     TEXT_WORKER_DECLARATION_GENERATION_KEY,
     TextWorker,
     TextWorkerSoftprompts,
     get_minimum_text_worker_speed,
 )
+from horde.database import functions, threads
 from horde.flask import db
 
 pytestmark = pytest.mark.unit
@@ -130,6 +131,7 @@ def test_queuing_a_text_request_seeds_the_availability_its_first_status_poll_rea
         "might_stall": False,
         "impossible_reason": None,
         "declaration_generation": 0,
+        "served_models": ["seeded-model"],
     }
 
     def fail_worker_query(*_args: Any, **_kwargs: Any) -> None:
@@ -842,3 +844,115 @@ def test_direct_and_query_eligibility_inputs_match_for_a_request_without_a_softp
     assert [eligible_worker.worker.id for eligible_worker in eligible_workers] == [worker.id]
     assert eligible_workers[0].eligibility_inputs.softprompt_names == ("first_softprompt", "second_softprompt")
     assert worker.get_eligibility_inputs(request) == eligible_workers[0].eligibility_inputs
+
+
+TEXT_REQUEST_AVG = 10.0
+"""The text throughput per worker thread, in tokens per second, the wait estimate tests store as the horde average."""
+
+
+def _queue_text_request(user: Any, model_names: list[str], *, max_length: int) -> TextWaitingPrompt:
+    """Create an active text request for ``model_names``, an empty list accepting any model."""
+    request = TextWaitingPrompt(
+        worker_ids=[],
+        models=model_names,
+        prompt="text wait estimate test",
+        user_id=user.id,
+        params={"n": 1, "max_length": max_length, "max_context_length": 2048},
+    )
+    request.slow_workers = False
+    request.validated_backends = False
+    request.active = True
+    db.session.commit()
+    return request
+
+
+def _read_status_after_queue_refresh(request: TextWaitingPrompt, fake_redis: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Store the prioritized queues as the primary does and return the request's text status.
+
+    The in-process copies of the stored queue are cleared first, so the status reads what was just stored.
+    """
+    fake_redis.horde_r_setex("text_worker_performances_avg_cache", timedelta(seconds=60), TEXT_REQUEST_AVG)
+    threads.store_prioritized_wp_queue()
+    monkeypatch.setitem(functions._wp_queue_cache, "text", None)
+    monkeypatch.setitem(functions._wp_queue_positions_time, "text", 0.0)
+    monkeypatch.setitem(functions._wp_queue_positions_cache, "text", {})
+    return read_text_request_status(request)
+
+
+def test_a_request_for_a_model_without_a_queue_of_its_own_reads_a_short_wait_behind_a_long_horde_queue(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Requests ahead for models no eligible worker serves do not count toward the position or the wait."""
+    monkeypatch.setattr("horde.classes.kobold.worker.model_reference.get_text_model_multiplier", lambda _model_name: 20)
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    for _ in range(20):
+        _queue_text_request(user, ["busy-model"], max_length=512)
+    request = _queue_text_request(user, ["quiet-model"], max_length=80)
+    _make_text_worker(user, "busy-model", speed=10)
+    _make_text_worker(user, "quiet-model", speed=10)
+
+    status = _read_status_after_queue_refresh(request, fake_redis, monkeypatch)
+
+    assert status["is_possible"] is True
+    assert status["eligible_worker_threads"] == 1
+    assert status["queue_position"] == 1
+    assert status["wait_time"] == round(80 / TEXT_REQUEST_AVG)
+
+
+def test_a_request_behind_its_own_models_queue_reads_that_work_over_the_eligible_threads(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wait is the competing work, including a request that accepts any model, over the eligible thread throughput."""
+    monkeypatch.setattr("horde.classes.kobold.worker.model_reference.get_text_model_multiplier", lambda _model_name: 20)
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    for _ in range(6):
+        _queue_text_request(user, ["shared-model"], max_length=200)
+    _queue_text_request(user, [], max_length=200)
+    for _ in range(5):
+        _queue_text_request(user, ["busy-model"], max_length=512)
+    request = _queue_text_request(user, ["shared-model"], max_length=80)
+    eligible_worker = _make_text_worker(user, "shared-model", speed=10)
+    eligible_worker.threads = 3
+    _make_text_worker(user, "busy-model", speed=10)
+    db.session.commit()
+
+    status = _read_status_after_queue_refresh(request, fake_redis, monkeypatch)
+
+    competing_work = 7 * 200 + 80
+    assert status["eligible_worker_threads"] == 3
+    assert status["queue_position"] == 8
+    assert status["wait_time"] == round(competing_work / (TEXT_REQUEST_AVG * 3))
+
+
+def test_a_request_without_eligible_threads_reads_impossible_with_the_horde_wide_estimate(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no eligible thread the status reports the request impossible and estimates the wait from the whole queue."""
+    monkeypatch.setattr("horde.classes.kobold.worker.model_reference.get_text_model_multiplier", lambda _model_name: 20)
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    _queue_text_request(user, ["busy-model"], max_length=512)
+    request = _queue_text_request(user, ["unserved-model"], max_length=80)
+    _make_text_worker(user, "busy-model", speed=10)
+
+    status = _read_status_after_queue_refresh(request, fake_redis, monkeypatch)
+
+    assert status["is_possible"] is False
+    assert status["eligible_workers"] == 0
+    assert status["eligible_worker_threads"] == 0
+    assert status["queue_position"] == 2
+    assert status["wait_time"] == round((512 + 80) / TEXT_REQUEST_AVG)

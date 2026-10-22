@@ -20,7 +20,8 @@ Topics: [generation](../topics.md#generation), [requests](../topics.md#requests)
 A request status draws on several parts of the scheduler. Check `done`, `faulted`, and `processing` first. While work
 is waiting, use `is_possible` to check whether the request can currently be served, the eligible-worker counts to
 understand how much compatible capacity exists, and `might_stall` to decide whether the delay needs additional
-explanation. `queue_position` and `wait_time` provide useful context for the horde as a whole.
+explanation. `queue_position` and `wait_time` describe the queue ahead of the request: the whole horde's for an image
+request, and the part its eligible workers could take for a text request.
 
 For the surrounding lifecycle, see [Job lifecycle](../haidra-assets/docs/job_lifecycle.md). The
 [Workers](../haidra-assets/docs/workers.md) overview explains why independently operated workers expose different
@@ -68,17 +69,21 @@ threads that are already occupied. Current occupancy and reservations are outsid
 
 ### Queue position and wait time
 
-`queue_position` reflects the request's priority in the horde-wide queue. `wait_time` estimates delay from aggregate
-horde throughput. Clients can use these values to describe general queue conditions and should label `wait_time` as an
-estimate.
+For an image request, `queue_position` reflects the request's priority in the horde-wide queue, and `wait_time`
+estimates delay from the work queued ahead and the throughput of the horde's active worker threads. A request
+supported by only a few workers may wait longer than this estimate. It may also start sooner when its compatible
+workers have little competing work.
 
-A request supported by only a few workers may wait longer than the horde-wide estimate. It may also start sooner when
-its compatible workers have little competing work. Each eligible worker sees its own candidate queue, while
-`queue_position` represents the global ordering.
+For a text or chat request, both values count only the requests ahead whose models overlap a model one of its eligible
+workers serves, and a request that accepts any model. `wait_time` divides that work by the throughput of
+`eligible_worker_threads`, capped at the number of generations counted. A request for a lightly queued model therefore
+reads a short estimate however long the horde's queue is. With zero eligible threads there is no throughput to divide
+by, so both values keep the horde-wide calculation; `is_possible` and the thread count report that case.
 
-Producing a compatibility-specific position would require a separate scheduling calculation for every eligible
-worker. Their candidate queues overlap without being identical, and they change as workers and requests arrive. The
-API keeps the queue values horde-wide and supplies compatible-capacity fields alongside them.
+Both are estimates, and clients should label `wait_time` as one. Each eligible worker sees its own candidate queue, and
+an exact compatibility-specific position would require a separate scheduling calculation for every eligible worker.
+Their candidate queues overlap without being identical, and they change as workers and requests arrive. The model
+overlap approximates them: a worker that serves several models can still prefer work this request cannot use.
 
 ### `might_stall`
 
@@ -128,7 +133,7 @@ other labels. Seeding the cache when a request is created is not a read and is n
   client.
 - Use several consecutive polls before changing a user-facing warning. This prevents a worker check-in or cache
   refresh from causing the interface to flicker.
-- Use the eligible-worker fields to add context to the horde-wide estimate. Free-slot calculations require current
+- Use the eligible-worker fields to add context to the wait estimate. Free-slot calculations require current
   occupancy data, which the response omits.
 - When `might_stall` is true, explain that compatible capacity is limited or under pressure. Allow the request to keep
   running unless the user or the client's own policy decides otherwise.
@@ -159,8 +164,9 @@ The first version of the shadow estimator, `compatible-queue-v1`, uses normalize
 throughput, and the compatible thread count. Work belonging to the request is excluded from the first-assignment
 calculation and included in the completion calculation. The provisional `p90` value adds the larger of 60 seconds or
 50% of the `p50` value. It is a candidate upper estimate, not yet an empirical 90th percentile and therefore is not
-eligible for public promotion under that name. The global queue remains part of the calculation because compatible
-workers do not share a single candidate queue. The validation loop measures whether later empirical calibration can
+eligible for public promotion under that name. The global queue remains part of the calculation, also for text
+requests whose `wait_time` counts only the compatible part of it, because compatible workers do not share a single
+candidate queue. The validation loop measures whether later empirical calibration can
 support real percentile fields.
 
 Forecast and outcome events pass through a bounded local queue before a background thread stores them in Redis. This
