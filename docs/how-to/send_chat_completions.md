@@ -388,8 +388,9 @@ Every error is `{"error": {"message", "type", "param", "code", "metadata"}}`, wi
 do not apply and `metadata` carrying the Horde's `request_id` and return code where known
 ([ADR 0034](../decisions/0034-map-chat-errors-to-the-openai-envelope-with-openrouter-status-vocabulary.md)). A refusal
 from the Horde keeps its status and has its return code (see `README_return_codes.md` at the repository root) as
-`code`; a Horde 429 keeps `Retry-After` and the `X-RateLimit-*` headers. A native payload validation failure, which
-has no return code, is 400 `BadRequest` with the failing key as `param`, such as `temperature` or `max_tokens`.
+`code`; a Horde 429 keeps `Retry-After` and the `X-RateLimit-*` headers, and has code `rate_limit_exceeded` when the
+Horde sends no return code. A native payload validation failure, which does not carry a return code, is 400
+`BadRequest` with the failing key as `param`, such as `temperature` or `max_tokens`.
 
 The front's own codes:
 

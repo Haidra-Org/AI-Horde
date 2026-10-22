@@ -81,3 +81,39 @@ def test_sdk_disabled_keeps_telemetry_off(telemetry_environment: pytest.MonkeyPa
 
     assert front_main.configure_telemetry() is False
     assert configure_calls == []
+
+
+def test_profiling_only_starts_pyroscope_as_horde_oai_without_the_sdk(
+    telemetry_environment: pytest.MonkeyPatch,
+) -> None:
+    pyroscope_calls: list[dict[str, Any]] = []
+    configure_calls: list[dict[str, Any]] = []
+    telemetry_environment.setenv("PYROSCOPE_ENABLED", "true")
+    telemetry_environment.setenv("OTEL_SDK_DISABLED", "true")
+    telemetry_environment.setattr(front_main, "init_pyroscope", lambda **kwargs: pyroscope_calls.append(kwargs) or [])
+    telemetry_environment.setattr(logfire, "configure", lambda **kwargs: configure_calls.append(kwargs))
+
+    assert front_main.configure_telemetry() is False
+    assert pyroscope_calls == [{"span_profiles_enabled": False, "default_service_name": "horde-oai"}]
+    assert configure_calls == []
+
+
+def test_pyroscope_span_processors_join_the_front_tracer_provider(telemetry_environment: pytest.MonkeyPatch) -> None:
+    span_processor = object()
+    pyroscope_calls: list[dict[str, Any]] = []
+    configure_calls: list[dict[str, Any]] = []
+    telemetry_environment.setenv("PYROSCOPE_ENABLED", "true")
+    telemetry_environment.setattr(
+        front_main,
+        "init_pyroscope",
+        lambda **kwargs: pyroscope_calls.append(kwargs) or [span_processor],
+    )
+    telemetry_environment.setattr(logfire, "configure", lambda **kwargs: configure_calls.append(kwargs))
+    telemetry_environment.setattr(logfire, "loguru_handler", lambda: {"sink": print})
+    telemetry_environment.setattr(logger, "add", lambda **_kwargs: None)
+    telemetry_environment.setattr(logfire, "instrument_httpx", lambda **_kwargs: None)
+
+    assert front_main.configure_telemetry() is True
+    assert pyroscope_calls == [{"span_profiles_enabled": True, "default_service_name": "horde-oai"}]
+    (configure_kwargs,) = configure_calls
+    assert configure_kwargs["additional_span_processors"] == [span_processor]

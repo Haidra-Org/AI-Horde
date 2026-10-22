@@ -15,6 +15,8 @@ off, and ``OTEL_SERVICE_NAME``, ``DEPLOYMENT_ENVIRONMENT`` and ``OTEL_TRACES_SAM
 sampling. The service name defaults to [`FRONT_SERVICE_NAME`][horde.oai.__main__.FRONT_SERVICE_NAME]. With none of
 them set the front exports nothing. Configured, the front records one server span per request (health checks
 excluded) and a client span per call to the horde, carrying the trace context into the horde's own spans.
+``PYROSCOPE_ENABLED=true`` starts continuous profiling through the horde's ``PYROSCOPE_*`` variables, with the
+same service name as the front's telemetry, so the front's profiles are kept apart from the horde's.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from loguru import logger
 from horde.oai.app import create_app
 from horde.oai.metrics import histogram_views
 from horde.oai.settings import load_settings
-from horde.telemetry import build_sampling_options, otel_sdk_enabled, telemetry_enabled
+from horde.telemetry import build_sampling_options, init_pyroscope, otel_sdk_enabled, telemetry_enabled
 
 __all__ = [
     "FRONT_SERVICE_NAME",
@@ -54,19 +56,26 @@ def configure_telemetry() -> bool:
 
     The Flask application's ``init_telemetry_early`` also instruments Flask, so the front configures Logfire itself
     with the same variables, its own service name and the bucket boundaries of its histograms. Loguru records,
-    the finished-request line included, are bridged to OpenTelemetry logs. Pyroscope profiling is not started.
+    the finished-request line included, are bridged to OpenTelemetry logs. Pyroscope profiling starts through the
+    horde's ``init_pyroscope`` under the front's service name, also when ``OTEL_SDK_DISABLED=true`` leaves the SDK
+    off, and its span processors join the tracer provider when span profiles are on.
 
     httpx is instrumented here, before the application creates its clients, so every call to the horde is a client
     span that carries the trace context (``traceparent``) the horde's Flask instrumentation continues; the server
     spans are added by [`instrument_app`][horde.oai.__main__.instrument_app] once the application exists.
 
     Returns:
-        Whether telemetry was configured.
+        Whether the OpenTelemetry SDK was configured.
 
     Side Effects:
-        Installs the global OpenTelemetry tracer and meter providers, instruments httpx and adds a Loguru sink.
+        Starts Pyroscope when ``PYROSCOPE_ENABLED=true``, installs the global OpenTelemetry tracer and meter
+        providers, instruments httpx and adds a Loguru sink.
     """
-    if not telemetry_enabled() or not otel_sdk_enabled():
+    if not telemetry_enabled():
+        return False
+    sdk_enabled = otel_sdk_enabled()
+    span_processors = init_pyroscope(span_profiles_enabled=sdk_enabled, default_service_name=FRONT_SERVICE_NAME)
+    if not sdk_enabled:
         return False
     logfire.configure(
         send_to_logfire=False,
@@ -75,6 +84,7 @@ def configure_telemetry() -> bool:
         environment=os.environ.get("DEPLOYMENT_ENVIRONMENT", "development"),
         sampling=build_sampling_options(),
         metrics=logfire.MetricsOptions(views=histogram_views()),
+        additional_span_processors=span_processors or None,
     )
     loguru_handler = logfire.loguru_handler()
     logger.add(**loguru_handler)

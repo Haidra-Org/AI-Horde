@@ -339,7 +339,7 @@ def test_profiling_only_initializes_pyroscope_without_logfire(monkeypatch):
     monkeypatch.setattr(telemetry, "_initialized_early", False)
     monkeypatch.setattr(
         telemetry,
-        "_init_pyroscope",
+        "init_pyroscope",
         lambda *, span_profiles_enabled: pyroscope_calls.append(span_profiles_enabled) or [],
     )
     monkeypatch.setattr(
@@ -379,7 +379,7 @@ def test_pyroscope_span_processor_is_disabled_by_default(monkeypatch, span_profi
     else:
         monkeypatch.setenv("PYROSCOPE_SPAN_PROFILES", span_profiles)
 
-    assert telemetry._init_pyroscope() == []
+    assert telemetry.init_pyroscope() == []
     assert len(configure_calls) == 1
 
 
@@ -402,7 +402,7 @@ def test_pyroscope_span_processor_requires_explicit_opt_in(monkeypatch):
     monkeypatch.setenv("PYROSCOPE_SPAN_PROFILES", "true")
     monkeypatch.setenv("PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE", "1")
 
-    processors = telemetry._init_pyroscope()
+    processors = telemetry.init_pyroscope()
 
     assert len(processors) == 1
     assert isinstance(processors[0], telemetry._TraceRatioSpanProcessor)
@@ -430,7 +430,7 @@ def test_profiling_only_skips_span_processor_when_otel_sdk_is_disabled(monkeypat
     monkeypatch.setenv("PYROSCOPE_ENABLED", "true")
     monkeypatch.setenv("PYROSCOPE_SPAN_PROFILES", "true")
 
-    assert telemetry._init_pyroscope(span_profiles_enabled=False) == []
+    assert telemetry.init_pyroscope(span_profiles_enabled=False) == []
     assert len(configure_calls) == 1
 
 

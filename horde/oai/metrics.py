@@ -151,6 +151,7 @@ class MetricAttribute(StrEnum):
     ESTIMATED_USAGE = "horde.estimated_usage"
     EXISTING_CLAIM = "horde.existing_claim"
     RELAYED = "horde.relayed"
+    REASON = "horde.reason"
 
 
 class NativeCallType(StrEnum):
@@ -373,14 +374,22 @@ class FrontMetrics:
         """Record a chat request refused before it took an in-flight slot."""
         self._refused.add(1, {MetricAttribute.STATUS_CODE: int(status_code), MetricAttribute.CODE: code or ""})
 
-    def record_error(self, *, status_code: int, code: str | None, streamed: bool) -> None:
-        """Record an admitted chat request answered with an error status before any header was sent."""
+    def record_error(self, *, status_code: int, code: str | None, streamed: bool, reason: str | None) -> None:
+        """Record an admitted chat request answered with an error status before any header was sent.
+
+        Args:
+            status_code: The HTTP status sent.
+            code: The error code.
+            streamed: Whether the request is streamed.
+            reason: Which rule refused a ``queue_unavailable`` request; None for every other error.
+        """
         self._errors.add(
             1,
             {
                 MetricAttribute.STATUS_CODE: int(status_code),
                 MetricAttribute.CODE: code or "",
                 MetricAttribute.STREAMED: streamed,
+                MetricAttribute.REASON: reason or "",
             },
         )
 

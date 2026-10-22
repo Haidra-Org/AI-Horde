@@ -48,7 +48,7 @@ from fastapi.responses import JSONResponse
 from horde_sdk.generation_parameters.text.chat_policy import ChatGuarantee
 from loguru import logger
 from opentelemetry.metrics import Meter
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.background import BackgroundTask
 from starlette.requests import ClientDisconnect
@@ -146,6 +146,7 @@ __all__ = [
     "InflightLimiter",
     "InflightSlot",
     "OpenRequest",
+    "QueueRefusalFacts",
     "RequestTrace",
     "create_app",
 ]
@@ -273,6 +274,10 @@ MAX_KUDOS_EXCEEDED_CODE: str = "max_kudos_exceeded"
 """The error code of a request whose kudos estimate at current pricing exceeds its ``horde.max_kudos``; the Horde
 refuses it with ``ChatKudosCapExceeded`` before creating it."""
 
+RATE_LIMIT_EXCEEDED_CODE: str = "rate_limit_exceeded"
+"""The error code of a Horde 429 that carries no ``rc``, such as a per-route request limit; OpenAI's code for a rate
+limit refusal. A 429 with an ``rc``, such as ``TooManyPrompts``, keeps the ``rc``."""
+
 MAX_KUDOS_PARAMETER: str = "horde.max_kudos"
 """The request path of the client's kudos cap."""
 
@@ -337,6 +342,22 @@ CLIENT_RETRY_COUNT_HEADER: str = "x-stainless-retry-count"
 """The request header OpenAI SDKs send with how many times they retried the call; a hint, never an identity."""
 
 
+class QueueRefusalFacts(BaseModel):
+    """Represents the pool a ``fail_fast`` request's first status read reported when it refused the request.
+
+    The facts go to the error metric and the finished-request line; the client reads them in the error message only.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    reason: QueueUnavailableReason
+    """Which rule refused the request."""
+    wait_time: int | None
+    """The Horde's wait estimate in seconds, when the status carried one."""
+    eligible_worker_threads: int | None
+    """The eligible worker threads online, when the status carried the count."""
+
+
 class ChatFrontError(Exception):
     """An error the front answers with an OpenAI error envelope, or an SSE error event after headers."""
 
@@ -350,6 +371,7 @@ class ChatFrontError(Exception):
         metadata: ErrorMetadata | None = None,
         headers: Mapping[str, str] | None = None,
         job_may_exist: bool = False,
+        queue_refusal: QueueRefusalFacts | None = None,
     ) -> None:
         """Create the error.
 
@@ -361,6 +383,7 @@ class ChatFrontError(Exception):
             metadata: The request id, return code and retry details that are known.
             headers: Extra response headers, such as ``Retry-After``.
             job_may_exist: Whether the Horde holds, or may hold, a request for this call; adds ``x-should-retry: false``.
+            queue_refusal: The pool facts of a ``queue_unavailable`` refusal, for the metric and log; not sent.
         """
         super().__init__(message)
         self.status_code: int = status_code
@@ -377,6 +400,8 @@ class ChatFrontError(Exception):
         """Extra response headers."""
         self.job_may_exist: bool = job_may_exist
         """Whether a retry could create a second charged job."""
+        self.queue_refusal: QueueRefusalFacts | None = queue_refusal
+        """The pool facts of a ``queue_unavailable`` refusal."""
 
     def to_response(self) -> JSONResponse:
         """Create the JSON error response, with ``x-should-retry: false`` when a job may exist."""
@@ -767,7 +792,8 @@ def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist:
     """Create the front error for a Horde error, keeping its status, ``rc`` and forwarded headers.
 
     A native payload validation failure, which has no ``rc``, is reported as ``BadRequest`` with its first failing
-    field as ``param``. A refusal over the client's kudos cap is reported as ``max_kudos_exceeded``.
+    field as ``param``. A 429 without an ``rc`` is reported as ``rate_limit_exceeded``, keeping the Horde's message and
+    ``Retry-After``. A refusal over the client's kudos cap is reported as ``max_kudos_exceeded``.
     """
     if error.return_code == CHAT_KUDOS_CAP_EXCEEDED_RC:
         return _kudos_cap_error(error, request_id=request_id, job_may_exist=job_may_exist)
@@ -790,6 +816,8 @@ def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist:
         param = _request_path_of_native_field(native_path) or None
         message = f"{param}: {field_message}" if param is not None else field_message
         code = code if code is not None else BAD_REQUEST_RC
+    if code is None and error.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+        code = RATE_LIMIT_EXCEEDED_CODE
     return ChatFrontError(
         status_code=error.status_code,
         message=message,
@@ -1435,21 +1463,28 @@ class RequestTrace:
     """Time one admitted chat request and record how it ended, once.
 
     The line logged at the end carries the request id, the submit and wake times, what woke the request, the wait,
-    the status and code, the wake count, whether usage was estimated and how many reads showed the request done
-    without a generation. It does not carry the API key, the messages
-    or the client's attribution.
+    the status and code, the wake count, whether usage was estimated, how many reads showed the request done without
+    a generation, the requested and served models and the ``Retry-After`` sent, for a ``queue_unavailable``
+    refusal the pool facts that decided it, and for a ``fail_fast`` request the wait estimate and eligible worker
+    threads of the status that took its first-read decision. It does not carry the API key, the messages or the
+    client's attribution.
     """
 
-    def __init__(self, *, front_metrics: FrontMetrics, streamed: bool, received_at: float) -> None:
+    def __init__(self, *, front_metrics: FrontMetrics, streamed: bool, received_at: float, requested_models: Sequence[str]) -> None:
         """Create the trace of an admitted request.
 
         Args:
             front_metrics: The front's instruments.
             streamed: Whether the request is streamed.
             received_at: The monotonic time the request arrived.
+            requested_models: The models the request accepts.
         """
         self.streamed: bool = streamed
         """Whether the request is streamed."""
+        self.requested_models: tuple[str, ...] = tuple(requested_models)
+        """The models the request accepts."""
+        self.served_model: str | None = None
+        """The model of the delivered completion, once one is recorded."""
         self.request_id: str | None = None
         """The Horde request id, once the submit is acknowledged."""
         self.submitted_at: float | None = None
@@ -1486,6 +1521,7 @@ class RequestTrace:
     def record_completion(self, completion: ChatCompletionResponse, status: HordeChatStatus) -> None:
         """Record the content, usage, empty-return and queue-wait facts of a completion about to be sent."""
         self.record_first_content()
+        self.served_model = completion.model
         self._front_metrics.record_completion(
             model=completion.model,
             estimated_usage=completion.x_horde.estimated_usage,
@@ -1500,16 +1536,21 @@ class RequestTrace:
 
     def error_response(self, error: ChatFrontError, *, watcher: ChatRequestWatcher | None = None) -> JSONResponse:
         """Return the error response sent before headers, recording the error and the request's end."""
-        self._front_metrics.record_error(status_code=int(error.status_code), code=error.code, streamed=self.streamed)
+        self._front_metrics.record_error(
+            status_code=int(error.status_code),
+            code=error.code,
+            streamed=self.streamed,
+            reason=error.queue_refusal.reason if error.queue_refusal is not None else None,
+        )
         if error.metadata.submit_outcome == SubmitOutcome.UNKNOWN:
             self._front_metrics.record_submit_outcome_unknown()
-        self.finish(status_code=int(error.status_code), code=error.code or "", watcher=watcher)
+        self.finish(status_code=int(error.status_code), code=error.code or "", watcher=watcher, front_error=error)
         return error.to_response()
 
     def error_events(self, error: ChatFrontError, *, watcher: ChatRequestWatcher | None) -> list[ServerSentEvent]:
         """Return the error events sent after a stream's 200 headers, recording the failure and the request's end."""
         self._front_metrics.record_stream_failure(code=error.code)
-        self.finish(status_code=HTTPStatus.OK, code=error.code or "", watcher=watcher)
+        self.finish(status_code=HTTPStatus.OK, code=error.code or "", watcher=watcher, front_error=error)
         return error.to_events()
 
     def finish_disconnected(self, *, status_code: int, watcher: ChatRequestWatcher | None) -> None:
@@ -1530,6 +1571,7 @@ class RequestTrace:
         watcher: ChatRequestWatcher | None,
         estimated_usage: bool | None = None,
         woke_by: WakeSource | None = None,
+        front_error: ChatFrontError | None = None,
     ) -> None:
         """Record the request's duration and log its finished line; only the first call counts.
 
@@ -1540,6 +1582,7 @@ class RequestTrace:
             watcher: The request's watcher, when the wait started.
             estimated_usage: Whether the delivered completion's usage was estimated; None when none was delivered.
             woke_by: What ended the wait when the watcher did not find the request finished.
+            front_error: The error the request was answered with, for its ``Retry-After`` and queue refusal facts.
         """
         if self._finished:
             return
@@ -1568,21 +1611,53 @@ class RequestTrace:
             "wake_count": watcher.wake_count if watcher is not None else 0,
             "estimated_usage": estimated_usage,
             "done_without_generation_reads": watcher.done_without_generation_reads if watcher is not None else 0,
+            "requested_model": ",".join(self.requested_models),
+            "served_model": self.served_model,
+            "retry_after": front_error.metadata.retry_after if front_error is not None else None,
         }
+        queue_refusal = front_error.queue_refusal if front_error is not None else None
+        if queue_refusal is not None:
+            finished_fields["queue_reason"] = str(queue_refusal.reason)
+            finished_fields["wait_time"] = queue_refusal.wait_time
+            finished_fields["eligible_worker_threads"] = queue_refusal.eligible_worker_threads
+        first_read_status = watcher.first_read_status if watcher is not None else None
+        finished_fields["first_read_wait_time"] = first_read_status.wait_time if first_read_status is not None else None
+        finished_fields["first_read_eligible_worker_threads"] = (
+            first_read_status.eligible_worker_threads if first_read_status is not None else None
+        )
         request_label = f"Chat request {self.request_id}" if self.request_id is not None else "Unsubmitted chat request"
-        # tests/stress/chat_scale_demo.py parses the leading fields in this order and format.
-        logger.bind(**finished_fields).info(
+        # tests/stress/chat_scale_demo.py parses the leading fields in this order and format, and the horde-chat
+        # dashboard's LogQL reads streamed, woke_by and code with greedy matches, so later fields go at the end and no
+        # later key ends in "code", "woke_by" or "streamed".
+        message = (
             f"{request_label} finished: streamed={self.streamed} submitted_at={_format_seconds(self.submitted_at)} "
             f"woke_at={_format_seconds(woke_at)} woke_by={finished_fields['woke_by']} "
             f"waited={_format_seconds(waited_seconds)}s status={int(status_code)} code={code} "
             f"wakes={finished_fields['wake_count']} estimated_usage={estimated_usage} "
-            f"done_without_generation_reads={finished_fields['done_without_generation_reads']}",
+            f"done_without_generation_reads={finished_fields['done_without_generation_reads']} "
+            f"requested_model={finished_fields['requested_model']} served_model={_format_optional(self.served_model)} "
+            f"retry_after={_format_optional(finished_fields['retry_after'])}"
         )
+        if queue_refusal is not None:
+            message += (
+                f" queue_reason={queue_refusal.reason} wait_time={_format_optional(queue_refusal.wait_time)} "
+                f"eligible_worker_threads={_format_optional(queue_refusal.eligible_worker_threads)}"
+            )
+        message += (
+            f" first_read_wait_time={_format_optional(finished_fields['first_read_wait_time'])} "
+            f"first_read_eligible_worker_threads={_format_optional(finished_fields['first_read_eligible_worker_threads'])}"
+        )
+        logger.bind(**finished_fields).info(message)
 
 
 def _format_seconds(seconds: float | None) -> str:
     """Return ``seconds`` with millisecond precision, or ``none``."""
     return f"{seconds:.3f}" if seconds is not None else "none"
+
+
+def _format_optional(value: object) -> str:
+    """Return ``value`` as text, or ``none``."""
+    return str(value) if value is not None else "none"
 
 
 async def _wait_for_disconnect(request: Request) -> None:
@@ -1763,6 +1838,11 @@ def _queue_unavailable_error(error: QueueUnavailableError, *, request_id: str) -
         metadata=ErrorMetadata(request_id=request_id, retry_after=retry_after),
         headers={RETRY_AFTER_HEADER: str(retry_after)},
         job_may_exist=True,
+        queue_refusal=QueueRefusalFacts(
+            reason=error.reason,
+            wait_time=status.wait_time,
+            eligible_worker_threads=status.eligible_worker_threads,
+        ),
     )
 
 
@@ -1966,7 +2046,12 @@ async def _chat_completions(request: Request) -> Response:
         raise
     streamed = bool(chat_request.stream)
     front_metrics.record_admitted(streamed=streamed)
-    request_trace = RequestTrace(front_metrics=front_metrics, streamed=streamed, received_at=received_at)
+    request_trace = RequestTrace(
+        front_metrics=front_metrics,
+        streamed=streamed,
+        received_at=received_at,
+        requested_models=chat_request.requested_models(),
+    )
     budget_seconds = settings.stream_timeout_seconds if chat_request.stream else settings.nonstream_timeout_seconds
     deadline = time.monotonic() + budget_seconds
     # A fresh key per client request: a client's own retry is a new request and is not deduplicated (ADR 0026).

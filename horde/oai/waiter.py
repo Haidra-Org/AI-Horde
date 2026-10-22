@@ -64,6 +64,7 @@ from enum import StrEnum
 from http import HTTPStatus
 
 import httpx
+import logfire
 import redis.asyncio
 import redis.exceptions
 from loguru import logger
@@ -126,6 +127,29 @@ to join, and a delta reaches its client within it.
 
 DELTA_READ_COUNT: int = 100
 """The most entries one ``XREAD`` returns per stream; a reader that fell behind catches up over several reads."""
+
+DELTA_READ_SPAN_NAME: str = "horde.oai.delta_read"
+"""The span recorded for each delta stream read that returns entries.
+
+An empty read does not get a span: with any streamed request registered the reader reads every block, so empty
+reads would add several spans a second per process without a relayed chunk.
+"""
+
+DELTA_READ_ENTRY_COUNT_ATTRIBUTE: str = "horde.entry_count"
+"""The read span attribute holding how many stream entries the read returned, across every stream."""
+
+DELTA_READ_BYTE_COUNT_ATTRIBUTE: str = "horde.byte_count"
+"""The read span attribute holding the UTF-8 size of the returned entries' field names and values."""
+
+DELTA_READ_FIRST_ENTRY_LAG_ATTRIBUTE: str = "horde.first_entry_lag_seconds"
+"""The read span attribute holding the seconds from the oldest returned entry's append to the read's return.
+
+The append time is the millisecond part of the entry's auto-generated stream id, taken from the Redis server's
+clock, so a skew between that clock and the front's shifts the value by the same amount.
+"""
+
+STREAM_ID_MILLISECONDS_PER_SECOND: int = 1000
+"""The unit of the time part of a Redis stream entry id, which counts milliseconds."""
 
 DELTA_READ_TIMEOUT_SECONDS: float = 5.0
 """How long one ``XREAD`` may take before the connection is treated as dead and the read is made again.
@@ -648,20 +672,37 @@ class DeltaStreamReader:
             ),
             DELTA_READ_TIMEOUT_SECONDS,
         )
-        for stream_key, stream_entries in replies or ():
-            request_id = _decode_text(stream_key).removeprefix(DELTA_STREAM_KEY_PREFIX)
-            subscription = self._subscriptions.get(request_id)
-            if subscription is None:
-                continue
-            for entry_id, entry_fields in stream_entries:
-                subscription.last_entry_id = _decode_text(entry_id)
-                fields = {_decode_text(field): _decode_text(value) for field, value in entry_fields.items()}
-                try:
-                    entry = DeltaEntry.model_validate(fields)
-                except ValidationError as error:
-                    logger.warning(f"Ignoring a malformed delta of chat request {request_id}: {error}")
-                    continue
-                subscription.deliver(entry)
+        if not replies:
+            return
+        read_at = time.time()
+        with logfire.span(DELTA_READ_SPAN_NAME) as span:
+            entry_count = 0
+            byte_count = 0
+            oldest_appended_at: float | None = None
+            for stream_key, stream_entries in replies:
+                request_id = _decode_text(stream_key).removeprefix(DELTA_STREAM_KEY_PREFIX)
+                if stream_entries:
+                    first_appended_at = _stream_entry_appended_at(_decode_text(stream_entries[0][0]))
+                    if first_appended_at is not None and (oldest_appended_at is None or first_appended_at < oldest_appended_at):
+                        oldest_appended_at = first_appended_at
+                subscription = self._subscriptions.get(request_id)
+                for entry_id, entry_fields in stream_entries:
+                    fields = {_decode_text(field): _decode_text(value) for field, value in entry_fields.items()}
+                    entry_count += 1
+                    byte_count += sum(len(field.encode()) + len(value.encode()) for field, value in fields.items())
+                    if subscription is None:
+                        continue
+                    subscription.last_entry_id = _decode_text(entry_id)
+                    try:
+                        entry = DeltaEntry.model_validate(fields)
+                    except ValidationError as error:
+                        logger.warning(f"Ignoring a malformed delta of chat request {request_id}: {error}")
+                        continue
+                    subscription.deliver(entry)
+            span.set_attribute(DELTA_READ_ENTRY_COUNT_ATTRIBUTE, entry_count)
+            span.set_attribute(DELTA_READ_BYTE_COUNT_ATTRIBUTE, byte_count)
+            if oldest_appended_at is not None:
+                span.set_attribute(DELTA_READ_FIRST_ENTRY_LAG_ATTRIBUTE, max(0.0, read_at - oldest_appended_at))
 
     async def _read_forever(self, redis_client: redis.asyncio.Redis) -> None:
         """Read the registered streams until cancelled, waiting while none is registered and reading again after a
@@ -721,6 +762,9 @@ class ChatRequestWatcher:
         """How many status reads the wait made, the read that found the request finished included."""
         self.done_without_generation_reads: int = 0
         """How many status reads showed the request done, not faulted and without a finished generation."""
+        self.first_read_status: HordeChatStatus | None = None
+        """The status that took a ``fail_fast`` request's first-read decision, whether it admitted or refused the
+        request; None in the ``wait`` mode and before the decision."""
         self._front_metrics = front_metrics
         self._horde_client = horde_client
         self._credentials = credentials
@@ -895,7 +939,7 @@ class ChatRequestWatcher:
         In the ``fail_fast`` mode a status without queue information does not decide the wait rule until
         [`POSITIONED_READ_WAIT_SECONDS`][horde.oai.waiter.POSITIONED_READ_WAIT_SECONDS] after the first read: it
         schedules a re-read instead, and the first status that carries the information, or the latest once the bound
-        has passed, decides. Zero eligible worker threads needs no position and refuses on the first read.
+        has passed, decides. With zero eligible worker threads the request does not need a position and is refused on the first read.
 
         Raises:
             QueueUnavailableError: The pool has zero eligible worker threads, or the wait estimate exceeds the time
@@ -911,6 +955,7 @@ class ChatRequestWatcher:
         self._positioned_reread_at = math.inf
         if not is_fail_fast:
             return
+        self.first_read_status = status
         if status.processing > 0 or status.finished > 0:
             return
         remaining_seconds = self._budget.deadline - self._clock()
@@ -1126,6 +1171,18 @@ def jitter_poll_seconds(poll_seconds: float, random_fraction: Callable[[], float
 def _decode_text(text: object) -> str:
     """Return a pub/sub field as text, whether the client decodes responses or not."""
     return text.decode("utf-8", "replace") if isinstance(text, bytes) else str(text)
+
+
+def _stream_entry_appended_at(entry_id: str) -> float | None:
+    """Return the Unix time in seconds a stream entry was appended, from its ``<milliseconds>-<sequence>`` id.
+
+    Returns None for an id Redis did not generate, which does not carry a time.
+    """
+    milliseconds, _, _ = entry_id.partition("-")
+    try:
+        return int(milliseconds) / STREAM_ID_MILLISECONDS_PER_SECOND
+    except ValueError:
+        return None
 
 
 def _is_finished(status: HordeChatStatus) -> bool:

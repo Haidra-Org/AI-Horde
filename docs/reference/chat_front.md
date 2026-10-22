@@ -294,10 +294,22 @@ another, and the views from `horde.oai.metrics.histogram_views`. It bridges Logu
 instruments httpx, so each call to the horde is a client span whose `traceparent` the horde's Flask instrumentation
 continues. The Flask application's `init_telemetry_early` is not reused because it instruments a Flask app.
 
+With `PYROSCOPE_ENABLED=true`, `configure_telemetry` starts Pyroscope through `horde.telemetry.init_pyroscope`, the
+function the Flask application uses, with the same `PYROSCOPE_*` variables and the front's service name as the
+application name. It starts also when `OTEL_SDK_DISABLED=true`; span profiles need the SDK.
+
 `instrument_app` adds the server spans (`POST /v1/chat/completions`, `GET /v1/models`) once `create_app` has built
 the application; `main` calls it only when telemetry was configured. `/healthz` is excluded, since the listener and
 the container poll it every few seconds. The instrumentation does not capture headers or bodies. A streamed request's span lasts
 until the stream ends.
+
+## Spans
+
+Besides the server and client spans, the front records these spans. Attribute keys carry the `horde.` prefix.
+
+| Name | Attributes | Meaning |
+| --- | --- | --- |
+| `horde.oai.delta_read` | `entry_count`, `byte_count`, `first_entry_lag_seconds` | One delta stream read that returned entries, across every registered request's stream; an empty read does not record a span. `entry_count` is the entries returned, `byte_count` the UTF-8 size of their field names and values, and `first_entry_lag_seconds` the time from the oldest returned entry's append, the millisecond part of its stream id on the Redis server's clock, to the read's return. The reader is one background task, so the span is a root span and not part of a request's trace. |
 
 `create_app` takes the meter from the global meter provider unless one is passed as `meter`; tests pass a meter of
 a separate `MeterProvider` with an `InMemoryMetricReader`. Unconfigured, the global provider does not record
@@ -306,14 +318,14 @@ anything.
 ## Metrics
 
 Attribute keys carry the `horde.` prefix. Every attribute is bounded: call types, outcomes, wake sources, HTTP
-statuses, error codes, booleans and the model id. The model id comes from a delivered completion, so it is a model a
+statuses, error codes, refusal reasons, booleans and the model id. The model id comes from a delivered completion, so it is a model a
 worker served. Client addresses, API keys, prompts, client titles and request ids are never attributes.
 
 | Name | Type | Attributes | Meaning |
 | --- | --- | --- | --- |
 | `horde.oai.requests.admitted` | counter | `streamed` | Chat requests that took an in-flight slot. |
 | `horde.oai.requests.refused` | counter | `status_code`, `code` | Chat requests refused before an in-flight slot: body size (413), body read timeout (408 `RequestBodyTimeout`), validation (400, 404), authorization (401), `FrontAtCapacity` (503). |
-| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed` | Admitted requests answered with an error status before any header: horde refusals at submit, 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 400 `no_worker_supports_limit`, 503 `no_eligible_worker`, 503 `queue_unavailable`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. |
+| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed`, `reason` | Admitted requests answered with an error status before any header: horde refusals at submit (429 `rate_limit_exceeded` when the horde's 429 does not carry an `rc`), 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 400 `no_worker_supports_limit`, 503 `no_eligible_worker`, 503 `queue_unavailable`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. `reason` is `no_eligible_threads` or `wait_exceeds_budget` for `queue_unavailable` and empty for every other code. |
 | `horde.oai.stream.failures` | counter | `code` | Streamed requests whose 200 headers were sent and which ended in an SSE error event. |
 | `horde.oai.inflight` | observable gauge | none | Requests holding an in-flight slot. |
 | `horde.oai.inflight.sources` | observable gauge | none | Distinct client addresses holding at least one slot. |
@@ -345,11 +357,15 @@ duration use `BUCKETS_REQUEST_LIFECYCLE_SECONDS` (both in `horde/metrics.py`); b
 Every admitted request logs one Loguru `INFO` record when it ends. The message is
 
 ```text
-Chat request <id> finished: streamed=<bool> submitted_at=<unix> woke_at=<unix|none> woke_by=<source|None> waited=<seconds|none>s status=<status> code=<code> wakes=<count> estimated_usage=<bool|None> done_without_generation_reads=<count>
+Chat request <id> finished: streamed=<bool> submitted_at=<unix> woke_at=<unix|none> woke_by=<source|None> waited=<seconds|none>s status=<status> code=<code> wakes=<count> estimated_usage=<bool|None> done_without_generation_reads=<count> requested_model=<models> served_model=<model|none> retry_after=<seconds|none>
 ```
 
-and the same values are bound to the record's `extra`, which the OpenTelemetry log bridge exports as attributes. A
-request refused at submit has no id; its message starts `Unsubmitted chat request finished:`.
+A `queue_unavailable` refusal appends
+`queue_reason=<reason> wait_time=<seconds|none> eligible_worker_threads=<count|none>`. Every line then ends with
+`first_read_wait_time=<seconds|none> first_read_eligible_worker_threads=<count|none>`.
+
+The same values are bound to the record's `extra`, which the OpenTelemetry log bridge exports as attributes. A
+request refused at submit does not have an id; its message starts `Unsubmitted chat request finished:`.
 `tests/stress/chat_scale_demo.py` parses the message up to `waited`.
 
 | Field | Meaning |
@@ -365,5 +381,13 @@ request refused at submit has no id; its message starts `Unsubmitted chat reques
 | `wake_count` | How many status reads the wait made. |
 | `estimated_usage` | Whether the delivered completion's usage was estimated; null when none was delivered. |
 | `done_without_generation_reads` | How many status reads showed the request done, not faulted and without a generation. |
+| `requested_model` | The models the request accepts, comma-separated. |
+| `served_model` | The model of the delivered completion; null when none was delivered. |
+| `retry_after` | The `Retry-After` the error response or event carried, in seconds; null when it carried none. |
+| `queue_reason` | `queue_unavailable` only: `no_eligible_threads` or `wait_exceeds_budget`. |
+| `wait_time` | `queue_unavailable` only: the horde-wide wait estimate the deciding status read reported; null when it had none. |
+| `eligible_worker_threads` | `queue_unavailable` only: the eligible worker threads that read reported; null when it had none. |
+| `first_read_wait_time` | `fail_fast` only: the wait estimate of the status read that took the first-read decision, whether it admitted or refused the request; null in the `wait` mode, before a decision, or when the read had none. |
+| `first_read_eligible_worker_threads` | `fail_fast` only: the eligible worker threads that read reported; null as for `first_read_wait_time`. |
 
 The line does not carry the API key, the messages, the client's title or address, or the operation key.

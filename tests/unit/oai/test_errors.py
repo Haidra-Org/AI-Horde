@@ -224,6 +224,31 @@ async def test_horde_rate_limit_passes_through_with_its_headers(start_front: Sta
     }
 
 
+async def test_horde_rate_limit_without_an_rc_is_rate_limit_exceeded_with_its_retry_after(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.submit_route.respond(
+            429,
+            json={"message": "90 per 1 minute"},
+            headers={"Retry-After": "7", "X-RateLimit-Limit": "90", "X-RateLimit-Remaining": "0"},
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "7"
+    assert response.headers["x-ratelimit-limit"] == "90"
+    assert response.headers["x-ratelimit-remaining"] == "0"
+    assert SHOULD_RETRY not in response.headers
+    assert response.json() == {
+        "error": {
+            "message": "90 per 1 minute",
+            "type": "rate_limit_error",
+            "param": None,
+            "code": "rate_limit_exceeded",
+            "metadata": {"retry_after": 7},
+        },
+    }
+
+
 async def test_chat_admission_disabled_is_503_with_retry_after(start_front: StartFront) -> None:
     async with start_front() as front:
         front.horde.submit_route.respond(503, json={"message": "Chat is switched off.", "rc": "ChatAdmissionDisabled"})

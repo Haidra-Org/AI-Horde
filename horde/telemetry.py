@@ -40,7 +40,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, cast, override
+from typing import TYPE_CHECKING, Any, cast, override
 
 import logfire
 from loguru import logger as _loguru_logger
@@ -52,22 +52,53 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from flask import Flask
-class _HordeLogger(Protocol):
-    """Subset of the loguru logger augmented with Horde's custom INIT levels.
+_INIT_LOG_CALLER_DEPTH: int = 2
+"""The frames between the loguru call and the code reporting an init status: ``_log_init`` and the ``init_*``
+method, so the record carries the reporting function and line."""
 
-    ``horde.logger`` binds ``init_ok`` / ``init_warn`` / ``init_err`` onto the
-    loguru ``Logger`` class at import time via ``partialmethod``; those dynamic
-    attributes are invisible to static analysis, so this Protocol re-declares
-    the subset used in this module.
+_INIT_FALLBACK_LEVEL: str = "INFO"
+"""The level an init status is logged at in a process that has not registered Horde's INIT levels."""
+
+
+class _HordeLogger:
+    """The loguru logger with Horde's INIT levels, usable before or without ``horde.logger``.
+
+    ``horde.logger`` registers the ``INIT_OK``, ``INIT_WARN`` and ``INIT_ERR``
+    levels at import time; the Flask application imports it, so its init
+    statuses keep those levels. The chat front shares Pyroscope startup with
+    this module but configures its own logging and does not import
+    ``horde.logger``, so there a status is logged at INFO with the status in
+    the message.
     """
 
-    def init_ok(self, message: str, *, status: str) -> None: ...
-    def init_warn(self, message: str, *, status: str) -> None: ...
-    def init_err(self, message: str, *, status: str) -> None: ...
-    def add(self, sink: Any, **kwargs: Any) -> int: ...
+    def init_ok(self, message: str, *, status: str) -> None:
+        """Log ``message`` with ``status`` at the ``INIT_OK`` level."""
+        self._log_init("INIT_OK", message, status)
+
+    def init_warn(self, message: str, *, status: str) -> None:
+        """Log ``message`` with ``status`` at the ``INIT_WARN`` level."""
+        self._log_init("INIT_WARN", message, status)
+
+    def init_err(self, message: str, *, status: str) -> None:
+        """Log ``message`` with ``status`` at the ``INIT_ERR`` level."""
+        self._log_init("INIT_ERR", message, status)
+
+    def add(self, sink: Any, **kwargs: Any) -> int:
+        """Add a loguru sink and return its id."""
+        return _loguru_logger.add(sink, **kwargs)
+
+    @staticmethod
+    def _log_init(level: str, message: str, status: str) -> None:
+        caller = _loguru_logger.opt(depth=_INIT_LOG_CALLER_DEPTH)
+        try:
+            _loguru_logger.level(level)
+        except ValueError:
+            caller.log(_INIT_FALLBACK_LEVEL, "{message}: {status}", message=message, status=status)
+            return
+        caller.log(level, message, status=status)
 
 
-logger: _HordeLogger = cast("_HordeLogger", _loguru_logger)
+logger: _HordeLogger = _HordeLogger()
 
 _initialized_early = False
 _initialized_late = False
@@ -314,7 +345,7 @@ def init_telemetry_early(app: Flask) -> None:
     _initialized_early = True
 
     sdk_enabled = otel_sdk_enabled()
-    span_processors = _init_pyroscope(span_profiles_enabled=sdk_enabled)
+    span_processors = init_pyroscope(span_profiles_enabled=sdk_enabled)
 
     if not sdk_enabled:
         logger.init_warn("Telemetry", status="OpenTelemetry disabled")
@@ -418,12 +449,28 @@ def build_sampling_options() -> logfire.SamplingOptions:
     return logfire.SamplingOptions(head=ratio)
 
 
-def _init_pyroscope(*, span_profiles_enabled: bool = True) -> list[SpanProcessor]:
+def init_pyroscope(
+    *,
+    span_profiles_enabled: bool = True,
+    default_service_name: str = "ai-horde",
+) -> list[SpanProcessor]:
     """Start continuous profiling and optionally enable span correlation.
 
     ``PyroscopeSpanProcessor`` adds per-root-span identifiers to profiling
     samples. Keep it behind its own explicit gate so ordinary continuous
     profiling does not create an unbounded series for every request.
+
+    Args:
+        span_profiles_enabled: Whether the OpenTelemetry SDK runs, which span
+            correlation requires.
+        default_service_name: The Pyroscope application name when
+            ``OTEL_SERVICE_NAME`` is unset. Each process passes its own
+            OpenTelemetry default so its profiles are not merged with
+            another service's.
+
+    Returns:
+        The span processors to add to the tracer provider; empty when span
+        profiles are off or unavailable.
     """
     if os.environ.get("PYROSCOPE_ENABLED", "").lower() != "true":
         return []
@@ -432,7 +479,7 @@ def _init_pyroscope(*, span_profiles_enabled: bool = True) -> list[SpanProcessor
         import pyroscope
 
         pyroscope.configure(
-            application_name=os.environ.get("OTEL_SERVICE_NAME", "ai-horde"),
+            application_name=os.environ.get("OTEL_SERVICE_NAME", default_service_name),
             server_address=os.environ.get("PYROSCOPE_SERVER_ADDRESS", "http://localhost:4040"),
             tags={
                 "environment": os.environ.get("DEPLOYMENT_ENVIRONMENT", "development"),

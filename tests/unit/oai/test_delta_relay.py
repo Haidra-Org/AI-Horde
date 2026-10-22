@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Coroutine
+from types import SimpleNamespace
 from typing import Any
 
 import fakeredis
@@ -172,6 +173,52 @@ async def test_reader_queues_each_registered_requests_entries_in_stream_order() 
     ]
     assert second_entries == [DeltaEntry.model_validate({"gen": "g2", "seq": 1, "content": "Yo"})]
     assert entries_after_second_read == []
+
+
+class RecordedSpan:
+    """A stand-in for a Logfire span that keeps its name and the attributes set on it."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.attributes: dict[str, Any] = {}
+
+    def __enter__(self) -> RecordedSpan:
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        return None
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        self.attributes[key] = value
+
+
+async def test_reader_records_one_span_per_read_that_returns_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The span counts every returned entry and its bytes, and the lag runs from the oldest entry's stream id."""
+    spans: list[RecordedSpan] = []
+    monkeypatch.setattr(waiter.logfire, "span", lambda name, **_attributes: spans.append(RecordedSpan(name)) or spans[-1])
+    monkeypatch.setattr(waiter, "time", SimpleNamespace(time=lambda: 1_000_002.5))
+    redis_client = fakeredis.FakeAsyncRedis()
+    reader = DeltaStreamReader(redis_client)
+    try:
+        with reader.register("request-a"), reader.register("request-b"):
+            await reader.read_once(redis_client)
+            spans_after_empty_read = len(spans)
+            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-a", {"gen": "g1", "seq": "1", "content": "Hi"}, id="1000001000-0")
+            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-b", {"gen": "g2", "ended": "1"}, id="1000000000-0")
+            await reader.read_once(redis_client)
+    finally:
+        await redis_client.close()
+
+    assert spans_after_empty_read == 0
+    (span,) = spans
+    assert span.name == waiter.DELTA_READ_SPAN_NAME
+    assert span.attributes == {
+        waiter.DELTA_READ_ENTRY_COUNT_ATTRIBUTE: 2,
+        waiter.DELTA_READ_BYTE_COUNT_ATTRIBUTE: sum(
+            len(text) for text in ("gen", "g1", "seq", "1", "content", "Hi", "gen", "g2", "ended", "1")
+        ),
+        waiter.DELTA_READ_FIRST_ENTRY_LAG_ATTRIBUTE: pytest.approx(2.5),
+    }
 
 
 @pytest.mark.parametrize(

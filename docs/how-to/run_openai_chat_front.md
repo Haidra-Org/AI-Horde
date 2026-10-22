@@ -242,7 +242,8 @@ Every error is an OpenAI envelope, `{"error": {"message", "type", "param", "code
 `code` written as null when they do not apply. `metadata` holds what is known: `request_id`, the horde's `rc`,
 `retry_after`, and `submit_outcome: "unknown"` with the request's `operation_key` when a submit was lost and recovery
 did not settle it. A horde error keeps the horde's status, and its
-`rc` becomes `code`; a horde 429 keeps `Retry-After` and the `X-RateLimit-*` headers, and a horde 503 without
+`rc` becomes `code`; a horde 429 keeps `Retry-After` and the `X-RateLimit-*` headers, and has code
+`rate_limit_exceeded` when the horde sends no `rc`, such as for its per-route request limit. A horde 503 without
 `Retry-After` (such as `ChatAdmissionDisabled`) gets `Retry-After: 30`. A status read that ends the wait with a
 horde error other than 404, 429 or a 5xx, such as 401 or 403, cancels the request before the error is returned; a 404
 means the horde no longer holds it.
@@ -329,7 +330,8 @@ anything.
 | `DEPLOYMENT_ENVIRONMENT` | `development` | The `deployment.environment` resource attribute. |
 | `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Head sampling ratio, as for the horde. |
 
-The front does not start Pyroscope, and `PYROSCOPE_ENABLED` alone does not turn its export on.
+`PYROSCOPE_ENABLED=true` starts Pyroscope continuous profiling with the horde's `PYROSCOPE_*` variables (see
+`horde.telemetry`). The application name is the front's service name, so its profiles are separate from the horde's.
 
 Verification: with an endpoint set, a collector receives `horde.oai.*` metrics within the SDK's export interval
 after the first request, one `Chat request <id> finished: ...` log record per finished request, and a trace per
