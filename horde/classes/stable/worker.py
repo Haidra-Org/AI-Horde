@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from sqlalchemy.orm import Mapped, mapped_column
@@ -15,7 +15,7 @@ from horde.bridge_reference import (
     is_latest_bridge_version,
     is_official_bridge_version,
 )
-from horde.classes.base.worker import Worker
+from horde.classes.base.worker import Worker, WorkerEligibilityInputs
 from horde.consts import (
     CONTROL_STRENGTH_PARAM,
     EXTENDED_SCHEDULERS,
@@ -35,6 +35,9 @@ from horde.sampler_work_policy import (
     sampler_work_request_from_payload,
 )
 from horde.suspicions import Suspicions
+
+if TYPE_CHECKING:
+    from horde.classes.base.waiting_prompt import RequestEligibilityInputs
 
 
 class ImageWorker(Worker):
@@ -66,9 +69,8 @@ class ImageWorker(Worker):
         )
         if not super().check_in(**kwargs):
             return False
-        if max_pixels > 3072 * 3072:  # FIXME #noqa SIM102
-            if not self.user.trusted:
-                self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
+        if max_pixels > 3072 * 3072 and not self.user.trusted:
+            self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
         self.max_pixels = max_pixels
         self.allow_img2img = kwargs.get("allow_img2img", True)
         self.allow_painting = kwargs.get("allow_painting", True)
@@ -96,32 +98,29 @@ class ImageWorker(Worker):
             baseline += 30
         return baseline
 
-    def can_generate(self, waiting_prompt: Any) -> list[bool | str | None]:
-        """Return whether this worker can serve an image request."""
-
-        return self.can_generate_with_model_names(waiting_prompt, self.get_model_names())
-
-    def can_generate_with_model_names(
+    def can_generate_with_eligibility_inputs(
         self,
         waiting_prompt: Any,
-        model_names: list[str],
+        request_inputs: "RequestEligibilityInputs",
+        worker_inputs: WorkerEligibilityInputs,
     ) -> list[bool | str | None]:
-        """Evaluate an image request using an already loaded model list.
+        """Evaluate an image request from already loaded eligibility inputs.
 
         Args:
             waiting_prompt: Image request being evaluated.
-            model_names: Models currently advertised by this worker.
+            request_inputs: The request's eligibility inputs.
+            worker_inputs: This worker's eligibility inputs.
 
         Returns:
             Eligibility followed by the existing rejection reason, if any.
         """
 
-        can_generate = super().can_generate(waiting_prompt)
+        can_generate = super().can_generate_with_eligibility_inputs(waiting_prompt, request_inputs, worker_inputs)
         if not can_generate[0]:
             return [can_generate[0], can_generate[1]]
-        my_model_names = model_names
-        requested_models = waiting_prompt.get_model_names()
-        if requested_models and set(requested_models).isdisjoint(my_model_names):
+        my_model_names = list(worker_inputs.model_names)
+        requested_models = list(request_inputs.model_names)
+        if requested_models and request_inputs.model_name_set.isdisjoint(my_model_names):
             return [False, "models"]
         if waiting_prompt.width * waiting_prompt.height > self.max_pixels:
             return [False, "max_pixels"]
@@ -205,9 +204,9 @@ class ImageWorker(Worker):
         ):
             return [False, "bridge_version"]
         # Prevent txt2img requests being sent to "stable_diffusion_inpainting" workers
-        if not waiting_prompt.source_image and (
-            self.models == ["stable_diffusion_inpainting"] or waiting_prompt.models == ["stable_diffusion_inpainting"]
-        ):
+        # Both halves compare a relationship of row objects with a list of model names, so the comparison is always
+        # false; the check is kept unchanged.
+        if not waiting_prompt.source_image and waiting_prompt.models == ["stable_diffusion_inpainting"]:
             return [False, "models"]
         if waiting_prompt.params.get("tiling") and not check_bridge_capability("tiling", self.bridge_agent):
             return [False, "bridge_version"]
@@ -300,20 +299,15 @@ class ImageWorker(Worker):
             if sampler_work_ceiling is None:
                 return [False, "step_count"]
 
-            requested_model_names = waiting_prompt.get_model_names()
-            budget_model_names = requested_model_names if requested_model_names else my_model_names
+            budget_model_names = requested_models if requested_models else my_model_names
             for model_name in budget_model_names:
                 requirements = model_reference.get_model_requirements(model_name)
                 average_work_budget = int(requirements.get("min_steps", 20) + requirements.get("max_steps", 40)) // 2
                 if sampler_work_ceiling.work_units.value > average_work_budget:
                     return [False, "step_count"]
-        # We do not give untrusted workers anon or VPN generations, to avoid anything slipping by and spooking them.
-        # logger.warning(datetime.utcnow())
-        if not self.user.trusted:  # FIXME #noqa SIM102
-            # if waiting_prompt.user.is_anon():
-            #    return [False, 'untrusted']
-            if not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:
-                return [False, "untrusted"]
+        # An untrusted worker does not get an untrusted user's request from an unsafe IP, so nothing slips by and spooks it.
+        if not worker_inputs.owner_trusted and not waiting_prompt.safe_ip and not waiting_prompt.user.trusted:
+            return [False, "untrusted"]
         if not self.allow_post_processing and len(waiting_prompt.gen_payload.get("post_processing", [])) >= 1:
             return [False, "post-processing"]
         # When the worker requires upfront kudos, the user has to have the required kudos upfront

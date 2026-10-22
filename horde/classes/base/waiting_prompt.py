@@ -136,6 +136,26 @@ class RequestCompletionSnapshot:
         return self.n <= 0 and self.processing_jobs == 0
 
 
+@dataclass(frozen=True)
+class RequestEligibilityInputs:
+    """Represents the request-side facts the worker eligibility rules read, computed once per request.
+
+    Eligibility evaluates one request against many workers, so these are read from the request once rather than once
+    per worker.
+    """
+
+    model_names: tuple[str, ...]
+    """The models the request accepts, in the order ``get_model_names`` returns them; empty when it accepts any."""
+    model_name_set: frozenset[str]
+    """``model_names`` as a set, for membership and disjointness checks."""
+    has_targeted_workers: bool
+    """Whether the request lists workers, as an allow list or, with ``worker_blacklist``, a deny list."""
+    targeted_worker_ids: frozenset[uuid.UUID]
+    """The ids of the listed workers; empty when ``has_targeted_workers`` is false."""
+    tricked_worker_ids: frozenset[uuid.UUID]
+    """The ids of the workers this request has already tricked."""
+
+
 class WPAllowedWorkers(db.Model):
     __tablename__ = "wp_allowed_workers"
     # The pop candidate query and the skipped-count query probe this table with
@@ -420,6 +440,25 @@ class WaitingPrompt(db.Model):
 
     def get_model_names(self):
         return [m.model for m in self.models]
+
+    def get_eligibility_inputs(self) -> RequestEligibilityInputs:
+        """Return the request-side facts the worker eligibility rules read.
+
+        The targeted worker ids are only looked up when the request lists workers, which skips the worker id cache
+        read for the common request that does not.
+
+        Returns:
+            The request's eligibility inputs.
+        """
+        model_names = tuple(self.get_model_names())
+        has_targeted_workers = len(self.workers) > 0
+        return RequestEligibilityInputs(
+            model_names=model_names,
+            model_name_set=frozenset(model_names),
+            has_targeted_workers=has_targeted_workers,
+            targeted_worker_ids=frozenset(self.get_worker_ids()) if has_targeted_workers else frozenset(),
+            tricked_worker_ids=frozenset(tricked.worker_id for tricked in self.tricked_workers),
+        )
 
     def read_privileged_submitted_prompt(self, *, purpose: SubmittedPromptPurpose) -> str | None:
         """Return submission provenance explicitly without populating a deferred ORM attribute.

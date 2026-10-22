@@ -56,6 +56,8 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
             connection.exec_driver_sql("CREATE TABLE waiting_prompts (id UUID PRIMARY KEY, user_id INTEGER)")
             connection.exec_driver_sql("CREATE TABLE workers (id UUID PRIMARY KEY)")
             connection.exec_driver_sql("CREATE TABLE processing_gens (id UUID PRIMARY KEY)")
+            connection.exec_driver_sql("CREATE TABLE worker_blacklists (id INTEGER PRIMARY KEY, worker_id UUID NOT NULL)")
+            connection.exec_driver_sql("CREATE TABLE text_worker_softprompts (id INTEGER PRIMARY KEY, worker_id UUID NOT NULL)")
             connection.execute(sqlalchemy.text("INSERT INTO workers (id) VALUES (:worker_id)"), {"worker_id": worker_id})
             connection.execute(sqlalchemy.text("INSERT INTO waiting_prompts (id) VALUES (:request_id)"), {"request_id": request_id})
 
@@ -67,7 +69,12 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                     """
                     SELECT table_name, column_name, data_type, character_maximum_length, is_nullable
                     FROM information_schema.columns
-                    WHERE table_schema = 'public' AND column_name NOT IN ('id', 'user_id')
+                    WHERE table_schema = 'public'
+                        AND column_name NOT IN ('id', 'user_id')
+                        AND NOT (
+                            table_name IN ('worker_blacklists', 'text_worker_softprompts')
+                            AND column_name = 'worker_id'
+                        )
                     ORDER BY table_name, column_name
                     """,
                 ),
@@ -145,5 +152,21 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
             assert is_valid is True
             assert "(user_id, operation_key)" in index_definition
             assert "WHERE (operation_key IS NOT NULL)" in index_definition
+
+            for table_name in ("worker_blacklists", "text_worker_softprompts"):
+                worker_id_index = connection.execute(
+                    sqlalchemy.text(
+                        """
+                        SELECT pg_index.indisvalid, pg_get_indexdef(pg_index.indexrelid)
+                        FROM pg_index
+                        JOIN pg_class ON pg_class.oid = pg_index.indexrelid
+                        WHERE pg_class.relname = :index_name
+                        """,
+                    ),
+                    {"index_name": f"ix_{table_name}_worker_id"},
+                ).one()
+                is_valid, index_definition = worker_id_index
+                assert is_valid is True
+                assert f"ON public.{table_name} USING btree (worker_id)" in index_definition
     finally:
         engine.dispose()

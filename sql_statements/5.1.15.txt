@@ -72,3 +72,8 @@ RESET lock_timeout;
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ix_waiting_prompts_user_operation_key
   ON waiting_prompts (user_id, operation_key)
   WHERE operation_key IS NOT NULL;
+
+-- The eligibility query and the readers of a worker's blacklist and softprompts look rows up by
+-- worker_id. PostgreSQL does not index foreign key columns, so without these each lookup scans the table.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_worker_blacklists_worker_id ON worker_blacklists (worker_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_text_worker_softprompts_worker_id ON text_worker_softprompts (worker_id);

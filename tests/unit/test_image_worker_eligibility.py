@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -71,6 +72,12 @@ def _make_worker(user: Any) -> ImageWorker:
     return worker
 
 
+def _judge_with_model_names(worker: ImageWorker, request: ImageWaitingPrompt, model_names: list[str]) -> list[bool | str | None]:
+    """Evaluate the worker as if it advertised ``model_names``, the way the availability query supplies them."""
+    worker_inputs = replace(worker.get_eligibility_inputs(request), model_names=tuple(model_names))
+    return worker.can_generate_with_eligibility_inputs(request, request.get_eligibility_inputs(), worker_inputs)
+
+
 def _make_pair(make_user: Any, make_user_role: Any) -> tuple[ImageWaitingPrompt, ImageWorker]:
     user = make_user()
     make_user_role(user, UserRoleTypes.TRUSTED, value=True)
@@ -101,7 +108,7 @@ def test_runtime_gate_rejects_worker_pop_constraints(
     for name, value in worker_change.items():
         setattr(worker, name, value)
 
-    assert worker.can_generate_with_model_names(request, model_names) == [False, reason]
+    assert _judge_with_model_names(worker, request, model_names) == [False, reason]
 
 
 @pytest.mark.parametrize(
@@ -132,7 +139,7 @@ def test_runtime_gate_rejects_missing_bridge_capability(
         lambda checked_capability, _bridge_agent: checked_capability != capability,
     )
 
-    assert worker.can_generate_with_model_names(request, [_MODEL]) == [False, "bridge_version"]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == [False, "bridge_version"]
 
 
 def test_runtime_gate_allows_r2_request_without_bridge_capability(
@@ -149,7 +156,7 @@ def test_runtime_gate_allows_r2_request_without_bridge_capability(
         lambda checked_capability, _bridge_agent: checked_capability != "r2",
     )
 
-    assert worker.can_generate_with_model_names(request, [_MODEL]) == [True, None]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == [True, None]
 
 
 @pytest.mark.parametrize(
@@ -175,7 +182,7 @@ def test_runtime_gate_honors_worker_capability_opt_outs(
     monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
     monkeypatch.setattr("horde.classes.stable.worker.check_bridge_capability", lambda *_args: True)
 
-    assert worker.can_generate_with_model_names(request, [_MODEL]) == [False, reason]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == [False, reason]
 
 
 def test_runtime_gate_rejects_control_strength_on_a_bridge_that_cannot_read_it(
@@ -193,7 +200,7 @@ def test_runtime_gate_rejects_control_strength_on_a_bridge_that_cannot_read_it(
         lambda checked_capability, _bridge_agent: checked_capability != "control_strength",
     )
 
-    assert worker.can_generate_with_model_names(request, [_MODEL]) == [False, "bridge_version"]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == [False, "bridge_version"]
 
 
 def test_runtime_gate_allows_control_strength_on_a_bridge_that_reads_it(
@@ -207,7 +214,7 @@ def test_runtime_gate_allows_control_strength_on_a_bridge_that_reads_it(
     monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
     monkeypatch.setattr("horde.classes.stable.worker.check_bridge_capability", lambda *_args: True)
 
-    assert worker.can_generate_with_model_names(request, [_MODEL]) == [True, None]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == [True, None]
 
 
 def test_runtime_gate_judges_baseline_features_on_the_requested_models_only(
@@ -232,8 +239,8 @@ def test_runtime_gate_judges_baseline_features_on_the_requested_models_only(
     worker.bridge_agent = "AI Horde Worker reGen:18.4.1:https://github.com/Haidra-Org/horde-worker-reGen"
     monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
 
-    assert worker.can_generate_with_model_names(request, [_MODEL, flux_model]) == [True, None]
+    assert _judge_with_model_names(worker, request, [_MODEL, flux_model]) == [True, None]
 
     request.models = [WPModels(model=flux_model, wp_id=request.id)]
     db.session.commit()
-    assert worker.can_generate_with_model_names(request, [_MODEL, flux_model]) == [False, "bridge_version"]
+    assert _judge_with_model_names(worker, request, [_MODEL, flux_model]) == [False, "bridge_version"]

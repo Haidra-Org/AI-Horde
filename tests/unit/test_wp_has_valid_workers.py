@@ -24,7 +24,7 @@ outdated answer. The remaining tests cover the availability query's
 model/staleness/capacity filters and the processing-count bucketing.
 
 Every test uses ``fake_redis`` because the verdict is Redis-memoized. Availability
-loads worker capabilities from their relational rows in batches. The
+selects worker capabilities as aggregates in the same statement as the workers. The
 ``_stub_model_reference`` autouse fixture pins the image model reference to a
 minimal in-memory dict so ``can_generate`` and procgen construction stay
 hermetic (no network dependency on the remote model reference).
@@ -41,7 +41,8 @@ import pytest
 from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from horde_sdk.generation_parameters.image.sampler_work import SamplerExecutionContractVersion
 
-from horde.classes.base.worker import WorkerModel
+from horde.classes.base.waiting_prompt import WPTrickedWorkers
+from horde.classes.base.worker import WorkerBlackList, WorkerModel
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
@@ -388,8 +389,110 @@ class TestFreshCapableWorker:
             _make_image_worker(user)
         five_worker_query_count = count_eligibility_queries()
 
-        assert one_worker_query_count <= 8
+        assert one_worker_query_count <= 5
         assert five_worker_query_count == one_worker_query_count
+
+    def test_eligibility_selects_worker_collections_in_the_worker_statement(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        from sqlalchemy import event, inspect
+
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        for _ in range(3):
+            worker = _make_image_worker(user)
+            db.session.add(WorkerBlackList(worker_id=worker.id, word="unrelated"))
+        db.session.commit()
+        statements: list[str] = []
+
+        def record_statement(_connection: Any, _cursor: Any, statement: str, *_args: Any) -> None:
+            statements.append(statement)
+
+        db.session.expire_all()
+        event.listen(db.engine, "before_cursor_execute", record_statement)
+        try:
+            eligible_workers = list(f._iter_eligible_workers_for_request(target))
+        finally:
+            event.remove(db.engine, "before_cursor_execute", record_statement)
+
+        collection_statements = [
+            statement
+            for statement in statements
+            if any(table in statement for table in ("worker_models", "worker_blacklists", "user_roles"))
+        ]
+        assert len(eligible_workers) == 3
+        assert len(collection_statements) == 1
+        for eligible_worker in eligible_workers:
+            assert eligible_worker.eligibility_inputs.model_names == (_HOSTED_MODEL,)
+            assert eligible_worker.eligibility_inputs.blacklist_words == ("unrelated",)
+            assert eligible_worker.eligibility_inputs.owner_trusted is True
+            assert {"models", "blacklist"} <= inspect(eligible_worker.worker).unloaded
+
+    def test_eligibility_model_names_keep_the_stored_order(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        stored_order = ("zz_model", _HOSTED_MODEL, "aa_model")
+        _make_image_worker(user, models=stored_order)
+        db.session.expire_all()
+
+        eligible_workers = list(f._iter_eligible_workers_for_request(target))
+
+        assert [eligible_worker.eligibility_inputs.model_names for eligible_worker in eligible_workers] == [stored_order]
+
+    def test_eligibility_refusals_match_can_generate(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        trusted_owner = _make_trusted_user(make_user, make_user_role)
+        untrusted_owner = make_user()
+        untrusted_requester = make_user()
+        target = _make_image_wp(untrusted_requester)
+        target.safe_ip = False
+        eligible = _make_image_worker(trusted_owner)
+        blacklisted = _make_image_worker(trusted_owner)
+        db.session.add(WorkerBlackList(worker_id=blacklisted.id, word="UNIT-TEST"))
+        tricked = _make_image_worker(trusted_owner)
+        db.session.add(WPTrickedWorkers(worker_id=tricked.id, wp_id=target.id))
+        untrusted = _make_image_worker(untrusted_owner)
+        workers = (eligible, blacklisted, tricked, untrusted)
+        for worker in workers:
+            worker.allow_unsafe_ipaddr = True
+        db.session.commit()
+        expected_reasons = {
+            eligible.id: None,
+            blacklisted.id: "blacklist",
+            tricked.id: "secret",
+            untrusted.id: "untrusted",
+        }
+
+        def reasons_from_eligibility() -> dict[Any, str | None]:
+            refusals: list[tuple[Any, str]] = []
+            eligible_workers = list(f._iter_eligible_workers_for_request(target, refusals))
+            reasons: dict[Any, str | None] = {eligible_worker.worker.id: None for eligible_worker in eligible_workers}
+            reasons.update({worker.id: reason for worker, reason in refusals})
+            return reasons
+
+        def reasons_from_can_generate() -> dict[Any, str | None]:
+            return {worker.id: worker.can_generate(target)[1] for worker in workers}
+
+        assert reasons_from_eligibility() == expected_reasons
+        assert reasons_from_can_generate() == expected_reasons
+        db.session.expire_all()
+        assert reasons_from_eligibility() == expected_reasons
+        assert reasons_from_can_generate() == expected_reasons
 
     def test_availability_deduplicates_active_batched_pop(
         self,
@@ -483,7 +586,8 @@ class TestFreshCapableWorker:
             candidates.append(candidate)
         db.session.commit()
 
-        preceding_arrivals = f._get_preceding_arrivals(target, [worker], datetime.utcnow())
+        eligible_worker = f.EligibleWorker(worker=worker, eligibility_inputs=worker.get_eligibility_inputs(target))
+        preceding_arrivals = f._get_preceding_arrivals(target, [eligible_worker], datetime.utcnow())
 
         assert {arrival.request_id for arrival in preceding_arrivals} == {str(candidate.id) for candidate in candidates}
 
@@ -501,6 +605,7 @@ class TestFreshCapableWorker:
         target.created = datetime.utcnow() - timedelta(minutes=4)
         target.extra_priority = 0
         worker = _make_image_worker(user)
+        eligible_worker = f.EligibleWorker(worker=worker, eligibility_inputs=worker.get_eligibility_inputs(target))
         candidates: list[ImageWaitingPrompt] = []
         for _ in range(51):
             candidate = _make_image_wp(user)
@@ -521,7 +626,7 @@ class TestFreshCapableWorker:
             db.session.expire_all()
             event.listen(db.engine, "before_cursor_execute", count_statement)
             try:
-                f._get_preceding_arrivals(target, [worker], datetime.utcnow())
+                f._get_preceding_arrivals(target, [eligible_worker], datetime.utcnow())
             finally:
                 event.remove(db.engine, "before_cursor_execute", count_statement)
             return statement_count

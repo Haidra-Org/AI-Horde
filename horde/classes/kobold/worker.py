@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATIONS, ChatFeature, ChatLimitField
 from horde_sdk.worker.chat_declaration import IMAGE_PART_TRANSPORTS, ChatImageTransport
-from sqlalchemy import JSON
+from sqlalchemy import JSON, ScalarSelect
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import expression
@@ -20,12 +21,15 @@ from horde import exceptions as e
 from horde.bridge_reference import (
     is_backed_validated,
 )
-from horde.classes.base.worker import Worker
+from horde.classes.base.worker import Worker, WorkerEligibilityInputs, worker_ordered_names_clause
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.model_reference import model_reference
 from horde.utils import sanitize_string
+
+if TYPE_CHECKING:
+    from horde.classes.base.waiting_prompt import RequestEligibilityInputs
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 text_array_column_type = ARRAY(db.Text) if not SQLITE_MODE else JSON
@@ -80,6 +84,7 @@ class TextWorkerSoftprompts(db.Model):
         uuid_column_type(),
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     worker = db.relationship("TextWorker", back_populates="softprompts")
     softprompt = db.Column(db.String(255))
@@ -279,39 +284,41 @@ class TextWorker(Worker):
         # The uptime is based on both how much context they provide, as well as how many parameters they're serving
         return round(base_kudos * param_multiplier, 2)
 
-    def can_generate(self, waiting_prompt: Any) -> list[bool | str | None]:
-        """Return whether this worker can serve a text request."""
+    def get_eligibility_inputs(self, waiting_prompt: Any) -> WorkerEligibilityInputs:
+        """Return the worker-side eligibility inputs, including the worker's softprompt names.
 
-        model_names = self.get_model_names()
-        softprompt_names = self.get_softprompt_names() if waiting_prompt.softprompt else []
-        return self.can_generate_with_softprompt_names(waiting_prompt, softprompt_names, model_names=model_names)
+        Args:
+            waiting_prompt: The text request being evaluated.
 
-    def can_generate_with_softprompt_names(
+        Returns:
+            The worker's eligibility inputs.
+        """
+        eligibility_inputs = super().get_eligibility_inputs(waiting_prompt)
+        return replace(eligibility_inputs, softprompt_names=tuple(self.get_softprompt_names()))
+
+    def can_generate_with_eligibility_inputs(
         self,
         waiting_prompt: Any,
-        softprompt_names: list[str],
-        *,
-        model_names: list[str] | None = None,
+        request_inputs: RequestEligibilityInputs,
+        worker_inputs: WorkerEligibilityInputs,
     ) -> list[bool | str | None]:
-        """Evaluate a text request using already loaded softprompt names.
+        """Evaluate a text request from already loaded eligibility inputs.
 
         Args:
             waiting_prompt: Text request being evaluated.
-            softprompt_names: Softprompts currently advertised by this worker.
-            model_names: Models currently advertised by this worker. When
-                omitted, load the worker's current models.
+            request_inputs: The request's eligibility inputs.
+            worker_inputs: This worker's eligibility inputs.
 
         Returns:
             Eligibility followed by the existing rejection reason, if any.
         """
 
-        can_generate = super().can_generate(waiting_prompt)
+        can_generate = super().can_generate_with_eligibility_inputs(waiting_prompt, request_inputs, worker_inputs)
         if not can_generate[0]:
             return [can_generate[0], can_generate[1]]
-        if model_names is None:
-            model_names = self.get_model_names()
-        requested_models = waiting_prompt.get_model_names()
-        if requested_models and set(requested_models).isdisjoint(model_names):
+        model_names = list(worker_inputs.model_names)
+        requested_models = list(request_inputs.model_names)
+        if requested_models and request_inputs.model_name_set.isdisjoint(model_names):
             return [False, "models"]
         if waiting_prompt.is_chat:
             chat_refusal = self.chat_refusal_reason(waiting_prompt, requested_models)
@@ -334,7 +341,7 @@ class TextWorker(Worker):
             # If a None softprompts has been provided, we always match, since we can always remove the softprompt
             if waiting_prompt.softprompt == "":
                 matching_softprompt = True
-            if waiting_prompt.softprompt in softprompt_names:
+            if waiting_prompt.softprompt in worker_inputs.softprompt_names:
                 matching_softprompt = True
         if not matching_softprompt:
             return [False, "matching_softprompt"]
@@ -433,3 +440,19 @@ class TextWorker(Worker):
         if len(models) == 0:
             raise e.BadRequest("Unfortunately we cannot accept workers serving unrecognised models at this time")
         return models
+
+
+def text_worker_softprompt_names_clause() -> ScalarSelect:
+    """Return the correlated subquery aggregating a text worker's softprompt names, in the order they were stored.
+
+    Returns:
+        The aggregate column expression of the text worker's softprompt names, ordered by row id. See
+            [`worker_ordered_names_clause`][horde.classes.base.worker.worker_ordered_names_clause] for the value
+            of a worker without softprompts.
+    """
+    return worker_ordered_names_clause(
+        name_column=TextWorkerSoftprompts.softprompt,
+        id_column=TextWorkerSoftprompts.id,
+        worker_id_column=TextWorkerSoftprompts.worker_id,
+        worker_class=TextWorker,
+    )

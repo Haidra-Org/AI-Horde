@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 import logfire
 from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField, ChatServiceGapKind
-from sqlalchemy import Boolean, and_, case, func, not_, or_, select
+from sqlalchemy import Boolean, and_, case, func, not_, null, or_, select
 from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload
 
 import horde.classes.base.stats as stats
@@ -29,10 +29,19 @@ from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt, WPAllowedWorkers, WPModels
-from horde.classes.base.worker import Worker, WorkerMessage, WorkerModel, WorkerPerformance, WorkerTemplate
+from horde.classes.base.worker import (
+    Worker,
+    WorkerEligibilityInputs,
+    WorkerMessage,
+    WorkerModel,
+    WorkerPerformance,
+    WorkerTemplate,
+    worker_blacklist_words_clause,
+    worker_model_names_clause,
+)
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.classes.kobold.worker import TEXT_WORKER_DECLARATION_GENERATION_KEY, TextWorker
+from horde.classes.kobold.worker import TEXT_WORKER_DECLARATION_GENERATION_KEY, TextWorker, text_worker_softprompt_names_clause
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -83,18 +92,6 @@ WP_CLASS_MAP = {
     "image": ImageWaitingPrompt,
     "text": TextWaitingPrompt,
 }
-
-
-def _worker_model_names(worker: Worker) -> list[str]:
-    """Return the worker's eagerly loaded model names."""
-
-    return [worker_model.model for worker_model in worker.models]
-
-
-def _text_worker_softprompt_names(worker: TextWorker) -> list[str]:
-    """Return the text worker's eagerly loaded softprompt names."""
-
-    return [softprompt.softprompt for softprompt in worker.softprompts]
 
 
 CHAT_DECLARATION_REFUSALS = frozenset(
@@ -1955,11 +1952,28 @@ def _waiting_prompt_has_inflight_generation(waiting_prompt: WaitingPrompt) -> bo
     )
 
 
+@dataclass(frozen=True)
+class EligibleWorker:
+    """Represents a worker that passed a request's eligibility rules, with the inputs it was judged on.
+
+    Consumers that evaluate the worker again, against other requests, read ``eligibility_inputs`` instead of the
+    worker's collections, which the eligibility query does not load.
+    """
+
+    worker: ImageWorker | TextWorker
+    """The worker row."""
+    eligibility_inputs: WorkerEligibilityInputs
+    """The worker-side inputs the eligibility query selected alongside the row."""
+
+
 def _iter_eligible_workers_for_request(
     waiting_prompt: WaitingPrompt,
     refusals: list[tuple[ImageWorker | TextWorker, str]] | None = None,
-) -> Iterator[ImageWorker | TextWorker]:
+) -> Iterator[EligibleWorker]:
     """Yield recently active workers that pass every known request gate.
+
+    The worker's models, blacklist and softprompts are selected as aggregates and owner trust as an EXISTS, in the
+    worker query, so a call issues one statement for the workers however many are found and does not hydrate their collections.
 
     Args:
         waiting_prompt: The request.
@@ -1983,8 +1997,9 @@ def _iter_eligible_workers_for_request(
             worker_class = TextWorker
         else:
             return
-        models_list = waiting_prompt.get_model_names()
-        worker_ids = waiting_prompt.get_worker_ids()
+        request_inputs = waiting_prompt.get_eligibility_inputs()
+        models_list = list(request_inputs.model_names)
+        worker_ids = list(request_inputs.targeted_worker_ids)
         # The model constraint is a semi-join rather than an outer join: joining
         # worker_models returns one full worker+user row per matching model, so
         # a request allowing N models multiplies every candidate row N-fold
@@ -1997,16 +2012,22 @@ def _iter_eligible_workers_for_request(
             )
             .exists()
         )
+        # The collections can_generate reads are selected as aggregates and owner trust as an EXISTS, since
+        # hydrating every model, blacklist and role row of every candidate costs far more than the statement itself.
+        softprompt_names = text_worker_softprompt_names_clause() if isinstance(waiting_prompt, TextWaitingPrompt) else null()
         final_worker_list = (
-            db.session.query(worker_class)
+            db.session.query(
+                worker_class,
+                worker_model_names_clause().label("model_names"),
+                worker_blacklist_words_clause().label("blacklist_words"),
+                User.trusted.label("owner_trusted"),
+                softprompt_names.label("softprompt_names"),
+            )
             .options(
                 noload(Worker.performance),
                 noload(Worker.suspicions),
                 noload(Worker.stats),
-                # Eagerly load relationships accessed by can_generate() to avoid N+1 queries
-                selectinload(Worker.blacklist),
-                contains_eager(Worker.user).selectinload(User.roles),
-                selectinload(Worker.models),
+                contains_eager(Worker.user),
             )
             .join(
                 User,
@@ -2081,31 +2102,24 @@ def _iter_eligible_workers_for_request(
             )
             if not waiting_prompt.slow_workers:
                 final_worker_list = final_worker_list.filter(TextWorker.speed >= 2)
-        if isinstance(waiting_prompt, TextWaitingPrompt):
-            final_worker_list = final_worker_list.options(selectinload(TextWorker.softprompts))
-        for worker in final_worker_list.all():
-            if isinstance(worker, ImageWorker):
-                can_generate = worker.can_generate_with_model_names(
-                    waiting_prompt,
-                    _worker_model_names(worker),
-                )
-            elif isinstance(worker, TextWorker):
-                can_generate = worker.can_generate_with_softprompt_names(
-                    waiting_prompt,
-                    _text_worker_softprompt_names(worker),
-                    model_names=_worker_model_names(worker),
-                )
-            else:
-                continue
+        for worker, model_names, blacklist_words, owner_trusted, worker_softprompt_names in final_worker_list.all():
+            # The Postgres aggregate over no rows is NULL.
+            worker_inputs = WorkerEligibilityInputs(
+                model_names=tuple(model_names or ()),
+                softprompt_names=tuple(worker_softprompt_names or ()),
+                blacklist_words=tuple(blacklist_words or ()),
+                owner_trusted=bool(owner_trusted),
+            )
+            can_generate = worker.can_generate_with_eligibility_inputs(waiting_prompt, request_inputs, worker_inputs)
             if can_generate[0]:
-                yield worker
+                yield EligibleWorker(worker=worker, eligibility_inputs=worker_inputs)
             elif refusals is not None:
                 refusals.append((worker, str(can_generate[1])))
 
 
 def _get_preceding_arrivals(
     waiting_prompt: WaitingPrompt,
-    eligible_workers: list[ImageWorker | TextWorker],
+    eligible_workers: list[EligibleWorker],
     observed_at: datetime,
 ) -> tuple[PrecedingArrival, ...]:
     """Return recent compatible demand that entered ahead of a request.
@@ -2139,7 +2153,7 @@ def _get_preceding_arrivals(
     else:
         return ()
     window_start = max(waiting_prompt.created, observed_at - ASSIGNMENT_PRESSURE_WINDOW)
-    owner_ids = {worker.user_id for worker in eligible_workers}
+    owner_ids = {eligible_worker.worker.user_id for eligible_worker in eligible_workers}
     candidate_query = (
         db.session.query(candidate_class)
         .options(
@@ -2166,24 +2180,18 @@ def _get_preceding_arrivals(
     thing_divisor = hv.thing_divisors[waiting_prompt.wp_type]
     candidates = candidate_query.order_by(WaitingPrompt.created.asc()).all()
     for candidate in candidates:
-        for worker in eligible_workers:
+        candidate_inputs = candidate.get_eligibility_inputs()
+        for eligible_worker in eligible_workers:
+            worker = eligible_worker.worker
             normal_precedence = candidate.extra_priority > waiting_prompt.extra_priority
             owner_precedence = candidate.user_id == worker.user_id and waiting_prompt.user_id != worker.user_id
             if not normal_precedence and not owner_precedence:
                 continue
-            if isinstance(worker, ImageWorker):
-                can_generate = worker.can_generate_with_model_names(
-                    candidate,
-                    _worker_model_names(worker),
-                )
-            elif isinstance(worker, TextWorker):
-                can_generate = worker.can_generate_with_softprompt_names(
-                    candidate,
-                    _text_worker_softprompt_names(worker),
-                    model_names=_worker_model_names(worker),
-                )
-            else:
-                continue
+            can_generate = worker.can_generate_with_eligibility_inputs(
+                candidate,
+                candidate_inputs,
+                eligible_worker.eligibility_inputs,
+            )
             if can_generate[0]:
                 arrivals.append(
                     PrecedingArrival(
@@ -2255,7 +2263,7 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
         eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt, refusals))
     # Only a request no worker can take pays for naming the cause, from the refusals the same pass collected.
     impossible_reason = None if eligible_workers else find_chat_declaration_gap(waiting_prompt, refusals)
-    thread_count = sum(max(worker.threads, 1) for worker in eligible_workers)
+    thread_count = sum(max(eligible_worker.worker.threads, 1) for eligible_worker in eligible_workers)
     availability = RequestWorkerAvailability(
         worker_count=len(eligible_workers),
         thread_count=thread_count,
@@ -2349,7 +2357,7 @@ def check_new_request_has_valid_workers(waiting_prompt: WaitingPrompt) -> bool:
     if not eligible_workers:
         hr.horde_r_setex(f"wp_validity_{waiting_prompt.id}", timedelta(seconds=60), 0)
         return False
-    thread_count = sum(max(worker.threads, 1) for worker in eligible_workers)
+    thread_count = sum(max(eligible_worker.worker.threads, 1) for eligible_worker in eligible_workers)
     availability = RequestWorkerAvailability(
         worker_count=len(eligible_workers),
         thread_count=thread_count,
@@ -2361,7 +2369,7 @@ def check_new_request_has_valid_workers(waiting_prompt: WaitingPrompt) -> bool:
 
 def _assess_request_might_stall(
     waiting_prompt: WaitingPrompt,
-    eligible_workers: list[ImageWorker | TextWorker],
+    eligible_workers: list[EligibleWorker],
     thread_count: int,
 ) -> bool:
     """Return the stall advisory for a request, recording the assignment-pressure evidence behind it.
@@ -2397,7 +2405,7 @@ def _assess_request_might_stall(
 
 def _measure_request_assignment_pressure(
     waiting_prompt: WaitingPrompt,
-    eligible_workers: list[ImageWorker | TextWorker],
+    eligible_workers: list[EligibleWorker],
     thread_count: int,
 ) -> AssignmentPressure:
     """Return the assignment-pressure evidence for a request with generations still waiting.
@@ -2423,15 +2431,15 @@ def _measure_request_assignment_pressure(
         return AssignmentPressure("insufficient_window", 0, 0, 0, False)
     eligible_worker_states = tuple(
         EligibleWorkerState(
-            worker_id=str(worker.id),
+            worker_id=str(eligible_worker.worker.id),
             scheduling_state=build_worker_scheduling_state(
                 gentype=waiting_prompt.wp_type,
-                model_names=_worker_model_names(worker),
-                bridge_agent=worker.bridge_agent,
-                softprompt_names=(_text_worker_softprompt_names(worker) if isinstance(worker, TextWorker) else ()),
+                model_names=eligible_worker.eligibility_inputs.model_names,
+                bridge_agent=eligible_worker.worker.bridge_agent,
+                softprompt_names=eligible_worker.eligibility_inputs.softprompt_names,
             ),
         )
-        for worker in eligible_workers
+        for eligible_worker in eligible_workers
     )
     with logfire.span("horde.scheduling.assignment_pressure", eligible_workers=len(eligible_worker_states)):
         active_dispatches = _get_active_worker_dispatches(

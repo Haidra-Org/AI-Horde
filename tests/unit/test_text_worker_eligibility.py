@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -16,13 +17,17 @@ import pytest
 from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, ChatFeature, ChatGuarantee
 
 from horde.apis.v2.base import GenerateTemplate
-from horde.apis.v2.kobold import TextAsyncGenerate
 from horde.chat_contract import ChatImpossibleReason
 from horde.classes.base.user import UserRoleTypes
-from horde.classes.base.worker import WorkerModel
+from horde.classes.base.worker import WorkerBlackList, WorkerModel
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.classes.kobold.worker import TEXT_WORKER_DECLARATION_GENERATION_KEY, TextWorker, get_minimum_text_worker_speed
 from horde.database import functions
+from horde.classes.kobold.worker import (
+    TEXT_WORKER_DECLARATION_GENERATION_KEY,
+    TextWorker,
+    TextWorkerSoftprompts,
+    get_minimum_text_worker_speed,
+)
 from horde.flask import db
 
 pytestmark = pytest.mark.unit
@@ -134,6 +139,12 @@ def test_queuing_a_text_request_seeds_the_availability_its_first_status_poll_rea
     assert functions.get_worker_availability_for_request(request).worker_count == 1
 
 
+def _judge_with_names(worker: TextWorker, request: TextWaitingPrompt, *, model_names: list[str]) -> list[Any]:
+    """Evaluate the worker with ``model_names`` and no softprompts in place of the inputs the availability query would supply."""
+    worker_inputs = replace(worker.get_eligibility_inputs(request), model_names=tuple(model_names), softprompt_names=())
+    return worker.can_generate_with_eligibility_inputs(request, request.get_eligibility_inputs(), worker_inputs)
+
+
 def test_runtime_gate_rejects_a_model_the_worker_does_not_serve(
     db_session: Any,
     fake_redis: Any,
@@ -145,11 +156,7 @@ def test_runtime_gate_rejects_a_model_the_worker_does_not_serve(
     request = _make_text_request(user, "requested-model")
     worker = _make_text_worker(user, "worker-model", speed=10)
 
-    can_generate, reason = worker.can_generate_with_softprompt_names(
-        request,
-        [],
-        model_names=["worker-model"],
-    )
+    can_generate, reason = _judge_with_names(worker, request, model_names=["worker-model"])
 
     assert can_generate is False
     assert reason == "models"
@@ -213,7 +220,7 @@ def _make_chat_worker(user: Any, **chat_declaration: Any) -> TextWorker:
 
 
 def _chat_eligibility(worker: TextWorker, request: TextWaitingPrompt) -> list[Any]:
-    return worker.can_generate_with_softprompt_names(request, [], model_names=[CHAT_MODEL])
+    return _judge_with_names(worker, request, model_names=[CHAT_MODEL])
 
 
 def test_a_chat_request_is_refused_by_a_worker_that_did_not_declare_chat_jobs(
@@ -767,3 +774,71 @@ def test_a_changed_model_list_bumps_the_declaration_generation_once(
     assert worker.set_models([CHAT_MODEL, "koboldcpp/another-model"]) is True
     assert worker.set_models([CHAT_MODEL, "koboldcpp/another-model"]) is False
     assert _declaration_generation(fake_redis) == 1
+
+
+def test_text_eligibility_refusals_match_can_generate(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+) -> None:
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    request = _make_text_request(user, "softprompt-model")
+    request.softprompt = "wanted_softprompt"
+    matching = _make_text_worker(user, "softprompt-model", speed=10)
+    db.session.add(TextWorkerSoftprompts(worker_id=matching.id, softprompt="other_softprompt"))
+    db.session.add(TextWorkerSoftprompts(worker_id=matching.id, softprompt="wanted_softprompt"))
+    mismatched = _make_text_worker(user, "softprompt-model", speed=10)
+    db.session.add(TextWorkerSoftprompts(worker_id=mismatched.id, softprompt="other_softprompt"))
+    without_softprompts = _make_text_worker(user, "softprompt-model", speed=10)
+    blacklisted = _make_text_worker(user, "softprompt-model", speed=10)
+    db.session.add(TextWorkerSoftprompts(worker_id=blacklisted.id, softprompt="wanted_softprompt"))
+    db.session.add(WorkerBlackList(worker_id=blacklisted.id, word="Eligibility"))
+    db.session.commit()
+    workers = (matching, mismatched, without_softprompts, blacklisted)
+    expected_reasons = {
+        matching.id: None,
+        mismatched.id: "matching_softprompt",
+        without_softprompts.id: "matching_softprompt",
+        blacklisted.id: "blacklist",
+    }
+
+    def reasons_from_eligibility() -> dict[Any, str | None]:
+        refusals: list[tuple[Any, str]] = []
+        eligible_workers = list(functions._iter_eligible_workers_for_request(request, refusals))
+        reasons: dict[Any, str | None] = {eligible_worker.worker.id: None for eligible_worker in eligible_workers}
+        reasons.update({worker.id: reason for worker, reason in refusals})
+        return reasons
+
+    def reasons_from_can_generate() -> dict[Any, str | None]:
+        return {worker.id: worker.can_generate(request)[1] for worker in workers}
+
+    assert reasons_from_eligibility() == expected_reasons
+    assert reasons_from_can_generate() == expected_reasons
+    db.session.expire_all()
+    assert reasons_from_eligibility() == expected_reasons
+    assert reasons_from_can_generate() == expected_reasons
+
+
+def test_direct_and_query_eligibility_inputs_match_for_a_request_without_a_softprompt(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+) -> None:
+    """A worker's eligibility inputs, softprompt names included, do not depend on whether the request names a softprompt."""
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    request = _make_text_request(user, "softprompt-model")
+    worker = _make_text_worker(user, "softprompt-model", speed=10)
+    db.session.add(TextWorkerSoftprompts(worker_id=worker.id, softprompt="first_softprompt"))
+    db.session.add(TextWorkerSoftprompts(worker_id=worker.id, softprompt="second_softprompt"))
+    db.session.add(WorkerBlackList(worker_id=worker.id, word="unrelated"))
+    db.session.commit()
+
+    eligible_workers = list(functions._iter_eligible_workers_for_request(request))
+
+    assert [eligible_worker.worker.id for eligible_worker in eligible_workers] == [worker.id]
+    assert eligible_workers[0].eligibility_inputs.softprompt_names == ("first_softprompt", "second_softprompt")
+    assert worker.get_eligibility_inputs(request) == eligible_workers[0].eligibility_inputs

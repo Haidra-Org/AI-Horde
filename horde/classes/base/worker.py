@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import logfire
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, relationship
+from sqlalchemy import JSON, ScalarSelect, func, select, type_coerce
+from sqlalchemy.dialects.postgresql import UUID, aggregate_order_by, array_agg
+from sqlalchemy.orm import InstrumentedAttribute, Mapped, relationship
 
 from horde import vars as hv
 from horde.classes.base import settings
@@ -32,6 +34,7 @@ from horde.utils import get_db_uuid, get_message_expiry_date, is_profane, saniti
 
 if TYPE_CHECKING:
     from horde.classes.base.user import User
+    from horde.classes.base.waiting_prompt import RequestEligibilityInputs
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -97,6 +100,7 @@ class WorkerBlackList(db.Model):
         uuid_column_type(),
         db.ForeignKey("workers.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     worker = db.relationship("Worker", back_populates="blacklist")
     word = db.Column(db.String(20), primary_key=False)
@@ -160,6 +164,24 @@ class WorkerModel(db.Model):
     )
     worker = db.relationship("Worker", back_populates="models")
     model = db.Column(db.String(255))  # TODO model should be a foreign key to a model table
+
+
+@dataclass(frozen=True)
+class WorkerEligibilityInputs:
+    """Represents the worker-side facts the eligibility rules read beyond the worker's own columns.
+
+    ``Worker.get_eligibility_inputs`` reads them from the worker's relationships; the availability query selects them
+    as aggregates in the same statement as the worker, so evaluating many workers does not hydrate their collections.
+    """
+
+    model_names: tuple[str, ...]
+    """The models the worker advertises."""
+    softprompt_names: tuple[str, ...]
+    """The softprompts a text worker holds; empty for image workers."""
+    blacklist_words: tuple[str, ...]
+    """The words the worker refuses to see in a prompt."""
+    owner_trusted: bool
+    """Whether the worker's owner is trusted."""
 
 
 class WorkerMessage(db.Model):
@@ -891,8 +913,53 @@ class Worker(WorkerTemplate):
         del models[200:]
         return set(models)
 
-    def can_generate(self, waiting_prompt):
-        """Takes as an argument a WaitingPrompt class and checks if this worker is valid for generating it"""
+    def can_generate(self, waiting_prompt: Any) -> list[bool | str | None]:
+        """Return whether this worker can serve a request, reading the eligibility inputs from the loaded rows.
+
+        Args:
+            waiting_prompt: The request being evaluated.
+
+        Returns:
+            Eligibility followed by the rejection reason, if any.
+        """
+        return self.can_generate_with_eligibility_inputs(
+            waiting_prompt,
+            waiting_prompt.get_eligibility_inputs(),
+            self.get_eligibility_inputs(waiting_prompt),
+        )
+
+    def get_eligibility_inputs(self, waiting_prompt: Any) -> WorkerEligibilityInputs:
+        """Return the worker-side eligibility inputs, read from the worker's relationships and model cache.
+
+        Args:
+            waiting_prompt: The request being evaluated.
+
+        Returns:
+            The worker's eligibility inputs.
+        """
+        return WorkerEligibilityInputs(
+            model_names=tuple(self.get_model_names()),
+            softprompt_names=(),
+            blacklist_words=tuple(blacklisted.word for blacklisted in self.blacklist),
+            owner_trusted=self.user.trusted,
+        )
+
+    def can_generate_with_eligibility_inputs(
+        self,
+        waiting_prompt: Any,
+        request_inputs: RequestEligibilityInputs,
+        worker_inputs: WorkerEligibilityInputs,
+    ) -> list[bool | str | None]:
+        """Evaluate the eligibility rules every worker type shares.
+
+        Args:
+            waiting_prompt: The request being evaluated.
+            request_inputs: The request's eligibility inputs.
+            worker_inputs: This worker's eligibility inputs.
+
+        Returns:
+            Eligibility followed by the rejection reason, if any.
+        """
         # Workers in maintenance are still allowed to generate for their owner
         if self.maintenance and waiting_prompt.user != self.user:
             return [False, None]
@@ -904,24 +971,24 @@ class Worker(WorkerTemplate):
         if waiting_prompt.nsfw and not self.nsfw:
             return [False, "nsfw"]
         # logger.warning(datetime.utcnow())
-        if waiting_prompt.trusted_workers and not self.user.trusted:
+        if waiting_prompt.trusted_workers and not worker_inputs.owner_trusted:
             return [False, "untrusted"]
         # If the worker has been tricked once by this prompt, we don't want to resend it it
         # as it may give up the jig
         # logger.warning(datetime.utcnow())
-        if waiting_prompt.tricked_worker(self):
+        if self.id in request_inputs.tricked_worker_ids:
             return [False, "secret"]
         # logger.warning(datetime.utcnow())
-        if self.blacklist:
+        if worker_inputs.blacklist_words:
             prompt_lower = waiting_prompt.prompt.lower()
-            if any(b.word.lower() in prompt_lower for b in self.blacklist):
+            if any(word.lower() in prompt_lower for word in worker_inputs.blacklist_words):
                 return [False, "blacklist"]
         # Skips working prompts which require a specific worker from a list, and our ID is not in that list
         if waiting_prompt.worker_blacklist:
-            if len(waiting_prompt.workers) and self.id in waiting_prompt.get_worker_ids():
+            if request_inputs.has_targeted_workers and self.id in request_inputs.targeted_worker_ids:
                 return [False, "worker_id"]
         else:
-            if len(waiting_prompt.workers) and self.id not in waiting_prompt.get_worker_ids():
+            if request_inputs.has_targeted_workers and self.id not in request_inputs.targeted_worker_ids:
                 return [False, "worker_id"]
         # logger.warning(datetime.utcnow())
 
@@ -963,3 +1030,75 @@ class Worker(WorkerTemplate):
     # To override
     def get_safe_amount(self, amount, wp):
         return amount
+
+
+def worker_ordered_names_clause(
+    *,
+    name_column: InstrumentedAttribute[str],
+    id_column: InstrumentedAttribute[int],
+    worker_id_column: InstrumentedAttribute[Any],
+    worker_class: type[Worker],
+) -> ScalarSelect:
+    """Return the correlated subquery aggregating one name column of a worker's rows, in the order they were stored.
+
+    Postgres aggregates with an ordered ``array_agg``, which is NULL for a worker without rows. SQLite has no
+    ordered aggregate SQLAlchemy can render, so it aggregates with ``json_group_array`` over a subquery ordered
+    by row id; the column is typed as JSON so the driver result decodes to a list, empty for a worker without rows.
+    JSON is used over ``group_concat`` because no separator character is excluded from the names.
+
+    Args:
+        name_column: The column holding the names to aggregate.
+        id_column: The row id column that orders the names.
+        worker_id_column: The column referencing the owning worker.
+        worker_class: The worker class the subquery correlates to.
+
+    Returns:
+        The aggregate column expression of the names, ordered by row id.
+    """
+    if SQLITE_MODE:
+        ordered_names = (
+            select(name_column.label("name"))
+            .where(worker_id_column == worker_class.id)
+            .order_by(id_column)
+            .correlate(worker_class)
+            .subquery()
+        )
+        return select(type_coerce(func.json_group_array(ordered_names.c.name), JSON)).correlate(worker_class).scalar_subquery()
+    return (
+        select(array_agg(aggregate_order_by(name_column, id_column)))
+        .where(worker_id_column == worker_class.id)
+        .correlate(worker_class)
+        .scalar_subquery()
+    )
+
+
+def worker_model_names_clause() -> ScalarSelect:
+    """Return the correlated subquery aggregating a worker's model names, in the order they were stored.
+
+    Returns:
+        The aggregate column expression of the worker's model names, ordered by row id. See
+            [`worker_ordered_names_clause`][horde.classes.base.worker.worker_ordered_names_clause] for the value
+            of a worker without models.
+    """
+    return worker_ordered_names_clause(
+        name_column=WorkerModel.model,
+        id_column=WorkerModel.id,
+        worker_id_column=WorkerModel.worker_id,
+        worker_class=Worker,
+    )
+
+
+def worker_blacklist_words_clause() -> ScalarSelect:
+    """Return the correlated subquery aggregating a worker's blacklisted words, in the order they were stored.
+
+    Returns:
+        The aggregate column expression of the worker's blacklisted words, ordered by row id. See
+            [`worker_ordered_names_clause`][horde.classes.base.worker.worker_ordered_names_clause] for the value
+            of a worker without a blacklist.
+    """
+    return worker_ordered_names_clause(
+        name_column=WorkerBlackList.word,
+        id_column=WorkerBlackList.id,
+        worker_id_column=WorkerBlackList.worker_id,
+        worker_class=Worker,
+    )

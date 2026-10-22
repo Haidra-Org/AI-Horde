@@ -17,12 +17,26 @@ which gate broke.
 
 from __future__ import annotations
 
+import re
+import uuid
+from collections.abc import Callable
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import Column, MetaData, ScalarSelect, String, Table, create_engine, insert, select
+from sqlalchemy.dialects import postgresql, sqlite
 
-from horde.classes.base.worker import Worker
+from horde.classes.base.waiting_prompt import RequestEligibilityInputs, WaitingPrompt
+from horde.classes.base.worker import (
+    Worker,
+    WorkerEligibilityInputs,
+    WorkerModel,
+    worker_blacklist_words_clause,
+    worker_model_names_clause,
+)
+from horde.classes.kobold.worker import TextWorker, text_worker_softprompt_names_clause
 
 pytestmark = pytest.mark.unit
 
@@ -49,10 +63,16 @@ def _allowing_worker(**overrides):
         "id": "worker-1",
     }
     defaults.update(overrides)
-    worker = MagicMock(spec_set=list(defaults.keys()) + ["is_stale"])
+    worker = MagicMock(
+        spec_set=list(defaults.keys()) + ["is_stale", "get_model_names", "get_eligibility_inputs", "can_generate_with_eligibility_inputs"],
+    )
     for k, v in defaults.items():
         setattr(worker, k, v)
     worker.is_stale.return_value = overrides.get("_is_stale", False)
+    worker.get_model_names.return_value = []
+    # The real input builder and rule chain run against the mock, so ``Worker.can_generate`` runs against the stand-in without a database.
+    worker.get_eligibility_inputs = partial(Worker.get_eligibility_inputs, worker)
+    worker.can_generate_with_eligibility_inputs = partial(Worker.can_generate_with_eligibility_inputs, worker)
     return worker
 
 
@@ -68,12 +88,39 @@ def _allowing_wp(**overrides):
         "workers": [],
     }
     defaults.update(overrides)
-    wp = MagicMock(spec_set=list(defaults.keys()) + ["tricked_worker", "get_worker_ids"])
+    wp = MagicMock(spec_set=list(defaults.keys()) + ["tricked_workers", "get_model_names", "get_worker_ids", "get_eligibility_inputs"])
     for k, v in defaults.items():
         setattr(wp, k, v)
-    wp.tricked_worker.return_value = overrides.get("_tricked", False)
+    wp.tricked_workers = [SimpleNamespace(worker_id=worker_id) for worker_id in overrides.get("_tricked_worker_ids", [])]
+    wp.get_model_names.return_value = []
     wp.get_worker_ids.return_value = overrides.get("_worker_ids", [])
+    wp.get_eligibility_inputs = partial(WaitingPrompt.get_eligibility_inputs, wp)
     return wp
+
+
+def _request_inputs(**overrides):
+    """Return request eligibility inputs that pass every default gate."""
+    defaults = {
+        "model_names": (),
+        "model_name_set": frozenset(),
+        "has_targeted_workers": False,
+        "targeted_worker_ids": frozenset(),
+        "tricked_worker_ids": frozenset(),
+    }
+    defaults.update(overrides)
+    return RequestEligibilityInputs(**defaults)
+
+
+def _worker_inputs(**overrides):
+    """Return worker eligibility inputs that pass every default gate."""
+    defaults = {
+        "model_names": (),
+        "softprompt_names": (),
+        "blacklist_words": (),
+        "owner_trusted": True,
+    }
+    defaults.update(overrides)
+    return WorkerEligibilityInputs(**defaults)
 
 
 class TestHappyPath:
@@ -137,9 +184,14 @@ class TestTrustedWorkersOnly:
 
 class TestTrickedWorker:
     def test_tricked_worker_rejected_with_secret_reason(self):
-        worker = _allowing_worker()
-        wp = _allowing_wp(_tricked=True)
+        worker = _allowing_worker(id="worker-1")
+        wp = _allowing_wp(_tricked_worker_ids=["worker-1"])
         assert Worker.can_generate(worker, wp) == [False, "secret"]
+
+    def test_worker_tricked_by_another_request_passes(self):
+        worker = _allowing_worker(id="worker-1")
+        wp = _allowing_wp(_tricked_worker_ids=["worker-2"])
+        assert Worker.can_generate(worker, wp) == [True, None]
 
 
 class TestBlacklist:
@@ -233,3 +285,116 @@ class TestRejectionPriority:
         worker = _allowing_worker(nsfw=False, user=_allowing_user(trusted=False))
         wp = _allowing_wp(nsfw=True, trusted_workers=True)
         assert Worker.can_generate(worker, wp) == [False, "nsfw"]
+
+
+class TestEligibilityInputs:
+    """``can_generate_with_eligibility_inputs`` judges a worker from the inputs it is given, which the availability
+    query selects as aggregates; it must not fall back to the worker's or the request's collections."""
+
+    def test_blacklist_words_come_from_the_worker_inputs(self):
+        worker = _allowing_worker(blacklist=[])
+        wp = _allowing_wp(prompt="something evil happens")
+        result = Worker.can_generate_with_eligibility_inputs(worker, wp, _request_inputs(), _worker_inputs(blacklist_words=("EVIL",)))
+        assert result == [False, "blacklist"]
+
+    def test_owner_trust_comes_from_the_worker_inputs(self):
+        worker = _allowing_worker(user=_allowing_user(trusted=True))
+        wp = _allowing_wp(trusted_workers=True)
+        result = Worker.can_generate_with_eligibility_inputs(worker, wp, _request_inputs(), _worker_inputs(owner_trusted=False))
+        assert result == [False, "untrusted"]
+
+    def test_tricked_worker_ids_come_from_the_request_inputs(self):
+        worker = _allowing_worker(id="worker-1")
+        wp = _allowing_wp()
+        request_inputs = _request_inputs(tricked_worker_ids=frozenset({"worker-1"}))
+        assert Worker.can_generate_with_eligibility_inputs(worker, wp, request_inputs, _worker_inputs()) == [False, "secret"]
+
+    def test_targeted_worker_ids_come_from_the_request_inputs(self):
+        worker = _allowing_worker(id="worker-99")
+        wp = _allowing_wp(worker_blacklist=False, workers=[])
+        request_inputs = _request_inputs(has_targeted_workers=True, targeted_worker_ids=frozenset({"worker-1"}))
+        assert Worker.can_generate_with_eligibility_inputs(worker, wp, request_inputs, _worker_inputs()) == [False, "worker_id"]
+
+    def test_request_inputs_skip_the_worker_id_cache_without_targeted_workers(self):
+        wp = _allowing_wp(workers=[], _worker_ids=["worker-1"])
+        request_inputs = wp.get_eligibility_inputs()
+        assert request_inputs.has_targeted_workers is False
+        assert request_inputs.targeted_worker_ids == frozenset()
+        wp.get_worker_ids.assert_not_called()
+
+
+_ELIGIBILITY_NAME_CLAUSES = [
+    pytest.param(Worker, worker_model_names_clause, id="model_names"),
+    pytest.param(Worker, worker_blacklist_words_clause, id="blacklist_words"),
+    pytest.param(TextWorker, text_worker_softprompt_names_clause, id="softprompt_names"),
+]
+"""The name aggregates the availability query selects, each with the worker class it correlates to."""
+
+
+class TestEligibilityNameAggregates:
+    """The name aggregates of the availability query render under both supported dialects, and the SQLite form
+    decodes to the names in row id order."""
+
+    @pytest.mark.parametrize(("worker_class", "clause_factory"), _ELIGIBILITY_NAME_CLAUSES)
+    def test_postgres_aggregate_is_an_ordered_array_agg(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        worker_class: type[Worker],
+        clause_factory: Callable[[], ScalarSelect],
+    ):
+        monkeypatch.setattr("horde.classes.base.worker.SQLITE_MODE", False)
+        statement = select(worker_class.id, clause_factory().label("names"))
+        compiled = str(statement.compile(dialect=postgresql.dialect()))
+        assert re.search(r"array_agg\(\S+ ORDER BY \S+\.id\)", compiled)
+
+    @pytest.mark.parametrize(("worker_class", "clause_factory"), _ELIGIBILITY_NAME_CLAUSES)
+    def test_sqlite_aggregate_renders_as_json_group_array(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        worker_class: type[Worker],
+        clause_factory: Callable[[], ScalarSelect],
+    ):
+        monkeypatch.setattr("horde.classes.base.worker.SQLITE_MODE", True)
+        statement = select(worker_class.id, clause_factory().label("names"))
+        compiled = str(statement.compile(dialect=sqlite.dialect()))
+        assert "json_group_array(" in compiled
+        assert "array_agg" not in compiled
+
+    def test_sqlite_model_names_decode_in_row_id_order(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr("horde.classes.base.worker.SQLITE_MODE", True)
+        # The full workers table carries Postgres-only column types, so only the columns the statement reads exist.
+        metadata = MetaData()
+        Table(
+            "workers",
+            metadata,
+            Column("id", Worker.__table__.c.id.type, primary_key=True),
+            Column("worker_type", String(30)),
+        )
+        worker_models_table = WorkerModel.__table__.to_metadata(metadata)
+        engine = create_engine("sqlite://")
+        metadata.create_all(engine)
+        serving_worker_id = uuid.uuid4()
+        idle_worker_id = uuid.uuid4()
+        # A comma and a quote would split or break a delimited aggregate.
+        later_sorting_name = 'z-model, "quoted"'
+        with engine.begin() as connection:
+            connection.execute(
+                insert(metadata.tables["workers"]),
+                [
+                    {"id": serving_worker_id, "worker_type": "worker"},
+                    {"id": idle_worker_id, "worker_type": "worker"},
+                ],
+            )
+            connection.execute(
+                insert(worker_models_table),
+                [
+                    {"id": 1, "worker_id": serving_worker_id, "model": later_sorting_name},
+                    {"id": 2, "worker_id": serving_worker_id, "model": "a-model"},
+                ],
+            )
+            rows = connection.execute(select(Worker.id, worker_model_names_clause().label("model_names"))).all()
+        names_by_worker = {worker_id: tuple(model_names) for worker_id, model_names in rows}
+        assert names_by_worker == {
+            serving_worker_id: (later_sorting_name, "a-model"),
+            idle_worker_id: (),
+        }
