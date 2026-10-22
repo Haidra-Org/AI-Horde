@@ -107,6 +107,11 @@ and `might_stall` labels. Companion histograms expose dispatch opportunities, lo
 active preceding dispatches, and arriving versus returned normalized work. Request, worker, model, and prompt
 identifiers are deliberately excluded, keeping both cardinality and client influence bounded.
 
+`horde.worker_availability.cache_lookups` counts each availability cache read. `horde.outcome` is `hit` for a usable
+entry, `absent` when no entry exists, `generation_mismatch` when a text worker declaration changed after the entry was
+written, and `malformed` when the entry cannot be parsed. `horde.gentype` and the boolean `horde.chat` are the only
+other labels. Seeding the cache when a request is created is not a read and is not counted.
+
 ## Common response combinations
 
 | Observed state | Suggested interpretation |

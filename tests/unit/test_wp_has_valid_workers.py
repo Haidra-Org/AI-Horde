@@ -32,6 +32,7 @@ hermetic (no network dependency on the remote model reference).
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -558,6 +559,49 @@ class TestFreshCapableWorker:
         monkeypatch.setattr(f, "record_request_assignment_pressure", fail_recalculation)
 
         assert f.get_worker_availability_for_request(target) == availability
+
+
+class _RecordingCounter:
+    """Stands in for a metric counter and keeps the attributes of each addition."""
+
+    def __init__(self) -> None:
+        self.attributes: list[dict[str, Any]] = []
+        """The attributes of each addition, in call order."""
+
+    def add(self, amount: float, attributes: dict[str, Any]) -> None:
+        self.attributes.append(attributes)
+
+
+class TestAvailabilityCacheLookupCounter:
+    """Each availability cache read is counted once under its outcome."""
+
+    def test_each_cache_outcome_is_counted_with_bounded_attributes(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        counter = _RecordingCounter()
+        monkeypatch.setattr(f, "worker_availability_cache_lookups", counter)
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        _make_image_worker(user)
+        availability_key = f"wp_availability_{target.id}"
+
+        f.get_worker_availability_for_request(target)
+        f.get_worker_availability_for_request(target)
+        cached_entry = json.loads(fake_redis.horde_r_get(availability_key))
+        fake_redis.horde_r_setex(availability_key, timedelta(seconds=60), json.dumps({**cached_entry, "declaration_generation": 1}))
+        f.get_worker_availability_for_request(target)
+        fake_redis.horde_r_setex(availability_key, timedelta(seconds=60), "not json")
+        f.get_worker_availability_for_request(target)
+
+        assert counter.attributes == [
+            {"horde.outcome": outcome, "horde.gentype": "image", "horde.chat": False}
+            for outcome in ("absent", "hit", "generation_mismatch", "malformed")
+        ]
 
 
 class TestPersistedSamplerExecutionContract:

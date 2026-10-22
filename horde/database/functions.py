@@ -53,7 +53,12 @@ from horde.enums import KudosAuditDetail, KudosEntryType, State
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
-from horde.metrics import kudos_transfers_idempotent_replays, pop_query_duration, record_request_assignment_pressure
+from horde.metrics import (
+    kudos_transfers_idempotent_replays,
+    pop_query_duration,
+    record_request_assignment_pressure,
+    worker_availability_cache_lookups,
+)
 from horde.model_reference import model_reference
 from horde.request_scheduling import (
     ASSIGNMENT_PRESSURE_WINDOW,
@@ -2223,21 +2228,27 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
     """
 
     cached_availability, declaration_generation = _get_cached_availability_and_declaration_generation(waiting_prompt)
-    if cached_availability is not None:
+    if cached_availability is None:
+        _record_worker_availability_cache_lookup(waiting_prompt, "absent")
+    else:
         try:
             parsed_availability = json.loads(cached_availability)
             if parsed_availability.get("declaration_generation") == declaration_generation:
                 might_stall = parsed_availability["might_stall"]
                 if not isinstance(might_stall, bool):
                     raise TypeError("might_stall must be a boolean")
-                return RequestWorkerAvailability(
+                cached_result = RequestWorkerAvailability(
                     worker_count=int(parsed_availability["workers"]),
                     thread_count=int(parsed_availability["threads"]),
                     might_stall=might_stall,
                     impossible_reason=_parse_cached_impossible_reason(parsed_availability.get("impossible_reason")),
                 )
+                _record_worker_availability_cache_lookup(waiting_prompt, "hit")
+                return cached_result
+            _record_worker_availability_cache_lookup(waiting_prompt, "generation_mismatch")
         except (KeyError, TypeError, ValueError):
             logger.debug(f"Ignoring malformed worker availability cache for request {waiting_prompt.id}")
+            _record_worker_availability_cache_lookup(waiting_prompt, "malformed")
 
     with logfire.span("horde.db.eligible_workers", wp_id=str(waiting_prompt.id)):
         refusals: list[tuple[ImageWorker | TextWorker, str]] = []
@@ -2253,6 +2264,24 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
     )
     _cache_worker_availability(waiting_prompt, availability, declaration_generation)
     return availability
+
+
+def _record_worker_availability_cache_lookup(waiting_prompt: WaitingPrompt, outcome: str) -> None:
+    """Count one availability cache read by outcome, gentype and chat flag.
+
+    Args:
+        waiting_prompt: Request whose cached availability was read.
+        outcome: One of ``hit``, ``absent``, ``generation_mismatch`` or ``malformed``.
+    """
+    is_chat = isinstance(waiting_prompt, TextWaitingPrompt) and bool(waiting_prompt.is_chat)
+    worker_availability_cache_lookups.add(
+        1,
+        {
+            "horde.outcome": outcome,
+            "horde.gentype": waiting_prompt.wp_type,
+            "horde.chat": is_chat,
+        },
+    )
 
 
 def _get_cached_availability_and_declaration_generation(waiting_prompt: WaitingPrompt) -> tuple[bytes | str | None, int]:

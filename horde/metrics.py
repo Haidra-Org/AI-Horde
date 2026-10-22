@@ -342,6 +342,14 @@ request_assignment_pressure_samples = logfire.metric_counter(
     unit="1",
     description="Request-specific assignment-pressure samples split by bounded evidence state and advisory verdict",
 )
+worker_availability_cache_lookups = logfire.metric_counter(
+    "horde.worker_availability.cache_lookups",
+    unit="1",
+    description=(
+        "Per-request worker-availability cache reads, split by outcome (hit, absent, generation_mismatch, malformed), "
+        "gentype and whether the request is a chat request"
+    ),
+)
 
 
 def record_request_assignment_pressure(

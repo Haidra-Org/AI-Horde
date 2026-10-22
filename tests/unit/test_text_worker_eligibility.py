@@ -693,6 +693,32 @@ def test_cached_chat_availability_is_recomputed_after_a_worker_declaration_chang
     assert availability.is_possible is False
 
 
+def test_a_declaration_change_counts_the_live_chat_cache_entry_as_a_generation_mismatch(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded_attributes: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        functions,
+        "worker_availability_cache_lookups",
+        SimpleNamespace(add=lambda _amount, attributes: recorded_attributes.append(attributes)),
+    )
+    user = make_user()
+    worker = _make_debounced_chat_worker(user)
+    request = _make_chat_request(user)
+
+    functions.get_worker_availability_for_request(request)
+    _check_in_chat_declaration(worker, accepts_chat_jobs=False)
+    functions.get_worker_availability_for_request(request)
+
+    assert recorded_attributes == [
+        {"horde.outcome": "absent", "horde.gentype": "text", "horde.chat": True},
+        {"horde.outcome": "generation_mismatch", "horde.gentype": "text", "horde.chat": True},
+    ]
+
+
 def test_a_steady_chat_check_in_does_not_bump_the_declaration_generation(
     db_session: Any,
     fake_redis: Any,
