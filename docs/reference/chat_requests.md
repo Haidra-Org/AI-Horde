@@ -163,6 +163,16 @@ text pop and submit keep serving requests already queued. A repeated [operation 
 `200` with its existing request, since it does not create anything, so a caller recovering an ambiguous submit
 learns the id of a request that is queued and charged.
 
+### Rate limits
+
+`POST /v2/generate/chat/async` holds one ordinary address to `HORDE_CHAT_REQUEST_2SEC_LIMIT_PER_IP` and
+`HORDE_CHAT_REQUEST_90MIN_LIMIT_PER_IP`, in flask-limiter notation such as `5/second` and `300/minute`. The address is
+the forwarded client address when the request carries a known proxy passkey. Clients behind one egress address, such
+as the users of one chat front, share both budgets. Unset, each follows the text submit limit, `2/second` and
+`90/minute`. A whitelisted service address gets the text route's whitelisted limits, and the per-key limit is the
+text route's. Each route counts its requests separately, so chat submits do not spend the text budget. An exceeded limit
+returns `429`.
+
 ## Request body
 
 | Key                                      | Mapping                                                                          |

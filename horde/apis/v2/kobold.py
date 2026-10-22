@@ -763,6 +763,19 @@ class ChatAsyncGenerate(TextAsyncGenerate):
     chat_extras = None
     """The tools and response format the request applies and its stream hint, from ``build_stored_chat_extras``, or
     None."""
+    # The per-address limits are the chat settings, so a deployment can raise them for clients behind one egress
+    # address without raising the text submit limits. The per-key limit is the text route's.
+    decorators = [
+        limiter.limit(
+            limit_value=lim.get_chat_request_90min_limit_per_ip,
+            key_func=lim.get_request_path,
+        ),
+        limiter.limit(limit_value=lim.get_chat_request_2sec_limit_per_ip, key_func=lim.get_request_path),
+        limiter.limit(
+            limit_value=lim.get_request_limit_per_apikey,
+            key_func=lim.get_request_api_key,
+        ),
+    ]
 
     @api.expect(parsers.chat_generate_parser, models.input_model_chat_generation)
     @api.marshal_with(

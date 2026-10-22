@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from flask import request
 
 from horde.apis.request_utils import get_remoteaddr
+from horde.config import Config
 from horde.consts import WHITELISTED_SERVICE_IPS
 from horde.utils import hash_api_key
 
@@ -41,22 +42,59 @@ REQUEST_2SEC_LIMIT_PER_IP = "2/second"
 """What an ordinary address is held to where this rate applies. A whitelisted service address gets more."""
 
 
+def is_whitelisted_address():
+    """Return whether the request comes from a service address or one whitelisted for the day.
+
+    Returns:
+        True when the address is held to the higher limits.
+    """
+    return get_remoteaddr() in WHITELISTED_SERVICE_IPS or dynamic_ip_whitelist.is_ip_whitelisted(get_remoteaddr())
+
+
 def get_request_90min_limit_per_ip():
-    if get_remoteaddr() in WHITELISTED_SERVICE_IPS or dynamic_ip_whitelist.is_ip_whitelisted(get_remoteaddr()):
+    if is_whitelisted_address():
         return "300/minute"
     return REQUEST_90MIN_LIMIT_PER_IP
 
 
 def get_request_90hour_limit_per_ip():
-    if get_remoteaddr() in WHITELISTED_SERVICE_IPS or dynamic_ip_whitelist.is_ip_whitelisted(get_remoteaddr()):
+    if is_whitelisted_address():
         return "600/hour"
     return "90/hour"
 
 
 def get_request_2sec_limit_per_ip():
-    if get_remoteaddr() in WHITELISTED_SERVICE_IPS or dynamic_ip_whitelist.is_ip_whitelisted(get_remoteaddr()):
+    if is_whitelisted_address():
         return "10/second"
     return REQUEST_2SEC_LIMIT_PER_IP
+
+
+def get_chat_request_90min_limit_per_ip():
+    """Return the per-minute limit on chat submits from the request's address.
+
+    Clients behind one egress address, such as the users of one chat front, share this budget, so a deployment
+    sizes it apart from the text limit. A whitelisted address gets the text route's whitelisted value.
+
+    Returns:
+        ``HORDE_CHAT_REQUEST_90MIN_LIMIT_PER_IP`` when it is set, otherwise the text limit.
+    """
+    if is_whitelisted_address() or Config.chat_request_90min_limit_per_ip is None:
+        return get_request_90min_limit_per_ip()
+    return Config.chat_request_90min_limit_per_ip
+
+
+def get_chat_request_2sec_limit_per_ip():
+    """Return the per-second limit on chat submits from the request's address.
+
+    Clients behind one egress address, such as the users of one chat front, share this budget, so a deployment
+    sizes it apart from the text limit. A whitelisted address gets the text route's whitelisted value.
+
+    Returns:
+        ``HORDE_CHAT_REQUEST_2SEC_LIMIT_PER_IP`` when it is set, otherwise the text limit.
+    """
+    if is_whitelisted_address() or Config.chat_request_2sec_limit_per_ip is None:
+        return get_request_2sec_limit_per_ip()
+    return Config.chat_request_2sec_limit_per_ip
 
 
 def get_request_api_key():

@@ -15,6 +15,13 @@ class Config:
     """Whether ``POST /v2/generate/chat/async`` accepts new chat requests. Turning it off refuses only new
     requests: status, cancel, pop and submit keep serving chat requests already queued, so a deployment can stop
     admitting chat work and drain what is in flight."""
+    chat_request_2sec_limit_per_ip: str | None = env.str("HORDE_CHAT_REQUEST_2SEC_LIMIT_PER_IP", default=None)
+    """The per-second limit, in flask-limiter notation such as ``5/second``, on ``POST /v2/generate/chat/async``
+    from one ordinary address. Clients behind one egress address, such as the users of one chat front, share it.
+    Unset, the route follows the text submit limit."""
+    chat_request_90min_limit_per_ip: str | None = env.str("HORDE_CHAT_REQUEST_90MIN_LIMIT_PER_IP", default=None)
+    """The per-minute limit, in flask-limiter notation such as ``300/minute``, on ``POST /v2/generate/chat/async``
+    from one ordinary address. Unset, the route follows the text submit limit."""
     chat_messages_offload_enabled: bool = env.bool("HORDE_CHAT_MESSAGES_OFFLOAD_ENABLED", default=False)
     """Whether a new chat request whose messages are larger than ``chat_messages_offload_bytes`` has them stored as
     one object, which a worker that declared the ``messages_url`` transport fetches in place of receiving them in the
