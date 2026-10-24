@@ -293,12 +293,66 @@ def encode_chat_image(image: Image.Image) -> bytes:
     return image_buffer.getvalue()
 
 
+def read_chat_image_bytes(image_url: str, *, resolve: HostResolver = resolve_host_addresses) -> bytes:
+    """Return the image bytes a chat image part points at, decoding a data URL or fetching an http(s) URL.
+
+    A URL is fetched with [`fetch_public_image`][horde.image.fetch_public_image], with the 5 MiB cap a source image
+    URL has. The bytes are returned before they are opened as an image, so a caller can count them against a total
+    across the request's images first.
+
+    Args:
+        image_url: An image part's ``url``, already checked for form and encoded size.
+        resolve: Resolves a URL's host, passed to the fetch.
+
+    Returns:
+        The decoded data URL payload, or the fetched body.
+
+    Raises:
+        horde.exceptions.ImageValidationFailed: If the image cannot be fetched or decoded, or breaks a size cap.
+    """
+    with logfire.span("horde.image.read_chat_image_bytes", is_url=image_url.startswith("http")):
+        base64_payload = parse_image_data_url(image_url)
+        if base64_payload is None:
+            return fetch_public_image(image_url, resolve=resolve)
+        try:
+            return base64.b64decode(base64_payload.encode("utf-8"))
+        except binascii.Error as err:
+            raise ImageValidationFailed("The image could not be read.", rc="SourceImageUnreadable") from err
+
+
+def decode_chat_image(image_bytes: bytes) -> Image.Image:
+    """Create the normalised image from the bytes [`read_chat_image_bytes`][horde.image.read_chat_image_bytes] returned.
+
+    The image is held to the source image resolution cap, checked on the decoded header before any pixel data is
+    decoded.
+
+    Args:
+        image_bytes: The image file's bytes.
+
+    Returns:
+        The image as [`normalize_chat_image`][horde.image.normalize_chat_image] returns it.
+
+    Raises:
+        horde.exceptions.ImageValidationFailed: If the image cannot be read or breaks the resolution cap.
+    """
+    with logfire.span("horde.image.decode_chat_image", size=len(image_bytes)):
+        try:
+            image = Image.open(BytesIO(image_bytes))
+            width, height = image.size
+            if width * height > MAX_SOURCE_IMAGE_PIXELS:
+                raise ImageValidationFailed("Image size cannot exceed 3072*3072 pixels", rc="SourceImageResolutionExceeded")
+            return normalize_chat_image(image)
+        except Image.DecompressionBombError as err:
+            raise ImageValidationFailed("Image size cannot exceed 3072*3072 pixels", rc="SourceImageResolutionExceeded") from err
+        except OSError as err:
+            raise ImageValidationFailed("The image could not be read.", rc="SourceImageUnreadable") from err
+
+
 def load_chat_image(image_url: str, *, resolve: HostResolver = resolve_host_addresses) -> Image.Image:
     """Create the normalised image a chat image part points at, decoding a data URL or fetching an http(s) URL.
 
-    A URL is fetched with [`fetch_public_image`][horde.image.fetch_public_image], with the 5 MiB cap a source image
-    URL has. Both forms are held to the source image resolution cap, checked on the decoded header before any
-    pixel data is decoded.
+    Composes [`read_chat_image_bytes`][horde.image.read_chat_image_bytes] and
+    [`decode_chat_image`][horde.image.decode_chat_image].
 
     Args:
         image_url: An image part's ``url``, already checked for form and encoded size.
@@ -311,20 +365,7 @@ def load_chat_image(image_url: str, *, resolve: HostResolver = resolve_host_addr
         horde.exceptions.ImageValidationFailed: If the image cannot be fetched or read, or breaks a size cap.
     """
     with logfire.span("horde.image.load_chat_image", is_url=image_url.startswith("http")):
-        base64_payload = parse_image_data_url(image_url)
-        try:
-            if base64_payload is None:
-                image = Image.open(BytesIO(fetch_public_image(image_url, resolve=resolve)))
-            else:
-                image, _, _, _ = convert_source_image_to_pil(base64_payload)
-            width, height = image.size
-            if width * height > MAX_SOURCE_IMAGE_PIXELS:
-                raise ImageValidationFailed("Image size cannot exceed 3072*3072 pixels", rc="SourceImageResolutionExceeded")
-            return normalize_chat_image(image)
-        except Image.DecompressionBombError as err:
-            raise ImageValidationFailed("Image size cannot exceed 3072*3072 pixels", rc="SourceImageResolutionExceeded") from err
-        except (binascii.Error, OSError) as err:
-            raise ImageValidationFailed("The image could not be read.", rc="SourceImageUnreadable") from err
+        return decode_chat_image(read_chat_image_bytes(image_url, resolve=resolve))
 
 
 def calculate_image_tiles(image):

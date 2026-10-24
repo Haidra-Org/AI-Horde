@@ -7,6 +7,7 @@ import json
 import math
 from datetime import datetime
 
+import logfire
 import redis
 from botocore.exceptions import BotoCoreError, ClientError
 from flask import request
@@ -31,7 +32,8 @@ from horde.apis.v2.base import (
 )
 from horde.chat_contract import (
     MAX_CHAT_BODY_BYTES,
-    MAX_CHAT_IMAGE_COUNT_UNTRUSTED,
+    MAX_CHAT_IMAGE_TOTAL_BYTES,
+    MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED,
     ChatContextFit,
     KudosCapExcess,
     refuse_json_constant,
@@ -74,6 +76,9 @@ from horde.classes.kobold.chat_request import (
     build_worker_targeting,
     chat_reply_finish_reason,
     chat_worker_fault_message,
+    check_data_url_image_total,
+    create_image_total_refusal,
+    estimate_chat_prompt_tokens,
     flatten_messages,
     inline_chat_images,
     list_image_urls,
@@ -113,7 +118,7 @@ from horde.database.text_functions import ChatOperationClaim
 from horde.detection import prompt_checker
 from horde.enums import KudosEntryType, RequestTerminalOutcome
 from horde.flask import cache, db
-from horde.image import encode_chat_image, load_chat_image
+from horde.image import decode_chat_image, encode_chat_image, read_chat_image_bytes
 from horde.limiter import limiter
 from horde.logger import logger
 from horde.model_reference import model_reference
@@ -346,7 +351,7 @@ class TextAsyncGenerate(GenerateTemplate):
                 that was applied.
         """
         resolved_request = super().get_resolved_request()
-        resolved_request["estimated_prompt_tokens"] = estimate_prompt_tokens(self.prompt)
+        resolved_request["estimated_prompt_tokens"] = self.estimate_request_prompt_tokens()
         resolved_request["context_fit"] = self.context_fit.value
         return resolved_request
 
@@ -409,6 +414,14 @@ class TextAsyncGenerate(GenerateTemplate):
         db.session.commit()
         logger.debug(f"Style '{self.args.style}' applied.")
 
+    def estimate_request_prompt_tokens(self) -> int:
+        """Return the estimated token count of the prompt the request's context is fitted and charged by.
+
+        Returns:
+            The estimate of the prompt as it will be sent, after any style templating.
+        """
+        return estimate_prompt_tokens(self.prompt)
+
     def apply_context_fit(self) -> None:
         """Size the request's context against the prompt that will actually be sent.
 
@@ -418,7 +431,7 @@ class TextAsyncGenerate(GenerateTemplate):
         """
         max_length = self.params.get(MAX_LENGTH_PARAMETER, DEFAULT_MAX_LENGTH)
         max_context_length = self.params.get(MAX_CONTEXT_LENGTH_PARAMETER, DEFAULT_MAX_CONTEXT_LENGTH)
-        estimated_prompt_tokens = estimate_prompt_tokens(self.prompt)
+        estimated_prompt_tokens = self.estimate_request_prompt_tokens()
         # Checked first so a prompt that already fits does not query the worker pool.
         prompt_fits = prompt_fits_context(
             estimated_prompt_tokens=estimated_prompt_tokens,
@@ -854,9 +867,8 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         - `SourceImageUrlRefused` (400): an image URL resolving or redirecting to a private address.
         - `SourceImageUrlInvalid`, `SourceImageUnreadable`, `SourceImageSizeExceeded` or
           `SourceImageResolutionExceeded` (400): an image that cannot be fetched or read, or is above the size or
-          resolution limit.
+          resolution limit, or images above the total size limit for the user.
         - `TooManyExtraSourceImages` (400): more images than a chat request can carry.
-        - `MoreThanMinExtraSourceImage` (400): more images than the limit for users who are not trusted or patrons.
         - `UnknownChatModel` (404): a model that the text model reference does not list and that no online chat
           worker serves; for an entry of `models`, the message starts with its quoted path, such as `'models[1]'`,
           and the whole request is refused.
@@ -1038,26 +1050,52 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         return super().get_activation_kudos_adjustment() + EXTRA_SOURCE_IMAGE_HORDE_TAX * self.get_extra_source_images_count()
 
     def load_chat_images(self):
-        """Fetch or decode every image, enforcing the count, size and resolution caps, and encode each as JPEG.
+        """Fetch or decode every image, enforcing the size, total size and resolution caps, and encode each as JPEG.
 
-        Runs after every other check, so a refused request never fetches. A dry run counts its images for the quote
-        and refuses too many, but fetches and decodes nothing.
+        Runs after every other check, so a refused request never fetches. The total is
+        [`MAX_CHAT_IMAGE_TOTAL_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_TOTAL_BYTES] for trusted users and patrons
+        and [`MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED`][horde.chat_contract.MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED] for
+        anyone else. The data URLs are held to it before anything is fetched; a URL image's size is known only once
+        it is fetched, so the running total is checked after each fetch and before the next. A dry run checks the
+        data URLs, but fetches and decodes nothing.
+
+        The JPEGs the images are encoded as are held to the same total. Storage, transfer and the worker's download
+        cost the stored bytes, and a compact PNG can re-encode to a far larger JPEG, so the sent size alone does not
+        bound the stored objects.
 
         Raises:
-            horde.exceptions.BadRequest: With ``MoreThanMinExtraSourceImage`` when a user who is neither trusted nor
-                a patron sends more than one image, or an image validation failure for an image that cannot be
+            horde.exceptions.ImageValidationFailed: With ``SourceImageSizeExceeded`` when the images as sent or as
+                encoded pass the total for the user, or another image validation failure for an image that cannot be
                 fetched or read or breaks a cap.
         """
         image_urls = list_image_urls(self.messages)
-        if len(image_urls) > MAX_CHAT_IMAGE_COUNT_UNTRUSTED and not self.user.trusted and not patrons.is_patron(self.user.id):
-            raise e.BadRequest(
-                f"Only trusted users and patrons can send more than {MAX_CHAT_IMAGE_COUNT_UNTRUSTED} image on a chat request.",
-                rc="MoreThanMinExtraSourceImage",
-            )
         self.chat_images = ()
+        if not image_urls:
+            return
+        if self.user.trusted or patrons.is_patron(self.user.id):
+            max_total_bytes = MAX_CHAT_IMAGE_TOTAL_BYTES
+        else:
+            max_total_bytes = MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED
+        check_data_url_image_total(image_urls, max_total_bytes=max_total_bytes)
         if self.args.dry_run:
             return
-        self.chat_images = tuple(encode_chat_image(load_chat_image(image_url)) for image_url in image_urls)
+        sent_total_bytes = 0
+        stored_total_bytes = 0
+        chat_images: list[bytes] = []
+        for image_url in image_urls:
+            # The span name is the one loading a chat image has always been recorded under.
+            with logfire.span("horde.image.load_chat_image", is_url=image_url.startswith("http")):
+                image_bytes = read_chat_image_bytes(image_url)
+                sent_total_bytes += len(image_bytes)
+                if sent_total_bytes > max_total_bytes:
+                    raise create_image_total_refusal(total_bytes=sent_total_bytes, max_total_bytes=max_total_bytes)
+                chat_image = decode_chat_image(image_bytes)
+            jpeg_bytes = encode_chat_image(chat_image)
+            stored_total_bytes += len(jpeg_bytes)
+            if stored_total_bytes > max_total_bytes:
+                raise create_image_total_refusal(total_bytes=stored_total_bytes, max_total_bytes=max_total_bytes, encoded=True)
+            chat_images.append(jpeg_bytes)
+        self.chat_images = tuple(chat_images)
 
     def prepare_messages_offload(self):
         """Build the object the messages are offloaded as when offloading is enabled and they are large.
@@ -1129,6 +1167,16 @@ class ChatAsyncGenerate(TextAsyncGenerate):
             request_path = f"models[{model_index}]" if listed_models is not None else None
             raise e.UnknownChatModel(model_name, request_path=request_path)
 
+    def estimate_request_prompt_tokens(self) -> int:
+        """Return the estimated token count of the flattened messages, with each image part counted as a worker
+        counts it.
+
+        Returns:
+            The estimate from
+                [`estimate_chat_prompt_tokens`][horde.classes.kobold.chat_request.estimate_chat_prompt_tokens].
+        """
+        return estimate_chat_prompt_tokens(self.prompt, self.messages)
+
     def apply_context_fit(self) -> None:
         """Size the request's context as a text request's, trim its history under ``truncate_oldest``, and record
         each change for the chat status."""
@@ -1178,7 +1226,7 @@ class ChatAsyncGenerate(TextAsyncGenerate):
                 fit after every droppable turn is dropped.
         """
         max_length = self.params.get(MAX_LENGTH_PARAMETER, DEFAULT_MAX_LENGTH)
-        estimated_prompt_tokens = estimate_prompt_tokens(self.prompt)
+        estimated_prompt_tokens = self.estimate_request_prompt_tokens()
         if prompt_fits_context(
             estimated_prompt_tokens=estimated_prompt_tokens,
             max_length=max_length,

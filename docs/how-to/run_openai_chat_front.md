@@ -226,11 +226,13 @@ The `horde` object takes `only` or `ignore` (worker ids, not both), `trusted_wor
 
 A `user` message may carry `{"type": "image_url", "image_url": {"url": ..., "detail": ...}}` parts, with `url` a
 `data:image/...;base64,` URL or an `http(s)` URL and `detail` optionally `auto`, `low` or `high`. The front forwards
-them unchanged. It refuses before the submit a request with more than five image parts (400
-`TooManyExtraSourceImages`) or a data URL that decodes to more than 5 MiB (400 `SourceImageSizeExceeded`, with
-`param` the path of the part's `url`); data URLs do not count toward `HORDE_OAI_MAX_TEXT_BYTES`. The horde fetches,
-checks and stores each image, charges the extra source image tax per image, refuses more than one image from an
-untrusted user (400 `MoreThanMinExtraSourceImage`), and sends the image only to a worker that declares the `vision`
+them unchanged. It refuses before the submit a request with more than 20 image parts (400
+`TooManyExtraSourceImages`), a data URL that decodes to more than 5 MiB, or data URLs that decode to more than 25 MiB
+in all (400 `SourceImageSizeExceeded`, with `param` the path of the part's `url`); data URLs do not count toward
+`HORDE_OAI_MAX_TEXT_BYTES`. The front does not know whether the user is trusted, so the 5 MiB total for users who are
+neither trusted nor patrons is left to the horde. The horde fetches, checks and stores each image, charges the extra
+source image tax per image, refuses images over the user's total (400 `SourceImageSizeExceeded`), and sends the
+image only to a worker that declares the `vision`
 feature and an image transport. Its refusals pass through with the horde's `rc` as `code`, such as
 `SourceImageUrlRefused` for a URL at a private address or `SourceImageResolutionExceeded`, and 503
 `ChatImageStorageUnavailable` when the image store refuses the image. A model whose list entry shows `image` in
@@ -256,7 +258,7 @@ retry into a second charged job. Errors before the submit do not carry the heade
 | 400 | `UnsupportedChatParameter` | | A key, role, content part, value or size the service does not serve. `param` holds its path. |
 | 400 | `ChatRequestConflict` | | `max_tokens` and `max_completion_tokens` differ, or `only` and `ignore` are both set. |
 | 400 | `BadRequest` | | The body is not a JSON object or a value has the wrong type. |
-| 400 | `TooManyExtraSourceImages` | | More than five image parts. |
+| 400 | `TooManyExtraSourceImages` | | More than 20 image parts. |
 | 400 | `SourceImageSizeExceeded` | | An image data URL decodes to more than 5 MiB. `param` is the path of the part's `url`. |
 | 401 | `InvalidAuthorizationHeader` | | `Authorization` is present but not `Bearer <key>`. Omit it to use the anonymous key. |
 | 404 | `model_not_found` | | The model id contains `:`; the front does not serve model variants. A horde 404 keeps the horde's `rc` as `code`. |

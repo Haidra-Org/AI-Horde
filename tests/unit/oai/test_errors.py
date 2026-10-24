@@ -676,7 +676,12 @@ async def test_completed_non_streamed_response_carries_no_retry_header(start_fro
             "messages[1].content[1].type=image_url",
         ),
         (400, "The image URL resolves to a private address.", "SourceImageUrlRefused", None),
-        (400, "A chat request from an untrusted user can carry at most 1 image.", "MoreThanMinExtraSourceImage", None),
+        (
+            400,
+            "Image validation failed. The images of a chat request reach 6291468 bytes, over the 5242880 bytes allowed in total.",
+            "SourceImageSizeExceeded",
+            None,
+        ),
         (503, "The image store refused the image.", "ChatImageStorageUnavailable", None),
     ],
 )

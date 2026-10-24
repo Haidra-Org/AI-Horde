@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import os
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
@@ -70,6 +71,41 @@ def _worker(client, headers: dict[str, str], **pop_options: Any) -> FakeChatWork
 def _png_data_url(size: tuple[int, int] = (64, 48), colour: tuple[int, int, int] = (200, 30, 30)) -> str:
     image_buffer = BytesIO()
     Image.new("RGB", size, colour).save(image_buffer, format="PNG")
+    return f"data:image/png;base64,{base64.b64encode(image_buffer.getvalue()).decode('ascii')}"
+
+
+NOISE_IMAGE_SIDE = 1024
+"""The side of a square noise image, whose PNG holds about 3 MiB: random RGB pixels do not compress, so the file is
+about the raw ``1024 * 1024 * 3`` bytes."""
+
+
+def _noise_png_bytes() -> bytes:
+    image_buffer = BytesIO()
+    Image.frombytes("RGB", (NOISE_IMAGE_SIDE, NOISE_IMAGE_SIDE), os.urandom(NOISE_IMAGE_SIDE * NOISE_IMAGE_SIDE * 3)).save(
+        image_buffer,
+        format="PNG",
+    )
+    return image_buffer.getvalue()
+
+
+def _noise_png_data_url() -> str:
+    return f"data:image/png;base64,{base64.b64encode(_noise_png_bytes()).decode('ascii')}"
+
+
+NOISE_TILE_SIDE = 64
+"""The side of the noise tile a compact image repeats. A PNG row holds the tile's row repeated, which deflate
+compresses, while every 8 by 8 JPEG block is still noise."""
+
+
+def _compact_noise_png_data_url() -> str:
+    """Return a 2048 by 2048 PNG of about 0.5 MiB that re-encodes to a JPEG of about 3.5 MiB."""
+    tile = Image.frombytes("RGB", (NOISE_TILE_SIDE, NOISE_TILE_SIDE), os.urandom(NOISE_TILE_SIDE * NOISE_TILE_SIDE * 3))
+    image = Image.new("RGB", (2048, 2048))
+    for left in range(0, 2048, NOISE_TILE_SIDE):
+        for top in range(0, 2048, NOISE_TILE_SIDE):
+            image.paste(tile, (left, top))
+    image_buffer = BytesIO()
+    image.save(image_buffer, format="PNG")
     return f"data:image/png;base64,{base64.b64encode(image_buffer.getvalue()).decode('ascii')}"
 
 
@@ -285,14 +321,78 @@ def test_the_dry_run_quote_includes_the_image_tax_and_stores_nothing(app, client
     assert image_quote - plain_quote == EXTRA_SOURCE_IMAGE_HORDE_TAX
 
 
-def test_more_than_one_image_from_an_untrusted_user_is_refused(client, make_api_user) -> None:
+def test_several_small_images_from_an_untrusted_user_are_accepted(client, make_api_user) -> None:
     requester = make_api_user(kudos=1000)
     headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
 
-    response = client.post("/api/v2/generate/chat/async", json=_image_body(_png_data_url(), _png_data_url()), headers=headers)
+    _submit(client, headers, _image_body(_png_data_url(), _png_data_url(colour=(0, 0, 200)), _png_data_url(colour=(0, 200, 0))))
+
+
+def test_untrusted_images_over_the_untrusted_total_are_refused_at_the_second_large_image(client, make_api_user) -> None:
+    from horde.chat_contract import MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED
+
+    requester = make_api_user(kudos=1000)
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
+    first_image = _noise_png_data_url()
+    second_image = _noise_png_data_url()
+
+    response = client.post("/api/v2/generate/chat/async", json=_image_body(first_image, second_image), headers=headers)
 
     assert response.status_code == 400
-    assert response.get_json()["rc"] == "MoreThanMinExtraSourceImage"
+    assert response.get_json()["rc"] == "SourceImageSizeExceeded"
+    assert str(MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED) in response.get_json()["message"]
+
+
+def test_untrusted_images_whose_jpegs_pass_the_untrusted_total_are_refused_after_encoding(client, make_api_user) -> None:
+    requester = make_api_user(kudos=1000)
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
+    compact_image = _compact_noise_png_data_url()
+
+    response = client.post("/api/v2/generate/chat/async", json=_image_body(compact_image, compact_image), headers=headers)
+
+    assert response.status_code == 400
+    assert response.get_json()["rc"] == "SourceImageSizeExceeded"
+    assert "once encoded for storage" in response.get_json()["message"]
+
+
+def test_trusted_images_whose_jpegs_pass_the_untrusted_total_are_accepted(client, make_api_user) -> None:
+    requester = make_api_user(trusted=True, kudos=1000)
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
+    compact_image = _compact_noise_png_data_url()
+
+    _submit(client, headers, _image_body(compact_image, compact_image))
+
+
+def test_trusted_images_over_the_untrusted_total_are_accepted(client, make_api_user) -> None:
+    requester = make_api_user(trusted=True, kudos=1000)
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
+
+    _submit(client, headers, _image_body(_noise_png_data_url(), _noise_png_data_url()))
+
+
+def test_untrusted_url_images_are_refused_once_the_fetched_total_passes_the_cap(
+    client,
+    make_api_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from horde.apis.v2 import kobold
+
+    requester = make_api_user(kudos=1000)
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
+    fetched_urls: list[str] = []
+
+    def fetch_noise_image(image_url: str) -> bytes:
+        fetched_urls.append(image_url)
+        return _noise_png_bytes()
+
+    monkeypatch.setattr(kobold, "read_chat_image_bytes", fetch_noise_image)
+    image_urls = [f"https://images.example/{index}.png" for index in range(3)]
+
+    response = client.post("/api/v2/generate/chat/async", json=_image_body(*image_urls), headers=headers)
+
+    assert response.status_code == 400
+    assert response.get_json()["rc"] == "SourceImageSizeExceeded"
+    assert fetched_urls == image_urls[:2]
 
 
 @pytest.mark.parametrize("image_url", ["http://10.0.0.5/a.png", "http://127.0.0.1:9/a.png", "http://[::1]/a.png"])

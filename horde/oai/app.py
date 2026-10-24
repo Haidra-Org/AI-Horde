@@ -59,6 +59,7 @@ from horde.chat_contract import (
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
+    MAX_CHAT_IMAGE_TOTAL_BYTES,
     ChatAvailabilityMode,
     ChatImpossibleReason,
     ChatRequestRefusal,
@@ -297,7 +298,8 @@ OPERATION_KEY_CONFLICT_CODE: str = "OperationKeyConflict"
 """The Horde rc for an operation key already claimed with a different request."""
 
 IMAGE_SIZE_EXCEEDED_CODE: str = "SourceImageSizeExceeded"
-"""The error code of an image data URL decoding to more than the native per-image cap; the native rc for the same."""
+"""The error code of an image data URL decoding to more than the native per-image cap, or of data URLs decoding to
+more than the native total cap; the native rc for the same."""
 
 TOO_MANY_IMAGES_CODE: str = "TooManyExtraSourceImages"
 """The error code of a request with more image parts than the native cap; the native rc for the same."""
@@ -1035,12 +1037,17 @@ def _find_contract_refusal(chat_request: ChatCompletionRequest) -> ChatFrontErro
 
 
 def _find_image_limit_error(chat_request: ChatCompletionRequest) -> ChatFrontError | None:
-    """Return the 400 for more image parts or a larger image data URL than the native route accepts, or None.
+    """Return the 400 for more image parts, a larger image data URL or larger data URLs in all than the native route
+    accepts, or None.
 
     Refusing here keeps a body the native route would refuse from being forwarded. A data URL's decoded size is
     estimated from its payload length, as the native route does; any other malformation is left to the native route.
+    The front does not know whether the user is trusted or a patron, so the total is
+    [`MAX_CHAT_IMAGE_TOTAL_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_TOTAL_BYTES], the cap for those users; the
+    smaller cap for other users, and the size of images behind http(s) URLs, are left to the native route.
     """
     image_count = 0
+    data_url_total_bytes = 0
     for message_index, message in enumerate(chat_request.messages):
         if message.content is None or isinstance(message.content, str):
             continue
@@ -1052,13 +1059,26 @@ def _find_image_limit_error(chat_request: ChatCompletionRequest) -> ChatFrontErr
             if not image_url.startswith(DATA_URL_PREFIX):
                 continue
             _media_type, _separator, payload = image_url.partition(DATA_URL_PAYLOAD_SEPARATOR)
+            image_param = f"messages[{message_index}].content[{part_index}].image_url.url"
             # Four base64 characters encode three bytes, so the estimate is at most two bytes over the decoded size.
-            if len(payload) * 3 // 4 > MAX_CHAT_IMAGE_BYTES:
+            estimated_image_bytes = len(payload) * 3 // 4
+            if estimated_image_bytes > MAX_CHAT_IMAGE_BYTES:
                 return ChatFrontError(
                     status_code=HTTPStatus.BAD_REQUEST,
                     message=f"An image cannot be larger than {MAX_CHAT_IMAGE_BYTES} bytes.",
                     code=IMAGE_SIZE_EXCEEDED_CODE,
-                    param=f"messages[{message_index}].content[{part_index}].image_url.url",
+                    param=image_param,
+                )
+            data_url_total_bytes += estimated_image_bytes
+            if data_url_total_bytes > MAX_CHAT_IMAGE_TOTAL_BYTES:
+                return ChatFrontError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    message=(
+                        f"The images of a chat request reach {data_url_total_bytes} bytes, "
+                        f"over the {MAX_CHAT_IMAGE_TOTAL_BYTES} bytes allowed in total."
+                    ),
+                    code=IMAGE_SIZE_EXCEEDED_CODE,
+                    param=image_param,
                 )
     if image_count > MAX_CHAT_IMAGE_COUNT:
         return ChatFrontError(

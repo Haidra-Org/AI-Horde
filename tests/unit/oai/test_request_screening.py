@@ -13,7 +13,13 @@ from typing import Any
 import pytest
 from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_SCHEMA_NESTING
 
-from horde.chat_contract import MAX_CHAT_IMAGE_BYTES, MAX_CHAT_IMAGE_COUNT, MAX_CHAT_MODEL_COUNT
+from horde.chat_contract import (
+    MAX_CHAT_IMAGE_BYTES,
+    MAX_CHAT_IMAGE_COUNT,
+    MAX_CHAT_IMAGE_TOTAL_BYTES,
+    MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED,
+    MAX_CHAT_MODEL_COUNT,
+)
 from tests.unit.oai.conftest import FAST_TEST_SETTINGS, StartFront, build_chat_body, done_status
 
 pytestmark = pytest.mark.asyncio
@@ -510,6 +516,32 @@ async def test_an_image_data_url_at_the_native_cap_is_forwarded(start_front: Sta
     # A length divisible by three encodes without padding, so the size estimate equals the decoded size.
     payload_at_cap = base64.b64encode(bytes(MAX_CHAT_IMAGE_BYTES - MAX_CHAT_IMAGE_BYTES % 3)).decode("ascii")
     messages = user_image_messages(image_part(f"data:image/png;base64,{payload_at_cap}"))
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 200
+
+
+async def test_image_data_urls_over_the_native_total_are_refused_at_the_part_that_passes_it(start_front: StartFront) -> None:
+    # The smallest length divisible by three that takes twenty images past the total, so each estimate is exact.
+    image_bytes = MAX_CHAT_IMAGE_TOTAL_BYTES // MAX_CHAT_IMAGE_COUNT + 3 - MAX_CHAT_IMAGE_TOTAL_BYTES // MAX_CHAT_IMAGE_COUNT % 3
+    payload = base64.b64encode(bytes(image_bytes)).decode("ascii")
+    messages = user_image_messages(*(image_part(f"data:image/png;base64,{payload}") for _ in range(MAX_CHAT_IMAGE_COUNT)))
+    async with start_front() as front:
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "SourceImageSizeExceeded"
+    assert str(MAX_CHAT_IMAGE_TOTAL_BYTES) in error["message"]
+    assert error["param"] == f"messages[1].content[{MAX_CHAT_IMAGE_COUNT}].image_url.url"
+    assert front.horde.submit_route.call_count == 0
+
+
+async def test_image_data_urls_over_the_untrusted_total_are_forwarded(start_front: StartFront) -> None:
+    payload = base64.b64encode(bytes(MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED // 2 + 3)).decode("ascii")
+    messages = user_image_messages(*(image_part(f"data:image/png;base64,{payload}") for _ in range(3)))
     async with start_front() as front:
         front.horde.status_payload = done_status()
         response = await front.client.post("/v1/chat/completions", json=build_chat_body(messages=messages))

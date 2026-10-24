@@ -1232,9 +1232,9 @@ class TextModels(v2.Models):
                     description=(
                         "The message text, as a string or as an array of parts: ChatTextPart, or on a user message "
                         "{type: image_url, image_url: {url, detail?}} with a base64 image data URL or an http(s) URL. "
-                        "At most 5 images per request, 1 for users who are neither trusted nor patrons, each at most "
-                        "5 MiB and 3072*3072 pixels. A tool message takes text only. Null or absent only on an "
-                        "assistant message with tool_calls."
+                        "At most 20 images per request, each at most 5 MiB and 3072*3072 pixels, and at most 25 MiB in "
+                        "all, 5 MiB for users who are neither trusted nor patrons. A tool message takes text only. Null "
+                        "or absent only on an assistant message with tool_calls."
                     ),
                 ),
                 "name": fields.String(

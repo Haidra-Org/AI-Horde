@@ -92,10 +92,12 @@ from referencing.exceptions import Unresolvable
 
 from horde import exceptions as e
 from horde.chat_contract import (
+    CHAT_IMAGE_PROMPT_TOKENS,
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
     CHAT_REQUEST_CONFLICT_RC,
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
+    MAX_CHAT_IMAGE_TOTAL_BYTES,
     MAX_CHAT_MESSAGE_COUNT,
     MAX_CHAT_MODEL_COUNT,
     MAX_CHAT_TOOL_CALL_COUNT,
@@ -167,9 +169,12 @@ __all__ = [
     "build_worker_chat_extras",
     "build_worker_targeting",
     "chat_reply_characters",
+    "check_data_url_image_total",
     "chat_reply_finish_reason",
     "chat_tools_temperature",
     "chat_worker_fault_message",
+    "create_image_total_refusal",
+    "estimate_chat_prompt_tokens",
     "flatten_messages",
     "has_image_parts",
     "inline_chat_images",
@@ -879,14 +884,66 @@ def _validate_image_url(image_url: str) -> None:
             raise e.ImageValidationFailed("An image URL must be a base64 data URL or an http(s) URL.", rc="SourceImageUrlInvalid")
         return
 
-    # Four base64 characters encode three bytes, so the estimate is at most two bytes over the decoded size.
-    estimated_decoded_bytes = len(base64_payload) * 3 // 4
-    if estimated_decoded_bytes > MAX_CHAT_IMAGE_BYTES:
+    if _estimate_data_url_image_bytes(image_url) > MAX_CHAT_IMAGE_BYTES:
         raise e.ImageValidationFailed("An image cannot be larger than 5 MiB.", rc="SourceImageSizeExceeded")
 
 
+def _estimate_data_url_image_bytes(image_url: str) -> int:
+    """Return the decoded size of an image data URL estimated from its payload length, or 0 for any other URL.
+
+    Four base64 characters encode three bytes, so the estimate is at most two bytes over the decoded size.
+    """
+    base64_payload = parse_image_data_url(image_url)
+    if base64_payload is None:
+        return 0
+    return len(base64_payload) * 3 // 4
+
+
+def create_image_total_refusal(*, total_bytes: int, max_total_bytes: int, encoded: bool = False) -> e.ImageValidationFailed:
+    """Create the refusal for a chat request whose images pass a total size cap.
+
+    Args:
+        total_bytes: The image bytes counted when the cap was passed.
+        max_total_bytes: The cap.
+        encoded: Whether ``total_bytes`` counts the images as encoded for storage rather than as sent.
+
+    Returns:
+        The refusal, with ``SourceImageSizeExceeded``.
+    """
+    measured_as = " once encoded for storage" if encoded else ""
+    return e.ImageValidationFailed(
+        f"The images of a chat request reach {total_bytes} bytes{measured_as}, over the {max_total_bytes} bytes allowed in total.",
+        rc="SourceImageSizeExceeded",
+    )
+
+
+def check_data_url_image_total(image_urls: Sequence[str], *, max_total_bytes: int) -> None:
+    """Validate that the data URL images of a chat request do not pass a total size cap.
+
+    Each data URL's decoded size is estimated from its payload length, so this runs before any image is decoded or
+    fetched. An http(s) URL's size is only known after the fetch and is not counted here.
+
+    Args:
+        image_urls: Every image part's ``url``, in message order.
+        max_total_bytes: The most decoded bytes the data URLs may have in all.
+
+    Raises:
+        horde.exceptions.ImageValidationFailed: With ``SourceImageSizeExceeded`` at the first data URL that takes
+            the total over ``max_total_bytes``.
+    """
+    total_bytes = 0
+    for image_url in image_urls:
+        total_bytes += _estimate_data_url_image_bytes(image_url)
+        if total_bytes > max_total_bytes:
+            raise create_image_total_refusal(total_bytes=total_bytes, max_total_bytes=max_total_bytes)
+
+
 def _validate_image_urls(image_urls: Sequence[str]) -> None:
-    """Validate the number of image parts and the form of each image URL.
+    """Validate the number of image parts, the form of each image URL and the total size of the data URLs.
+
+    The total is held to [`MAX_CHAT_IMAGE_TOTAL_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_TOTAL_BYTES], the cap for
+    trusted users and patrons, since the user is not known when the body is parsed; the smaller cap for other users
+    is applied once the user is known.
 
     Args:
         image_urls: Every image part's ``url``, in message order.
@@ -894,13 +951,14 @@ def _validate_image_urls(image_urls: Sequence[str]) -> None:
     Raises:
         horde.exceptions.BadRequest: With ``TooManyExtraSourceImages`` when there are more than
             [`MAX_CHAT_IMAGE_COUNT`][horde.chat_contract.MAX_CHAT_IMAGE_COUNT] images, or an image validation
-            failure for a malformed or oversized image URL.
+            failure for a malformed or oversized image URL or data URLs over the total.
     """
     if len(image_urls) > MAX_CHAT_IMAGE_COUNT:
         raise e.BadRequest(f"A chat request can carry at most {MAX_CHAT_IMAGE_COUNT} images.", rc="TooManyExtraSourceImages")
 
     for image_url in image_urls:
         _validate_image_url(image_url)
+    check_data_url_image_total(image_urls, max_total_bytes=MAX_CHAT_IMAGE_TOTAL_BYTES)
 
 
 def parse_chat_request(request_body: object) -> ChatCompletionRequest:
@@ -1486,6 +1544,22 @@ def _truncation_units(messages: Sequence[Mapping[str, Any]]) -> list[list[int]]:
     return units
 
 
+def estimate_chat_prompt_tokens(prompt: str, messages: Sequence[Mapping[str, Any]]) -> int:
+    """Return the estimated token count of a chat request's prompt, counting its images.
+
+    Each image part adds [`CHAT_IMAGE_PROMPT_TOKENS`][horde.chat_contract.CHAT_IMAGE_PROMPT_TOKENS] to the estimate of
+    the flattened text, which holds only a placeholder for it.
+
+    Args:
+        prompt: The messages flattened by [`flatten_messages`][horde.classes.kobold.chat_request.flatten_messages].
+        messages: The ``messages`` array the prompt was flattened from.
+
+    Returns:
+        The estimated token count.
+    """
+    return estimate_prompt_tokens(prompt) + CHAT_IMAGE_PROMPT_TOKENS * len(list_image_urls(messages))
+
+
 def truncate_oldest_messages(
     messages: Sequence[Mapping[str, Any]],
     chat_extras: Mapping[str, Any] | None,
@@ -1495,8 +1569,10 @@ def truncate_oldest_messages(
 ) -> ChatHistoryTruncation:
     """Return the history with its oldest turns dropped, one turn at a time, until it fits the context.
 
-    Each candidate is flattened as the request's prompt is, tools JSON included, and estimated again, so the fit is
-    judged on the same estimate the request is sized and charged by. The turns are formed by ``_truncation_units``.
+    Each candidate is flattened as the request's prompt is, tools JSON included, and estimated again by
+    [`estimate_chat_prompt_tokens`][horde.classes.kobold.chat_request.estimate_chat_prompt_tokens], images included,
+    so the fit is judged on the same estimate the request is sized and charged by. The turns are formed by
+    ``_truncation_units``.
 
     Args:
         messages: The stored ``messages`` array, oldest first.
@@ -1510,7 +1586,7 @@ def truncate_oldest_messages(
     """
     kept_messages = [dict(message) for message in messages]
     prompt = flatten_messages(kept_messages, chat_extras)
-    estimated_prompt_tokens_before = estimate_prompt_tokens(prompt)
+    estimated_prompt_tokens_before = estimate_chat_prompt_tokens(prompt, kept_messages)
     estimated_prompt_tokens = estimated_prompt_tokens_before
     dropped_indexes: set[int] = set()
     units = iter(_truncation_units(messages))
@@ -1525,7 +1601,7 @@ def truncate_oldest_messages(
         dropped_indexes.update(unit)
         kept_messages = [dict(message) for index, message in enumerate(messages) if index not in dropped_indexes]
         prompt = flatten_messages(kept_messages, chat_extras)
-        estimated_prompt_tokens = estimate_prompt_tokens(prompt)
+        estimated_prompt_tokens = estimate_chat_prompt_tokens(prompt, kept_messages)
     return ChatHistoryTruncation(
         messages=kept_messages,
         prompt=prompt,

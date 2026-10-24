@@ -29,7 +29,7 @@ those workers keep receiving text jobs.
 | Body validation and mapping      | `horde/classes/kobold/chat_request.py`          | `parse_chat_request`, `build_text_params`             |
 | Worker targeting                 | `horde/classes/kobold/chat_request.py`          | `build_worker_targeting`                              |
 | `horde` object and size limits   | `horde/chat_contract.py`                        | `ChatHordeOptions`, `MAX_CHAT_MESSAGE_COUNT`          |
-| Flattened estimate               | `horde/classes/kobold/chat_request.py`          | `flatten_messages`                                    |
+| Flattened estimate               | `horde/classes/kobold/chat_request.py`          | `flatten_messages`, `estimate_chat_prompt_tokens`     |
 | Declaration vocabulary           | `horde_sdk.generation_parameters.text.chat_policy` | `ChatFeature`, `ChatGuarantee`, `ChatConformance`, `required_chat_guarantees` |
 | Request requirements             | `horde/classes/kobold/chat_request.py`          | `build_chat_request_traits`, `required_chat_features`, `chat_tools_temperature` |
 | Client-side requirements (SDK)   | `horde_sdk.generation_parameters.text.chat_policy` | `chat_request_requirements`, `chat_service_gap`; `TestRequirementParity` in `tests/unit/test_chat_request.py` keeps both derivations equal |
@@ -236,18 +236,27 @@ A `user` message may carry image parts, `{"type": "image_url", "image_url": {"ur
 is a `data:image/...;base64,` URL or an `http(s)` URL and the optional `detail` (`auto`, `low`, `high`) is passed to the
 worker unchanged. An image part in any other role returns `400 UnsupportedChatParameter`.
 
-The caps are those of extra source images on image requests, shared with the front from `horde/chat_contract.py`:
+The per-image caps are those of a source image on image requests, and the total caps keep the storage and transfer
+cost of the extra source image caps. They are shared with the front from `horde/chat_contract.py`:
 
 | Cap                                                  | Refusal                                    |
 | ---------------------------------------------------- | ------------------------------------------ |
-| At most 5 images per request (`MAX_CHAT_IMAGE_COUNT`) | `400 TooManyExtraSourceImages`            |
-| More than 1 only for trusted users and patrons (`MAX_CHAT_IMAGE_COUNT_UNTRUSTED`) | `400 MoreThanMinExtraSourceImage` |
+| At most 20 images per request, for every user (`MAX_CHAT_IMAGE_COUNT`) | `400 TooManyExtraSourceImages` |
 | At most 5 MiB decoded or fetched per image (`MAX_CHAT_IMAGE_BYTES`) | `400 SourceImageSizeExceeded` |
+| At most 25 MiB in all, decoded or fetched and again as stored JPEGs, for trusted users and patrons (`MAX_CHAT_IMAGE_TOTAL_BYTES`), 5 MiB for anyone else (`MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED`) | `400 SourceImageSizeExceeded`, whose message states the total reached and the cap |
 | At most 3072*3072 pixels, read from the image header before decoding | `400 SourceImageResolutionExceeded` |
 | Readable as an image                                 | `400 SourceImageUnreadable`                |
 
-`MAX_CHAT_BODY_BYTES` is sized for a request at every cap: 5 data URLs of 5 MiB, which base64 grows by 4/3 to about
-33.3 MiB, plus the 1 MiB text allowance, with room for JSON structure, rounded to 36 MiB.
+Every request is held to the 25 MiB total when the body is parsed, before the user is known, counting each data URL's
+decoded size as estimated from its payload length. After the other checks, `load_chat_images` applies the user's
+total: the data URLs are counted before anything is fetched, and since a URL image's size is known only once it is
+fetched, the running total is checked after each fetch and before the next. The JPEGs the images are stored as are
+held to the same total, refused with a message saying the encoded size passed the cap: storage, transfer and the
+worker's download cost the stored bytes, and a compact PNG can re-encode to a far larger JPEG. A dry run checks the
+data URLs only.
+
+`MAX_CHAT_BODY_BYTES` is sized for a request at every cap: 25 MiB of images as data URLs, which base64 grows by 4/3 to
+about 33.3 MiB, plus the 1 MiB text allowance, with room for JSON structure, rounded to 36 MiB.
 
 An `http(s)` URL is fetched by `fetch_public_image` in `horde/image.py`, through `send_public_request` (see
 [Outbound requests reference](outbound_requests.md)). Each hop resolves its host once, refuses the
@@ -339,10 +348,10 @@ request was stored under. The fetcher has to honour `Content-Encoding` on the re
 form; Python's `urllib`, which koboldcpp's worker uses, does not decode it automatically.
 
 The body is bounded by the request limits. Its non-image part is the stored messages, whose text is at most 1 MiB
-(`MAX_CHAT_TEXT_BYTES`) and whose JSON is no larger than the same part of the submitted body. Each of at most 5 images
-is a JPEG of at most 2048 pixels a side at quality 90; random noise, the worst case for JPEG, encodes to about 3.6
-MiB, or 4.8 MiB as base64, so 5 images stay under 25 MiB. The whole body therefore stays under the 36 MiB
-`MAX_CHAT_BODY_BYTES`, which is the fetch cap to set on a worker for the decoded body.
+(`MAX_CHAT_TEXT_BYTES`) and whose JSON is no larger than the same part of the submitted body. The at most 20 images
+are JPEGs of at most 25 MiB in all (`MAX_CHAT_IMAGE_TOTAL_BYTES`, which holds the stored JPEGs as well as the sent
+images), about 33.3 MiB as base64. The whole body therefore stays under the 36 MiB `MAX_CHAT_BODY_BYTES`, which is the
+fetch cap to set on a worker for the decoded body.
 
 A fetch that fails is a faulted job, as for an image URL. `ChatFaultReason` does not include a value for a failed
 input fetch, so the fault is sent without `fault_reason`.
@@ -480,6 +489,12 @@ definitions into its prompt. A response format schema is not part of it: the ref
 a grammar and never renders it into the prompt. It is an estimate only. The character-based
 token estimate, `context_fit` sizing, kudos and moderation read it; workers do not receive it. `submitted_prompt` holds
 the flattened messages as submitted.
+
+The token estimate of a chat request (`estimate_chat_prompt_tokens`) adds 512 tokens per image part
+(`CHAT_IMAGE_PROMPT_TOKENS`, `horde/chat_contract.py`) to the estimate of the flattened text, the number koboldcpp's
+worker adds per image in its own context overflow estimate. `context_fit` sizing, `truncate_oldest` trimming,
+`estimated_prompt_tokens` and the context the quote is priced at all follow from it, so a request with many images is
+not estimated to fit a context the worker then refuses.
 
 Every rewrite validation makes to the flattened prompt is mirrored onto the messages. The replacement filter applied
 for flagged users and NSFW models is applied to each message text, a text the filter empties becomes an empty string,

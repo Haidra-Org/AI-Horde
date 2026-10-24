@@ -50,7 +50,7 @@ The errors returned by the AI horde are always in this json format
 | PolymorphicNameConflict | The provided worker name already exists for a different worker type (e.g. Dreamer VS Scribe) |
 | ImageValidationFailed | Source image validation failed unexpectedly |
 | SourceImageResolutionExceeded | Source image resolution larger than the max allowed by the AI Horde |
-| SourceImageSizeExceeded | Source image file size larger than the max allowed by the AI Horde |
+| SourceImageSizeExceeded | Source image file size larger than the max allowed by the AI Horde, or the images of a chat request larger in all than the total allowed for the user |
 | SourceImageUrlInvalid | Source image url does not contain an image |
 | SourceImageUrlRefused | A source image or chat image URL is not http(s), does not resolve, resolves or redirects to a private, loopback, link-local, multicast or otherwise non-public address, or redirects more than 3 times |
 | SourceImageUnreadable | Source image could not be parsed |
@@ -194,7 +194,7 @@ The errors returned by the AI horde are always in this json format
 | MissingExtraTexts | This workflow requires the extra texts to be provided |
 | MissingFullSamplerOrder | A custom sampler order must list every sampler |
 | ModerationEventNotFound | No moderation event exists with the given ID |
-| MoreThanMinExtraSourceImage | Only trusted users and patrons can send more than one extra source image, or more than one image on a chat request |
+| MoreThanMinExtraSourceImage | Only trusted users and patrons can send more than one extra source image |
 | NonServiceForbidden | Only service accounts can set a proxy passkey |
 | NotUserOrMod | Only the user themselves or a moderator can delete a user |
 | NulByteInPayload | The request payload may not contain NUL bytes |
@@ -216,7 +216,7 @@ The errors returned by the AI horde are always in this json format
 | TemplateFieldsRequireStyle | Template fields can only be sent alongside a style |
 | ThingNotFound | No item exists with the given ID |
 | TokenOverflow | More tokens were requested than the context length allows |
-| TooManyExtraSourceImages | At most 5 extra source images, or 5 images on a chat request, can be sent |
+| TooManyExtraSourceImages | At most 5 extra source images, or 20 images on a chat request, can be sent |
 | TooManyStopSequences | Too many stop sequences were specified |
 | TooManyStyleExamples | An image style can have at most 4 examples |
 | TooManyWorkers | Untrusted users can have at most 3 distinct workers |

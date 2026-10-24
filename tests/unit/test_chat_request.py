@@ -11,6 +11,7 @@ import gzip
 import json
 import uuid
 from io import BytesIO
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -36,10 +37,12 @@ from pydantic import ValidationError
 
 from horde import exceptions as e
 from horde.chat_contract import (
+    CHAT_IMAGE_PROMPT_TOKENS,
     CHAT_KUDOS_CAP_EXCEEDED_RC,
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
     MAX_CHAT_IMAGE_BYTES,
-    MAX_CHAT_IMAGE_COUNT,
+    MAX_CHAT_IMAGE_TOTAL_BYTES,
+    MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED,
     MAX_CHAT_MESSAGE_COUNT,
     MAX_CHAT_MODEL_COUNT,
     ChatHordeOptions,
@@ -71,6 +74,7 @@ from horde.classes.kobold.chat_request import (
     chat_reply_characters,
     chat_reply_finish_reason,
     chat_tools_temperature,
+    estimate_chat_prompt_tokens,
     flatten_messages,
     has_image_parts,
     inline_chat_images,
@@ -1919,6 +1923,31 @@ def _tool_call(call_id: str, arguments: str = "{}") -> dict[str, Any]:
     return {"id": call_id, "type": "function", "function": {"name": "lookup", "arguments": arguments}}
 
 
+class TestChatPromptEstimate:
+    def test_each_image_part_adds_the_image_prompt_tokens(self) -> None:
+        messages = _image_messages(SMALL_DATA_URL, SMALL_DATA_URL)
+        prompt = flatten_messages(messages)
+
+        assert estimate_chat_prompt_tokens(prompt, messages) == estimate_prompt_tokens(prompt) + 2 * CHAT_IMAGE_PROMPT_TOKENS
+
+    def test_an_image_turn_that_fits_as_text_is_dropped_for_its_image_tokens(self) -> None:
+        image_turn = _image_messages(SMALL_DATA_URL)[0]
+        image_reply = {"role": "assistant", "content": "A small picture."}
+        latest_user = {"role": "user", "content": "And now?"}
+        messages = [image_turn, image_reply, latest_user]
+
+        truncation = truncate_oldest_messages(
+            messages,
+            None,
+            max_length=TRUNCATION_MAX_LENGTH,
+            max_context_length=_context_fitting(messages),
+        )
+
+        assert truncation.fits
+        assert truncation.messages == [latest_user]
+        assert truncation.estimated_prompt_tokens_before == estimate_prompt_tokens(flatten_messages(messages)) + CHAT_IMAGE_PROMPT_TOKENS
+
+
 class TestTruncateOldest:
     def test_a_history_that_fits_is_kept_whole(self) -> None:
         messages = [
@@ -2268,16 +2297,38 @@ def _png_data_url(size: tuple[int, int], mode: str = "RGB") -> str:
     return f"data:image/png;base64,{base64.b64encode(image_buffer.getvalue()).decode('ascii')}"
 
 
+LARGEST_IMAGE_PAYLOAD = "A" * ((MAX_CHAT_IMAGE_BYTES - MAX_CHAT_IMAGE_BYTES % 3) * 4 // 3)
+"""A base64 payload decoding to the largest whole number of base64 groups within the per-image cap."""
+
+
 class TestImageValidation:
-    def test_more_images_than_the_cap_are_refused(self) -> None:
-        rejection = _rejection(_body(messages=_image_messages(*[SMALL_DATA_URL] * (MAX_CHAT_IMAGE_COUNT + 1))))
+    def test_twenty_one_images_are_refused(self) -> None:
+        rejection = _rejection(_body(messages=_image_messages(*[SMALL_DATA_URL] * 21)))
 
         assert rejection.rc == "TooManyExtraSourceImages"
 
-    def test_the_image_cap_itself_is_accepted(self) -> None:
-        chat_request = parse_chat_request(_body(messages=_image_messages(*[SMALL_DATA_URL] * MAX_CHAT_IMAGE_COUNT)))
+    def test_twenty_images_are_accepted(self) -> None:
+        chat_request = parse_chat_request(_body(messages=_image_messages(*[SMALL_DATA_URL] * 20)))
 
-        assert len(list_image_urls(serialize_messages(chat_request))) == MAX_CHAT_IMAGE_COUNT
+        assert len(list_image_urls(serialize_messages(chat_request))) == 20
+
+    def test_data_urls_over_the_total_cap_are_refused(self) -> None:
+        image_count = MAX_CHAT_IMAGE_TOTAL_BYTES // (len(LARGEST_IMAGE_PAYLOAD) * 3 // 4) + 1
+
+        with pytest.raises(e.ImageValidationFailed) as raised:
+            parse_chat_request(_body(messages=_image_messages(*[f"data:image/png;base64,{LARGEST_IMAGE_PAYLOAD}"] * image_count)))
+
+        assert raised.value.rc == "SourceImageSizeExceeded"
+        assert str(MAX_CHAT_IMAGE_TOTAL_BYTES) in raised.value.specific
+
+    def test_data_urls_within_the_total_cap_are_accepted(self) -> None:
+        image_count = MAX_CHAT_IMAGE_TOTAL_BYTES // (len(LARGEST_IMAGE_PAYLOAD) * 3 // 4)
+
+        chat_request = parse_chat_request(
+            _body(messages=_image_messages(*[f"data:image/png;base64,{LARGEST_IMAGE_PAYLOAD}"] * image_count)),
+        )
+
+        assert len(list_image_urls(serialize_messages(chat_request))) == image_count
 
     def test_a_data_url_decoding_to_more_than_the_byte_cap_is_refused(self) -> None:
         oversized_payload = "A" * ((MAX_CHAT_IMAGE_BYTES + 3) * 4 // 3)
@@ -2299,6 +2350,43 @@ class TestImageValidation:
             parse_chat_request(_body(messages=_image_messages(image_url)))
 
         assert raised.value.rc == return_code
+
+
+THREE_MIB_DATA_URL = "data:image/png;base64," + "A" * (3 * 1024 * 1024 * 4 // 3)
+"""A data URL estimated at 3 MiB decoded, so two of them pass the untrusted total and stay within the trusted one."""
+
+
+def _load_dry_run_chat_images(*, trusted: bool, image_urls: list[str]) -> None:
+    """Run the native route's image loading for a dry run on a stub request, which checks only the data URL total."""
+    from horde.apis.v2.kobold import ChatAsyncGenerate
+
+    stub_request = SimpleNamespace(
+        messages=_image_messages(*image_urls),
+        user=SimpleNamespace(id=1, trusted=trusted),
+        args=SimpleNamespace(dry_run=True),
+        chat_images=None,
+    )
+    ChatAsyncGenerate.load_chat_images(stub_request)
+
+
+class TestImageTotalByTrust:
+    def test_an_untrusted_user_who_is_not_a_patron_is_held_to_the_untrusted_total(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from horde.patreon import patrons
+
+        monkeypatch.setattr(patrons, "is_patron", lambda user_id: False)
+
+        with pytest.raises(e.ImageValidationFailed) as raised:
+            _load_dry_run_chat_images(trusted=False, image_urls=[THREE_MIB_DATA_URL, THREE_MIB_DATA_URL])
+
+        assert raised.value.rc == "SourceImageSizeExceeded"
+        assert str(MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED) in raised.value.specific
+
+    def test_a_patron_who_is_not_trusted_gets_the_trusted_total(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from horde.patreon import patrons
+
+        monkeypatch.setattr(patrons, "is_patron", lambda user_id: True)
+
+        _load_dry_run_chat_images(trusted=False, image_urls=[THREE_MIB_DATA_URL, THREE_MIB_DATA_URL])
 
 
 class TestImageTransport:

@@ -251,9 +251,9 @@ worker. Send images only to a model whose `architecture.input_modalities` includ
 
 | Bound | Refusal |
 | --- | --- |
-| At most 5 images per request | 400 `TooManyExtraSourceImages` |
-| More than 1 only for trusted users and patrons | 400 `MoreThanMinExtraSourceImage` |
+| At most 20 images per request | 400 `TooManyExtraSourceImages` |
 | At most 5 MiB per image, decoded or fetched | 400 `SourceImageSizeExceeded`, `param` at the part's `url` |
+| At most 25 MiB of images in all, decoded or fetched and again as the JPEGs the Horde stores, for trusted users and patrons; 5 MiB for anyone else | 400 `SourceImageSizeExceeded`; the message states the total and the cap, and `param` is the `url` of the data URL part that passes 25 MiB |
 | At most 3072 by 3072 pixels | 400 `SourceImageResolutionExceeded` |
 | A URL at a private, loopback or reserved address | 400 `SourceImageUrlRefused` |
 | A URL answering other than 200 | 400 `SourceImageUrlInvalid` |
@@ -473,7 +473,7 @@ curl -s -i "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API
 | Request body | 36 MiB by default; the deployment sets it | 413 `RequestTooLarge` |
 | Messages per request | 1024 | 400 `UnsupportedChatParameter` |
 | Message text | 1 MiB of UTF-8 across all text and the function names and arguments of replayed tool calls, image data URLs excluded | 400 `UnsupportedChatParameter` |
-| Images | 5 per request (1 for untrusted users), 5 MiB and 3072 by 3072 pixels each | See [Images](#images) |
+| Images | 20 per request, 5 MiB and 3072 by 3072 pixels each, 25 MiB in all (5 MiB for untrusted users) | See [Images](#images) |
 | Tools, tool choice and response format | 256 KiB of compact JSON together; 128 tools; schemas nested at most 10 levels | 400 `UnsupportedChatParameter` |
 | Tool calls replayed in one assistant message | 128 | 400 |
 | `max_tokens` | 16 to 4096 | 400 `UnsupportedChatParameter` |

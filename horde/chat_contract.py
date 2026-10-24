@@ -47,6 +47,7 @@ from pydantic_core import PydanticCustomError
 
 __all__ = [
     "BAD_REQUEST_RC",
+    "CHAT_IMAGE_PROMPT_TOKENS",
     "CHAT_KUDOS_CAP_EXCEEDED_RC",
     "CHAT_REQUEST_CONFLICT_ERROR_TYPE",
     "CHAT_REQUEST_CONFLICT_RC",
@@ -54,7 +55,8 @@ __all__ = [
     "MAX_CHAT_BODY_BYTES",
     "MAX_CHAT_IMAGE_BYTES",
     "MAX_CHAT_IMAGE_COUNT",
-    "MAX_CHAT_IMAGE_COUNT_UNTRUSTED",
+    "MAX_CHAT_IMAGE_TOTAL_BYTES",
+    "MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED",
     "MAX_CHAT_MESSAGE_COUNT",
     "MAX_CHAT_MODEL_COUNT",
     "MAX_CHAT_TOOL_CALL_COUNT",
@@ -112,21 +114,39 @@ long already covers every model a client would accept in place of another."""
 MAX_CHAT_IMAGE_BYTES: int = 5 * 1024 * 1024
 """The largest decoded size of one image in a chat request. Matches the cap on a source image fetched from a URL."""
 
-MAX_CHAT_IMAGE_COUNT: int = 5
-"""The most image parts one chat request may carry. Matches the extra source image cap on image requests, which
-bounds the same storage and transfer cost."""
+MAX_CHAT_IMAGE_COUNT: int = 20
+"""The most image parts one chat request may carry, for every user. The total size caps bound the bytes a request's
+images cost; this bounds the per-image work, a fetch or decode, a re-encode and a stored object each, and the
+[`CHAT_IMAGE_PROMPT_TOKENS`][horde.chat_contract.CHAT_IMAGE_PROMPT_TOKENS] each image adds to the prompt estimate."""
 
-MAX_CHAT_IMAGE_COUNT_UNTRUSTED: int = 1
-"""The most image parts a user who is neither trusted nor a patron may send. Matches the extra source image rule on
-image requests."""
+MAX_CHAT_IMAGE_TOTAL_BYTES: int = 25 * 1024 * 1024
+"""The most decoded or fetched image bytes one chat request may carry in all, for trusted users and patrons. Five
+images at [`MAX_CHAT_IMAGE_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_BYTES], the extra source image cap on image
+requests, which bounds the same storage and transfer cost. Every request is held to it, since a request is parsed
+before its user is known.
+
+Both totals hold the images as sent and again as the JPEGs they are stored as: storage, transfer and the worker's
+download cost the stored bytes, and a compact PNG can re-encode to a far larger JPEG."""
+
+MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED: int = 5 * 1024 * 1024
+"""The most decoded or fetched image bytes one chat request may carry in all, for a user who is neither trusted nor a
+patron. One image at [`MAX_CHAT_IMAGE_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_BYTES], which keeps the storage and
+transfer cost of the extra source image rule on image requests while letting the bytes be split over several
+smaller images."""
+
+CHAT_IMAGE_PROMPT_TOKENS: int = 512
+"""The tokens each image part adds to a chat request's prompt estimate, on top of the placeholder it is flattened to.
+koboldcpp's worker adds this many per image in its own context overflow estimate, so counting them keeps a request
+with many images from being estimated to fit a context the worker then refuses. The context is fitted, and so the
+request charged, on this estimate."""
 
 MAX_CHAT_BODY_BYTES: int = 36 * 1024 * 1024
 """The most bytes a chat request body may have, and the bound on what is read before the body is parsed.
 
-A request at every cap carries [`MAX_CHAT_IMAGE_COUNT`][horde.chat_contract.MAX_CHAT_IMAGE_COUNT] data URLs of
-[`MAX_CHAT_IMAGE_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_BYTES] each, which base64 grows by 4/3 to about 33.3 MiB,
-plus the SDK's ``MAX_CHAT_TEXT_BYTES`` of text: about 34.3 MiB. 36 MiB leaves room
-for JSON structure and escaping on top of that."""
+A request at every cap carries [`MAX_CHAT_IMAGE_TOTAL_BYTES`][horde.chat_contract.MAX_CHAT_IMAGE_TOTAL_BYTES] (25 MiB)
+of images as data URLs, which base64 grows by 4/3 to about 33.3 MiB, plus the SDK's ``MAX_CHAT_TEXT_BYTES`` (1 MiB)
+of text: about 34.3 MiB. 36 MiB leaves about 1.7 MiB for JSON structure, escaping and the data URL prefixes on top
+of that."""
 
 CHAT_REQUEST_CONFLICT_ERROR_TYPE: str = "chat_request_conflict"
 """The pydantic error type raised for two keys whose values contradict each other.
