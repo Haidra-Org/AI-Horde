@@ -88,12 +88,15 @@ Interrogation cleanup removes the stored image from R2.
 
 ## Webhook delivery
 
-Generation and interrogation webhooks share one bounded queue (`WEBHOOK_QUEUE_MAXSIZE`) and one background sender
-thread per process, so delivery does not block the worker's submit request. A delivery is POSTed as JSON, up to
+Generation and interrogation webhooks share one bounded queue (`WEBHOOK_QUEUE_MAXSIZE`) and a pool of
+`WEBHOOK_SENDER_THREADS` background sender threads per process, so delivery does not block the worker's submit request
+and one stalled subscriber does not hold back other deliveries. A delivery is POSTed as JSON, up to
 `WEBHOOK_ATTEMPTS` times while the subscriber returns 4xx or 5xx or the exchange fails. Redirects are not followed: a
 307 or 308 would re-send the payload to a target the subscriber did not register. A refused URL, including a redirect,
 is logged once and not retried. A 2xx response whose body exceeds the cap counts as delivered. The `horde.webhook.outcomes`
-counter records `ok`, `giveup`, `refused` or `dropped` for each delivery.
+counter records `ok`, `giveup`, `refused` or `dropped` for each delivery. The `horde.webhook.queue_wait.duration`
+histogram records how long each delivery waited for a sender. A rising wait shows the senders falling behind before the
+queue fills and drops begin.
 
 ## Dependencies
 

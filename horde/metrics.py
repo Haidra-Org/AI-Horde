@@ -657,6 +657,10 @@ webhook_duration = _seconds_histogram(
     "horde.webhook.attempt.duration",
     "Duration of a single webhook POST attempt",
 )
+webhook_queue_wait = _seconds_histogram(
+    "horde.webhook.queue_wait.duration",
+    "Time a webhook delivery waited in the queue before a sender took it",
+)
 webhook_outcomes = logfire.metric_counter(
     "horde.webhook.outcomes",
     unit="1",

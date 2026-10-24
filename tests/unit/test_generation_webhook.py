@@ -22,6 +22,7 @@ The contracts exercised here are:
 - A URL resolving to a private address, a plain http URL and a redirect are
   refused once, with no connection to the refused target and no retry.
 - A full queue drops the delivery without raising on the request path.
+- A stalled subscriber holds one sender, and other deliveries still complete.
 """
 
 from __future__ import annotations
@@ -29,8 +30,10 @@ from __future__ import annotations
 import functools
 import json
 import queue
+import threading
 import uuid
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler
 from types import SimpleNamespace
 from typing import Any
 
@@ -60,7 +63,7 @@ pytestmark = pytest.mark.unit
 
 WEBHOOK_URL = "http://subscriber.example/hook"
 
-WebhookDelivery = tuple[str, dict[str, Any], str, str]
+WebhookDelivery = tuple[str, dict[str, Any], str, str, float]
 
 
 @pytest.fixture
@@ -116,7 +119,7 @@ class TestEnqueue:
 
         procgen.send_webhook(kudos=10)
 
-        url, data, wp_id, procgen_id = isolated_queue.get_nowait()
+        url, data, wp_id, procgen_id, _ = isolated_queue.get_nowait()
         assert url == WEBHOOK_URL
         assert data["request"] == str(procgen.wp.id)
         assert data["id"] == str(procgen.id)
@@ -130,7 +133,7 @@ class TestEnqueue:
     ) -> None:
         procgen = _build_completed_generation(db_session, make_user(), webhook=WEBHOOK_URL)
         while not isolated_queue.full():
-            isolated_queue.put_nowait(("occupied", {}, "", ""))
+            isolated_queue.put_nowait(("occupied", {}, "", "", 0.0))
 
         procgen.send_webhook(kudos=10)
 
@@ -150,7 +153,7 @@ class TestInterrogationEnqueue:
 
         InterrogationForms.send_webhook(form, 3)  # type: ignore[arg-type]  # the method reads only these attributes
 
-        url, data, request_id, form_id = isolated_queue.get_nowait()
+        url, data, request_id, form_id, _ = isolated_queue.get_nowait()
         assert url == WEBHOOK_URL
         assert data == {
             "form": "caption",
@@ -261,3 +264,35 @@ class TestDelivery:
         procgen_module._deliver_webhook(f"http://{SUBSCRIBER_HOST}:{subscriber.port}/hook", {"id": "gen"}, "wp", "gen")
 
         assert [recorded.method for recorded in subscriber.requests] == ["POST"]
+
+
+class TestSenderPool:
+    """Several senders drain the queue, so one stalled subscriber does not hold back other deliveries."""
+
+    def test_a_stalled_delivery_does_not_hold_back_the_next(
+        self,
+        subscriber: RecordedServer,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A single sender would be held for the full low-speed window before reaching the second delivery."""
+        release_stalled = threading.Event()
+        other_answered = threading.Event()
+
+        def respond(handler: BaseHTTPRequestHandler) -> None:
+            if handler.path == "/stalled":
+                release_stalled.wait(10)
+            else:
+                other_answered.set()
+            send_body(b"")(handler)
+
+        subscriber.respond = respond
+        monkeypatch.setattr(procgen_module, "_webhook_queue", queue.Queue(maxsize=4))
+        monkeypatch.setattr(procgen_module, "_webhook_senders", [])
+        base_url = f"http://{SUBSCRIBER_HOST}:{subscriber.port}"
+        try:
+            procgen_module.enqueue_webhook(f"{base_url}/stalled", {"id": "stalled"}, "wp", "stalled")
+            procgen_module.enqueue_webhook(f"{base_url}/other", {"id": "other"}, "wp", "other")
+
+            assert other_answered.wait(procgen_module.WEBHOOK_HOP_TIMEOUT_SECONDS - 1)
+        finally:
+            release_stalled.set()

@@ -50,26 +50,37 @@ stops a large response from costing the sender memory and time."""
 WEBHOOK_SCHEMES = HTTPS_SCHEMES
 """The schemes a webhook URL may use. The submit routes accept only https webhook URLs, and the sender holds every
 delivery to the same rule."""
-_webhook_queue: queue.Queue[tuple[str, dict[str, Any], str, str]] = queue.Queue(maxsize=WEBHOOK_QUEUE_MAXSIZE)
+
+WEBHOOK_SENDER_THREADS = 4
+"""How many sender threads drain the queue in each process. One subscriber that stalls every attempt holds a sender
+for up to ``WEBHOOK_ATTEMPTS * WEBHOOK_ATTEMPT_DEADLINE_SECONDS``, so with a single sender every other delivery
+waits behind it. Each sender spends that time blocked in libcurl with the GIL released, so the extra threads use
+little CPU."""
+
+_webhook_queue: queue.Queue[tuple[str, dict[str, Any], str, str, float]] = queue.Queue(maxsize=WEBHOOK_QUEUE_MAXSIZE)
 _webhook_sender_lock = threading.Lock()
-_webhook_sender: threading.Thread | None = None
+_webhook_senders: list[threading.Thread] = []
 
 
 def _ensure_webhook_sender() -> None:
-    # Started lazily on first use so every serving process owns a live thread;
-    # a thread started at import time would not survive a post-import fork.
-    global _webhook_sender
-    if _webhook_sender is not None and _webhook_sender.is_alive():
+    # Started lazily on first use so every serving process has live threads.
+    # Threads started at import time would not survive a post-import fork.
+    if len(_webhook_senders) == WEBHOOK_SENDER_THREADS and all(sender.is_alive() for sender in _webhook_senders):
         return
     with _webhook_sender_lock:
-        if _webhook_sender is None or not _webhook_sender.is_alive():
-            _webhook_sender = threading.Thread(target=_webhook_sender_loop, name="webhook-sender", daemon=True)
-            _webhook_sender.start()
+        _webhook_senders[:] = [sender for sender in _webhook_senders if sender.is_alive()]
+        while len(_webhook_senders) < WEBHOOK_SENDER_THREADS:
+            sender = threading.Thread(target=_webhook_sender_loop, name="webhook-sender", daemon=True)
+            sender.start()
+            _webhook_senders.append(sender)
 
 
 def _webhook_sender_loop() -> None:
+    from horde.metrics import webhook_queue_wait
+
     while True:
-        url, data, wp_id, procgen_id = _webhook_queue.get()
+        url, data, wp_id, procgen_id, enqueued_at = _webhook_queue.get()
+        webhook_queue_wait.record(time.monotonic() - enqueued_at)
         try:
             _deliver_webhook(url, data, wp_id, procgen_id)
         except Exception as err:
@@ -172,7 +183,7 @@ def enqueue_webhook(url: str, data: dict[str, Any], wp_id: str, procgen_id: str)
 
     _ensure_webhook_sender()
     try:
-        _webhook_queue.put_nowait((url, data, wp_id, procgen_id))
+        _webhook_queue.put_nowait((url, data, wp_id, procgen_id, time.monotonic()))
     except queue.Full:
         webhook_outcomes.add(1, {"outcome": "dropped"})
         logger.warning(f"Webhook queue full; dropping delivery for {procgen_id}")
