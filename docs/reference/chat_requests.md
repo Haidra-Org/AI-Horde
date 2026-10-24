@@ -186,7 +186,7 @@ returns `429`.
 | `model`                                  | The model the request accepts. A request sends exactly one of `model` and `models` |
 | `models`                                 | The models the request accepts, 1 to `MAX_CHAT_MODEL_COUNT` (5), each non-empty and listed once: the text request's `models`. Whichever of them an online worker runs serves the request, chosen at pop as for a text request, and the generation's `model` on the status route is the one that served it |
 | `messages`                               | Required, at least one. Roles `system`, `developer`, `user`, `assistant`, `tool`; see [Tools](#tools) for the tool keys |
-| `max_tokens`, `max_completion_tokens`    | `max_length`, 16 to 4096, default `512`. Both may be sent only with equal values |
+| `max_tokens`, `max_completion_tokens`    | `max_length`, 16 to 16384, default `512`. Both may be sent only with equal values; above the [free output allowance](#free-output-allowance) the kudos are held upfront |
 | `temperature`, `top_p`                   | The text params with the same keys                                                |
 | `frequency_penalty`, `presence_penalty`  | -2 to 2; forwarded to the worker, which has to declare the feature for a non-zero value |
 | `seed`                                   | Forwarded to the worker, which has to declare the `seed` feature                 |
@@ -816,6 +816,35 @@ route. The posted content is not stored as the generation's reply, so the
 status does not list a generation for it, and `charge_basis` and `finish_reason` stay null on the cancelled
 generation. The Horde does not measure partial work on a request that does not stream: its worker submits after the
 cancel and is paid for the reply as usual.
+
+### Free output allowance
+
+A text or chat request whose `max_length` is at most its free output allowance is admitted without holding its kudos
+upfront and is charged when its generations settle. Above the allowance, the requester has to have the request's
+kudos available, and they are held at admission. A chat request does not downgrade, so a requester who cannot cover
+the hold gets `403 KudosUpfront`, whose message states the allowance. A text request with `allow_downgrade` is
+lowered to the allowance instead.
+
+The allowance is measured when the request is created, over the workers eligible for it at its requested
+`max_length` (`TextWaitingPrompt.require_upfront_kudos`, `compute_free_output_allowance`):
+
+```text
+allowance = clamp(ceiling - slope * competing_jobs / eligible_threads, floor, ceiling)
+```
+
+| Input             | Value |
+| ----------------- | ----- |
+| `eligible_threads` | The advertised threads of the eligible workers. With none, the allowance is the floor |
+| `competing_jobs`  | The waiting generations of every queued text request that accepts any model or a model an eligible worker serves, read from the in-process copy of the stored queue; the horde-wide queued text generations when no queue is stored |
+| `ceiling`         | `HORDE_TEXT_FREE_OUTPUT_CEILING`, default 4096: what an idle fleet serves free |
+| `floor`           | `HORDE_TEXT_FREE_OUTPUT_FLOOR`, default 512: the chat default `max_tokens` stays free under any load |
+| `slope`           | `HORDE_TEXT_FREE_OUTPUT_SLOPE`, default 1792: one competing job per eligible thread halves the 3584 tokens above the floor, and two reach it |
+
+A request that does not allow slow workers always holds its kudos upfront. With `HORDE_UPFRONT_KUDOS_ON_WORKERLIST`
+set to `1`, a request that lists workers holds its kudos upfront as well and cannot be downgraded. The availability
+measured for the allowance is cached for the request's status and reused by the worker check after activation, so
+creation runs the eligible-worker query once; a dry run runs it as well. A downgrade changes the eligible workers, so
+the check after a downgrade queries them again.
 
 ## Chat model list
 

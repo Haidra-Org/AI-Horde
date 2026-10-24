@@ -1458,11 +1458,12 @@ OVERSIZED_BODY_BYTES: int = MAX_CHAT_BODY_BYTES + 1
 ANONYMOUS_SHARE_GROUPS: frozenset[ScenarioGroup] = frozenset({ScenarioGroup.ORDINARY, ScenarioGroup.LITE})
 """The groups whose scenarios a run also sends anonymously, at ``--chat-mix-anonymous-share``."""
 
-UPFRONT_KUDOS_FREE_TOKENS: int = 256
-"""The most tokens a request may ask for without the Horde ever asking upfront kudos: the floor of its demand-based
-threshold (``TextWaitingPrompt.require_upfront_kudos``, between 256 and 512 tokens for requests that allow slow
-workers, as chat requests do by default). Above it an anonymous request, which holds no kudos, may get 403
-``KudosUpfront``; at or below it the refusal would break the contract."""
+UPFRONT_KUDOS_FREE_TOKENS: int = 512
+"""The most tokens a request may ask for without the Horde ever asking upfront kudos: the default floor of its free
+output allowance (``TextWaitingPrompt.require_upfront_kudos``, between 512 and 4096 tokens by default for requests that
+allow slow workers, as chat requests do by default, depending on the load on the request's eligible workers). Above it
+an anonymous request, which holds no kudos, may get 403 ``KudosUpfront``; at or below it the refusal would break the
+contract."""
 
 NATIVE_DEFAULT_MAX_TOKENS: int = 512
 """The ``max_tokens`` a chat request gets when it sends none."""

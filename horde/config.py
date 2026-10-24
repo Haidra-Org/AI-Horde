@@ -36,3 +36,14 @@ class Config:
     smaller. Off by default: Cloudflare may already compress the download at the edge, and R2 may transcode an object
     stored gzipped, so which of the two saves transfer is measured on a deployment before turning it on. Off, the body
     is stored as plain JSON."""
+    text_free_output_ceiling: int = env.int("HORDE_TEXT_FREE_OUTPUT_CEILING", default=4096)
+    """The most tokens a text or chat request may ask for without holding its kudos upfront, reached when no
+    competing job waits for the workers eligible for it. 4096 is what an idle fleet serves free: current instruct and
+    reasoning models routinely need more than 512 tokens for one answer."""
+    text_free_output_floor: int = env.int("HORDE_TEXT_FREE_OUTPUT_FLOOR", default=512)
+    """The fewest tokens a text or chat request may ask for without holding its kudos upfront, however busy its
+    eligible workers are and when none is eligible. 512 keeps the chat default ``max_tokens`` free under any load."""
+    text_free_output_slope: float = env.float("HORDE_TEXT_FREE_OUTPUT_SLOPE", default=1792.0)
+    """The tokens the free allowance loses per competing job waiting for each eligible thread. The default is half
+    of the 3584 tokens between the default ceiling and floor, so one competing job per eligible thread halves the
+    headroom above the floor and two reach the floor."""

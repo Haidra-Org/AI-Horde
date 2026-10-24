@@ -11,7 +11,7 @@ import base64
 from typing import Any
 
 import pytest
-from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_SCHEMA_NESTING
+from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_MAX_TOKENS, MAX_CHAT_SCHEMA_NESTING
 
 from horde.chat_contract import (
     MAX_CHAT_IMAGE_BYTES,
@@ -132,8 +132,8 @@ async def test_default_no_op_is_accepted_and_not_forwarded(start_front: StartFro
         ({"horde": {"workers": ["w"]}}, "horde.workers"),
         ({"n": 2}, "n"),
         ({"max_tokens": 8}, "max_tokens"),
-        ({"max_tokens": 5000}, "max_tokens"),
-        ({"max_completion_tokens": 5000, "max_tokens": None}, "max_completion_tokens"),
+        ({"max_tokens": MAX_CHAT_MAX_TOKENS + 1}, "max_tokens"),
+        ({"max_completion_tokens": MAX_CHAT_MAX_TOKENS + 1, "max_tokens": None}, "max_completion_tokens"),
         ({"stop": ["a", "b", "c", "d", "e"]}, "stop"),
     ],
 )

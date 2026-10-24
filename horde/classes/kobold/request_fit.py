@@ -41,8 +41,10 @@ DEFAULT_MAX_LENGTH = 80
 DEFAULT_MAX_CONTEXT_LENGTH = 2048
 """The ``max_context_length`` a request that sets none runs under. The same default ``TextWaitingPrompt`` uses."""
 
-MAX_LENGTH_LIMIT = 4096
-"""The largest ``max_length`` the params model accepts."""
+MAX_LENGTH_LIMIT = 16384
+"""The largest ``max_length`` the params model accepts. A request above its free output allowance holds its kudos
+upfront, and the eligible workers' advertised ``max_length`` bounds what is served, so the cap does not need to sit
+at what a typical worker serves."""
 
 MAX_CONTEXT_LENGTH_LIMIT = 1_048_576
 """The largest ``max_context_length`` the params model accepts, and so the hard limit on growth."""

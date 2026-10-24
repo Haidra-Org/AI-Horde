@@ -267,6 +267,14 @@ the complete event has folded, including a transfer split across batches.
 This is conservative by design: a queued credit cannot fund a new spend until it is projected. Conservatism can delay
 work during projector lag, but it cannot authorize an overspend on the strength of unmaterialized income.
 
+Not every request takes a hold. A text or chat request that asks for no more tokens than its free output allowance is
+admitted without one and charged when its generations settle, so a requester with little or no balance can still use
+idle capacity. The allowance falls from 4096 tokens toward 512 as competing jobs queue for the workers eligible for
+that request, so free output is generous when those workers are idle and modest when they are busy
+([reference](../reference/chat_requests.md#free-output-allowance)). A free request's charge can take the requester
+below the account floor; projection then forgives the shortfall with a `FLOOR_ADJUSTMENT`, which is how free output is
+paid for.
+
 `effective_kudos` serves a different purpose. It adds all committed, unprojected currency deltas to the materialized
 balance and clamps the result to the account floor. It is appropriate for a "new balance" response or diagnosis, not
 for spend authorization, because it includes queued credits and does not represent holds.

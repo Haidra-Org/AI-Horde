@@ -113,7 +113,7 @@ Verification: the printed `model` is one of the listed ids.
 | Keys | Handling |
 | --- | --- |
 | `model` or `models`, `messages` | Required: exactly one of `model` and `models` (see [Accept any of several models](#accept-any-of-several-models)); `messages` holds at least one message. |
-| `max_tokens`, `max_completion_tokens` | 16 to 4096 (see [Deliberate deviations](#deliberate-deviations)); equal when both are sent. Default 512 when neither is. |
+| `max_tokens`, `max_completion_tokens` | 16 to 16384 (see [Deliberate deviations](#deliberate-deviations)); equal when both are sent. Default 512 when neither is. Above the free output allowance, by default between 512 and 4096 depending on the load on the workers that can serve the request (see [Free output allowance](../reference/chat_requests.md#free-output-allowance)), the key needs the request's kudos available, or the request is refused with 403 `KudosUpfront`. |
 | `temperature`, `top_p`, `stop` | Forwarded; `temperature` ranges 0 to 2, `top_p` 0 to 1, and `stop` is a string or up to four strings. |
 | `seed`, `frequency_penalty`, `presence_penalty` | Forwarded; a worker has to declare the feature for `seed` (any value) or a non-zero penalty. Penalties range -2 to 2. |
 | `reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high` or `xhigh`, forwarded unchanged with no default; a worker has to declare the `reasoning_effort` feature for any value, `none` included. `none` disables thinking; how much reasoning the other values allow is the worker's mapping. Any other value is 400 `BadRequest` with `param` `reasoning_effort`. |
@@ -476,7 +476,7 @@ curl -s -i "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API
 | Images | 20 per request, 5 MiB and 3072 by 3072 pixels each, 25 MiB in all (5 MiB for untrusted users) | See [Images](#images) |
 | Tools, tool choice and response format | 256 KiB of compact JSON together; 128 tools; schemas nested at most 10 levels | 400 `UnsupportedChatParameter` |
 | Tool calls replayed in one assistant message | 128 | 400 |
-| `max_tokens` | 16 to 4096 | 400 `UnsupportedChatParameter` |
+| `max_tokens` | 16 to 16384 | 400 `UnsupportedChatParameter` |
 | `max_tokens` against workers | At most a worker's declared length; the card's `max_completion_tokens` is the largest | 400 `no_worker_supports_limit` on `max_tokens`, at once |
 | Non-streamed and streamed wait | 300 and 600 seconds by default; the deployment sets them | 408 `ChatRequestTimeout`, or an in-stream error |
 

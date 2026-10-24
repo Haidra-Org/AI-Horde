@@ -204,7 +204,7 @@ Reversal: the run creates and drops its database schema; the test stack stays up
 
 The core OpenAI keys are forwarded: `model`, `messages`, `stream`, `stream_options`, `max_tokens`,
 `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed` and `n`.
-`max_tokens` and `max_completion_tokens` must agree when both are sent and lie between 16 and 4096; with neither, the
+`max_tokens` and `max_completion_tokens` must agree when both are sent and lie between 16 and 16384; with neither, the
 horde generates up to 512 tokens. `n` must be 1. `stop` is a string or up to four strings. `stream_options` needs
 `"stream": true`. Message roles are `system`, `developer`, `user`, `assistant` and `tool`; `developer` is stored as
 `system`, which loses its precedence over `system`; an `assistant` message may carry `tool_calls` and a `tool` message

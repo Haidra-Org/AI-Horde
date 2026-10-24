@@ -20,6 +20,7 @@ import pytest
 from flask.testing import FlaskClient
 from werkzeug.test import TestResponse
 
+from horde.classes.kobold.request_fit import MAX_LENGTH_LIMIT
 from tests.fixture_types import MakeApiUser
 
 TEXT_MODELS = ["elinas/chronos-70b-v2"]
@@ -446,7 +447,7 @@ class TestTextStyleContractRejections:
 
         assert response.status_code == 400, response.get_data(as_text=True)
 
-    @pytest.mark.parametrize("ceiling", [15, 4097])
+    @pytest.mark.parametrize("ceiling", [15, MAX_LENGTH_LIMIT + 1])
     def test_a_ceiling_outside_the_parameter_range_is_rejected(
         self,
         client,

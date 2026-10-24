@@ -956,3 +956,96 @@ def test_a_request_without_eligible_threads_reads_impossible_with_the_horde_wide
     assert status["eligible_worker_threads"] == 0
     assert status["queue_position"] == 2
     assert status["wait_time"] == round((512 + 80) / TEXT_REQUEST_AVG)
+
+
+def _refresh_stored_queue(fake_redis: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Store the prioritized queues as the primary does and clear the in-process copies, so the next read loads them."""
+    threads.store_prioritized_wp_queue()
+    monkeypatch.setitem(functions._wp_queue_cache, "text", None)
+    monkeypatch.setitem(functions._wp_queue_positions_time, "text", 0.0)
+    monkeypatch.setitem(functions._wp_queue_positions_cache, "text", {})
+
+
+def test_a_new_request_counts_every_queued_generation_its_eligible_workers_could_take(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every competing queued request counts, with its waiting generations, since the new request is not queued yet."""
+    user = make_user()
+    for _ in range(2):
+        _queue_text_request(user, ["shared-model"], max_length=200)
+    multi_generation_request = _queue_text_request(user, ["shared-model", "other-model"], max_length=200)
+    multi_generation_request.n = 3
+    _queue_text_request(user, [], max_length=200)
+    for _ in range(4):
+        _queue_text_request(user, ["busy-model"], max_length=200)
+    db.session.commit()
+    _refresh_stored_queue(fake_redis, monkeypatch)
+
+    competing_jobs = functions.count_competing_queued_jobs("text", frozenset({"shared-model"}))
+
+    assert competing_jobs == 2 + 3 + 1
+
+
+def test_a_new_request_has_no_competing_count_without_a_stored_queue(
+    db_session: Any,
+    fake_redis: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(functions._wp_queue_cache, "text", None)
+    monkeypatch.setitem(functions._wp_queue_positions_time, "text", 0.0)
+
+    assert functions.count_competing_queued_jobs("text", frozenset({"shared-model"})) is None
+
+
+def test_the_check_after_activation_reuses_the_availability_measured_at_creation(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A feasible creation-time measurement answers the check and stays cached for the first status poll."""
+    monkeypatch.setattr("horde.classes.kobold.worker.model_reference.get_text_model_multiplier", lambda _model_name: 20)
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    request = _make_text_request(user, "measured-model")
+    _make_text_worker(user, "measured-model", speed=10)
+    creation_availability = functions.get_worker_availability_for_request(request)
+
+    def fail_worker_query(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("the check after activation repeated the eligible-worker query")
+
+    monkeypatch.setattr(functions, "_iter_eligible_workers_for_request", fail_worker_query)
+
+    assert functions.check_new_request_has_valid_workers(request, creation_availability=creation_availability) is True
+    assert fake_redis.horde_r_get(f"wp_availability_{request.id}") is not None
+    assert functions.get_worker_availability_for_request(request).worker_count == 1
+
+
+def test_an_infeasible_creation_measurement_leaves_only_the_validity_flag_cached(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first status poll of a request no worker could take at creation measures its availability afresh."""
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    request = _make_text_request(user, "unserved-model")
+    creation_availability = functions.get_worker_availability_for_request(request)
+
+    def fail_worker_query(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("the check after activation repeated the eligible-worker query")
+
+    with monkeypatch.context() as query_guard:
+        query_guard.setattr(functions, "_iter_eligible_workers_for_request", fail_worker_query)
+        has_valid_workers = functions.check_new_request_has_valid_workers(request, creation_availability=creation_availability)
+
+    assert has_valid_workers is False
+    assert fake_redis.horde_r_get(f"wp_availability_{request.id}") is None
+    assert int(fake_redis.horde_r_get(f"wp_validity_{request.id}")) == 0

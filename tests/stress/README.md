@@ -691,8 +691,8 @@ the anonymous key and nothing else differs on the wire
 (`docs/decisions/0035-keep-anonymous-access-on-the-chat-front.md`), so the
 expected outcome stays the scenario's. The Horde's side differs: the anonymous
 user holds no kudos and ranks last, so its queue wait is recorded apart
-(`[queue_wait_seconds] <persona> anonymous`); a request above 256 tokens, the
-floor of the Horde's upfront-kudos threshold (`require_upfront_kudos`), may get
+(`[queue_wait_seconds] <persona> anonymous`); a request above 512 tokens, the
+default floor of the Horde's free output allowance (`require_upfront_kudos`), may get
 403 `KudosUpfront` (benign), while one at or below it never may, so that refusal
 is a contract violation there; and all anonymous traffic shares one concurrency
 limit, whose 429 is benign like any rate limit. `anonymous_plain` stays as an

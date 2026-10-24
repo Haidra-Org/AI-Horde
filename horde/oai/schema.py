@@ -17,7 +17,7 @@ inside those objects and the OpenAI SDK replays its accumulated reply with keys 
 unknown keys, as OpenAI does.
 
 [`ChatCompletionRequest`][horde.oai.schema.ChatCompletionRequest] then validates what remains with ``extra="forbid"``.
-Values outside the service contract (``n`` other than 1, a token limit outside 16 to 4096, more than four stop
+Values outside the service contract (``n`` other than 1, a token limit outside 16 to 16384, more than four stop
 sequences, a sampling parameter outside OpenAI's range) raise the error type
 [`UNSUPPORTED_PARAMETER_ERROR_TYPE`][horde.oai.schema.UNSUPPORTED_PARAMETER_ERROR_TYPE] so the front reports them as
 ``UnsupportedChatParameter``; contradictory values raise
@@ -734,7 +734,7 @@ class ChatCompletionRequest(BaseModel):
     """Options for a streamed answer; only allowed with ``stream: true``."""
 
     max_tokens: StrictInt | None = None
-    """The most tokens to generate, 16 to 4096; OpenAI accepts any value from 1."""
+    """The most tokens to generate, 16 to 16384; OpenAI accepts any value from 1."""
 
     max_completion_tokens: StrictInt | None = None
     """The newer key for ``max_tokens``; both must agree when both are set."""
@@ -874,7 +874,7 @@ class ChatCompletionRequest(BaseModel):
         Horde floor, which OpenAI does not have.
 
         Raises:
-            PydanticCustomError: The limit is outside 16 to 4096.
+            PydanticCustomError: The limit is outside 16 to 16384.
         """
         if token_limit is None or info.field_name is None:
             return token_limit

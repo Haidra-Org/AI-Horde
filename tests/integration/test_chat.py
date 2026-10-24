@@ -18,6 +18,7 @@ import pytest
 from horde import chat_signal
 from horde.chat_contract import KudosCapExcess
 from horde.chat_signal import chat_signal_channel
+from horde.classes.kobold.request_fit import MAX_LENGTH_LIMIT
 from tests.integration._fake_chat_worker import (
     FakeChatWorker,
     build_chat_submit_body,
@@ -816,7 +817,7 @@ def test_an_unsupported_chat_parameter_is_refused_with_its_return_code(
     [
         ({"temperature": 9}, "temperature"),
         ({"max_tokens": 8}, "max_length"),
-        ({"max_tokens": 5000}, "max_length"),
+        ({"max_tokens": MAX_LENGTH_LIMIT + 1}, "max_length"),
     ],
 )
 def test_a_chat_parameter_outside_the_text_range_is_refused_unclamped(
@@ -1056,6 +1057,62 @@ def test_a_dry_run_over_max_kudos_is_refused_as_its_submission_would_be(app, cli
     assert response.status_code == 400, response.get_data(as_text=True)
     assert response.get_json()["rc"] == "ChatKudosCapExceeded"
     assert _count_chat_requests(app, requester.id) == 0
+
+
+ANONYMOUS_HEADERS = {"apikey": "0000000000", "Client-Agent": "aihorde_ci_client:1:test"}
+"""The anonymous key, which holds no kudos, so it is refused any request above the free output allowance."""
+
+
+def _long_output_chat_body(max_tokens: int) -> dict[str, Any]:
+    """Return a chat body asking for ``max_tokens`` under a context large enough for it."""
+    return {
+        "model": CHAT_MODEL,
+        "messages": CHAT_MESSAGES,
+        "max_tokens": max_tokens,
+        "horde": {"max_context_length": 8192},
+    }
+
+
+@pytest.fixture
+def idle_long_output_worker(app, client, request_headers: dict[str, str]) -> Iterator[FakeChatWorker]:
+    """An online chat worker with no queued work that serves outputs past the free output ceiling.
+
+    It is taken offline afterwards, since its limits are larger than the ones other tests expect of the online pool.
+    """
+    worker = FakeChatWorker(
+        client=client,
+        headers=request_headers,
+        name=f"CICD Long Reply Scribe {uuid.uuid4().hex[:8]}",
+        models=[CHAT_MODEL],
+        pop_options={"chat_max_length": 8192, "chat_max_context_length": 8192},
+    )
+    worker.pop()
+    yield worker
+    _take_worker_offline(app, worker.name)
+
+
+def test_an_anonymous_chat_request_within_the_ceiling_is_free_with_an_idle_eligible_worker(
+    client,
+    idle_long_output_worker: FakeChatWorker,
+) -> None:
+    response = _post_chat(client, ANONYMOUS_HEADERS, _long_output_chat_body(2048))
+
+    assert response.status_code == 202, response.get_data(as_text=True)
+    _cancel(client, ANONYMOUS_HEADERS, "chat", response.get_json()["id"])
+
+
+def test_an_anonymous_chat_request_above_the_ceiling_is_refused_stating_the_allowance(
+    client,
+    idle_long_output_worker: FakeChatWorker,
+) -> None:
+    from horde.config import Config
+
+    response = _post_chat(client, ANONYMOUS_HEADERS, _long_output_chat_body(Config.text_free_output_ceiling + 1))
+
+    assert response.status_code == 403, response.get_data(as_text=True)
+    refusal = response.get_json()
+    assert refusal["rc"] == "KudosUpfront"
+    assert f"up to {Config.text_free_output_ceiling} tokens" in refusal["message"]
 
 
 def test_a_repeated_operation_key_is_answered_while_admission_is_off(client, make_api_user, monkeypatch) -> None:

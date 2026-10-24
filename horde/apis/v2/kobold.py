@@ -163,6 +163,9 @@ class TextAsyncGenerate(GenerateTemplate):
     gentype = "text"
     requires_chat_workers = False
     """Whether only workers that accept chat jobs can serve the request, which bounds how far its context grows."""
+    creation_availability: database.RequestWorkerAvailability | None = None
+    """The eligible worker capacity measured when the request was created, which sets its free output allowance and
+    answers the worker check after activation; None until measured and after a downgrade changes the request."""
     decorators = [
         limiter.limit(
             limit_value=lim.get_request_90min_limit_per_ip,
@@ -228,7 +231,11 @@ class TextAsyncGenerate(GenerateTemplate):
             "id": self.wp.id,
             "kudos": round(self.kudos),
         }
-        if not database.check_new_request_has_valid_workers(self.wp) and not settings.mode_raid():
+        has_valid_workers = database.check_new_request_has_valid_workers(
+            self.wp,
+            creation_availability=self.creation_availability,
+        )
+        if not has_valid_workers and not settings.mode_raid():
             ret_dict["message"] = self.get_size_too_big_message()
         return (ret_dict, 202)
 
@@ -263,7 +270,8 @@ class TextAsyncGenerate(GenerateTemplate):
         self.wp = TextWaitingPrompt(**self.get_waiting_prompt_arguments())
         self.refuse_over_kudos_cap()
         self.upload_source_images_or_delete_waiting_prompt()
-        _, total_threads = database.count_active_workers("text")
+        # Measured once here, at the requested max_length, and reused by the check after activation.
+        self.creation_availability = database.get_worker_availability_for_request(self.wp)
         highest_multiplier = 0
         if len(self.models) == 0:
             required_kudos = 20 * self.wp.n
@@ -275,7 +283,10 @@ class TextAsyncGenerate(GenerateTemplate):
                 if model_multiplier > highest_multiplier:
                     highest_multiplier = model_multiplier
             required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
-        needs_kudos, tokens, disable_downgrade = self.wp.require_upfront_kudos(database.retrieve_totals(), total_threads)
+        needs_kudos, tokens, disable_downgrade = self.wp.require_upfront_kudos(
+            competing_jobs_ahead=self.count_competing_jobs_ahead(),
+            eligible_threads=self.creation_availability.thread_count,
+        )
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
             if self.args.allow_downgrade and not disable_downgrade:
                 self.downgrade_wp_priority = True
@@ -297,14 +308,15 @@ class TextAsyncGenerate(GenerateTemplate):
             if reservation is None:
                 if self.args.allow_downgrade and not disable_downgrade:
                     self.wp.downgrade(tokens)
+                    # The downgrade lowers max_length and allows slow workers, which changes the eligible workers.
+                    database.discard_cached_worker_availability(self.wp)
+                    self.creation_availability = None
                 else:
                     self.wp.delete()
                     raise e.KudosUpfront(
                         required_kudos,
                         self.username,
-                        message=f"Due to heavy demand, for requests over {tokens} tokens, "
-                        "the client needs to already have the required kudos. "
-                        f"This request requires {required_kudos} kudos to fulfil.",
+                        message=self.get_kudos_upfront_message(tokens, required_kudos),
                     )
 
         if self.sharedkey:
@@ -327,6 +339,47 @@ class TextAsyncGenerate(GenerateTemplate):
         Subclass Integration:
             Override where a request type accepts a client cap on its kudos estimate.
         """
+
+    def count_competing_jobs_ahead(self) -> int:
+        """Return the waiting generations queued for the workers eligible for the request being created.
+
+        Every competing queued request counts, since the new request is not queued yet. When no queue is stored, the
+        horde-wide count of queued text generations stands in, which is never smaller than the competing count.
+
+        Returns:
+            The competing waiting generations; 0 when no worker is eligible, since the allowance is then the floor.
+        """
+        if self.creation_availability is None or not self.creation_availability.is_possible:
+            return 0
+        competing_jobs = database.count_competing_queued_jobs(
+            self.wp.wp_type,
+            self.creation_availability.served_model_names,
+        )
+        if competing_jobs is not None:
+            return competing_jobs
+        return int(database.retrieve_totals()["queued_text_requests"])
+
+    def get_kudos_upfront_message(self, free_tokens: int, required_kudos: float) -> str:
+        """Return the ``KudosUpfront`` message for a request whose requester cannot cover its kudos hold.
+
+        Args:
+            free_tokens: The most tokens the request could ask for without holding kudos upfront.
+            required_kudos: The kudos the request holds upfront.
+
+        Returns:
+            The message, stating the free allowance.
+        """
+        if not self.wp.slow_workers:
+            return (
+                "A request that does not allow slow workers needs the client to already have the required kudos. "
+                f"With slow workers allowed, about {free_tokens} tokens would currently be served without it. "
+                f"This request requires {required_kudos} kudos to fulfil."
+            )
+        return (
+            f"The workers eligible for this request currently serve up to {free_tokens} tokens without kudos held "
+            "upfront. For more, the client needs to already have the required kudos. "
+            f"This request requires {required_kudos} kudos to fulfil."
+        )
 
     def get_size_too_big_message(self):
         return (

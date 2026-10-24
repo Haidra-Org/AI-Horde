@@ -9,6 +9,7 @@ smoke checker's contract and environment buckets."""
 from __future__ import annotations
 
 import csv
+import dataclasses
 import json
 import os
 import random
@@ -969,11 +970,13 @@ class TestAnonymousVariant:
         assert anonymous.kudos_upfront_benign is False
 
     def test_kudos_upfront_is_benign_only_above_the_upfront_free_size(self) -> None:
-        at_limit = [
-            builder(CONTEXT) for builder in SCENARIO_BUILDERS[ScenarioGroup.ORDINARY] if builder.__name__ == "max_tokens_at_worker_limit"
-        ][0]
-        assert at_limit.body["max_tokens"] > UPFRONT_KUDOS_FREE_TOKENS
-        assert as_anonymous(at_limit).kudos_upfront_benign is True
+        at_limit_builder = next(
+            builder for builder in SCENARIO_BUILDERS[ScenarioGroup.ORDINARY] if builder.__name__ == "max_tokens_at_worker_limit"
+        )
+        at_free_size = at_limit_builder(dataclasses.replace(CONTEXT, worker_max_length=UPFRONT_KUDOS_FREE_TOKENS))
+        above_free_size = at_limit_builder(dataclasses.replace(CONTEXT, worker_max_length=UPFRONT_KUDOS_FREE_TOKENS + 1))
+        assert as_anonymous(at_free_size).kudos_upfront_benign is False
+        assert as_anonymous(above_free_size).kudos_upfront_benign is True
 
     def test_kudos_upfront_on_a_small_anonymous_request_is_a_violation(self) -> None:
         envelope = {"error": {"message": "upfront", "type": "permission_error", "param": None, "code": "KudosUpfront"}}

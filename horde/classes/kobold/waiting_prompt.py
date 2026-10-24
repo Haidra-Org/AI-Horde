@@ -36,6 +36,7 @@ from horde.classes.kobold.chat_request import (
 )
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.worker import text_array_column_type
+from horde.config import Config
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -68,6 +69,36 @@ CHAT_IMAGE_DELETE_RETRY_BATCH = 1000
 SQLITE_CHAT_IMAGE_PART_PATTERN = '%"type": "image_url"%'
 """The pattern matching an image part in ``messages`` serialised as SQLite JSON text. A quote inside a message text is
 escaped in that serialisation, so only a part's ``type`` key can match it."""
+
+
+def compute_free_output_allowance(
+    *,
+    competing_jobs_ahead: int,
+    eligible_threads: int,
+    ceiling: int,
+    floor: int,
+    slope: float,
+) -> int:
+    """Return how many tokens a text request may ask for without holding its kudos upfront.
+
+    The allowance falls linearly from ``ceiling`` with the competing jobs waiting per eligible thread, so it measures
+    the load on the workers that could serve this request rather than on the whole horde.
+
+    Args:
+        competing_jobs_ahead: The waiting generations of the queued requests the request's eligible workers could take.
+        eligible_threads: The advertised threads of the workers eligible for the request.
+        ceiling: The allowance when no competing job waits.
+        floor: The smallest allowance, and the allowance when no thread is eligible.
+        slope: The tokens the allowance loses per competing job waiting for each eligible thread.
+
+    Returns:
+        ``ceiling - slope * competing_jobs_ahead / eligible_threads``, rounded and clamped to ``floor``..``ceiling``.
+    """
+    if eligible_threads <= 0:
+        return floor
+    jobs_per_thread = competing_jobs_ahead / eligible_threads
+    allowance = round(ceiling - slope * jobs_per_thread)
+    return max(floor, min(ceiling, allowance))
 
 
 class TextWaitingPrompt(WaitingPrompt):
@@ -518,22 +549,33 @@ class TextWaitingPrompt(WaitingPrompt):
             style_reward=style_reward,
         )
 
-    def require_upfront_kudos(self, counted_totals, total_threads):
-        """Returns A tuple
-        First entry in the tuple is True if this wp requires that the user already has the required kudos to fulfil it
-        else is False
-        Second entry in the tuple is the max tokens that can be used without upfront kudos
-        Third entry in the tuple is whether the upfront kudos requirement prevents downgrading to resolve this.
+    def require_upfront_kudos(self, *, competing_jobs_ahead: int, eligible_threads: int) -> tuple[bool, int, bool]:
+        """Return whether this request must hold its kudos upfront, its free output allowance, and whether downgrading
+        is barred.
+
+        The allowance comes from
+        [`compute_free_output_allowance`][horde.classes.kobold.waiting_prompt.compute_free_output_allowance] under the
+        ceiling, floor and slope in [`Config`][horde.config.Config]. A request that disallows slow workers always holds
+        its kudos upfront.
+
+        Args:
+            competing_jobs_ahead: The waiting generations of the queued requests the request's eligible workers could
+                take.
+            eligible_threads: The advertised threads of the workers eligible for the request at its ``max_length``.
+
+        Returns:
+            Whether the requester must already have the kudos for the request, the most tokens it may ask for without
+            them, and whether the requirement forbids downgrading the request to the allowance.
         """
-        queue = counted_totals["queued_text_requests"]
-        max_tokens = 512 + (total_threads * 5) - round(queue * 0.9)
-        # logger.debug([queue,max_tokens])
+        max_tokens = compute_free_output_allowance(
+            competing_jobs_ahead=competing_jobs_ahead,
+            eligible_threads=eligible_threads,
+            ceiling=Config.text_free_output_ceiling,
+            floor=Config.text_free_output_floor,
+            slope=Config.text_free_output_slope,
+        )
         if not self.slow_workers:
             return (True, max_tokens, False)
-        if max_tokens < 256:
-            max_tokens = 256
-        if max_tokens > 512:
-            max_tokens = 512
         if self.max_length > max_tokens:
             return (True, max_tokens, False)
         if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "0") == "1" and len(self.workers) > 0:

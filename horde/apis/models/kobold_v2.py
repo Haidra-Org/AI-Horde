@@ -1341,7 +1341,7 @@ class TextModels(v2.Models):
                 "messages": fields.List(fields.Nested(self.model_chat_message), required=True, min_items=1),
                 "max_tokens": fields.Integer(
                     description=(
-                        f"How many tokens to generate, 16 to 4096. Defaults to {DEFAULT_CHAT_MAX_TOKENS}. Must equal "
+                        f"How many tokens to generate, 16 to {MAX_LENGTH_LIMIT}. Defaults to {DEFAULT_CHAT_MAX_TOKENS}. Must equal "
                         "max_completion_tokens when both are set."
                     ),
                 ),

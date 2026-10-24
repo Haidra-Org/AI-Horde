@@ -1879,7 +1879,7 @@ def _get_competing_wp_queue_stats(wp: WaitingPrompt, served_model_names: frozens
     things_ahead_in_queue = 0.0
     n_ahead_in_queue = 0
     for queued_request in cached_queue.requests[:own_index]:
-        if queued_request.model_names and queued_request.model_names.isdisjoint(served_model_names):
+        if not _queued_request_competes(queued_request, served_model_names):
             continue
         competing_ahead += 1
         things_ahead_in_queue += queued_request.queued_things
@@ -1888,6 +1888,31 @@ def _get_competing_wp_queue_stats(wp: WaitingPrompt, served_model_names: frozens
     things_ahead_in_queue += own_request.queued_things
     n_ahead_in_queue += own_request.n
     return (competing_ahead, round(things_ahead_in_queue, 2), n_ahead_in_queue)
+
+
+def _queued_request_competes(queued_request: QueuedRequest, served_model_names: frozenset[str]) -> bool:
+    """Return whether a queued request accepts any model or one of ``served_model_names``."""
+    return not queued_request.model_names or not queued_request.model_names.isdisjoint(served_model_names)
+
+
+def count_competing_queued_jobs(wp_type: str, served_model_names: frozenset[str]) -> int | None:
+    """Return the waiting generations of every queued request that workers serving ``served_model_names`` could take.
+
+    A request being created is not yet in the stored queue, so every competing request counts as ahead of it. Like
+    ``_get_competing_wp_queue_stats``, this reads only the in-process copy of the stored queue.
+
+    Args:
+        wp_type: The request type whose queue is read.
+        served_model_names: The models at least one worker eligible for the new request serves.
+
+    Returns:
+        The summed ``n`` of the competing queued requests; None when no queue is stored.
+    """
+    _refresh_wp_queue_caches(wp_type)
+    cached_queue = _wp_queue_cache.get(wp_type)
+    if cached_queue is None:
+        return None
+    return sum(queued_request.n for queued_request in cached_queue.requests if _queued_request_competes(queued_request, served_model_names))
 
 
 def get_wp_queue_stats(wp, *, served_model_names: frozenset[str] | None = None):
@@ -2465,7 +2490,11 @@ def _parse_declaration_generation(raw_generation: bytes | str | None) -> int:
     return int(raw_generation)
 
 
-def check_new_request_has_valid_workers(waiting_prompt: WaitingPrompt) -> bool:
+def check_new_request_has_valid_workers(
+    waiting_prompt: WaitingPrompt,
+    *,
+    creation_availability: RequestWorkerAvailability | None = None,
+) -> bool:
     """Return whether a just-created request has an eligible worker, seeding its availability when it does.
 
     A feasible verdict is cached as the full availability, so the first status poll does not repeat the
@@ -2475,11 +2504,23 @@ def check_new_request_has_valid_workers(waiting_prompt: WaitingPrompt) -> bool:
 
     Args:
         waiting_prompt: Request created by the current API call, with no generation started.
+        creation_availability: The availability
+            [`get_worker_availability_for_request`][horde.database.functions.get_worker_availability_for_request]
+            measured for the request in the same API call, which already cached it. When given, the verdict is read
+            from it instead of repeating the eligible-worker query. Pass None when the request changed since, for
+            example by a downgrade, since its eligible workers change with it.
 
     Returns:
         True when at least one recently active worker passes all known dispatch gates.
     """
 
+    if creation_availability is not None:
+        if creation_availability.is_possible:
+            return True
+        # The creation-time measurement cached the full infeasible availability. Only its validity flag stays cached,
+        # the same as for an infeasible verdict computed here.
+        hr.horde_r_delete(f"wp_availability_{waiting_prompt.id}")
+        return False
     declaration_generation = _get_declaration_generation(waiting_prompt)
     with logfire.span("horde.db.eligible_workers", wp_id=str(waiting_prompt.id)):
         eligible_workers = list(_iter_eligible_workers_for_request(waiting_prompt))
@@ -2638,6 +2679,16 @@ def _cache_worker_availability(
             },
         ),
     )
+
+
+def discard_cached_worker_availability(waiting_prompt: WaitingPrompt) -> None:
+    """Delete a request's cached availability and validity verdict, for a request whose eligibility inputs changed.
+
+    Args:
+        waiting_prompt: Request whose cached entries are deleted.
+    """
+    hr.horde_r_delete(f"wp_availability_{waiting_prompt.id}")
+    hr.horde_r_delete(f"wp_validity_{waiting_prompt.id}")
 
 
 def _get_active_worker_dispatches(
