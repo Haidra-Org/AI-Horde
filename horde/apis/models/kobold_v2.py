@@ -11,6 +11,7 @@ from horde_sdk.generation_parameters.text.chat_policy import (
     ChatConformance,
     ChatFeature,
     ChatGuarantee,
+    ChatReasoningEffort,
     ChatServiceGapKind,
 )
 from horde_sdk.worker.chat_declaration import ChatFaultReason, ChatFinishReason, ChatImageTransport
@@ -475,6 +476,13 @@ class TextModels(v2.Models):
                     description="Stop sequences, only when the client sent them.",
                 ),
                 "seed": fields.Integer(description="The sampling seed, only when the client sent one."),
+                "reasoning_effort": fields.String(
+                    enum=[reasoning_effort.value for reasoning_effort in ChatReasoningEffort],
+                    description=(
+                        "The client's reasoning_effort, unchanged, only when the client sent one. 'none' disables "
+                        "thinking. Only workers that declare the reasoning_effort feature receive it."
+                    ),
+                ),
                 "max_length": fields.Integer(description="Number of tokens to generate."),
                 "max_context_length": fields.Integer(description="The context length the rendered messages have to fit."),
                 "n": fields.Integer(description="Always 1."),
@@ -604,10 +612,10 @@ class TextModels(v2.Models):
                         "The optional chat features the worker implements: "
                         f"{', '.join(feature.value for feature in ChatFeature)}; and the parts of the OpenAI chat "
                         f"contract its backend follows exactly: {', '.join(guarantee.value for guarantee in ChatGuarantee)}. "
-                        "A chat request that needs a feature (a non-default seed or penalty, image parts, tools or a "
-                        "history with tool calls, a json_object or json_schema response format) only goes to workers "
-                        "that list it; under strict conformance so does a request that needs a guarantee. Unknown "
-                        "names are ignored."
+                        "A chat request that needs a feature (a seed, a reasoning_effort, a non-default penalty, image "
+                        "parts, tools or a history with tool calls, a json_object or json_schema response format) only "
+                        "goes to workers that list it; under strict conformance so does a request that needs a "
+                        "guarantee. Unknown names are ignored."
                     ),
                 ),
                 "chat_limits": fields.Nested(
@@ -1342,6 +1350,14 @@ class TextModels(v2.Models):
                 "top_p": fields.Float(description="Nucleus sampling value."),
                 "n": fields.Integer(description="How many choices to return. Only 1 is served."),
                 "seed": fields.Integer(description="A sampling seed. Only workers that declare the seed feature serve it."),
+                "reasoning_effort": fields.String(
+                    enum=[reasoning_effort.value for reasoning_effort in ChatReasoningEffort],
+                    description=(
+                        "How much the model reasons before answering; 'none' disables thinking. Forwarded to the "
+                        "worker unchanged, with no default. A request that sets it, 'none' included, only goes to "
+                        "workers that declare the reasoning_effort feature. Any other value is refused."
+                    ),
+                ),
                 "stop": fields.Raw(description="One stop sequence or an array of them."),
                 "frequency_penalty": fields.Float(
                     min=-2,

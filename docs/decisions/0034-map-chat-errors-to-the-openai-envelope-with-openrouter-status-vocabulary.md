@@ -35,7 +35,7 @@ after the response headers are sent?
 ## Decision Outcome
 
 Chosen option: "OpenAI envelope plus `metadata`; OpenRouter's status vocabulary; OpenRouter's mid-stream error
-event", amended below to keep finish reasons inside the OpenAI success enum.
+event", with finish reasons kept inside the OpenAI success enum.
 
 Before headers: `{"error": {"message", "type", "param", "code"}}` with `code` the Horde return code and a `metadata`
 object carrying the request id and details. Statuses: 400 invalid, 401 auth, 402 insufficient kudos, 403 moderation
@@ -73,6 +73,6 @@ submitted stream; their delivery is not guaranteed on disconnect.
 The front also maps ingress byte-limit refusal to 413. Unsupported service input is 400; temporary absence of workers
 satisfying supported constraints is 503, raised by the front after the native route reports `is_possible` false. The
 native submit path does not change for this. Operation keys protect internal native retries and do
-not protect independent client retries; follow ADR 0026's amended guarantee.
+not protect independent client retries; follow ADR 0026's guarantee.
 
 Rulings R8 and R9 of the review.

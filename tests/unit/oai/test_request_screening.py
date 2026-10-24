@@ -361,6 +361,8 @@ async def test_token_limit_openai_accepts_below_the_horde_floor_is_refused_with_
         ({"tool_choice": "sometimes"}, "tool_choice"),
         ({"response_format": {"type": "json_schema", "json_schema": {"name": "answer"}}}, "response_format.json_schema.schema"),
         ({"parallel_tool_calls": "yes", "tools": [WEATHER_TOOL]}, "parallel_tool_calls"),
+        ({"reasoning_effort": "maximum"}, "reasoning_effort"),
+        ({"reasoning_effort": 1}, "reasoning_effort"),
     ],
 )
 async def test_invalid_values_are_bad_requests(
@@ -552,6 +554,16 @@ STRUCTURED_OUTPUT_FORMAT: dict[str, Any] = {
     },
 }
 """A structured output format as the OpenAI SDK sends it, with a null inside the schema the worker has to receive."""
+
+
+@pytest.mark.parametrize("reasoning_effort", ["none", "minimal", "low", "medium", "high", "xhigh"])
+async def test_a_reasoning_effort_is_forwarded_unchanged(start_front: StartFront, reasoning_effort: str) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(reasoning_effort=reasoning_effort))
+
+    assert response.status_code == 200
+    assert front.horde.submitted_body()["reasoning_effort"] == reasoning_effort
 
 
 async def test_tools_tool_choice_and_parallel_tool_calls_are_forwarded_verbatim(start_front: StartFront) -> None:

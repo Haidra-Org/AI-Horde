@@ -45,18 +45,26 @@ opt-in".
 
 Three declaration kinds, defined once in `horde_sdk.generation_parameters.text.chat_policy`:
 
-- A capability (`ChatFeature`) states the backend acts on an input: `seed`, the penalties, `vision`, `tools`,
-  `json_object`, `json_schema`. Unchanged from ADR 0022.
+- A capability (`ChatFeature`) states the backend acts on an input: `seed`, the penalties, `reasoning_effort`,
+  `vision`, `tools`, `json_object`, `json_schema`, `tools_with_response_format`, declared as ADR 0022 describes. A request needs its capabilities
+  under both modes. A request that sets `reasoning_effort`, `none` included, needs a worker that declares it, because
+  a backend that ignores the key reasons anyway and would serve a request for less reasoning wrongly. The value, one
+  of OpenAI's `none`, `minimal`, `low`, `medium`, `high` and `xhigh`, is forwarded unchanged with no server default.
 - A guarantee (`ChatGuarantee`) states the backend follows one part of the contract exactly:
-  `tool_choice_enforced`, `single_tool_call_enforced`, `structured_output_enforced`, `prompt_overflow_refused`.
-  Capabilities and guarantees share the `chat_features` pop list.
+  `tool_choice_enforced`, `structured_output_enforced`, `prompt_overflow_refused`, and `single_tool_call_enforced`,
+  which a worker may declare and no request requires. Capabilities and guarantees share the `chat_features` pop
+  list.
 - A limit (`ChatWorkerLimits`) bounds the values the backend applies as sent. `tools_max_temperature` joins
   `max_context_length` and `max_length` in `chat_limits`; absent means the temperature is applied as sent.
 
 Each request carries a conformance mode in the `horde` body object, `strict` by default. The server derives the
 request's traits once, stores the required guarantees beside the required capabilities, and compares both with the
-worker's declaration in eligibility. Limits apply under both modes, because a clamped value changes the request.
-Under `best_effort` the request does not require a guarantee and replies pass through. When the online chat workers
+worker's declaration in eligibility. A `strict` request requires `tool_choice_enforced` when it forwards tools under
+`tool_choice: required` or a forced function, `structured_output_enforced` when its `json_schema` format is
+`strict`, and `prompt_overflow_refused` always. It does not require `single_tool_call_enforced`: the submit check
+keeps only the first call of a strict reply under `parallel_tool_calls: false`, so the client receives at most one
+call from any worker, and routing on the guarantee would only remove workers. Limits apply under both modes,
+because a clamped value changes the request. Under `best_effort` the request does not require a guarantee and replies pass through. When the online chat workers
 serving the model all lack a declaration the request needs, or all apply a limit it exceeds, the chat status reports
 the gap as `impossible_reason` and the chat front refuses the request at once with 404
 `no_worker_supports_features`, without the grace it gives a model without an online worker.
@@ -79,6 +87,8 @@ pricing basis of ADR 0027.
   its local behaviour.
 - Good: Routing, narrowing and verification are three separate layers; a false declaration costs the worker refused
   submissions, and the requester does not receive a wrong reply.
+- Good: A guarantee the server enforces on submit, such as a single tool call, is not a routing requirement, so it
+  does not narrow the workers that can serve a request.
 - Bad: Under strict a request needing a guarantee no online worker declares is refused, so coverage depends on
   workers adopting the declarations.
 - Bad: Submit verification adds a JSON Schema validator dependency and a validation pass per structured reply.

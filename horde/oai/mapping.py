@@ -130,19 +130,23 @@ FEATURE_SUPPORTED_PARAMETERS: tuple[str, ...] = (
     "seed",
     "frequency_penalty",
     "presence_penalty",
+    "reasoning_effort",
 )
 """The OpenAI request fields a model lists only when an online chat worker declares the chat feature with that value."""
 
 TOOLS_FEATURE: str = ChatFeature.TOOLS.value
 """The chat feature of a worker that serves function calling."""
 
-TOOL_SUPPORTED_PARAMETERS: tuple[str, ...] = ("tools",)
+TOOL_SUPPORTED_PARAMETERS: tuple[str, ...] = (
+    "tools",
+    "parallel_tool_calls",
+)
 """The OpenAI request fields a model lists when an online chat worker declares
-[`TOOLS_FEATURE`][horde.oai.mapping.TOOLS_FEATURE]."""
+[`TOOLS_FEATURE`][horde.oai.mapping.TOOLS_FEATURE]. ``parallel_tool_calls`` needs no guarantee: the Horde reduces a
+strict reply's tool calls to the first when parallel calls are off, whichever worker served it."""
 
 GUARANTEED_TOOL_PARAMETERS: dict[str, str] = {
     "tool_choice": ChatGuarantee.TOOL_CHOICE_ENFORCED.value,
-    "parallel_tool_calls": ChatGuarantee.SINGLE_TOOL_CALL_ENFORCED.value,
 }
 """The OpenAI tool fields a model lists only when an online chat worker also declares the guarantee mapped to each.
 A strict request that sets one of them to a constraining value needs that guarantee (ADR 0036), so a card without it

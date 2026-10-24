@@ -47,6 +47,26 @@ The first release uses strict behaviour only. A future opt-in `horde.require_par
 fields with explicit reporting; it is not required for the first release. Capability fields are never dropped. Accept only listed
 default no-ops such as empty tools or false logprobs; this is not permission to ignore arbitrary unknown fields.
 
+Unknown keys are refused at the top level and inside every object except messages and their nested objects, the
+`tools` definitions and the `tool_choice` object, which drop them. In the OpenAI chat front, a dropped key is a key
+outside the role's set, or a key outside the served fields of a tool call, its function object, a content part, an
+image part's `image_url` object, a `tools` entry, its `function` object, the `tool_choice` object or its `function`
+object. A dropped key is never forwarded. A function's `parameters` schema is client data and is forwarded unchanged.
+Served keys are validated. An unserved role, content part type or tool type is refused, and so is `tool_calls` on a
+message other than an assistant message. The `horde` extension object, `stream_options` and `response_format`
+refuse unknown keys.
+
+The split mirrors OpenAI. OpenAI's chat completions API returns a normal completion for a `tool` message carrying
+`name`, for a message carrying an arbitrary unknown key, for `tool_call_id` on a `user` message, and for an unknown
+key inside a content part, inside a tool call of an assistant history message, on a `tools` entry, on its `function`
+object and inside the `tool_choice` object. It refuses an unknown top-level parameter with "Unrecognized request
+argument supplied: X", an unknown key inside `response_format`, `response_format.json_schema` or `stream_options`
+with "Unknown parameter: 'response_format.bogus'" and that path as `param`, and `tool_calls` on a non-assistant
+message with "Invalid parameter: only messages with role 'assistant' can have a function call". The front's refusals
+mirror these. The OpenAI Python SDK replays its accumulated streamed reply with fields it adds (`refusal`, `audio`,
+`annotations`, `function_call`, `parsed`, `tool_calls[].index`, `function.parsed_arguments`), so refusing them would
+break the SDK's tool loop.
+
 ### Consequences
 
 - Good: The default never hides a changed answer; any later lenient mode must be explicit.
@@ -73,25 +93,3 @@ default no-ops such as empty tools or false logprobs; this is not permission to 
 
 This record and [ADR 0030](0030-route-unsupported-parameters-by-declared-support-ignoring-by-default.md) are
 mutually exclusive. Accepting one rejects the other. Ruling R5 of the review chose this record.
-
-### Amendment: unknown keys inside messages, tool definitions and tool choice
-
-Messages and their nested objects, the `tools` definitions and the `tool_choice` object drop unknown keys; every
-other object, and the top level, refuses them. In the OpenAI chat front, a dropped key is a key outside the role's
-set, or a key outside the served fields of a tool call, its function object, a content part, an image part's
-`image_url` object, a `tools` entry, its `function` object, the `tool_choice` object or its `function` object. The
-dropped key is never forwarded. A function's `parameters` schema is client data and is forwarded unchanged. Served
-keys keep their validation. An unserved role, content part type or tool type is still refused, and so is
-`tool_calls` on a message other than an assistant message. The `horde` extension object, `stream_options` and
-`response_format` keep the strict rule.
-
-The split mirrors OpenAI. Probing OpenAI's chat completions API showed that it returns a normal completion for a
-`tool` message carrying `name`, for a message carrying an arbitrary unknown key, for `tool_call_id` on a `user`
-message, and for an unknown key inside a content part, inside a tool call of an assistant history message, on a
-`tools` entry, on its `function` object and inside the `tool_choice` object. It refuses an unknown top-level
-parameter with "Unrecognized request argument supplied: X", an unknown key inside `response_format`,
-`response_format.json_schema` or `stream_options` with "Unknown parameter: 'response_format.bogus'" and that path as
-`param`, and `tool_calls` on a non-assistant message with "Invalid parameter: only messages with role 'assistant' can
-have a function call". The front's refusals mirror these. The OpenAI Python SDK also replays its accumulated streamed
-reply with fields it adds (`refusal`, `audio`, `annotations`, `function_call`, `parsed`, `tool_calls[].index`,
-`function.parsed_arguments`), so refusing them would break the SDK's tool loop.

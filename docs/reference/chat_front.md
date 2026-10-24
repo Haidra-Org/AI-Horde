@@ -66,7 +66,7 @@ unknown keys, as OpenAI does: an unknown key inside `stream_options` or `respons
 
 | Keys | Handling |
 | --- | --- |
-| `model`, `models`, `messages`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `n`, `horde` | Validated and forwarded; null counts as omitted. |
+| `model`, `models`, `messages`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `reasoning_effort`, `n`, `horde` | Validated and forwarded; null counts as omitted. `reasoning_effort` is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Validated against the `horde/chat_contract.py` shapes and forwarded verbatim; a `json_schema` response format is forwarded with its `schema` key and needs one. Dropped at their default: empty or null `tools`, `{"type": "text"}`; a null `tool_choice` or `parallel_tool_calls` is not forwarded. |
 | `stream`, `stream_options`, `user`, `metadata` | Applied or accepted by the front and not forwarded, except `stream: true` on a request whose deltas are relayed (see [Relayed deltas](#relayed-deltas)). |
 | `logprobs`, `top_logprobs`, `store`, `service_tier` | Dropped at their default (`false`, `0`, `false`, `auto` or `default`); any other value is 400. |
@@ -280,10 +280,9 @@ holds only the message and the `rc`, so both values are read from the message wi
 `GET /v1/models` lists each text model with at least one online chat worker. `context_length` and
 `top_provider.max_completion_tokens` are the largest the workers declare; `architecture.input_modalities` adds `image`
 for `vision`. `supported_parameters` is `max_tokens`, `temperature`, `top_p` and `stop`, then `seed`,
-`frequency_penalty` and `presence_penalty` for the features with the same values, `tools` for `tools`, with
-`tool_choice` added under the `tool_choice_enforced` guarantee and `parallel_tool_calls` under
-`single_tool_call_enforced`, and `response_format` for `json_object` or `json_schema`. `x_horde` carries the
-worker count and the queued work.
+`frequency_penalty`, `presence_penalty` and `reasoning_effort` for the features with the same values, `tools` and
+`parallel_tool_calls` for `tools`, with `tool_choice` added under the `tool_choice_enforced` guarantee, and
+`response_format` for `json_object` or `json_schema`. `x_horde` carries the worker count and the queued work.
 
 ## Telemetry configuration
 

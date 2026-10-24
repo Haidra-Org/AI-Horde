@@ -74,7 +74,7 @@ discriminator, so an id from the other family is not found.
 
 ## More Information
 
-The draft implementation follows the chosen option. The discriminator column is the amendment the draft needs
+The implementation follows the chosen option. The discriminator column is required
 before `messages` can be deferred, since the chat-ness property reads the column.
 
 First-release scope: one text-only choice and one requested model. Persist the structured message and its compatible string

@@ -79,7 +79,7 @@ curl -s "$OAI_BASE_URL/models" | jq '.data[] | {id, context_length, max: .top_pr
 | `x_horde.queued` | The model's queued work, shared with text requests. |
 | `context_length` | The largest context any of those workers declares. |
 | `top_provider.max_completion_tokens` | The largest `max_tokens` any of those workers declares. |
-| `supported_parameters` | `max_tokens`, `temperature`, `top_p`, `stop`; then `seed`, `frequency_penalty`, `presence_penalty`, `tools`, `response_format` when a worker declares the feature; `tool_choice` and `parallel_tool_calls` only when a worker serving tools also declares the guarantee that enforces them (see [Conformance](#conformance)). |
+| `supported_parameters` | `max_tokens`, `temperature`, `top_p`, `stop`; then `seed`, `frequency_penalty`, `presence_penalty`, `reasoning_effort`, `tools`, `response_format` when a worker declares the feature; `parallel_tool_calls` with `tools`; `tool_choice` only when a worker serving tools also declares the guarantee that enforces it (see [Conformance](#conformance)). |
 | `architecture.input_modalities` | Includes `image` when a worker accepts images. |
 
 The fields are the maxima and union across the model's workers, and they are availability hints: a request at the
@@ -116,6 +116,7 @@ Verification: the printed `model` is one of the listed ids.
 | `max_tokens`, `max_completion_tokens` | 16 to 4096 (see [Deliberate deviations](#deliberate-deviations)); equal when both are sent. Default 512 when neither is. |
 | `temperature`, `top_p`, `stop` | Forwarded; `temperature` ranges 0 to 2, `top_p` 0 to 1, and `stop` is a string or up to four strings. |
 | `seed`, `frequency_penalty`, `presence_penalty` | Forwarded; a worker has to declare the feature for `seed` (any value) or a non-zero penalty. Penalties range -2 to 2. |
+| `reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high` or `xhigh`, forwarded unchanged with no default; a worker has to declare the `reasoning_effort` feature for any value, `none` included. `none` disables thinking; how much reasoning the other values allow is the worker's mapping. Any other value is 400 `BadRequest` with `param` `reasoning_effort`. |
 | `n` | Only `1`. |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Forwarded unchanged to a worker that declares the feature; see [Tools](#tools-and-tool_choice) and [Structured output](#structured-output). |
 | `stream`, `stream_options` | Applied by the front; `stream_options` needs `"stream": true`. |
@@ -148,7 +149,7 @@ body.
 
 Any other key, and any of the dropped keys at another value, is 400 `UnsupportedChatParameter`, with `param` holding
 the key's path. Examples: `logit_bias`, `logprobs: true`, `functions`, `function_call`, `audio`, `modalities`,
-`prediction`, `web_search_options`, `reasoning_effort`, and sampler extras such as `rep_pen`, `top_k` and
+`prediction`, `web_search_options`, and sampler extras such as `rep_pen`, `top_k` and
 `min_p`. An unknown key inside `stream_options` or `response_format` is refused at its path, as OpenAI refuses it.
 `tool_calls` on a message other than an assistant message is refused at `messages[<i>].tool_calls`, and a role other
 than the five above at `messages[<i>].role`. A refused content part is reported with its type, such as
@@ -297,7 +298,7 @@ reply has `finish_reason` `stop` with text and no `tool_calls`.
 ## Conformance
 
 By default (`"conformance": "strict"`) a request goes only to workers that declare the guarantees it relies on: an
-enforced `tool_choice` for `required` or a forced function, at most one call under `parallel_tool_calls: false`, schema
+enforced `tool_choice` for `required` or a forced function, schema
 adherence for a `json_schema` format with `strict: true`, and refusal of a prompt that does not fit (the worker does
 not trim it). A request that needs a guarantee no online worker serving the model declares ends at once with 404
 `no_worker_supports_features`, and the message lists the guarantee.

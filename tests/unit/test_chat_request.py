@@ -24,6 +24,7 @@ from horde_sdk.generation_parameters.text.chat_policy import (
     ChatConformance,
     ChatFeature,
     ChatGuarantee,
+    ChatReasoningEffort,
     ChatRequestTraits,
     ChatResponseFormatType,
     ChatToolChoiceMode,
@@ -124,7 +125,6 @@ class TestUnsupportedParameters:
             "modalities",
             "audio",
             "prediction",
-            "reasoning_effort",
             "an_unknown_key",
         ],
     )
@@ -627,6 +627,39 @@ OTHER_TOOL: dict[str, Any] = {
 """A second function tool, beside ``LOOKUP_TOOL``."""
 
 
+class TestReasoningEffort:
+    """``reasoning_effort`` is OpenAI's value set, stored and forwarded unchanged, with no default."""
+
+    @pytest.mark.parametrize("reasoning_effort", [effort.value for effort in ChatReasoningEffort])
+    def test_each_openai_value_is_stored_unchanged(self, reasoning_effort: str) -> None:
+        text_params = build_text_params(parse_chat_request(_body(reasoning_effort=reasoning_effort)))
+
+        assert text_params["reasoning_effort"] == reasoning_effort
+
+    def test_an_unset_effort_stores_no_default(self) -> None:
+        assert "reasoning_effort" not in build_text_params(parse_chat_request(_body()))
+
+    @pytest.mark.parametrize("reasoning_effort", ["maximum", "NONE", ""])
+    def test_a_value_outside_the_openai_set_is_refused_by_name(self, reasoning_effort: str) -> None:
+        rejection = _rejection(_body(reasoning_effort=reasoning_effort))
+
+        assert rejection.rc == "BadRequest"
+        assert "reasoning_effort" in rejection.specific
+
+    @pytest.mark.parametrize("reasoning_effort", [1, True, ["low"], {"effort": "low"}])
+    def test_a_value_that_is_not_a_string_is_refused_by_name(self, reasoning_effort: object) -> None:
+        rejection = _rejection(_body(reasoning_effort=reasoning_effort))
+
+        assert rejection.rc == "BadRequest"
+        assert "reasoning_effort" in rejection.specific
+
+    def test_a_changed_effort_changes_the_operation_fingerprint(self) -> None:
+        low = build_operation_fingerprint(parse_chat_request(_body(reasoning_effort="low")))
+
+        assert low != build_operation_fingerprint(parse_chat_request(_body(reasoning_effort="high")))
+        assert low != build_operation_fingerprint(parse_chat_request(_body()))
+
+
 class TestRequestTraits:
     def test_a_request_without_extras_has_the_api_defaults(self) -> None:
         assert _traits(_body()) == ChatRequestTraits(
@@ -725,10 +758,10 @@ class TestRequiredGuarantees:
             ChatConformance.STRICT,
         ) == {ChatFeature.TOOLS, ChatGuarantee.PROMPT_OVERFLOW_REFUSED}
 
-    def test_tools_without_parallel_calls_need_the_single_call_guarantee(self) -> None:
+    def test_tools_without_parallel_calls_need_no_single_call_guarantee(self) -> None:
+        """The server reduces a strict reply's tool calls to the first, so routing does not need the guarantee."""
         assert _required_features(_body(tools=[LOOKUP_TOOL], parallel_tool_calls=False), ChatConformance.STRICT) == {
             ChatFeature.TOOLS,
-            ChatGuarantee.SINGLE_TOOL_CALL_ENFORCED,
             ChatGuarantee.PROMPT_OVERFLOW_REFUSED,
         }
 
@@ -846,6 +879,14 @@ class TestRequiredFeatures:
     def test_a_zero_seed_still_needs_the_seed_feature(self) -> None:
         assert _required_features(_body(seed=0)) == {ChatFeature.SEED}
 
+    @pytest.mark.parametrize("conformance", list(ChatConformance))
+    def test_a_reasoning_effort_of_none_still_needs_the_reasoning_effort_feature_under_every_mode(
+        self,
+        conformance: ChatConformance,
+    ) -> None:
+        """A backend that ignores the key would reason anyway, so ``none`` needs the feature as any other value does."""
+        assert ChatFeature.REASONING_EFFORT in _required_features(_body(reasoning_effort="none"), conformance)
+
     def test_image_parts_need_the_vision_feature(self) -> None:
         image_part = {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}
 
@@ -934,6 +975,7 @@ REQUIREMENT_PARITY_BODIES: dict[str, dict[str, Any]] = {
         tools=[LOOKUP_TOOL], tool_choice="required", response_format=JSON_SCHEMA_FORMAT, horde={"conformance": "best_effort"}
     ),
     "explicit_strict": _body(seed=3, horde={"conformance": "strict"}),
+    "reasoning_effort": _body(reasoning_effort="none"),
 }
 """Request bodies covering every requirement rule, for comparing the server's derivation with the SDK's."""
 
@@ -1788,6 +1830,13 @@ class TestChatJobPayload:
         assert payload["stop_sequence"] == ["END"]
         assert payload["seed"] == 9
         assert "prompt" not in payload
+
+    def test_a_reasoning_effort_the_client_sent_reaches_the_payload_unchanged(self) -> None:
+        params = build_text_params(parse_chat_request(_body(reasoning_effort="xhigh")))
+
+        payload = build_chat_job_payload(params, max_length=64, max_context_length=2048)
+
+        assert payload["reasoning_effort"] == "xhigh"
 
 
 class TestMessages:

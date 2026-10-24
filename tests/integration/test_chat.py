@@ -450,6 +450,22 @@ def test_a_request_needing_an_undeclared_feature_waits_for_a_worker_that_declare
     _cancel(client, request_headers, "chat", request_id)
 
 
+def test_a_reasoning_effort_waits_for_a_worker_that_declares_it_and_reaches_the_payload_unchanged(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """``none`` needs the feature as any other value does, since a backend that ignores the key would reason anyway."""
+    request_id = _submit_chat_request(client, request_headers, reasoning_effort="none")
+
+    without_feature = chat_worker.pop()
+    assert without_feature["id"] is None, without_feature
+    with_feature = chat_worker.pop(chat_features=["reasoning_effort"])
+    assert with_feature["id"] is not None, with_feature
+    assert with_feature["payload"]["reasoning_effort"] == "none"
+    _cancel(client, request_headers, "chat", request_id)
+
+
 def _age_worker_into_the_check_in_debounce(app, worker_name: str) -> None:
     """Make every following pop within 30 seconds a debounced check-in, as for a long-running worker."""
     from horde.classes.kobold.worker import TextWorker
@@ -2033,6 +2049,22 @@ def test_a_strict_single_call_request_shows_only_the_first_of_several_calls(
     assert generation["finish_reason"] == "tool_calls"
     [submit_record] = [attributes for event_name, attributes in log_records if event_name == "horde.job_submit.done"]
     assert submit_record["dropped_tool_calls"] == 1
+
+
+def test_a_strict_request_without_parallel_tool_calls_goes_to_a_worker_without_the_single_call_guarantee(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """The Horde reduces a strict reply's tool calls to the first itself, so routing does not need
+    ``single_tool_call_enforced``."""
+    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], parallel_tool_calls=False)
+
+    pop_result = chat_worker.pop(chat_features=["tools"], chat_guarantees=["prompt_overflow_refused"])
+
+    assert pop_result["id"] is not None, pop_result
+    assert pop_result["payload"]["parallel_tool_calls"] is False
+    _cancel(client, request_headers, "chat", request_id)
 
 
 @pytest.mark.parametrize("conformance", ["strict", "best_effort"])

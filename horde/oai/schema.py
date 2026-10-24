@@ -45,6 +45,7 @@ from horde_sdk.generation_parameters.text.chat_limits import (
     OPENAI_SAMPLING_RANGES,
     SUPPORTED_CHAT_CHOICE_COUNT,
 )
+from horde_sdk.generation_parameters.text.chat_policy import ChatReasoningEffort
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -755,6 +756,9 @@ class ChatCompletionRequest(BaseModel):
 
     seed: StrictInt | None = None
     """The sampling seed."""
+
+    reasoning_effort: ChatReasoningEffort | None = None
+    """How much the model reasons before answering, forwarded unchanged; needs a worker that declares it."""
 
     n: StrictInt | None = None
     """How many choices to generate; only 1 is served."""

@@ -131,7 +131,7 @@ Each entry is built from the model's `chat` object in that list:
 | `context_length`, `top_provider.context_length` | `chat.max_context_length`, the largest an online chat worker declares. |
 | `top_provider.max_completion_tokens` | `chat.max_length`, the largest an online chat worker declares. |
 | `architecture` | Text in and out; `input_modalities` adds `image`, and `modality` becomes `text+image->text`, when a worker declares the `vision` feature. |
-| `supported_parameters` | `max_tokens`, `temperature`, `top_p` and `stop`, then `seed`, `frequency_penalty` and `presence_penalty` for each a worker declares as a feature; `tools` with the `tools` feature, and with it `tool_choice` under the `tool_choice_enforced` guarantee and `parallel_tool_calls` under `single_tool_call_enforced`; `response_format` with `json_object` or `json_schema`. |
+| `supported_parameters` | `max_tokens`, `temperature`, `top_p` and `stop`, then `seed`, `frequency_penalty`, `presence_penalty` and `reasoning_effort` for each a worker declares as a feature; `tools` and `parallel_tool_calls` with the `tools` feature, and with them `tool_choice` under the `tool_choice_enforced` guarantee; `response_format` with `json_object` or `json_schema`. |
 | `x_horde.workers` | `chat.workers`, the online chat workers serving the model. |
 | `x_horde.queued` | The model's queue, which chat requests share with text requests; absent when the horde reports none. |
 

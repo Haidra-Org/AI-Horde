@@ -611,7 +611,7 @@ async def test_models_list_tool_and_response_format_parameters_from_declared_fea
 
     supported_by_model = {model["id"]: model["supported_parameters"] for model in response.json()["data"]}
     assert supported_by_model == {
-        "tools-model": ["max_tokens", "temperature", "top_p", "stop", "tools"],
+        "tools-model": ["max_tokens", "temperature", "top_p", "stop", "tools", "parallel_tool_calls"],
         "json-object-model": ["max_tokens", "temperature", "top_p", "stop", "response_format"],
         "json-schema-model": [
             "max_tokens",
@@ -620,8 +620,8 @@ async def test_models_list_tool_and_response_format_parameters_from_declared_fea
             "stop",
             "seed",
             "tools",
-            "tool_choice",
             "parallel_tool_calls",
+            "tool_choice",
             "response_format",
         ],
     }
@@ -630,8 +630,8 @@ async def test_models_list_tool_and_response_format_parameters_from_declared_fea
 @pytest.mark.parametrize(
     ("declared_features", "expected_tool_parameters"),
     [
-        (["tools"], ["tools"]),
-        (["tools", "tool_choice_enforced"], ["tools", "tool_choice"]),
+        (["tools"], ["tools", "parallel_tool_calls"]),
+        (["tools", "tool_choice_enforced"], ["tools", "parallel_tool_calls", "tool_choice"]),
         (["tools", "single_tool_call_enforced"], ["tools", "parallel_tool_calls"]),
         (["tool_choice_enforced", "single_tool_call_enforced"], []),
     ],
@@ -649,6 +649,22 @@ async def test_models_list_a_tool_constraint_only_with_its_declared_guarantee(
 
     (model_card,) = response.json()["data"]
     assert model_card["supported_parameters"] == ["max_tokens", "temperature", "top_p", "stop", *expected_tool_parameters]
+
+
+async def test_models_list_reasoning_effort_only_when_a_worker_declares_it(start_front: StartFront) -> None:
+    model_list = [
+        {"name": "reasoning-model", "chat": {"workers": 1, "features": ["reasoning_effort"]}},
+        {"name": "plain-model", "chat": {"workers": 1, "features": []}},
+    ]
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=model_list)
+        response = await front.client.get("/v1/models")
+
+    supported_by_model = {model["id"]: model["supported_parameters"] for model in response.json()["data"]}
+    assert supported_by_model == {
+        "reasoning-model": ["max_tokens", "temperature", "top_p", "stop", "reasoning_effort"],
+        "plain-model": ["max_tokens", "temperature", "top_p", "stop"],
+    }
 
 
 REASONING_TEXT: str = "The user wants a greeting."

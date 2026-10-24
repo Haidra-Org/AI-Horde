@@ -101,6 +101,7 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   | `json_object`       | The backend constrains the reply to one JSON object                                 |
   | `json_schema`       | The backend constrains the reply to the client's JSON Schema                        |
   | `tools_with_response_format` | The backend serves tools and a response format in one request, applying the format only to the final text answer |
+  | `reasoning_effort`  | The backend applies OpenAI's `reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) to the model's reasoning; `none` disables thinking |
 
   The same list carries guarantees: a guarantee states that the backend follows one part of the OpenAI contract
   exactly, where it could otherwise deviate on purpose ([ADR 0036](../decisions/0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md)).
@@ -111,7 +112,7 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   | Guarantee                    | The worker promises                                                              |
   | ---------------------------- | -------------------------------------------------------------------------------- |
   | `tool_choice_enforced`       | Under `required` or a function choice the reply calls a tool (that function), never prose alone; under `none` it does not call a tool |
-  | `single_tool_call_enforced`  | Under `parallel_tool_calls: false` the reply carries at most one call            |
+  | `single_tool_call_enforced`  | Under `parallel_tool_calls: false` the reply carries at most one call. No request needs it: the horde keeps only the first call of a strict reply |
   | `structured_output_enforced` | A `json_schema` reply satisfies the schema, or the job is faulted; the backend does not fall back to free text |
   | `prompt_overflow_refused`    | A prompt that does not fit `chat_limits.max_context_length` faults the job and is not trimmed |
 
@@ -173,7 +174,8 @@ A chat job's payload differs from a text payload in these ways:
 - `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `rep_pen`, `top_k` and `min_p` are always present,
   with OpenAI's defaults where the client left them out. Apply them as sent and ignore the backend's local defaults,
   so one request means the same thing on every worker.
-- `stop_sequence` and `seed` are present only when the client sent them.
+- `stop_sequence`, `seed` and `reasoning_effort` are present only when the client sent them. `reasoning_effort` is the
+  client's value unchanged; the horde applies no default, so a job without it leaves reasoning to the backend.
 - `max_length` and `max_context_length` are validated budgets within the worker's `chat_limits`. Generate at most
   `max_length` tokens and render within `max_context_length`.
 - `tools`, `tool_choice`, `parallel_tool_calls` and `response_format` are present only when the request applies them

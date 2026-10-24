@@ -255,6 +255,7 @@ The submit check does not trust declarations, so a false one costs the worker re
 the requester a wrong reply. It verifies only what the payload proves. Under `strict` a call under `none`, a missing
 or other call under a forced choice, and content that is not the requested JSON or does not match a `strict` schema
 are refused; several calls under `parallel_tool_calls: false` are cut to the first, since an OpenAI client would only ever see one.
+Because the cut holds whichever worker replied, routing does not require `single_tool_call_enforced`.
 Under either mode a call to a function the client did not offer, or two calls sharing an id, is refused, because no
 client can dispatch or answer such a reply. A refused submit faults the job on the worker and counts towards faulting
 the request, so the check refuses only what OpenAI would never return. A trimmed prompt or a hidden tool-selection pass

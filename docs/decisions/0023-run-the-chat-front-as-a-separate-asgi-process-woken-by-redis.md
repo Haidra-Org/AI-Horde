@@ -71,10 +71,10 @@ publishing is best effort. A stretched poll covers a lost message. The front doe
 
 ## More Information
 
-The draft implementation follows the chosen option. The native cache in `horde/horde_redis.py` fans writes out to
+The implementation follows the chosen option. The native cache in `horde/horde_redis.py` fans writes out to
 every configured server; chat signal and stream keys live only on the primary.
 
-Correctness amendments: terminal status comes from committed database state or an explicitly fresh cache; publishing
+Correctness requirements: terminal status comes from committed database state or an explicitly fresh cache; publishing
 after commit alone does not invalidate caches. Waits, native-call acquisition, response writes and shutdown have
 finite budgets, including streamed requests. Native cancellation is best effort and preserves text accounting.
 Crashes may leave charged work uncollected; durable delivery recovery is outside the first release's scope.

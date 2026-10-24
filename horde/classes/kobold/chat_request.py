@@ -65,6 +65,7 @@ from horde_sdk.generation_parameters.text.chat_policy import (
     ChatConformance,
     ChatFeature,
     ChatGuarantee,
+    ChatReasoningEffort,
     ChatRequestTraits,
     required_chat_guarantees,
 )
@@ -228,6 +229,7 @@ SUPPORTED_REQUEST_KEYS = frozenset(
         "top_p",
         "n",
         "seed",
+        "reasoning_effort",
         "stop",
         "frequency_penalty",
         "presence_penalty",
@@ -511,6 +513,10 @@ class ChatCompletionRequest(BaseModel):
 
     seed: StrictInt | None = None
     """A sampling seed, passed to the worker. Only workers that declare ``seed`` serve a request that sets it."""
+
+    reasoning_effort: ChatReasoningEffort | None = None
+    """How much the model reasons before answering, one of OpenAI's values, passed to the worker unchanged and without
+    a default. Only workers that declare ``reasoning_effort`` serve a request that sets it, ``none`` included."""
 
     stop: StrictStr | list[StrictStr] | None = None
     """One stop sequence or a list of them."""
@@ -1682,6 +1688,8 @@ def build_text_params(chat_request: ChatCompletionRequest) -> dict[str, Any]:
         text_params["presence_penalty"] = chat_request.presence_penalty
     if chat_request.seed is not None:
         text_params["seed"] = chat_request.seed
+    if chat_request.reasoning_effort is not None:
+        text_params["reasoning_effort"] = chat_request.reasoning_effort.value
     if chat_request.stop is not None:
         text_params["stop_sequence"] = [chat_request.stop] if isinstance(chat_request.stop, str) else list(chat_request.stop)
 
@@ -1801,9 +1809,11 @@ def required_chat_features(
         conformance: The conformance mode the request selected.
 
     Returns:
-        ``seed`` when a seed is set; each penalty whose value is not zero; ``vision`` when a message carries an image
-        part; ``tools`` when the request offers tools under a ``tool_choice`` other than ``none``, or any message is a
-        ``tool`` message or carries tool calls, since the worker's template has to render those turns;
+        ``seed`` when a seed is set; ``reasoning_effort`` when a reasoning effort is set, ``none`` included, since a
+        backend that ignores the key would reason anyway; each penalty whose value is not zero; ``vision`` when a
+        message carries an image part; ``tools`` when the request offers tools under a ``tool_choice`` other than
+        ``none``, or any message is a ``tool`` message or carries tool calls, since the worker's template has to render
+        those turns;
         ``json_object`` or ``json_schema`` by the response format's type; ``tools_with_response_format`` when the
         request forwards tool definitions and sets a response format, since the backend then has to apply the format
         to the final answer and not to the tool calls; and the guarantees the SDK's
@@ -1813,6 +1823,8 @@ def required_chat_features(
     needed_features: set[ChatFeature | ChatGuarantee] = set()
     if params.get("seed") is not None:
         needed_features.add(ChatFeature.SEED)
+    if params.get("reasoning_effort") is not None:
+        needed_features.add(ChatFeature.REASONING_EFFORT)
     for penalty_feature in (ChatFeature.FREQUENCY_PENALTY, ChatFeature.PRESENCE_PENALTY):
         default_penalty = CHAT_SAMPLING_DEFAULTS[penalty_feature.value]
         if params.get(penalty_feature.value, default_penalty) != default_penalty:
@@ -2071,7 +2083,8 @@ def build_chat_job_payload(params: Mapping[str, Any], *, max_length: int, max_co
 
     Every sampling field in
     the SDK's ``CHAT_SAMPLING_DEFAULTS`` is present, with its
-    default where the client left it unset; ``stop_sequence`` and ``seed`` only when the client sent them. There is
+    default where the client left it unset; ``stop_sequence``, ``seed`` and ``reasoning_effort`` only when the client
+    sent them. There is
     no prompt.
 
     Args:
@@ -2085,7 +2098,7 @@ def build_chat_job_payload(params: Mapping[str, Any], *, max_length: int, max_co
     chat_payload: dict[str, Any] = {
         sampling_field: params.get(sampling_field, default_value) for sampling_field, default_value in CHAT_SAMPLING_DEFAULTS.items()
     }
-    for optional_field in ("stop_sequence", "seed"):
+    for optional_field in ("stop_sequence", "seed", "reasoning_effort"):
         if params.get(optional_field) is not None:
             chat_payload[optional_field] = params[optional_field]
     chat_payload[MAX_LENGTH_PARAMETER] = max_length

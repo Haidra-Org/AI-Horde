@@ -487,6 +487,8 @@ def _find_declaration_violations(payload: Mapping[str, Any], persona: ChatPerson
         needed.append(ChatFeature.TOOLS_WITH_RESPONSE_FORMAT.value)
     if "seed" in payload:
         needed.append(ChatFeature.SEED.value)
+    if ChatFeature.REASONING_EFFORT.value in payload:
+        needed.append(ChatFeature.REASONING_EFFORT.value)
     if payload.get("presence_penalty"):
         needed.append(ChatFeature.PRESENCE_PENALTY.value)
     if payload.get("frequency_penalty"):

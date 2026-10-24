@@ -106,6 +106,7 @@ NATIVE_REQUEST_KEYS: frozenset[str] = frozenset(
         "presence_penalty",
         "stop",
         "seed",
+        "reasoning_effort",
         "n",
         "tools",
         "tool_choice",

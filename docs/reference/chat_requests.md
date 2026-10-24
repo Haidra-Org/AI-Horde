@@ -190,6 +190,7 @@ returns `429`.
 | `temperature`, `top_p`                   | The text params with the same keys                                                |
 | `frequency_penalty`, `presence_penalty`  | -2 to 2; forwarded to the worker, which has to declare the feature for a non-zero value |
 | `seed`                                   | Forwarded to the worker, which has to declare the `seed` feature                 |
+| `reasoning_effort`                       | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` (`ChatReasoningEffort`); stored and forwarded to the worker unchanged, with no default. The worker has to declare the `reasoning_effort` feature, for `none` as for any other value. Any other value or type returns `400` |
 | `stop`                                   | `stop_sequence`; a single string becomes a one-element list                      |
 | `n`                                      | Only `1`                                                                         |
 | `stream`                                 | `true` stores the stream hint; see [Streaming progress](#streaming-progress)     |
@@ -418,7 +419,7 @@ the client's; only the worker's copy is narrowed (see [Chat job pop response](#c
 ### Refused keys and values
 
 Any key outside the lists above returns `400 UnsupportedChatParameter`, and the message holds the key. This covers
-`logprobs`, `top_logprobs`, `logit_bias`, `modalities`, `audio`, `prediction` and `reasoning_effort`, as well as:
+`logprobs`, `top_logprobs`, `logit_bias`, `modalities`, `audio` and `prediction`, as well as:
 
 - a message key outside its role's keys: `role`, `content` and `name`, plus `tool_calls` on an `assistant` message,
   and `role`, `content` and `tool_call_id` on a `tool` message (for example `messages[0].tool_calls` on a `user`
@@ -512,6 +513,7 @@ The feature vocabulary (`ChatFeature`) grows by adding values; a value never cha
 | Feature             | A request needs it when                       |
 | ------------------- | --------------------------------------------- |
 | `seed`              | it sends `seed`, whatever its value            |
+| `reasoning_effort`  | it sends `reasoning_effort`, whatever its value; `none` included, since a backend that ignores the key reasons anyway. The backend applies the value, and `none` disables thinking |
 | `presence_penalty`  | it sends a non-zero `presence_penalty`         |
 | `frequency_penalty` | it sends a non-zero `frequency_penalty`        |
 | `vision`            | a message carries an image part; the worker also has to declare an image transport |
@@ -531,7 +533,7 @@ Guarantees share the `chat_features` list and namespace with the features above:
 | Guarantee                    | A `strict` request needs it when                                              |
 | ---------------------------- | ----------------------------------------------------------------------------- |
 | `tool_choice_enforced`       | it forwards tools under `tool_choice` `required` or a function choice          |
-| `single_tool_call_enforced`  | it forwards tools with `parallel_tool_calls` `false`                          |
+| `single_tool_call_enforced`  | never; a worker may declare it, and under `strict` the Horde reduces the reply's tool calls to the first when `parallel_tool_calls` is `false` |
 | `structured_output_enforced` | its `response_format` is `json_schema` with `strict` `true`                   |
 | `prompt_overflow_refused`    | always                                                                        |
 
@@ -608,7 +610,7 @@ A text job's pop response does not carry a `chat` key. A chat job's response has
 | `messages_url`                                                         | Only for a generation assigned the `messages_url` transport: a signed URL, valid for 120 seconds, to the array as in [Messages offload](#messages-offload) |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format`       | Each only when stored in `chat_extras`, narrowed as below     |
 | `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `rep_pen`, `top_k`, `min_p` | Always present; the client's value or `1.0`, `1.0`, `0`, `0`, `1.0`, `0`, `0` |
-| `stop_sequence`, `seed`                                                | Only when the client sent them                                |
+| `stop_sequence`, `seed`, `reasoning_effort`                            | Only when the client sent them                                |
 | `max_length`, `max_context_length`                                     | The validated budgets                                         |
 | `n`                                                                    | `1`                                                           |
 
