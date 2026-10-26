@@ -51,7 +51,7 @@ dependencies = [
     # the workers, and the clients that share this package.
     # Also contains the text chat completions request limits and chat capabilities foundations used
     # to enforce compliance with different standards (OAI vs horde adaptations).
-    "horde_sdk~=0.33.1",
+    "horde_sdk~=0.33.3",
     # The image model reference loader (REPLICA fetch plus the pending/beta overlay) and the
     # baseline vocabulary both come from here, so it is pinned explicitly rather than being
     # inherited from horde_sdk.
