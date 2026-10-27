@@ -1471,7 +1471,7 @@ class JobSubmitTemplate(Resource):
             if self.args.state == "faulted":
                 self.kudos = 0
             else:
-                raise e.AbortedGen(self.procgen.worker.name, self.args["id"])
+                raise e.AbortedGen(self.procgen.worker.name, self.args["id"], self.procgen.job_ttl)
         if self.args.gen_metadata and len(self.args.gen_metadata) > 50:
             raise e.BadRequest("Too many metadata fields. Max is 50.")
 

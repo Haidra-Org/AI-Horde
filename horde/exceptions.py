@@ -672,10 +672,10 @@ class DuplicateGen(wze.BadRequest):
 
 
 class AbortedGen(wze.BadRequest):
-    def __init__(self, worker, gen_id, rc="AbortedGen"):
+    def __init__(self, worker, gen_id, ttl, rc="AbortedGen"):
         self.specific = (
             f"Processing Generation with ID {gen_id} took too long to process and has been aborted! "
-            "Please check your worker speed - generations must complete within 150 seconds (minimum ~1 it/s, higher for large requests)!"
+            f"Please check your worker speed - this generation had to complete within {ttl} seconds!"
         )
         self.log = f"Worker '{worker}' attempted to provide aborted generation for {gen_id}."
         self.rc = rc

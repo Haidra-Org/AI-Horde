@@ -22,6 +22,7 @@ from horde.classes.kobold.chat_request import (
     streams_progress,
 )
 from horde.classes.kobold.genstats import record_text_statistic
+from horde.classes.kobold.worker import get_minimum_text_worker_speed
 from horde.flask import db
 from horde.logger import logger
 from horde.metrics import (
@@ -31,9 +32,18 @@ from horde.metrics import (
 )
 from horde.model_reference import model_reference
 from horde.suspicions import Suspicions
+from horde.utils import EXTRA_SLOW_REQUEST_LIFETIME_SECONDS, REQUEST_LIFETIME_SECONDS
 
 UNKNOWN_ATTRIBUTE_VALUE = "unknown"
 """Placeholder for a metric attribute the submission did not include."""
+
+TEXT_JOB_FIXED_SECONDS = 30
+"""Seconds every text lease grants before its per-token term, covering the time from pop to the start of generation
+and the worker's prompt processing, neither of which scales with the requested output length."""
+
+TEXT_JOB_MINIMUM_SECONDS = 150
+"""Shortest text lease, matching the base generation default so a short reply keeps the deadline every generation
+type is granted when model loading or a busy worker delays its start."""
 
 
 def is_empty_text_generation(generation: str | None) -> bool:
@@ -138,6 +148,39 @@ class TextProcessingGeneration(ProcessingGeneration):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._write_stream_lease()
+
+    def set_job_ttl(self) -> None:
+        """Persist the completion deadline offered to the worker for this assignment.
+
+        This is a lease from pop to submission, not a prediction of generation time. It grants a fixed allowance
+        for reaching the job and processing its prompt, plus the request's ``max_length`` at the normal-speed
+        threshold for the assigned model, the rate
+        [`get_minimum_text_worker_speed`][horde.classes.kobold.worker.get_minimum_text_worker_speed] sets for
+        requests that disallow slow workers. The lease is set at pop, before any speed for this job is known, and a
+        worker at the threshold must be able to finish the longest reply the request permits; the assigned worker's
+        measured speed is therefore not a term. The rate depends on the assigned model alone, so a multi-model
+        request is not budgeted by its largest model.
+
+        The 150-second floor protects short jobs, where model loading and queueing on the worker dominate and the
+        proportional allowance would be least useful. The lease is capped at the request's lifetime, since a request
+        expires on that schedule whatever its jobs are doing: a reply the threshold rate cannot finish inside it is
+        leased the lifetime, and a worker that cannot sustain the implied rate is aborted rather than waited for.
+        """
+        tokens_per_second = get_minimum_text_worker_speed([self.model])
+        ttl = TEXT_JOB_FIXED_SECONDS + self.wp.max_length / tokens_per_second
+        ttl = max(ttl, TEXT_JOB_MINIMUM_SECONDS)
+        request_lifetime = REQUEST_LIFETIME_SECONDS
+        # The extra-slow opt-in describes the worker, not the payload. Applying it after the floor keeps
+        # short leases viable on hardware whose model preparation is itself unusually slow.
+        if self.worker.extra_slow_worker is True:
+            ttl *= 3
+            request_lifetime = EXTRA_SLOW_REQUEST_LIFETIME_SECONDS
+        ttl = min(ttl, request_lifetime)
+
+        # The wire contract and database column are whole seconds. Round upward so a fractional token term can
+        # never shorten the promised completion window.
+        self.job_ttl = math.ceil(ttl)
+        db.session.commit()
 
     def _write_stream_lease(self) -> None:
         """Write the stream lease of a chat generation whose client streams the reply.

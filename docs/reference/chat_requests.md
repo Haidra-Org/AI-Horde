@@ -637,6 +637,17 @@ The payload does not carry a `prompt`. The worker applies its chat template, tok
 fails a job that does not fit; it does not truncate the input. Every sampling field is present, so a worker's
 defaults never apply to a chat job.
 
+### Job lease
+
+The pop response's top-level `ttl` is the job's completion lease in seconds, the deadline after which the
+stale-generation thread aborts the job and a late submit returns `400 AbortedGen` stating it. For text and chat jobs
+alike `TextProcessingGeneration.set_job_ttl` grants a fixed 30 seconds plus the request's `max_length` at the
+normal-speed threshold of the assigned model (`get_minimum_text_worker_speed`: 3, 4 or 5 tokens per second by
+parameter count), floored at 150 seconds, tripled for an extra-slow worker and capped at the request lifetime
+(`REQUEST_LIFETIME_SECONDS`, 20 minutes; 60 for an extra-slow worker), since a request expires on that schedule
+whatever its jobs are doing. The lease is set at pop, before the job's own speed is known, so the assigned worker's
+measured speed is not a term. The stream lease and a chat image URL's lifetime derive from the same value.
+
 ## Structured submit
 
 `POST /v2/generate/text/submit` keeps `generation` for text jobs. A chat job sends these instead:

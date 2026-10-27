@@ -107,12 +107,21 @@ def get_message_expiry_date():
     return datetime.utcnow() + dateutil.relativedelta.relativedelta(hours=+12)
 
 
+REQUEST_LIFETIME_SECONDS = 20 * 60
+"""How long a generation request lives after its creation or last refresh before it is expired, and therefore the
+longest a job lease on it can usefully run."""
+
+EXTRA_SLOW_REQUEST_LIFETIME_SECONDS = 60 * 60
+"""The request lifetime once an extra-slow worker holds one of its jobs, since such hardware is allowed several times
+the usual completion window."""
+
+
 def get_expiry_date():
-    return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+20)
+    return datetime.utcnow() + dateutil.relativedelta.relativedelta(seconds=+REQUEST_LIFETIME_SECONDS)
 
 
 def get_extra_slow_expiry_date():
-    return datetime.utcnow() + dateutil.relativedelta.relativedelta(minutes=+60)
+    return datetime.utcnow() + dateutil.relativedelta.relativedelta(seconds=+EXTRA_SLOW_REQUEST_LIFETIME_SECONDS)
 
 
 def get_interrogation_form_expiry_date():
