@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import logfire
-from sqlalchemy import Boolean, and_, case, func, not_, or_
+from sqlalchemy import Boolean, and_, case, func, not_, or_, select
 from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload
 
 import horde.classes.base.stats as stats
@@ -382,6 +382,20 @@ def worker_name_exists(worker_name):
         if worker:
             return True
     return False
+
+
+WORKER_REGISTRATION_LOCK_NAMESPACE = 0x574B5247  # "WKRG"
+
+
+def acquire_worker_registration_lock(user_id: int) -> None:
+    """Serialize new-worker registration for one user until the current transaction ends.
+
+    The worker limits count the user's workers before the insert, so two concurrent pops that each register a new
+    name would both pass them without this lock.
+    """
+    if SQLITE_MODE:
+        return
+    db.session.execute(select(func.pg_advisory_xact_lock(WORKER_REGISTRATION_LOCK_NAMESPACE, user_id))).scalar_one()
 
 
 def find_worker_by_id(worker_id):

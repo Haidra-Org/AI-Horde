@@ -100,6 +100,133 @@ class TestPopAuth:
 
 
 # --------------------------------------------------------------------------- #
+# Concurrent worker registration                                              #
+# --------------------------------------------------------------------------- #
+
+
+def _store_worker(app, user_id: int, name: str, worker_kind: str = "text") -> None:
+    """Commit a worker row directly, standing in for a concurrent pop that registered it."""
+    from horde.classes.kobold.worker import TextWorker
+    from horde.classes.stable.worker import ImageWorker
+    from horde.flask import db
+
+    worker_class = {"text": TextWorker, "image": ImageWorker}[worker_kind]
+    with app.app_context():
+        db.session.add(worker_class(user_id=user_id, name=name))
+        db.session.commit()
+
+
+def _count_workers_named(app, name: str) -> int:
+    from horde.classes.base.worker import WorkerTemplate
+    from horde.flask import db
+
+    with app.app_context():
+        return db.session.query(WorkerTemplate).filter(WorkerTemplate.name == name).count()
+
+
+def _hide_first_calls(monkeypatch, function_name: str, hidden_calls: int, hidden_result) -> None:
+    """Make the first lookups of a pop miss a committed row, as they do when the row commits after them."""
+    from horde.database import functions as database
+
+    real_function = getattr(database, function_name)
+    calls = {"count": 0}
+
+    def _lookup(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] <= hidden_calls:
+            return hidden_result
+        return real_function(*args, **kwargs)
+
+    monkeypatch.setattr(database, function_name, _lookup)
+
+
+def _allow_untrusted_ip(monkeypatch) -> None:
+    from horde.apis.v2 import base as api_base
+
+    monkeypatch.setattr(api_base.CounterMeasures, "is_ip_safe", staticmethod(lambda ipaddr: True))
+
+
+def _commit_worker_before_lock(monkeypatch, name: str) -> None:
+    """Commit a worker for the popping user just before the pop takes the registration lock.
+
+    This is the order of events when another pop by the same user registers while this one waits on the lock: the
+    limits this pop checked before the lock did not count that worker.
+    """
+    from horde.classes.kobold.worker import TextWorker
+    from horde.database import functions as database
+    from horde.flask import db
+
+    real_lock = database.acquire_worker_registration_lock
+
+    def _lock_after_concurrent_registration(user_id):
+        db.session.add(TextWorker(user_id=user_id, name=name))
+        db.session.commit()
+        real_lock(user_id)
+
+    monkeypatch.setattr(database, "acquire_worker_registration_lock", _lock_after_concurrent_registration)
+
+
+class TestPopWorkerRegistration:
+    def test_sibling_registration_while_waiting_is_reused_at_the_limit(self, app, client, make_api_user, monkeypatch):
+        owner = make_api_user(trusted=False, kudos=100)
+        for index in range(3):
+            _store_worker(app, owner.id, f"Sibling Scribe {index}")
+        _allow_untrusted_ip(monkeypatch)
+        _commit_worker_before_lock(monkeypatch, "Sibling Scribe 3")
+
+        resp = _pop_text(client, owner.api_key, "Sibling Scribe 3")
+
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        assert _count_workers_named(app, "Sibling Scribe 3") == 1
+
+    def test_insert_collision_with_another_users_worker_is_wrong_credentials(self, app, client, make_api_user, monkeypatch):
+        owner = make_api_user(trusted=True, kudos=100)
+        rival = make_api_user(trusted=True, kudos=100)
+        _store_worker(app, rival.id, "Contested Scribe")
+        _hide_first_calls(monkeypatch, "find_worker_by_name", hidden_calls=2, hidden_result=None)
+        _hide_first_calls(monkeypatch, "worker_name_exists", hidden_calls=2, hidden_result=False)
+
+        resp = _pop_text(client, owner.api_key, "Contested Scribe")
+
+        assert resp.status_code == 403, resp.get_data(as_text=True)
+        assert resp.get_json()["rc"] == "WrongCredentials"
+        assert _count_workers_named(app, "Contested Scribe") == 1
+
+    def test_insert_collision_with_another_worker_type_is_polymorphic_conflict(self, app, client, make_api_user, monkeypatch):
+        owner = make_api_user(trusted=True, kudos=100)
+        _store_worker(app, owner.id, "Painter Scribe", worker_kind="image")
+        _hide_first_calls(monkeypatch, "worker_name_exists", hidden_calls=2, hidden_result=False)
+
+        resp = _pop_text(client, owner.api_key, "Painter Scribe")
+
+        assert resp.status_code == 400, resp.get_data(as_text=True)
+        assert resp.get_json()["rc"] == "PolymorphicNameConflict"
+
+    def test_worker_limit_counts_registrations_committed_while_waiting(self, app, client, make_api_user, monkeypatch):
+        owner = make_api_user(trusted=False, kudos=100)
+        for index in range(3):
+            _store_worker(app, owner.id, f"Untrusted Scribe {index}")
+        _allow_untrusted_ip(monkeypatch)
+        _commit_worker_before_lock(monkeypatch, "Untrusted Scribe 3")
+
+        resp = _pop_text(client, owner.api_key, "Untrusted Scribe 4")
+
+        assert resp.status_code == 403, resp.get_data(as_text=True)
+        assert resp.get_json()["rc"] == "TooManyWorkers"
+        assert _count_workers_named(app, "Untrusted Scribe 4") == 0
+
+    def test_name_longer_than_the_column_is_rejected_before_lookup(self, app, client, make_api_user):
+        owner = make_api_user(trusted=True, kudos=100)
+        long_name = "Verbose Scribe " + "x" * 100
+
+        resp = _pop_text(client, owner.api_key, long_name)
+
+        assert resp.status_code == 400, resp.get_data(as_text=True)
+        assert resp.get_json()["rc"] == "TooLongWorkerName"
+        assert _count_workers_named(app, long_name[:100]) == 0
+
+
+# --------------------------------------------------------------------------- #
 # Worker details + modify permission matrix                                   #
 # --------------------------------------------------------------------------- #
 
