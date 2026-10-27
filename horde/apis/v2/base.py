@@ -724,7 +724,24 @@ class GenerateTemplate(Resource):
             webhook=self.args.webhook,
             traceparent=get_traceparent(),
         )
-        self.upload_source_images()
+        self.upload_source_images_or_delete_waiting_prompt()
+
+    def upload_source_images_or_delete_waiting_prompt(self):
+        """Upload the request's source images, deleting the waiting prompt if any upload fails.
+
+        The waiting prompt is committed before the upload because the storage keys carry its id. A row left behind
+        by a refused or unreadable source image is never faulted and counts toward the user's concurrency until
+        stale-request cleanup removes it, so repeated refusals would lock the user out of new requests.
+
+        Raises:
+            Exception: Whatever the upload raised (a URL refusal, an unreadable or oversized image, or a storage
+                error), re-raised unchanged once the waiting prompt is deleted.
+        """
+        try:
+            self.upload_source_images()
+        except Exception:
+            self.wp.delete()
+            raise
 
     def upload_source_images(self):
         """Upload the request's source images to object storage and replace them in the args with their references.
