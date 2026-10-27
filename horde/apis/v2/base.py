@@ -48,7 +48,7 @@ from horde.classes.base.style_contract import (
 from horde.classes.base.team import Team, find_team_by_id, find_team_by_name, get_all_teams
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
-from horde.classes.base.worker import Worker, WorkerMessage
+from horde.classes.base.worker import MAX_WORKER_NAME_CHARACTERS, Worker, WorkerMessage
 from horde.consts import HORDE_VERSION
 from horde.countermeasures import REJECTION_WINDOW, CounterMeasures
 from horde.database import functions as database
@@ -1215,6 +1215,15 @@ class JobPopTemplate(Resource):
         if self.user.is_anon():
             raise e.AnonForbidden(rc="AnonForbiddenWorker")
         self.worker_name = sanitize_string(self.args["name"])
+        # The stored name is cut to the column width, so a longer name never matches its own row.
+        if len(self.worker_name) > MAX_WORKER_NAME_CHARACTERS:
+            raise e.TooLong(
+                self.user.get_unique_alias(),
+                len(self.worker_name),
+                MAX_WORKER_NAME_CHARACTERS,
+                "worker name",
+                rc="TooLongWorkerName",
+            )
         self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
         if not self.worker and database.worker_name_exists(self.worker_name):
             raise e.PolymorphicNameConflict(self.worker_name)
@@ -1226,36 +1235,72 @@ class JobPopTemplate(Resource):
                 raise e.BadRequest(
                     f"To avoid unwanted attention, please do not use '{cs.group()}' in your worker names.",
                 )
-            worker_count = self.user.count_workers()
-            if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
-                raise e.WorkerInviteOnly(worker_count)
-            # Untrusted users can only have 3 workers
-            if not self.user.trusted and worker_count > 3:
-                raise e.Forbidden(
-                    "To avoid abuse, untrusted users can only have up to 3 distinct workers.",
-                    rc="TooManyWorkers",
-                )
-            # Trusted users can have up to 20 workers by default unless overriden
-            if worker_count > 20 and worker_count > self.user.worker_invited:
-                raise e.Forbidden(
-                    "To avoid abuse, tou cannot onboard more than 20 workers as a trusted user. Please contact us on Discord to adjust.",
-                    rc="TooManyWorkersTrusted",
-                )
-            if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
-                raise e.TooManySameIPs(self.user.username)
+            self.check_worker_limits()
             # The profanity checks run a model prediction, so they come after the cheap refusals: a user at a worker
             # limit who keeps popping with new names does not cost a prediction per pop.
             if is_profane(self.worker_name):
                 raise e.Profanity(self.user.get_unique_alias(), self.worker_name, "worker name", rc="ProfaneWorkerName")
             if is_profane(self.args.bridge_agent):
                 raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, "bridge agent", rc="ProfaneBridgeAgent")
-            self.worker = self.worker_class(
-                user_id=self.user.id,
-                name=self.worker_name,
-            )
-            self.worker.create()
+            self.worker = self.register_worker()
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
+
+    def check_worker_limits(self):
+        """Refuse a new worker when the user is at the invite, worker-count or same-IP limit."""
+        worker_count = self.user.count_workers()
+        if settings.mode_invite_only() and worker_count >= self.user.worker_invited:
+            raise e.WorkerInviteOnly(worker_count)
+        # Untrusted users can only have 3 workers
+        if not self.user.trusted and worker_count > 3:
+            raise e.Forbidden(
+                "To avoid abuse, untrusted users can only have up to 3 distinct workers.",
+                rc="TooManyWorkers",
+            )
+        # Trusted users can have up to 20 workers by default unless overriden
+        if worker_count > 20 and worker_count > self.user.worker_invited:
+            raise e.Forbidden(
+                "To avoid abuse, tou cannot onboard more than 20 workers as a trusted user. Please contact us on Discord to adjust.",
+                rc="TooManyWorkersTrusted",
+            )
+        if self.user.exceeding_ipaddr_restrictions(self.worker_ip):
+            raise e.TooManySameIPs(self.user.username)
+
+    def register_worker(self):
+        """Create the worker for this pop or return the row a concurrent pop created under the same name.
+
+        Clients that run several threads under one worker name could send their first pops together. The per-user lock
+        serializes those pops and any other new-worker registrations by the same user, so the limits checked under it
+        count every worker the user registered first. Pops by different users take different locks, so their inserts
+        can still collide on the unique worker name. The losing pop then gets the response a pop sent after the
+        winner's commit would get.
+        """
+        database.acquire_worker_registration_lock(self.user.id)
+        # Looked up again before the limits, so a pop that lost to its own sibling thread is not refused for the
+        # worker that sibling just registered.
+        worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
+        if worker:
+            return worker
+        if database.worker_name_exists(self.worker_name):
+            raise e.PolymorphicNameConflict(self.worker_name)
+        # The collection was loaded before the lock and does not include workers committed since.
+        db.session.refresh(self.user, attribute_names=["workers"])
+        self.check_worker_limits()
+        worker = self.worker_class(
+            user_id=self.user.id,
+            name=self.worker_name,
+        )
+        try:
+            worker.create()
+        except IntegrityError:
+            db.session.rollback()
+            concurrent_worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
+            if concurrent_worker:
+                return concurrent_worker
+            if database.worker_name_exists(self.worker_name):
+                raise e.PolymorphicNameConflict(self.worker_name) from None
+            raise
+        return worker
 
     def check_ip(self):
         ip_timeout = CounterMeasures.retrieve_timeout(self.worker_ip)
