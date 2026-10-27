@@ -148,3 +148,64 @@ def test_a_source_image_url_at_a_private_address_is_refused(client, request_head
 
     assert response.status_code == 400, response.get_data(as_text=True)
     assert response.get_json()["rc"] == "SourceImageUrlRefused"
+
+
+def _count_test_user_waiting_requests(app, api_key: str) -> int:
+    from horde.database import functions as database
+
+    with app.app_context():
+        user = database.find_user_by_api_key(api_key)
+        return database.count_waiting_requests(user=user, request_type="image")
+
+
+@pytest.mark.parametrize(
+    "refused_image_fields",
+    [
+        pytest.param(
+            {"source_image": "http://127.0.0.1:9/a.png"},
+            id="source_image",
+        ),
+        pytest.param(
+            {
+                "source_image": load_image_as_b64("img_stable/0.jpg"),
+                "extra_source_images": [{"image": "http://127.0.0.1:9/a.png"}],
+            },
+            id="extra_source_image_after_a_stored_source_image",
+        ),
+    ],
+)
+def test_a_refused_source_image_url_does_not_count_toward_the_users_waiting_requests(
+    app,
+    client,
+    api_key: str,
+    request_headers: dict[str, str],
+    refused_image_fields: dict[str, object],
+) -> None:
+    """A request refused for its source image URL leaves no waiting request behind.
+
+    The waiting prompt row exists before the source images are fetched, so a refusal that left it in place would
+    count toward the user's concurrency limit until stale-request cleanup.
+    """
+    async_dict = {
+        "prompt": "A remix",
+        "nsfw": True,
+        "censor_nsfw": False,
+        "r2": True,
+        "params": {
+            "width": 1024,
+            "height": 1024,
+            "steps": 20,
+            "cfg_scale": 4,
+            "sampler_name": "k_euler_a",
+        },
+        "models": TEST_MODELS,
+        "source_processing": "remix",
+        **refused_image_fields,
+    }
+    waiting_before = _count_test_user_waiting_requests(app, api_key)
+
+    response = client.post("/api/v2/generate/async", json=async_dict, headers=request_headers)
+
+    assert response.status_code == 400, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "SourceImageUrlRefused"
+    assert _count_test_user_waiting_requests(app, api_key) == waiting_before
