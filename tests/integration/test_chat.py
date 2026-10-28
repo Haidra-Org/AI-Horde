@@ -975,6 +975,18 @@ def _take_worker_offline(app, worker_name: str) -> None:
         db.session.commit()
 
 
+def _set_worker_speed(app, worker_name: str, *, tokens_per_second: float) -> None:
+    """Record a measured speed for a worker, as the speed refresh would after it completed jobs at that rate."""
+    from horde import vars as hv
+    from horde.classes.kobold.worker import TextWorker
+    from horde.flask import db
+
+    with app.app_context():
+        worker = db.session.query(TextWorker).filter_by(name=worker_name).one()
+        worker.speed = tokens_per_second * hv.thing_divisors["text"]
+        db.session.commit()
+
+
 def test_a_model_unknown_to_the_reference_and_every_online_chat_worker_is_404_with_no_row_and_no_tax(app, client, make_api_user) -> None:
     from horde.model_reference import model_reference
 
@@ -1087,6 +1099,10 @@ def idle_long_output_worker(app, client, request_headers: dict[str, str]) -> Ite
         pop_options={"chat_max_length": 8192, "chat_max_context_length": 8192},
     )
     worker.pop()
+    # A worker is offered only the output its measured speed finishes inside the base lease, so a worker that is
+    # eligible for its whole advertised length needs a recorded speed to match: 8192 tokens in 120 s is about 69
+    # tokens per second.
+    _set_worker_speed(app, worker.name, tokens_per_second=80)
     yield worker
     _take_worker_offline(app, worker.name)
 

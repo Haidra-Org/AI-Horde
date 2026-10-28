@@ -342,7 +342,8 @@ def test_a_request_over_one_worker_chat_limit_is_not_a_gap_while_another_worker_
 ) -> None:
     user = make_user()
     _make_chat_worker(user)
-    _make_chat_worker(user, chat_max_length=4096)
+    # Fast enough to finish the 2048 tokens inside the base lease, so only the chat limit decides.
+    _make_chat_worker(user, chat_max_length=4096, speed=20)
 
     availability = functions.get_worker_availability_for_request(_make_chat_request(user, {"max_length": 2048}))
 

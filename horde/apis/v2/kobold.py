@@ -94,6 +94,7 @@ from horde.classes.kobold.genstats import (
     get_compiled_textgen_stats_models,
     get_compiled_textgen_stats_totals,
 )
+from horde.classes.kobold.processing_generation import renew_text_job_lease
 from horde.classes.kobold.request_fit import (
     DEFAULT_MAX_CONTEXT_LENGTH,
     DEFAULT_MAX_LENGTH,
@@ -1526,6 +1527,11 @@ class TextJobPop(JobPopTemplate):
         self.args = parsers.job_pop_parser.parse_args()
         self.validate_chat_declaration()
         pop_response, status_code = super().post()
+        # The pop is the hot path, so the gate is observed from values already loaded for it: a pop by a worker whose
+        # measured speed caps the output it is offered below what it declares is counted, without a second query
+        # over the queue to count the requests withheld.
+        if status_code == 200 and text_database.worker_may_be_speed_gated(self.worker, self.models):
+            metrics.pop_lease_capacity_limited.add(1, {"horde.gentype": self.gentype})
         # A text job's response is marshalled by the text model alone, so it never carries the chat key.
         response_model = models.response_model_chat_job_pop if pop_response.get("chat") else models.response_model_job_pop
         return marshal_with(response_model)(lambda: (pop_response, status_code))()
@@ -1836,6 +1842,9 @@ class TextJobProgress(Resource):
         `seq` starts at 1 and goes up by one per post. A retry sends the same `seq` and content and is acknowledged
         again without appending it twice.
 
+        An appended delta extends the job's lease to end 150 seconds after the post, up to 600 seconds from the pop
+        for a trusted worker and 200 for an untrusted one. A retry does not extend it.
+
         The acknowledgement carries `cancelled`, true once the request was cancelled. The delta is still accepted;
         the worker stops generating and does not submit.
 
@@ -1874,6 +1883,13 @@ class TextJobProgress(Resource):
             logger.warning(f"Unable to take progress for chat generation {generation_id}: {redis_error}")
             raise e.ServiceUnavailable("The progress store is unavailable.", rc=CHAT_PROGRESS_UNAVAILABLE_RC) from None
         metrics.chat_progress_outcomes.add(1, {"horde.outcome": appended.outcome.value})
+        # Only an appended delta adds output; a duplicate repeats the last one and does not extend the lease.
+        if appended.outcome is ProgressOutcome.ACCEPTED and not appended.cancelled:
+            try:
+                renew_text_job_lease(lease)
+            except SQLAlchemyError as write_error:
+                db.session.rollback()
+                logger.warning(f"Unable to extend the lease of chat generation {generation_id}: {write_error}")
         if appended.outcome in (ProgressOutcome.ACCEPTED, ProgressOutcome.DUPLICATE):
             return {"accepted_seq": appended.seq, "cancelled": appended.cancelled}, 200
         if appended.outcome is ProgressOutcome.GAP:

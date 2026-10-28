@@ -280,6 +280,16 @@ text_empty_generations = logfire.metric_counter(
     unit="1",
     description="Text generations submitted with empty or whitespace-only text, split by model, bridge agent and state",
 )
+text_lease_renewals = logfire.metric_counter(
+    "horde.text.lease_renewals",
+    unit="1",
+    description="Chat progress posts that extended the job lease or found it at its cap, split by worker trust",
+)
+text_stale_aborts = logfire.metric_counter(
+    "horde.text.stale_aborts",
+    unit="1",
+    description="Text and chat jobs aborted because their lease lapsed before a submit, split by worker trust",
+)
 
 # These instruments form the shadow-validation contract for scheduling
 # estimators. Candidate code records paired forecasts and observations through
@@ -532,6 +542,11 @@ pop_skipped = logfire.metric_counter(
     "horde.pop.skipped",
     unit="1",
     description="WPs skipped during pop, by reason",
+)
+pop_lease_capacity_limited = logfire.metric_counter(
+    "horde.pop.lease_capacity_limited",
+    unit="1",
+    description="Text pops by a worker whose measured speed caps the max_length it is offered below a length it declares",
 )
 
 # --- submit ------------------------------------------------------------------

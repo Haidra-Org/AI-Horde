@@ -6,7 +6,8 @@
 A chat request whose client streams carries the stream hint. When a worker pops it,
 [`write_stream_lease`][horde.chat_progress.write_stream_lease] writes ``horde:chat:lease:<generation id>``, a hash
 holding the request, the worker, the model, the worker's owner, a digest of the owner's API key and the byte cap.
-The progress route authenticates a post against that lease alone, so a post does not read Postgres.
+The progress route authenticates a post against that lease alone, so a post does not read Postgres. The lease also
+holds the job lease's start, current ``job_ttl`` and cap, so only a post that extends the job lease writes Postgres.
 
 [`append_progress`][horde.chat_progress.append_progress] appends one delta to ``horde:chat:stream:<request id>`` with
 the fields ``gen`` (the generation id), ``seq``, ``content``, ``reasoning_content`` when the delta carries
@@ -108,6 +109,19 @@ LEASE_FAKE_FIELD = "fake"
 """Lease field that is ``1`` for a fake generation, whose posts are acknowledged and not appended so the worker
 cannot tell it apart from a real one."""
 
+LEASE_STARTED_FIELD = "started"
+"""Lease field holding the generation's ``start_time`` as Unix seconds, the point its job lease is measured from."""
+
+LEASE_JOB_TTL_FIELD = "job_ttl"
+"""Lease field holding the generation's current ``job_ttl``, so a progress post that does not extend the job lease
+does not read Postgres."""
+
+LEASE_CAP_FIELD = "lease_cap"
+"""Lease field holding the longest ``job_ttl`` progress posts may extend the job lease to."""
+
+LEASE_TRUSTED_FIELD = "trusted"
+"""Lease field that is ``1`` when the worker's owner was trusted at pop, which set the lease cap."""
+
 LEASE_CANCELLED_FIELD = "cancelled"
 """Lease field that is ``1`` once the request was cancelled; absent before. The append script copies it into the
 acknowledgement so the worker stops generating."""
@@ -191,6 +205,18 @@ class StreamLease:
 
     key_digest: str
     """[`api_key_digest`][horde.chat_progress.api_key_digest] of the owner's stored API key."""
+
+    started_at: float | None = None
+    """The generation's ``start_time`` as Unix seconds; None on a lease written without the job lease fields."""
+
+    job_ttl: int | None = None
+    """The generation's current ``job_ttl``; None on a lease written without the job lease fields."""
+
+    lease_cap: int | None = None
+    """The longest ``job_ttl`` progress may extend the job lease to; None on a lease written without it."""
+
+    trusted: bool = False
+    """Whether the worker's owner was trusted at pop."""
 
 
 @dataclass(frozen=True)
@@ -312,6 +338,9 @@ def write_stream_lease(
     owner_api_key: str,
     max_length: int,
     job_ttl: int,
+    started_at: float,
+    lease_cap: int,
+    trusted: bool,
     fake: bool,
 ) -> None:
     """Write the lease that lets a generation's worker post deltas, logging rather than raising on a Redis failure.
@@ -325,6 +354,9 @@ def write_stream_lease(
         owner_api_key: The owner's stored API key hash.
         max_length: The tokens the job may generate, which sizes the byte cap.
         job_ttl: The job's TTL in seconds.
+        started_at: The generation's ``start_time`` as Unix seconds.
+        lease_cap: The longest ``job_ttl`` progress posts may extend the job lease to.
+        trusted: Whether the worker's owner is trusted, which set ``lease_cap``.
         fake: Whether the generation is fake.
 
     Side Effects:
@@ -340,6 +372,10 @@ def write_stream_lease(
         LEASE_KEY_DIGEST_FIELD: api_key_digest(owner_api_key),
         LEASE_MAX_BYTES_FIELD: max_length * CHAT_PROGRESS_BYTES_PER_TOKEN,
         LEASE_FAKE_FIELD: int(fake),
+        LEASE_STARTED_FIELD: started_at,
+        LEASE_JOB_TTL_FIELD: job_ttl,
+        LEASE_CAP_FIELD: lease_cap,
+        LEASE_TRUSTED_FIELD: int(trusted),
     }
     try:
         pipeline = _get_client().pipeline(transaction=True)
@@ -372,7 +408,38 @@ def read_stream_lease(generation_id: str) -> StreamLease | None:
         worker_id=lease_fields[LEASE_WORKER_FIELD],
         owner_id=int(lease_fields[LEASE_OWNER_FIELD]),
         key_digest=lease_fields[LEASE_KEY_DIGEST_FIELD],
+        started_at=float(lease_fields[LEASE_STARTED_FIELD]) if LEASE_STARTED_FIELD in lease_fields else None,
+        job_ttl=int(lease_fields[LEASE_JOB_TTL_FIELD]) if LEASE_JOB_TTL_FIELD in lease_fields else None,
+        lease_cap=int(lease_fields[LEASE_CAP_FIELD]) if LEASE_CAP_FIELD in lease_fields else None,
+        trusted=lease_fields.get(LEASE_TRUSTED_FIELD) == "1",
     )
+
+
+def extend_stream_lease(generation_id: str, job_ttl: int, expire_seconds: int) -> None:
+    """Record an extended job lease on a generation's stream lease, logging rather than raising on a Redis failure.
+
+    The lease is changed only while it exists, since a lease deleted by the generation's submit or fault must not be
+    recreated without its other fields.
+
+    Args:
+        generation_id: The generation whose job lease was extended.
+        job_ttl: The extended ``job_ttl``.
+        expire_seconds: Seconds from now until the extended job lease ends. The stream lease outlives it by
+            [`CHAT_PROGRESS_LEASE_GRACE_SECONDS`][horde.chat_progress.CHAT_PROGRESS_LEASE_GRACE_SECONDS].
+    """
+    lease_key = chat_lease_key(generation_id)
+
+    def _extend(pipeline: redis.client.Pipeline) -> None:
+        if not pipeline.exists(lease_key):
+            return
+        pipeline.multi()
+        pipeline.hset(lease_key, LEASE_JOB_TTL_FIELD, job_ttl)
+        pipeline.expire(lease_key, expire_seconds + CHAT_PROGRESS_LEASE_GRACE_SECONDS)
+
+    try:
+        _get_client().transaction(_extend, lease_key)
+    except redis.RedisError as redis_error:
+        logger.warning(f"Unable to extend the stream lease of chat generation {generation_id}: {redis_error}")
 
 
 def append_progress(lease: StreamLease, seq: int, content: str, reasoning_content: str = "") -> ProgressAppend:

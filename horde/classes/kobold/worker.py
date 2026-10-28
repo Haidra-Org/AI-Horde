@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import timedelta
@@ -18,10 +19,16 @@ from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import expression
 
 from horde import exceptions as e
+from horde import vars as hv
 from horde.bridge_reference import (
     is_backed_validated,
 )
-from horde.classes.base.worker import Worker, WorkerEligibilityInputs, worker_ordered_names_clause
+from horde.classes.base.worker import (
+    SPEED_BASELINE_THINGS_PER_SEC,
+    Worker,
+    WorkerEligibilityInputs,
+    worker_ordered_names_clause,
+)
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -40,6 +47,20 @@ TEXT_WORKER_DECLARATION_GENERATION_KEY = "text_worker_declaration_generation"
 list. A cached text request availability records the value it was computed under and is recomputed once the counter
 moves, so a worker that pops with a new declaration is reflected at the next status poll rather than when the cache
 expires. A missing key reads as 0."""
+
+TEXT_JOB_LEASE_SECONDS = 150
+"""The lease a text or chat job receives at pop, and the time a renewing progress post extends it to from the post.
+It matches the base generation default, since model loading and a busy worker delay every job type's start alike."""
+
+TEXT_JOB_PREPARATION_SECONDS = 30
+"""The part of the base lease set aside for reaching the job and processing its prompt, which does not scale with the
+requested output length. The rest of the lease is what the speed gate measures a worker's generation against."""
+
+UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND = 10.0
+"""The speed assumed for a text worker that has not recorded one. A worker records a speed only by completing jobs,
+and the speed gate offers it only jobs its assumed speed can finish, so the assumption must admit the jobs clients
+commonly send: 10 tokens per second admits 1200 tokens inside the base lease, above the usual 512-token request, and
+the first completed jobs replace it with the measured value."""
 
 
 def bump_text_worker_declaration_generation() -> None:
@@ -75,6 +96,40 @@ def get_minimum_text_worker_speed(model_names: Sequence[str]) -> int:
     if parameter_count >= 13:
         return 4
     return 5
+
+
+def get_effective_text_worker_speed(worker_speed: float) -> float:
+    """Return the tokens per second a text worker is assumed to generate at.
+
+    A worker that has not recorded a speed stores the speed baseline, which is far below any text threshold. Such a
+    worker is taken to run at
+    [`UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND`][horde.classes.kobold.worker.UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND],
+    so it can receive the jobs that record the samples replacing the assumption. A worker whose recorded average is
+    exactly the baseline is treated the same way.
+
+    Args:
+        worker_speed: The worker's stored ``speed``, in the raw units the column holds.
+
+    Returns:
+        The measured tokens per second, or the assumed speed when the worker has not recorded one.
+    """
+    if worker_speed == SPEED_BASELINE_THINGS_PER_SEC * hv.thing_divisors["text"]:
+        return UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND
+    return worker_speed / hv.thing_divisors["text"]
+
+
+def get_text_worker_lease_capacity(worker_speed: float) -> int:
+    """Return the longest ``max_length`` a text worker is offered, the tokens it generates inside the base lease.
+
+    Args:
+        worker_speed: The worker's stored ``speed``, in the raw units the column holds.
+        model_names: Models the worker advertises, in bridge preference order.
+
+    Returns:
+        The tokens the worker's effective speed produces in the base lease after the preparation allowance.
+    """
+    generation_seconds = TEXT_JOB_LEASE_SECONDS - TEXT_JOB_PREPARATION_SECONDS
+    return math.floor(get_effective_text_worker_speed(worker_speed) * generation_seconds)
 
 
 class TextWorkerSoftprompts(db.Model):
@@ -333,6 +388,10 @@ class TextWorker(Worker):
                 return [False, "max_length"]
         if not waiting_prompt.slow_workers and self.speed < get_minimum_text_worker_speed(model_names):
             return [False, "performance"]
+        # A job the worker cannot finish inside the base lease would only be renewed by progress posts, which a
+        # worker that never posts does not send; refusing it at offer time keeps every assignment finishable.
+        if waiting_prompt.max_length > get_text_worker_lease_capacity(self.speed):
+            return [False, "lease_speed"]
         if waiting_prompt.validated_backends and not is_backed_validated(self.bridge_agent):
             return [False, "bridge_version"]
         matching_softprompt = True

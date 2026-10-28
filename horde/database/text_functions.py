@@ -20,7 +20,11 @@ from horde.classes.kobold.processing_generation import TextProcessingGeneration
 
 # FIXME: Renamed for backwards compat. To fix later
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, chat_images_clause
-from horde.classes.kobold.worker import TextWorker, get_minimum_text_worker_speed
+from horde.classes.kobold.worker import (
+    TextWorker,
+    get_minimum_text_worker_speed,
+    get_text_worker_lease_capacity,
+)
 from horde.database.functions import query_prioritized_wps
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
@@ -70,16 +74,20 @@ def convert_things_to_kudos(things, **kwargs):
     return round(things, 2)
 
 
-def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_user_ids=None, page=0):
-    # This is just the top 3 - Adjusted method to send Worker object. Filters to add.
-    # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1
-    # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
-    # TODO: Filter by Worker not in WP.tricked_worker
-    # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
-    PER_PAGE = 3  # how many requests we're picking up to filter further
+def text_wp_offer_clauses(worker, models_list):
+    """Return the filter clauses a text request has to meet to be offered to a worker, except the speed gate.
+
+    Args:
+        worker: The popping text worker.
+        models_list: The models the worker advertises, in bridge preference order.
+
+    Returns:
+        The clauses, to be combined with [`text_wp_speed_gate_clause`][horde.database.text_functions.text_wp_speed_gate_clause]
+        or its negation.
+    """
     slow_speed = get_minimum_text_worker_speed(models_list)
     # The model constraint is a semi-join: joining wp_models returns one row per
-    # matching model, and the page LIMIT below counts joined rows, so a WP
+    # matching model, and the pop's page LIMIT counts joined rows, so a WP
     # naming several of the worker's models would consume several page slots as
     # duplicates of itself.
     wp_serves_model = db.session.query(WPModels.id).filter(WPModels.wp_id == TextWaitingPrompt.id, WPModels.model.in_(models_list)).exists()
@@ -132,6 +140,99 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
             wp_fits_chat_worker = and_(wp_fits_chat_worker, ~chat_images_clause())
         # A chat-only worker may leave its text limits at the pop defaults, which are not a capacity it serves at.
         wp_fits_worker = or_(wp_fits_worker, wp_fits_chat_worker) if worker.accepts_prompt_jobs else wp_fits_chat_worker
+    return [
+        TextWaitingPrompt.n > 0,
+        wp_fits_worker,
+        TextWaitingPrompt.active.is_(True),
+        TextWaitingPrompt.faulted.is_(False),
+        TextWaitingPrompt.expiry > datetime.utcnow(),
+        or_(
+            TextWaitingPrompt.safe_ip.is_(True),
+            worker.allow_unsafe_ipaddr is True,
+        ),
+        or_(
+            TextWaitingPrompt.nsfw.is_(False),
+            worker.nsfw is True,
+        ),
+        or_(
+            wp_serves_model,
+            ~wp_names_any_model,
+        ),
+        or_(
+            ~wp_has_worker_targets,
+            and_(
+                TextWaitingPrompt.worker_blacklist.is_(False),
+                wp_targets_this_worker,
+            ),
+            and_(
+                TextWaitingPrompt.worker_blacklist.is_(True),
+                ~wp_targets_this_worker,
+            ),
+        ),
+        or_(
+            worker.speed >= slow_speed,  # Slow speed is based on the model parameters used
+            TextWaitingPrompt.slow_workers.is_(True),
+        ),
+        or_(
+            worker.maintenance is False,
+            TextWaitingPrompt.user_id == worker.user_id,
+        ),
+        or_(
+            is_backed_validated(worker.bridge_agent),
+            TextWaitingPrompt.validated_backends.is_(False),
+        ),
+    ]
+
+
+def text_wp_speed_gate_clause(worker, models_list):
+    """Return the clause offering a worker only the requests whose ``max_length`` it finishes inside the base lease.
+
+    [`TextWorker.can_generate_with_eligibility_inputs`][horde.classes.kobold.worker.TextWorker.can_generate_with_eligibility_inputs]
+    applies the same rule through the same capacity.
+
+    Args:
+        worker: The popping text worker.
+        models_list: The models the worker advertises, in bridge preference order.
+
+    Returns:
+        The clause.
+    """
+    # The capacity is a scalar computed once per pop from the popping worker, so the clause compares a column with a
+    # bound parameter and adds no join. For a worker measured at 2 tokens/s (capacity 2 * 120 = 240):
+    #
+    # wp.id | max_length | offered
+    # A     | 240        | yes
+    # B     | 512        | no
+    return TextWaitingPrompt.max_length <= get_text_worker_lease_capacity(worker.speed)
+
+
+def worker_may_be_speed_gated(worker, models_list) -> bool:
+    """Return whether the speed gate can exclude any request the worker's declared limits would otherwise admit.
+
+    Args:
+        worker: The popping text worker.
+        models_list: The models the worker advertises, in bridge preference order.
+
+    Returns:
+        True when the worker's lease capacity is below the longest output it declares for text or chat jobs.
+    """
+    declared_lengths = []
+    if worker.accepts_prompt_jobs:
+        declared_lengths.append(worker.max_length)
+    if worker.accepts_chat_jobs and worker.chat_max_length is not None:
+        declared_lengths.append(worker.chat_max_length)
+    if not declared_lengths:
+        return False
+    return get_text_worker_lease_capacity(worker.speed) < max(declared_lengths)
+
+
+def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_user_ids=None, page=0):
+    # This is just the top 3 - Adjusted method to send Worker object. Filters to add.
+    # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1
+    # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
+    # TODO: Filter by Worker not in WP.tricked_worker
+    # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
+    PER_PAGE = 3  # how many requests we're picking up to filter further
     final_wp_list = (
         db.session.query(TextWaitingPrompt)
         .options(
@@ -143,47 +244,11 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
             # Computed for the returned page only, so eligibility never loads a candidate's deferred messages.
             with_expression(TextWaitingPrompt.carries_chat_images, chat_images_clause()),
         )
+        # The speed gate is kept apart from the offer clauses so each rule reads on its own. A request the worker's
+        # speed cannot finish inside the base lease is not paged here, so it never takes one of the page's slots.
         .filter(
-            TextWaitingPrompt.n > 0,
-            wp_fits_worker,
-            TextWaitingPrompt.active == True,  # noqa E712
-            TextWaitingPrompt.faulted == False,  # noqa E712
-            TextWaitingPrompt.expiry > datetime.utcnow(),
-            or_(
-                TextWaitingPrompt.safe_ip == True,  # noqa E712
-                worker.allow_unsafe_ipaddr == True,  # noqa E712
-            ),
-            or_(
-                TextWaitingPrompt.nsfw == False,  # noqa E712
-                worker.nsfw == True,  # noqa E712
-            ),
-            or_(
-                wp_serves_model,
-                ~wp_names_any_model,
-            ),
-            or_(
-                ~wp_has_worker_targets,
-                and_(
-                    TextWaitingPrompt.worker_blacklist.is_(False),
-                    wp_targets_this_worker,
-                ),
-                and_(
-                    TextWaitingPrompt.worker_blacklist.is_(True),
-                    ~wp_targets_this_worker,
-                ),
-            ),
-            or_(
-                worker.speed >= slow_speed,  # Slow speed is based on the model parameters used
-                TextWaitingPrompt.slow_workers == True,  # noqa E712
-            ),
-            or_(
-                worker.maintenance == False,  # noqa E712
-                TextWaitingPrompt.user_id == worker.user_id,
-            ),
-            or_(
-                is_backed_validated(worker.bridge_agent),
-                TextWaitingPrompt.validated_backends.is_(False),
-            ),
+            *text_wp_offer_clauses(worker, models_list),
+            text_wp_speed_gate_clause(worker, models_list),
         )
     )
     if priority_user_ids:

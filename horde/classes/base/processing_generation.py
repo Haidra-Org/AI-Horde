@@ -530,6 +530,8 @@ class ProcessingGeneration(db.Model):
         if request_stranded:
             self.wp.report_stranded_fault()
         try:
+            if stale:
+                self.record_stale_abort()
             self.log_worker_abort()
             self.log_aborted_generation()
             self._record_capacity_return()
@@ -540,6 +542,9 @@ class ProcessingGeneration(db.Model):
     def restarts_after_fault(self) -> bool:
         """Return whether a worker's fault of this generation puts its job back on the request; it always does."""
         return True
+
+    def record_stale_abort(self) -> None:
+        """Count this generation's abort for a lapsed lease; a generation type without a stale-abort metric does not."""
 
     def end_progress_after_fault(self) -> None:
         """Tell a reader of this generation's progress that the attempt ended; a generation does not stream progress by default.

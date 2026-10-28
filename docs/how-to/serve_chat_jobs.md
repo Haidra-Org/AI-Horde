@@ -384,6 +384,11 @@ apikey: <worker owner's key>
 - `seq` is 1 for the job's first post and one more for each post after it. Send a post only after the previous one
   was answered. A lost answer is retried with the same `seq` and content, which returns the same
   `{"accepted_seq": n, "cancelled": false}` and does not append an entry.
+- The job's lease is the pop's `ttl`, 150 seconds. Each accepted post with new text extends it to end 150 seconds
+  after the post, up to 600 seconds from the pop for a trusted worker and 200 for an untrusted one; a retried post
+  does not extend it. A job that does not stream keeps the 150 seconds, and the pop offers only jobs whose
+  `max_length` the worker's measured speed finishes in 120 of them (see the
+  [Job lease](../reference/chat_requests.md#job-lease) reference).
 - `"cancelled": true` in a `200` means the client cancelled the request: stop generating and do not submit. The
   delta in that post was accepted and is not needed again. The job was settled at the cancel on the content
   posted before it, so the worker is paid for that content without a dropped job.

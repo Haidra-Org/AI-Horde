@@ -2,16 +2,25 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import enum
 import math
 import os
 import time
+from datetime import UTC
 
 from horde import vars as hv
 from horde.bridge_reference import (
     is_backed_validated,
     parse_bridge_agent,
 )
-from horde.chat_progress import PostedProgress, end_progress_stream, release_stream_lease, write_stream_lease
+from horde.chat_progress import (
+    PostedProgress,
+    StreamLease,
+    end_progress_stream,
+    extend_stream_lease,
+    release_stream_lease,
+    write_stream_lease,
+)
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.processing_generation import ProcessingGeneration, json_column_type
 from horde.classes.kobold.chat_request import (
@@ -22,28 +31,135 @@ from horde.classes.kobold.chat_request import (
     streams_progress,
 )
 from horde.classes.kobold.genstats import record_text_statistic
-from horde.classes.kobold.worker import get_minimum_text_worker_speed
+from horde.classes.kobold.worker import TEXT_JOB_LEASE_SECONDS
 from horde.flask import db
 from horde.logger import logger
 from horde.metrics import (
     submit_genstats_record_duration,
     submit_state_handling_duration,
     text_empty_generations,
+    text_lease_renewals,
+    text_stale_aborts,
 )
 from horde.model_reference import model_reference
 from horde.suspicions import Suspicions
-from horde.utils import EXTRA_SLOW_REQUEST_LIFETIME_SECONDS, REQUEST_LIFETIME_SECONDS
 
 UNKNOWN_ATTRIBUTE_VALUE = "unknown"
 """Placeholder for a metric attribute the submission did not include."""
 
-TEXT_JOB_FIXED_SECONDS = 30
-"""Seconds every text lease grants before its per-token term, covering the time from pop to the start of generation
-and the worker's prompt processing, neither of which scales with the requested output length."""
+TRUSTED_TEXT_JOB_LEASE_CAP_SECONDS = 600
+"""The longest a trusted worker's chat job lease runs from pop once progress posts extend it. A trusted worker has a
+record of completing jobs, so a slow reply that keeps adding output is waited for longer."""
 
-TEXT_JOB_MINIMUM_SECONDS = 150
-"""Shortest text lease, matching the base generation default so a short reply keeps the deadline every generation
-type is granted when model loading or a busy worker delays its start."""
+UNTRUSTED_TEXT_JOB_LEASE_CAP_SECONDS = 200
+"""The longest an untrusted worker's chat job lease runs from pop once progress posts extend it. A worker that posts
+a trickle of output holds the job from other workers until the cap, so the cap stays close to the base lease."""
+
+
+class LeaseRenewal(enum.StrEnum):
+    """What a progress post that added output did to its job's lease."""
+
+    GRANTED = "granted"
+    """The lease was extended."""
+
+    AT_CAP = "at_cap"
+    """The lease already reached its cap and was not extended."""
+
+    UNCHANGED = "unchanged"
+    """The lease already ends at least as late as the post would extend it to."""
+
+    LAPSED = "lapsed"
+    """The lease ended before the post; the stale-generation thread aborts the job."""
+
+
+def text_job_lease_cap(trusted: bool) -> int:
+    """Return the longest a text job lease may run from pop once progress extends it.
+
+    Args:
+        trusted: Whether the owner of the worker holding the job is trusted.
+
+    Returns:
+        The cap in seconds.
+    """
+    if trusted:
+        return TRUSTED_TEXT_JOB_LEASE_CAP_SECONDS
+    return UNTRUSTED_TEXT_JOB_LEASE_CAP_SECONDS
+
+
+def renew_text_job_ttl(elapsed_seconds: float, job_ttl: int, lease_cap: int) -> tuple[LeaseRenewal, int]:
+    """Decide the ``job_ttl`` after a progress post that added output.
+
+    The lease is extended to end [`TEXT_JOB_LEASE_SECONDS`][horde.classes.kobold.worker.TEXT_JOB_LEASE_SECONDS] after
+    the post, never past ``lease_cap`` from pop.
+
+    Args:
+        elapsed_seconds: Seconds from the generation's start to the post.
+        job_ttl: The generation's current ``job_ttl``.
+        lease_cap: The longest ``job_ttl`` the lease may reach.
+
+    Returns:
+        The renewal outcome and the ``job_ttl`` after it.
+    """
+    if elapsed_seconds > job_ttl:
+        return LeaseRenewal.LAPSED, job_ttl
+    # Whole seconds, as the column and the pop's ``ttl`` are; rounding up keeps the full allowance after the post.
+    requested_ttl = math.ceil(elapsed_seconds) + TEXT_JOB_LEASE_SECONDS
+    renewed_ttl = min(requested_ttl, lease_cap)
+    if renewed_ttl > job_ttl:
+        return LeaseRenewal.GRANTED, renewed_ttl
+    if requested_ttl > lease_cap:
+        return LeaseRenewal.AT_CAP, job_ttl
+    return LeaseRenewal.UNCHANGED, job_ttl
+
+
+def renew_text_job_lease(lease: StreamLease, now: float | None = None) -> LeaseRenewal | None:
+    """Extend a chat job's lease after its worker posted progress that added output.
+
+    The stream lease carries the job lease's start, ``job_ttl`` and cap, so a post that does not extend the lease does
+    not touch Postgres. An extension is written to the generation only while it is pending, and then to the stream
+    lease, which outlives the job lease by its grace.
+
+    Args:
+        lease: The generation's stream lease, as the progress route read it before the append.
+        now: The post's time as Unix seconds; the current time when omitted.
+
+    Returns:
+        The renewal outcome, or None when the lease predates the job lease fields.
+    """
+    if lease.started_at is None or lease.job_ttl is None or lease.lease_cap is None:
+        return None
+    if now is None:
+        now = time.time()
+    outcome, job_ttl = renew_text_job_ttl(now - lease.started_at, lease.job_ttl, lease.lease_cap)
+    trust_attributes = {"horde.worker_trusted": str(lease.trusted).lower()}
+    if outcome is LeaseRenewal.AT_CAP:
+        text_lease_renewals.add(1, {"horde.outcome": outcome.value, **trust_attributes})
+    if outcome is not LeaseRenewal.GRANTED:
+        return outcome
+    # A compare-and-set on the row: only a pending generation is extended, and only upward, so a submit, fault or a
+    # concurrent post that already extended further is not overwritten. For a target job_ttl of 180:
+    #
+    # id | generation | faulted | job_ttl | rows updated
+    # G1 | NULL       | false   | 150     | 1 (job_ttl becomes 180)
+    # G2 | "reply"    | false   | 150     | 0
+    # G3 | NULL       | false   | 190     | 0
+    extended_rows = (
+        db.session.query(TextProcessingGeneration)
+        .filter(
+            TextProcessingGeneration.id == lease.generation_id,
+            TextProcessingGeneration.generation.is_(None),
+            TextProcessingGeneration.faulted.is_(False),
+            TextProcessingGeneration.job_ttl < job_ttl,
+        )
+        .update({TextProcessingGeneration.job_ttl: job_ttl}, synchronize_session=False)
+    )
+    db.session.commit()
+    if extended_rows != 1:
+        # Submitted, faulted or extended further by a concurrent post since the lease was read.
+        return LeaseRenewal.UNCHANGED
+    text_lease_renewals.add(1, {"horde.outcome": outcome.value, **trust_attributes})
+    extend_stream_lease(lease.generation_id, job_ttl, math.ceil(lease.started_at + job_ttl - now))
+    return outcome
 
 
 def is_empty_text_generation(generation: str | None) -> bool:
@@ -150,36 +266,14 @@ class TextProcessingGeneration(ProcessingGeneration):
         self._write_stream_lease()
 
     def set_job_ttl(self) -> None:
-        """Persist the completion deadline offered to the worker for this assignment.
+        """Persist the base lease, the deadline from pop to submission offered to the worker for this assignment.
 
-        This is a lease from pop to submission, not a prediction of generation time. It grants a fixed allowance
-        for reaching the job and processing its prompt, plus the request's ``max_length`` at the normal-speed
-        threshold for the assigned model, the rate
-        [`get_minimum_text_worker_speed`][horde.classes.kobold.worker.get_minimum_text_worker_speed] sets for
-        requests that disallow slow workers. The lease is set at pop, before any speed for this job is known, and a
-        worker at the threshold must be able to finish the longest reply the request permits; the assigned worker's
-        measured speed is therefore not a term. The rate depends on the assigned model alone, so a multi-model
-        request is not budgeted by its largest model.
-
-        The 150-second floor protects short jobs, where model loading and queueing on the worker dominate and the
-        proportional allowance would be least useful. The lease is capped at the request's lifetime, since a request
-        expires on that schedule whatever its jobs are doing: a reply the threshold rate cannot finish inside it is
-        leased the lifetime, and a worker that cannot sustain the implied rate is aborted rather than waited for.
+        The lease does not grow with ``max_length``, since a worker that pops a job and never submits holds it for
+        the whole lease. The pop offers a job only to a worker whose speed finishes its ``max_length`` inside this
+        lease, and a chat job's progress posts extend it up to
+        [`text_job_lease_cap`][horde.classes.kobold.processing_generation.text_job_lease_cap].
         """
-        tokens_per_second = get_minimum_text_worker_speed([self.model])
-        ttl = TEXT_JOB_FIXED_SECONDS + self.wp.max_length / tokens_per_second
-        ttl = max(ttl, TEXT_JOB_MINIMUM_SECONDS)
-        request_lifetime = REQUEST_LIFETIME_SECONDS
-        # The extra-slow opt-in describes the worker, not the payload. Applying it after the floor keeps
-        # short leases viable on hardware whose model preparation is itself unusually slow.
-        if self.worker.extra_slow_worker is True:
-            ttl *= 3
-            request_lifetime = EXTRA_SLOW_REQUEST_LIFETIME_SECONDS
-        ttl = min(ttl, request_lifetime)
-
-        # The wire contract and database column are whole seconds. Round upward so a fractional token term can
-        # never shorten the promised completion window.
-        self.job_ttl = math.ceil(ttl)
+        self.job_ttl = TEXT_JOB_LEASE_SECONDS
         db.session.commit()
 
     def _write_stream_lease(self) -> None:
@@ -192,6 +286,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         if not self.wp.is_chat or not streams_progress(self.wp.chat_extras):
             return
         owner = self.worker.user
+        trusted = bool(owner.trusted)
         write_stream_lease(
             str(self.id),
             request_id=str(self.wp_id),
@@ -201,8 +296,15 @@ class TextProcessingGeneration(ProcessingGeneration):
             owner_api_key=owner.api_key,
             max_length=self.wp.max_length,
             job_ttl=self.job_ttl,
+            started_at=self.start_time.replace(tzinfo=UTC).timestamp(),
+            lease_cap=text_job_lease_cap(trusted),
+            trusted=trusted,
             fake=bool(self.fake),
         )
+
+    def record_stale_abort(self) -> None:
+        """Count this generation's abort for a lapsed lease, split by whether its worker's owner is trusted."""
+        text_stale_aborts.add(1, {"horde.worker_trusted": str(bool(self.worker.user.trusted)).lower()})
 
     def end_progress_after_fault(self) -> None:
         """Append the ended marker for a faulted chat generation that holds a stream lease, and delete the lease.

@@ -61,6 +61,8 @@ those workers keep receiving text jobs.
 | Stream hint                      | `horde/classes/kobold/chat_request.py`          | `build_stored_chat_extras`, `CHAT_STREAM_PROGRESS_KEY`, `streams_progress` |
 | Stream lease at pop and fault    | `horde/classes/kobold/processing_generation.py` | `TextProcessingGeneration._write_stream_lease`, `TextProcessingGeneration.end_progress_after_fault` |
 | Progress route                   | `horde/apis/v2/kobold.py`                       | `TextJobProgress`                                     |
+| Job lease and its renewal        | `horde/classes/kobold/processing_generation.py` | `TextProcessingGeneration.set_job_ttl`, `renew_text_job_ttl`, `renew_text_job_lease`, `text_job_lease_cap` |
+| Speed gate                       | `horde/classes/kobold/worker.py`, `horde/database/text_functions.py` | `get_text_worker_lease_capacity`, `get_effective_text_worker_speed`, `text_wp_speed_gate_clause` |
 | Lease, append script and stream  | `horde/chat_progress.py`                        | `write_stream_lease`, `append_progress`, `end_progress_stream`, `APPEND_PROGRESS_SCRIPT` |
 | Structured submit                | `horde/apis/v2/kobold.py`                       | `TextJobSubmit.prepare_chat_submission`               |
 | Reply verification               | `horde/classes/kobold/chat_request.py`          | `verify_chat_reply`                                   |
@@ -641,12 +643,42 @@ defaults never apply to a chat job.
 
 The pop response's top-level `ttl` is the job's completion lease in seconds, the deadline after which the
 stale-generation thread aborts the job and a late submit returns `400 AbortedGen` stating it. For text and chat jobs
-alike `TextProcessingGeneration.set_job_ttl` grants a fixed 30 seconds plus the request's `max_length` at the
-normal-speed threshold of the assigned model (`get_minimum_text_worker_speed`: 3, 4 or 5 tokens per second by
-parameter count), floored at 150 seconds, tripled for an extra-slow worker and capped at the request lifetime
-(`REQUEST_LIFETIME_SECONDS`, 20 minutes; 60 for an extra-slow worker), since a request expires on that schedule
-whatever its jobs are doing. The lease is set at pop, before the job's own speed is known, so the assigned worker's
-measured speed is not a term. The stream lease and a chat image URL's lifetime derive from the same value.
+alike `TextProcessingGeneration.set_job_ttl` grants a flat 150 seconds (`TEXT_JOB_LEASE_SECONDS`) whatever the
+request's `max_length`, so a worker that pops a job and never submits holds it for that long at most.
+
+A streamed chat job's lease is renewed by progress. A post whose delta is appended extends the lease to end 150
+seconds after the post, rounded up to whole seconds, and the extension is written to the generation's `job_ttl` and
+to the stream lease. The lease measured from the pop never exceeds a cap set by the trust of the worker's owner at
+pop (`text_job_lease_cap`):
+
+| Worker owner | Cap from pop | Constant                               |
+| ------------ | ------------ | -------------------------------------- |
+| Trusted      | 600 seconds  | `TRUSTED_TEXT_JOB_LEASE_CAP_SECONDS`   |
+| Untrusted    | 200 seconds  | `UNTRUSTED_TEXT_JOB_LEASE_CAP_SECONDS` |
+
+A retried post, which repeats the last delta, does not extend the lease, nor does a post after the lease lapsed or a
+post on a cancelled request. Posts after the cap is reached are accepted as before and leave the lease at the cap. A
+chat job that does not stream, and a text job, keep the base lease.
+
+The pop offers a text or chat job only to a worker whose speed finishes the job's `max_length` inside the base lease
+after a 30 second preparation allowance (`TEXT_JOB_PREPARATION_SECONDS`): `speed * (150 - 30) >= max_length`, with
+`speed` in tokens per second (`get_text_worker_lease_capacity`). A worker that has not recorded a speed stores
+the speed baseline and is taken to run at `UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND` (10 tokens per second), which
+admits 1200 tokens until its first completed jobs record a measured speed. The pop query and
+`TextWorker.can_generate_with_eligibility_inputs` apply the same capacity, and the latter reports `lease_speed` for a
+job it refuses on it.
+
+These counters, in `horde/metrics.py`, show how the rule behaves:
+
+| Counter                           | Attributes                                                | Counts                                                            |
+| --------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
+| `horde.text.lease_renewals`       | `horde.outcome` (`granted`, `at_cap`), `horde.worker_trusted` | Posts that extended a lease, and posts that found it at its cap |
+| `horde.text.stale_aborts`         | `horde.worker_trusted`                                    | Text and chat jobs aborted because the lease lapsed               |
+| `horde.pop.lease_capacity_limited` | `horde.gentype`                                          | Pops by a worker whose measured speed caps the output it is offered below a length it declares |
+
+The capacity-limited count comes from values the pop already holds, so it adds no query; the requests the gate
+withholds from a given pop are not counted. The stream lease and a chat image URL's lifetime derive from the `ttl` at
+pop.
 
 ## Structured submit
 
@@ -911,9 +943,11 @@ again unchanged.
 
 When a generation carrying the hint is assigned, the pop writes the lease `horde:chat:lease:<generation id>` on the
 chat signal database: a hash of `request`, `worker`, `model`, `owner` (the owner's user id), `key` (a SHA-256 of the owner's
-stored key hash), `max_bytes`, `fake` and, once the request is cancelled, `cancelled` (`1`). It expires `CHAT_PROGRESS_LEASE_GRACE_SECONDS` (90) after the job's TTL,
-which covers the stale-generation thread's 60 second tick. The route reads only the lease and does not read Postgres; a key reset
-during the job therefore takes effect for posts only once the lease ends. A fake generation's posts are answered as a
+stored key hash), `max_bytes`, `fake`, the job lease's `started` (Unix seconds), `job_ttl`, `lease_cap` and `trusted`
+(`1` or `0`) and, once the request is cancelled, `cancelled` (`1`). It expires `CHAT_PROGRESS_LEASE_GRACE_SECONDS` (90) after the job's TTL,
+which covers the stale-generation thread's 60 second tick, and a renewal of the job lease moves that expiry with it. The route
+authenticates from the lease alone and does not read Postgres; a key reset during the job therefore takes effect for posts only once the
+lease ends. Only a post that extends the job lease writes Postgres (see [Job lease](#job-lease)). A fake generation's posts are answered as a
 real one's and not appended.
 
 One Lua script checks and appends a post atomically. The lease hash also holds the last accepted `seq`, the bytes

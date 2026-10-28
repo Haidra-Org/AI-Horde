@@ -28,6 +28,7 @@ from horde.chat_progress import (
     chat_lease_key,
     chat_stream_key,
     end_progress_stream,
+    extend_stream_lease,
     read_posted_progress,
     read_stream_lease,
     release_stream_lease,
@@ -38,6 +39,9 @@ GENERATION_ID = "5b0a54d6-1c55-4b39-8b1e-0e6c4a1c9f10"
 REQUEST_ID = "c6f4d1b2-7f0e-4a35-9f3e-2b8f6c1d0a77"
 STORED_API_KEY = "salted-hash-of-the-owner-key"
 JOB_TTL = 150
+STARTED_AT = 1_700_000_000.5
+"""The generation's start as Unix seconds, with a fraction so the lease is shown to keep it."""
+LEASE_CAP = 200
 MODEL = "koboldcpp/Llama-3-8B"
 MAX_LENGTH = 4
 """Four tokens, so the byte cap is 64 bytes and a test reaches it with short deltas."""
@@ -69,6 +73,9 @@ def _write_lease(*, fake: bool = False, max_length: int = MAX_LENGTH) -> None:
         owner_api_key=STORED_API_KEY,
         max_length=max_length,
         job_ttl=JOB_TTL,
+        started_at=STARTED_AT,
+        lease_cap=LEASE_CAP,
+        trusted=False,
         fake=fake,
     )
 
@@ -98,6 +105,10 @@ def test_a_lease_holds_the_request_worker_model_owner_and_byte_cap_until_past_th
         "key": api_key_digest(STORED_API_KEY),
         "max_bytes": str(MAX_LENGTH * CHAT_PROGRESS_BYTES_PER_TOKEN),
         "fake": "0",
+        "started": str(STARTED_AT),
+        "job_ttl": str(JOB_TTL),
+        "lease_cap": str(LEASE_CAP),
+        "trusted": "0",
     }
     assert JOB_TTL < progress_redis.ttl(lease_key) <= JOB_TTL + CHAT_PROGRESS_LEASE_GRACE_SECONDS
 
@@ -122,7 +133,29 @@ def test_a_lease_reads_back_as_the_route_uses_it(progress_redis: fakeredis.FakeS
         worker_id="worker-1",
         owner_id=7,
         key_digest=api_key_digest(STORED_API_KEY),
+        started_at=STARTED_AT,
+        job_ttl=JOB_TTL,
+        lease_cap=LEASE_CAP,
+        trusted=False,
     )
+
+
+def test_an_extended_job_lease_is_recorded_on_the_stream_lease_and_its_expiry(
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    _write_lease()
+
+    extend_stream_lease(GENERATION_ID, 180, 170)
+
+    assert _lease().job_ttl == 180
+    lease_ttl = progress_redis.ttl(chat_lease_key(GENERATION_ID))
+    assert JOB_TTL + CHAT_PROGRESS_LEASE_GRACE_SECONDS < lease_ttl <= 170 + CHAT_PROGRESS_LEASE_GRACE_SECONDS
+
+
+def test_extending_a_deleted_lease_does_not_recreate_it(progress_redis: fakeredis.FakeStrictRedis) -> None:
+    extend_stream_lease(GENERATION_ID, 180, 170)
+
+    assert not progress_redis.exists(chat_lease_key(GENERATION_ID))
 
 
 def test_a_generation_without_a_lease_reads_as_none(progress_redis: fakeredis.FakeStrictRedis) -> None:
