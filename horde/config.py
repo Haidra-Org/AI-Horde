@@ -37,13 +37,17 @@ class Config:
     stored gzipped, so which of the two saves transfer is measured on a deployment before turning it on. Off, the body
     is stored as plain JSON."""
     text_free_output_ceiling: int = env.int("HORDE_TEXT_FREE_OUTPUT_CEILING", default=4096)
-    """The most tokens a text or chat request may ask for without holding its kudos upfront, reached when no
-    competing job waits for the workers eligible for it. 4096 is what an idle fleet serves free: current instruct and
-    reasoning models routinely need more than 512 tokens for one answer."""
+    """The most tokens a text or chat request may ask for without holding its kudos upfront, reached when its
+    estimated wait is at most ``text_free_output_wait_full_seconds``. 4096 is what an idle fleet serves free: current
+    instruct and reasoning models routinely need more than 512 tokens for one answer."""
     text_free_output_floor: int = env.int("HORDE_TEXT_FREE_OUTPUT_FLOOR", default=512)
-    """The fewest tokens a text or chat request may ask for without holding its kudos upfront, however busy its
-    eligible workers are and when none is eligible. 512 keeps the chat default ``max_tokens`` free under any load."""
-    text_free_output_slope: float = env.float("HORDE_TEXT_FREE_OUTPUT_SLOPE", default=1792.0)
-    """The tokens the free allowance loses per competing job waiting for each eligible thread. The default is half
-    of the 3584 tokens between the default ceiling and floor, so one competing job per eligible thread halves the
-    headroom above the floor and two reach the floor."""
+    """The fewest tokens a text or chat request may ask for without holding its kudos upfront, however long its
+    estimated wait and when no worker is eligible. 512 keeps the chat default ``max_tokens`` free under any load."""
+    text_free_output_wait_full_seconds: float = env.float("HORDE_TEXT_FREE_OUTPUT_WAIT_FULL_SECONDS", default=60.0)
+    """The longest estimated wait, in seconds, at which a request still gets the full free allowance. A minute of
+    queue ahead is ordinary on a busy model, so a worker that clears its queue within it keeps its users at the
+    ceiling however many requests that queue holds."""
+    text_free_output_wait_floor_seconds: float = env.float("HORDE_TEXT_FREE_OUTPUT_WAIT_FLOOR_SECONDS", default=300.0)
+    """The estimated wait, in seconds, at and beyond which the free allowance is the floor; between the two
+    thresholds it falls linearly. Five minutes is where a queue is backed up enough that long free answers would
+    lengthen every later wait, so only kudos-backed requests keep asking for more than the floor."""

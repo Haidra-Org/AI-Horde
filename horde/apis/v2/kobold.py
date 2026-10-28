@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import horde.apis.limiter_api as lim
 from horde import exceptions as e
 from horde import metrics
+from horde import vars as hv
 from horde.apis.models.kobold_v2 import TextModels, TextParsers
 from horde.apis.v2.base import (
     GenerateTemplate,
@@ -58,7 +59,7 @@ from horde.classes.base.style_contract import (
     StyleContractVocabulary,
     build_vocabulary,
 )
-from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX
+from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX, estimate_queue_wait_seconds
 from horde.classes.kobold.chat_request import (
     CHAT_WORKER_FAULT_RC,
     MAX_NATIVE_FINISH_REASON_LENGTH,
@@ -285,8 +286,7 @@ class TextAsyncGenerate(GenerateTemplate):
                     highest_multiplier = model_multiplier
             required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
         needs_kudos, tokens, disable_downgrade = self.wp.require_upfront_kudos(
-            competing_jobs_ahead=self.count_competing_jobs_ahead(),
-            eligible_threads=self.creation_availability.thread_count,
+            estimated_wait_seconds=self.estimate_competing_wait_seconds(),
         )
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
             if self.args.allow_downgrade and not disable_downgrade:
@@ -341,24 +341,33 @@ class TextAsyncGenerate(GenerateTemplate):
             Override where a request type accepts a client cap on its kudos estimate.
         """
 
-    def count_competing_jobs_ahead(self) -> int:
-        """Return the waiting generations queued for the workers eligible for the request being created.
+    def estimate_competing_wait_seconds(self) -> float | None:
+        """Return the seconds the workers eligible for the request being created need to clear the work ahead of it.
 
-        Every competing queued request counts, since the new request is not queued yet. When no queue is stored, the
-        horde-wide count of queued text generations stands in, which is never smaller than the competing count.
+        Every competing queued request counts as ahead, since the new request is not queued yet. The estimate is
+        [`estimate_queue_wait_seconds`][horde.classes.base.waiting_prompt.estimate_queue_wait_seconds] over the
+        eligible workers' measured throughput, the one the status route reports as ``wait_time``. When no queue is
+        stored, the horde-wide queued text work stands in, which is never smaller than the competing work.
 
         Returns:
-            The competing waiting generations; 0 when no worker is eligible, since the allowance is then the floor.
+            The estimated seconds; None when no worker is eligible.
         """
-        if self.creation_availability is None or not self.creation_availability.is_possible:
-            return 0
-        competing_jobs = database.count_competing_queued_jobs(
-            self.wp.wp_type,
-            self.creation_availability.served_model_names,
+        availability = self.creation_availability
+        if availability is None or not availability.is_possible:
+            return None
+        competing_work = database.measure_competing_queued_work(self.wp.wp_type, availability.worker_profiles)
+        if competing_work is None:
+            horde_totals = database.retrieve_totals()
+            competing_work = database.CompetingQueuedWork(
+                queued_things=float(horde_totals[f"queued_{hv.thing_names['text']}"]),
+                queued_jobs=int(horde_totals["queued_text_requests"]),
+            )
+        return estimate_queue_wait_seconds(
+            queued_things=competing_work.queued_things,
+            queued_jobs=competing_work.queued_jobs,
+            worker_threads=availability.thread_count,
+            things_per_second=availability.tokens_per_second,
         )
-        if competing_jobs is not None:
-            return competing_jobs
-        return int(database.retrieve_totals()["queued_text_requests"])
 
     def get_kudos_upfront_message(self, free_tokens: int, required_kudos: float) -> str:
         """Return the ``KudosUpfront`` message for a request whose requester cannot cover its kudos hold.
@@ -581,10 +590,11 @@ def add_impossible_reason(wp_status: dict[str, object], worker_availability: dat
 def read_text_request_status(wp: TextWaitingPrompt) -> dict[str, object]:
     """Return a text or chat request's full status, estimating its wait from the capacity eligible to serve it.
 
-    The queue ahead counts only the requests whose models overlap a model an eligible worker serves, and the
-    throughput is that of the eligible worker threads. The horde-wide queue and active thread count would quote a
-    request for a lightly queued model the whole horde's backlog, and the active thread count is cached for minutes,
-    so a pool that has just come back would be quoted the single thread that checked in first.
+    The queue ahead counts only the requests at least one eligible worker could take, and the throughput is the
+    eligible workers' measured speed over their threads, the estimate the free output allowance also reads. The
+    horde-wide queue and active thread count would quote a request for a lightly queued model the whole horde's
+    backlog, and the active thread count is cached for minutes, so a pool that has just come back would be quoted the
+    single thread that checked in first.
 
     With no eligible thread there is no throughput to estimate from. The status then keeps the horde-wide estimate,
     and ``is_possible`` and ``eligible_worker_threads`` report that no worker can take the request.
@@ -598,11 +608,13 @@ def read_text_request_status(wp: TextWaitingPrompt) -> dict[str, object]:
     worker_availability = database.get_worker_availability_for_request(wp)
     horde_wide_queue_stats = database.get_wp_queue_stats(wp)
     if worker_availability.thread_count > 0:
-        wp_queue_stats = database.get_wp_queue_stats(wp, served_model_names=worker_availability.served_model_names)
+        wp_queue_stats = database.get_wp_queue_stats(wp, eligible_worker_profiles=worker_availability.worker_profiles)
         active_worker_count = (worker_availability.worker_count, worker_availability.thread_count)
+        things_per_second = worker_availability.tokens_per_second
     else:
         wp_queue_stats = horde_wide_queue_stats
         active_worker_count = database.count_active_workers("text")
+        things_per_second = None
     wp_status = wp.get_status(
         request_avg=database.get_request_avg("text"),
         has_valid_workers=worker_availability.is_possible,
@@ -612,6 +624,7 @@ def read_text_request_status(wp: TextWaitingPrompt) -> dict[str, object]:
         eligible_worker_threads=worker_availability.thread_count,
         might_stall=worker_availability.might_stall,
         forecast_queue_stats=horde_wide_queue_stats,
+        things_per_second=things_per_second,
     )
     add_impossible_reason(wp_status, worker_availability)
     return wp_status

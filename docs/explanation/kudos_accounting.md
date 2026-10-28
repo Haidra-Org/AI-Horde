@@ -269,9 +269,10 @@ work during projector lag, but it cannot authorize an overspend on the strength 
 
 Not every request takes a hold. A text or chat request that asks for no more tokens than its free output allowance is
 admitted without one and charged when its generations settle, so a requester with little or no balance can still use
-idle capacity. The allowance falls from 4096 tokens toward 512 as competing jobs queue for the workers eligible for
-that request, so free output is generous when those workers are idle and modest when they are busy
-([reference](../reference/chat_requests.md#free-output-allowance)). A free request's charge can take the requester
+idle capacity. The allowance follows the request's estimated wait on the workers eligible for it, the same estimate
+the status route reports as `wait_time`: 4096 tokens up to a minute of queue ahead, falling linearly to 512 at five
+minutes. Free output is therefore generous while those workers keep up with their queue, however deep it is, and
+modest when they fall behind ([reference](../reference/chat_requests.md#free-output-allowance)). A free request's charge can take the requester
 below the account floor; projection then forgives the shortfall with a `FLOOR_ADJUSTMENT`, which is how free output is
 paid for.
 

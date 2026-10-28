@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 import logfire
 from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField, ChatServiceGapKind
@@ -41,7 +42,12 @@ from horde.classes.base.worker import (
 )
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
-from horde.classes.kobold.worker import TEXT_WORKER_DECLARATION_GENERATION_KEY, TextWorker, text_worker_softprompt_names_clause
+from horde.classes.kobold.worker import (
+    TEXT_WORKER_DECLARATION_GENERATION_KEY,
+    TextWorker,
+    get_effective_text_worker_speed,
+    text_worker_softprompt_names_clause,
+)
 from horde.classes.stable.interrogation import Interrogation, InterrogationForms
 from horde.classes.stable.interrogation_worker import InterrogationWorker
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -143,6 +149,74 @@ def find_chat_declaration_gap(
 
 
 @dataclass(frozen=True)
+class EligibleTextWorkerProfile:
+    """Represents the declarations of a worker eligible for a text request that decide which queued requests it takes.
+
+    It holds the part of ``TextWorker.can_generate_with_eligibility_inputs`` that the stored queue entries can be
+    judged against: the models, the chat opt-in and the text and chat length limits. The other gates read request
+    fields the stored queue does not carry, such as the prompt, the softprompt or the chat features.
+    """
+
+    model_names: frozenset[str]
+    """The models the worker serves."""
+    accepts_prompt_jobs: bool
+    """Whether the worker takes plain text requests."""
+    max_length: int
+    """The most tokens the worker generates for a plain text request."""
+    max_context_length: int
+    """The largest context the worker takes for a plain text request."""
+    chat_model_id: str | None
+    """The model the worker serves chat requests with; None when it does not take chat requests."""
+    chat_max_length: int | None
+    """The most tokens the worker generates for a chat request; None when it declared no chat limit."""
+    chat_max_context_length: int | None
+    """The largest context the worker takes for a chat request; None when it declared no chat limit."""
+
+    @classmethod
+    def from_worker(cls, worker: TextWorker, model_names: Sequence[str]) -> "EligibleTextWorkerProfile":
+        """Create the profile of an eligible worker from its row and the models the eligibility query selected."""
+        accepts_chat_jobs = bool(worker.accepts_chat_jobs) and worker.chat_model_id is not None
+        return cls(
+            model_names=frozenset(model_names),
+            accepts_prompt_jobs=bool(worker.accepts_prompt_jobs),
+            max_length=int(worker.max_length),
+            max_context_length=int(worker.max_context_length),
+            chat_model_id=worker.chat_model_id if accepts_chat_jobs else None,
+            chat_max_length=worker.chat_max_length,
+            chat_max_context_length=worker.chat_max_context_length,
+        )
+
+    def to_cache_entry(self) -> dict[str, object]:
+        """Return the profile as the JSON-serializable mapping the cached availability stores."""
+        return {
+            "models": sorted(self.model_names),
+            "accepts_prompt_jobs": self.accepts_prompt_jobs,
+            "max_length": self.max_length,
+            "max_context_length": self.max_context_length,
+            "chat_model_id": self.chat_model_id,
+            "chat_max_length": self.chat_max_length,
+            "chat_max_context_length": self.chat_max_context_length,
+        }
+
+    @classmethod
+    def from_cache_entry(cls, cache_entry: dict[str, Any]) -> "EligibleTextWorkerProfile":
+        """Parse a profile from the mapping ``to_cache_entry`` stored.
+
+        Raises:
+            KeyError: When the entry lacks a field.
+        """
+        return cls(
+            model_names=frozenset(cache_entry["models"]),
+            accepts_prompt_jobs=bool(cache_entry["accepts_prompt_jobs"]),
+            max_length=int(cache_entry["max_length"]),
+            max_context_length=int(cache_entry["max_context_length"]),
+            chat_model_id=cache_entry["chat_model_id"],
+            chat_max_length=cache_entry["chat_max_length"],
+            chat_max_context_length=cache_entry["chat_max_context_length"],
+        )
+
+
+@dataclass(frozen=True)
 class RequestWorkerAvailability:
     """Represents current worker capacity that passes the dispatch gates.
 
@@ -152,15 +226,18 @@ class RequestWorkerAvailability:
         might_stall: Cached assignment-pressure advisory for the request.
         impossible_reason: Why no worker is eligible when the cause is the workers' chat declarations; None
             otherwise.
-        served_model_names: The models at least one eligible worker serves, for a text request; empty for other
-            request types, whose status does not read it.
+        worker_profiles: The declarations of each eligible worker, for a text request; empty for other request
+            types, whose status does not read them.
+        tokens_per_second: The combined measured throughput of the eligible workers' threads, for a text request;
+            0 for other request types.
     """
 
     worker_count: int
     thread_count: int
     might_stall: bool = False
     impossible_reason: ChatImpossibleReason | None = None
-    served_model_names: frozenset[str] = frozenset()
+    worker_profiles: tuple[EligibleTextWorkerProfile, ...] = ()
+    tokens_per_second: float = 0.0
 
     @property
     def is_possible(self) -> bool:
@@ -1782,6 +1859,41 @@ class QueuedRequest:
     """The request's outstanding generations."""
     model_names: frozenset[str]
     """The models the request accepts; empty when it accepts any, or when the cached entry does not carry them."""
+    is_chat: bool = False
+    """Whether the request is a chat request; False when the cached entry does not carry it."""
+    max_length: int = 0
+    """The tokens the request asks for; 0, which every worker satisfies, when the cached entry does not carry it."""
+    max_context_length: int = 0
+    """The context the request needs; 0, which every worker satisfies, when the cached entry does not carry it."""
+
+    def can_be_taken_by(self, worker_profile: EligibleTextWorkerProfile) -> bool:
+        """Return whether a worker with ``worker_profile`` could take this request.
+
+        This applies the model, chat opt-in and length gates of ``TextWorker.can_generate_with_eligibility_inputs``,
+        whose request side the stored queue carries. A chat request is bounded by the worker's chat limits and a
+        plain text request by its text limits, as the full predicate bounds them.
+
+        Args:
+            worker_profile: The declarations of a worker eligible for another request.
+        """
+        if self.model_names and self.model_names.isdisjoint(worker_profile.model_names):
+            return False
+        if not self.is_chat:
+            return (
+                worker_profile.accepts_prompt_jobs
+                and worker_profile.max_length >= self.max_length
+                and worker_profile.max_context_length >= self.max_context_length
+            )
+        serves_requested_chat_model = worker_profile.chat_model_id is not None and (
+            not self.model_names or worker_profile.chat_model_id in self.model_names
+        )
+        return (
+            serves_requested_chat_model
+            and worker_profile.chat_max_length is not None
+            and worker_profile.chat_max_length >= self.max_length
+            and worker_profile.chat_max_context_length is not None
+            and worker_profile.chat_max_context_length >= self.max_context_length
+        )
 
 
 @dataclass(frozen=True)
@@ -1817,6 +1929,9 @@ def _parse_cached_wp_queue(wp_type: str) -> CachedWPQueue | None:
                 queued_things=round(row["things"] * row["n"] / thing_divisor, 2),
                 n=row["n"],
                 model_names=frozenset(row.get("models", ())),
+                is_chat=bool(row.get("is_chat", False)),
+                max_length=int(row.get("max_length", 0)),
+                max_context_length=int(row.get("max_context_length", 0)),
             )
             for row in queue_rows
         )
@@ -1853,15 +1968,18 @@ def _refresh_wp_queue_caches(wp_type: str) -> None:
     _wp_queue_positions_time[wp_type] = now
 
 
-def _get_competing_wp_queue_stats(wp: WaitingPrompt, served_model_names: frozenset[str]) -> tuple[int, float, int] | None:
+def _get_competing_wp_queue_stats(
+    wp: WaitingPrompt,
+    worker_profiles: Sequence[EligibleTextWorkerProfile],
+) -> tuple[int, float, int] | None:
     """Return the queue statistics of ``wp`` counting only the requests ahead its eligible workers could take.
 
-    A request ahead competes when it accepts any model or a model in ``served_model_names``. This approximates the
-    workers' candidate queues: a worker serving several models can still prefer work this request cannot use.
+    A request ahead competes when at least one of the eligible workers could take it. This approximates the workers'
+    candidate queues: a worker serving several models can still prefer work this request cannot use.
 
     Args:
         wp: The request.
-        served_model_names: The models at least one worker eligible for ``wp`` serves.
+        worker_profiles: The declarations of the workers eligible for ``wp``.
 
     Returns:
         The position among competing requests, the work and the generations of those requests including ``wp``, as
@@ -1879,7 +1997,7 @@ def _get_competing_wp_queue_stats(wp: WaitingPrompt, served_model_names: frozens
     things_ahead_in_queue = 0.0
     n_ahead_in_queue = 0
     for queued_request in cached_queue.requests[:own_index]:
-        if not _queued_request_competes(queued_request, served_model_names):
+        if not _queued_request_competes(queued_request, worker_profiles):
             continue
         competing_ahead += 1
         things_ahead_in_queue += queued_request.queued_things
@@ -1890,47 +2008,66 @@ def _get_competing_wp_queue_stats(wp: WaitingPrompt, served_model_names: frozens
     return (competing_ahead, round(things_ahead_in_queue, 2), n_ahead_in_queue)
 
 
-def _queued_request_competes(queued_request: QueuedRequest, served_model_names: frozenset[str]) -> bool:
-    """Return whether a queued request accepts any model or one of ``served_model_names``."""
-    return not queued_request.model_names or not queued_request.model_names.isdisjoint(served_model_names)
+def _queued_request_competes(queued_request: QueuedRequest, worker_profiles: Sequence[EligibleTextWorkerProfile]) -> bool:
+    """Return whether at least one worker with one of ``worker_profiles`` could take a queued request."""
+    return any(queued_request.can_be_taken_by(worker_profile) for worker_profile in worker_profiles)
 
 
-def count_competing_queued_jobs(wp_type: str, served_model_names: frozenset[str]) -> int | None:
-    """Return the waiting generations of every queued request that workers serving ``served_model_names`` could take.
+@dataclass(frozen=True)
+class CompetingQueuedWork:
+    """Represents the queued work that the workers eligible for a request being created could take instead."""
+
+    queued_things: float
+    """The competing requests' outstanding work, in the request type's things."""
+    queued_jobs: int
+    """The competing requests' outstanding generations."""
+
+
+def measure_competing_queued_work(
+    wp_type: str,
+    worker_profiles: Sequence[EligibleTextWorkerProfile],
+) -> CompetingQueuedWork | None:
+    """Return the work of every queued request that at least one of the workers with ``worker_profiles`` could take.
 
     A request being created is not yet in the stored queue, so every competing request counts as ahead of it. Like
     ``_get_competing_wp_queue_stats``, this reads only the in-process copy of the stored queue.
 
     Args:
         wp_type: The request type whose queue is read.
-        served_model_names: The models at least one worker eligible for the new request serves.
+        worker_profiles: The declarations of the workers eligible for the new request.
 
     Returns:
-        The summed ``n`` of the competing queued requests; None when no queue is stored.
+        The summed work and generations of the competing queued requests; None when no queue is stored.
     """
     _refresh_wp_queue_caches(wp_type)
     cached_queue = _wp_queue_cache.get(wp_type)
     if cached_queue is None:
         return None
-    return sum(queued_request.n for queued_request in cached_queue.requests if _queued_request_competes(queued_request, served_model_names))
+    competing_requests = [
+        queued_request for queued_request in cached_queue.requests if _queued_request_competes(queued_request, worker_profiles)
+    ]
+    return CompetingQueuedWork(
+        queued_things=round(sum(queued_request.queued_things for queued_request in competing_requests), 2),
+        queued_jobs=sum(queued_request.n for queued_request in competing_requests),
+    )
 
 
-def get_wp_queue_stats(wp, *, served_model_names: frozenset[str] | None = None):
+def get_wp_queue_stats(wp, *, eligible_worker_profiles: Sequence[EligibleTextWorkerProfile] | None = None):
     """Return the queue position of ``wp``, the work queued up to and including it, and the generations in that work.
 
     Args:
         wp: The request.
-        served_model_names: When given, only the requests ahead that accept any model or one of these count. The text
-            status passes the models its eligible workers serve. When no queue is stored, the horde-wide statistics
-            are returned instead.
+        eligible_worker_profiles: When given, only the requests ahead that at least one of these workers could take
+            count. The text status passes the declarations of its eligible workers. When no queue is stored, the
+            horde-wide statistics are returned instead.
 
     Returns:
         The zero-based position, the work, and the generation count; ``(-1, 0, 0)`` when ``wp`` is not queued.
     """
     if not wp.needs_gen():
         return (-1, 0, 0)
-    if served_model_names is not None:
-        competing_stats = _get_competing_wp_queue_stats(wp, served_model_names)
+    if eligible_worker_profiles is not None:
+        competing_stats = _get_competing_wp_queue_stats(wp, eligible_worker_profiles)
         if competing_stats is not None:
             return competing_stats
     wp_type = wp.wp_type
@@ -2402,7 +2539,10 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
                     thread_count=int(parsed_availability["threads"]),
                     might_stall=might_stall,
                     impossible_reason=_parse_cached_impossible_reason(parsed_availability.get("impossible_reason")),
-                    served_model_names=frozenset(parsed_availability["served_models"]),
+                    worker_profiles=tuple(
+                        EligibleTextWorkerProfile.from_cache_entry(cache_entry) for cache_entry in parsed_availability["worker_profiles"]
+                    ),
+                    tokens_per_second=float(parsed_availability["tokens_per_second"]),
                 )
                 _record_worker_availability_cache_lookup(waiting_prompt, "hit")
                 return cached_result
@@ -2422,7 +2562,8 @@ def get_worker_availability_for_request(waiting_prompt: WaitingPrompt) -> Reques
         thread_count=thread_count,
         might_stall=_assess_request_might_stall(waiting_prompt, eligible_workers, thread_count),
         impossible_reason=impossible_reason,
-        served_model_names=_collect_served_model_names(waiting_prompt, eligible_workers),
+        worker_profiles=_collect_text_worker_profiles(waiting_prompt, eligible_workers),
+        tokens_per_second=_measure_text_tokens_per_second(waiting_prompt, eligible_workers),
     )
     _cache_worker_availability(waiting_prompt, availability, declaration_generation)
     return availability
@@ -2532,28 +2673,59 @@ def check_new_request_has_valid_workers(
         worker_count=len(eligible_workers),
         thread_count=thread_count,
         might_stall=_assess_request_might_stall(waiting_prompt, eligible_workers, thread_count),
-        served_model_names=_collect_served_model_names(waiting_prompt, eligible_workers),
+        worker_profiles=_collect_text_worker_profiles(waiting_prompt, eligible_workers),
+        tokens_per_second=_measure_text_tokens_per_second(waiting_prompt, eligible_workers),
     )
     _cache_worker_availability(waiting_prompt, availability, declaration_generation)
     return True
 
 
-def _collect_served_model_names(waiting_prompt: WaitingPrompt, eligible_workers: list[EligibleWorker]) -> frozenset[str]:
-    """Return the models at least one of a text request's eligible workers serves; empty for other request types.
+def _collect_text_worker_profiles(
+    waiting_prompt: WaitingPrompt,
+    eligible_workers: list[EligibleWorker],
+) -> tuple[EligibleTextWorkerProfile, ...]:
+    """Return the declarations of a text request's eligible workers; empty for other request types.
 
-    Only the text status narrows its queue to these models. An image worker serves many models, so collecting them
-    for every image request would enlarge each cached availability entry for a value nothing reads.
+    Only the text status narrows its queue to the requests these workers could take. An image worker serves many
+    models, so collecting them for every image request would enlarge each cached availability entry for a value
+    nothing reads.
+
+    Args:
+        waiting_prompt: Request the workers are eligible for.
+        eligible_workers: Workers that passed the request's dispatch gates.
+    """
+    if waiting_prompt.wp_type != "text":
+        return ()
+    return tuple(
+        EligibleTextWorkerProfile.from_worker(eligible_worker.worker, eligible_worker.eligibility_inputs.model_names)
+        for eligible_worker in eligible_workers
+        if isinstance(eligible_worker.worker, TextWorker)
+    )
+
+
+def _measure_text_tokens_per_second(waiting_prompt: WaitingPrompt, eligible_workers: list[EligibleWorker]) -> float:
+    """Return the combined throughput, in tokens per second, of a text request's eligible worker threads.
+
+    ``speed`` is the average of a worker's recent jobs, each run on one thread, so a worker contributes its speed
+    once per advertised thread. A worker that has not recorded a speed counts at the assumed speed of an unmeasured
+    worker, as the pop gate counts it.
 
     Args:
         waiting_prompt: Request the workers are eligible for.
         eligible_workers: Workers that passed the request's dispatch gates.
 
     Returns:
-        The union of the eligible workers' model names.
+        The summed throughput; 0 for other request types.
     """
     if waiting_prompt.wp_type != "text":
-        return frozenset()
-    return frozenset(model_name for eligible_worker in eligible_workers for model_name in eligible_worker.eligibility_inputs.model_names)
+        return 0.0
+    return float(
+        sum(
+            get_effective_text_worker_speed(eligible_worker.worker.speed)
+            * max(eligible_worker.worker.threads, 1)
+            for eligible_worker in eligible_workers
+        ),
+    )
 
 
 def _assess_request_might_stall(
@@ -2675,7 +2847,8 @@ def _cache_worker_availability(
                 "might_stall": availability.might_stall,
                 "impossible_reason": impossible_reason.model_dump(mode="json") if impossible_reason is not None else None,
                 "declaration_generation": declaration_generation,
-                "served_models": sorted(availability.served_model_names),
+                "worker_profiles": [worker_profile.to_cache_entry() for worker_profile in availability.worker_profiles],
+                "tokens_per_second": availability.tokens_per_second,
             },
         ),
     )
@@ -2770,23 +2943,43 @@ def _prioritized_wp_criteria(waiting_prompt_type):
     """Return the criteria a request of ``waiting_prompt_type`` meets to be in the prioritized queue."""
     return (
         waiting_prompt_type.n > 0,
-        waiting_prompt_type.faulted == False,  # noqa E712
-        waiting_prompt_type.active == True,  # noqa E712
+        waiting_prompt_type.faulted.is_(False),
+        waiting_prompt_type.active.is_(True),
     )
 
 
 def query_prioritized_wps(wp_type="image"):
+    """Return the waiting requests of ``wp_type`` in the order workers are offered them, highest priority first.
+
+    Examples:
+        Two queued text requests, a chat request ``A`` (``extra_priority`` 10, created 12:00, ``max_length`` 512)
+        and a plain request ``B`` (``extra_priority`` 50, created 12:05, ``max_length`` 200), yield ``B`` then
+        ``A``: ``(B, 200, 1, 50, 12:05, ..., False, 200, 2048)``, ``(A, 512, 1, 10, 12:00, ..., True, 512, 4096)``.
+        An image queue yields the same rows without the last three columns.
+    """
     waiting_prompt_type = WP_CLASS_MAP[wp_type]
+    selected_columns = [
+        waiting_prompt_type.id,
+        waiting_prompt_type.things,
+        waiting_prompt_type.n,
+        waiting_prompt_type.extra_priority,
+        waiting_prompt_type.created,
+        waiting_prompt_type.expiry,
+    ]
+    # The stored text queue carries the request fields that a worker's chat opt-in and length limits are checked
+    # against, so a text status counts only the requests ahead that its eligible workers could take.
+    if wp_type == "text":
+        selected_columns += [
+            TextWaitingPrompt.is_chat,
+            TextWaitingPrompt.max_length,
+            TextWaitingPrompt.max_context_length,
+        ]
     return (
-        db.session.query(
-            waiting_prompt_type.id,
-            waiting_prompt_type.things,
-            waiting_prompt_type.n,
-            waiting_prompt_type.extra_priority,
-            waiting_prompt_type.created,
-            waiting_prompt_type.expiry,
-        )
+        db.session.query(*selected_columns)
+        # Only requests with a generation still to hand out, neither faulted nor waiting on activation, are queued.
         .filter(*_prioritized_wp_criteria(waiting_prompt_type))
+        # The pop offers higher kudos priority first and, among equals, the older request first; the stored queue
+        # positions and wait estimates read this order as the order the requests are served in.
         .order_by(waiting_prompt_type.extra_priority.desc(), waiting_prompt_type.created.asc())
         .all()
     )

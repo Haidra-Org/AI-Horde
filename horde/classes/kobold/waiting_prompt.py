@@ -73,32 +73,35 @@ escaped in that serialisation, so only a part's ``type`` key can match it."""
 
 def compute_free_output_allowance(
     *,
-    competing_jobs_ahead: int,
-    eligible_threads: int,
+    estimated_wait_seconds: float | None,
     ceiling: int,
     floor: int,
-    slope: float,
+    full_wait_seconds: float,
+    floor_wait_seconds: float,
 ) -> int:
     """Return how many tokens a text request may ask for without holding its kudos upfront.
 
-    The allowance falls linearly from ``ceiling`` with the competing jobs waiting per eligible thread, so it measures
-    the load on the workers that could serve this request rather than on the whole horde.
+    The allowance follows the request's estimated wait on the workers eligible for it, so a fast worker that clears a
+    deep queue quickly keeps its users at the ceiling while a slow one with a short queue does not. It is ``ceiling``
+    up to ``full_wait_seconds``, falls linearly to ``floor`` at ``floor_wait_seconds`` and stays there beyond.
 
     Args:
-        competing_jobs_ahead: The waiting generations of the queued requests the request's eligible workers could take.
-        eligible_threads: The advertised threads of the workers eligible for the request.
-        ceiling: The allowance when no competing job waits.
-        floor: The smallest allowance, and the allowance when no thread is eligible.
-        slope: The tokens the allowance loses per competing job waiting for each eligible thread.
+        estimated_wait_seconds: The seconds the eligible workers need to clear the competing work ahead of the
+            request; None when no worker is eligible.
+        ceiling: The allowance at or below ``full_wait_seconds``.
+        floor: The allowance at or beyond ``floor_wait_seconds``, and when no worker is eligible.
+        full_wait_seconds: The longest wait that still gives ``ceiling``.
+        floor_wait_seconds: The wait from which the allowance is ``floor``.
 
     Returns:
-        ``ceiling - slope * competing_jobs_ahead / eligible_threads``, rounded and clamped to ``floor``..``ceiling``.
+        The allowance, rounded to whole tokens.
     """
-    if eligible_threads <= 0:
+    if estimated_wait_seconds is None or estimated_wait_seconds >= floor_wait_seconds:
         return floor
-    jobs_per_thread = competing_jobs_ahead / eligible_threads
-    allowance = round(ceiling - slope * jobs_per_thread)
-    return max(floor, min(ceiling, allowance))
+    if estimated_wait_seconds <= full_wait_seconds:
+        return ceiling
+    fraction_toward_floor = (estimated_wait_seconds - full_wait_seconds) / (floor_wait_seconds - full_wait_seconds)
+    return round(ceiling - (ceiling - floor) * fraction_toward_floor)
 
 
 class TextWaitingPrompt(WaitingPrompt):
@@ -549,30 +552,29 @@ class TextWaitingPrompt(WaitingPrompt):
             style_reward=style_reward,
         )
 
-    def require_upfront_kudos(self, *, competing_jobs_ahead: int, eligible_threads: int) -> tuple[bool, int, bool]:
+    def require_upfront_kudos(self, *, estimated_wait_seconds: float | None) -> tuple[bool, int, bool]:
         """Return whether this request must hold its kudos upfront, its free output allowance, and whether downgrading
         is barred.
 
         The allowance comes from
         [`compute_free_output_allowance`][horde.classes.kobold.waiting_prompt.compute_free_output_allowance] under the
-        ceiling, floor and slope in [`Config`][horde.config.Config]. A request that disallows slow workers always holds
-        its kudos upfront.
+        ceiling, floor and wait thresholds in [`Config`][horde.config.Config]. A request that disallows slow workers
+        always holds its kudos upfront.
 
         Args:
-            competing_jobs_ahead: The waiting generations of the queued requests the request's eligible workers could
-                take.
-            eligible_threads: The advertised threads of the workers eligible for the request at its ``max_length``.
+            estimated_wait_seconds: The seconds the workers eligible for the request at its ``max_length`` need to
+                clear the competing work ahead of it; None when no worker is eligible.
 
         Returns:
             Whether the requester must already have the kudos for the request, the most tokens it may ask for without
             them, and whether the requirement forbids downgrading the request to the allowance.
         """
         max_tokens = compute_free_output_allowance(
-            competing_jobs_ahead=competing_jobs_ahead,
-            eligible_threads=eligible_threads,
+            estimated_wait_seconds=estimated_wait_seconds,
             ceiling=Config.text_free_output_ceiling,
             floor=Config.text_free_output_floor,
-            slope=Config.text_free_output_slope,
+            full_wait_seconds=Config.text_free_output_wait_full_seconds,
+            floor_wait_seconds=Config.text_free_output_wait_floor_seconds,
         )
         if not self.slow_workers:
             return (True, max_tokens, False)

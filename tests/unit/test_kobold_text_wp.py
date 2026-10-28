@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from horde.classes.base.waiting_prompt import estimate_queue_wait_seconds
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, compute_free_output_allowance
 from horde.config import Config
 
@@ -38,39 +39,60 @@ FREE_OUTPUT_CEILING = 4096
 FREE_OUTPUT_FLOOR = 512
 """The default floor of the free output allowance."""
 
-FREE_OUTPUT_SLOPE = 1792.0
-"""The default slope: one competing job per eligible thread halves the headroom above the floor."""
+FULL_WAIT_SECONDS = 60.0
+"""The default longest estimated wait that still gives the ceiling."""
+
+FLOOR_WAIT_SECONDS = 300.0
+"""The default estimated wait from which the allowance is the floor."""
 
 
-def _allowance(*, competing_jobs_ahead: int, eligible_threads: int) -> int:
+def _allowance(estimated_wait_seconds: float | None) -> int:
     return compute_free_output_allowance(
-        competing_jobs_ahead=competing_jobs_ahead,
-        eligible_threads=eligible_threads,
+        estimated_wait_seconds=estimated_wait_seconds,
         ceiling=FREE_OUTPUT_CEILING,
         floor=FREE_OUTPUT_FLOOR,
-        slope=FREE_OUTPUT_SLOPE,
+        full_wait_seconds=FULL_WAIT_SECONDS,
+        floor_wait_seconds=FLOOR_WAIT_SECONDS,
     )
 
 
 class TestComputeFreeOutputAllowance:
-    def test_idle_eligible_workers_give_the_ceiling(self):
-        assert _allowance(competing_jobs_ahead=0, eligible_threads=4) == FREE_OUTPUT_CEILING
+    def test_no_wait_gives_the_ceiling(self):
+        assert _allowance(0.0) == FREE_OUTPUT_CEILING
 
-    def test_one_competing_job_per_thread_halves_the_headroom(self):
-        assert _allowance(competing_jobs_ahead=4, eligible_threads=4) == 2304
+    def test_a_wait_up_to_the_full_threshold_gives_the_ceiling(self):
+        assert _allowance(FULL_WAIT_SECONDS) == FREE_OUTPUT_CEILING
 
-    def test_load_is_measured_per_eligible_thread(self):
-        """Six jobs ahead weigh on four threads as three jobs ahead do on two."""
-        assert _allowance(competing_jobs_ahead=6, eligible_threads=4) == _allowance(competing_jobs_ahead=3, eligible_threads=2)
-        assert _allowance(competing_jobs_ahead=6, eligible_threads=4) == 1408
-        assert _allowance(competing_jobs_ahead=1, eligible_threads=4) == 3648
+    def test_the_allowance_falls_linearly_between_the_thresholds(self):
+        """Halfway between the thresholds the allowance is halfway between the ceiling and the floor."""
+        halfway_wait = (FULL_WAIT_SECONDS + FLOOR_WAIT_SECONDS) / 2
+        assert _allowance(halfway_wait) == (FREE_OUTPUT_CEILING + FREE_OUTPUT_FLOOR) / 2
+        assert _allowance(120.0) == 3200
+        assert FREE_OUTPUT_FLOOR < _allowance(FULL_WAIT_SECONDS + 1) < FREE_OUTPUT_CEILING
 
-    def test_saturated_eligible_workers_give_the_floor(self):
-        assert _allowance(competing_jobs_ahead=2, eligible_threads=1) == FREE_OUTPUT_FLOOR
-        assert _allowance(competing_jobs_ahead=500, eligible_threads=10) == FREE_OUTPUT_FLOOR
+    def test_a_wait_at_the_floor_threshold_gives_the_floor(self):
+        assert _allowance(FLOOR_WAIT_SECONDS) == FREE_OUTPUT_FLOOR
 
-    def test_no_eligible_thread_gives_the_floor(self):
-        assert _allowance(competing_jobs_ahead=0, eligible_threads=0) == FREE_OUTPUT_FLOOR
+    def test_a_wait_beyond_the_floor_threshold_gives_the_floor(self):
+        assert _allowance(FLOOR_WAIT_SECONDS * 10) == FREE_OUTPUT_FLOOR
+
+    def test_no_eligible_worker_gives_the_floor(self):
+        assert _allowance(None) == FREE_OUTPUT_FLOOR
+
+
+class TestEstimateQueueWaitSeconds:
+    def test_the_wait_is_the_queued_work_over_the_combined_throughput(self):
+        assert estimate_queue_wait_seconds(queued_things=1200, queued_jobs=6, worker_threads=3, things_per_second=60) == 20
+
+    def test_fewer_jobs_than_threads_count_only_the_threads_they_occupy(self):
+        """One job on a three-thread pool runs at one thread's share of the combined throughput."""
+        assert estimate_queue_wait_seconds(queued_things=200, queued_jobs=1, worker_threads=3, things_per_second=60) == 10
+
+    def test_an_empty_queue_has_no_wait(self):
+        assert estimate_queue_wait_seconds(queued_things=0, queued_jobs=0, worker_threads=3, things_per_second=60) == 0
+
+    def test_no_throughput_divides_the_work_by_one(self):
+        assert estimate_queue_wait_seconds(queued_things=80, queued_jobs=1, worker_threads=0, things_per_second=0) == 80
 
 
 class TestRequireUpfrontKudos:
@@ -78,69 +100,55 @@ class TestRequireUpfrontKudos:
     def default_allowance_settings(self, monkeypatch):
         monkeypatch.setattr(Config, "text_free_output_ceiling", FREE_OUTPUT_CEILING)
         monkeypatch.setattr(Config, "text_free_output_floor", FREE_OUTPUT_FLOOR)
-        monkeypatch.setattr(Config, "text_free_output_slope", FREE_OUTPUT_SLOPE)
+        monkeypatch.setattr(Config, "text_free_output_wait_full_seconds", FULL_WAIT_SECONDS)
+        monkeypatch.setattr(Config, "text_free_output_wait_floor_seconds", FLOOR_WAIT_SECONDS)
         monkeypatch.delenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", raising=False)
 
-    def test_idle_fleet_serves_up_to_the_ceiling_free(self):
-        result = TextWaitingPrompt.require_upfront_kudos(
-            _wp(max_length=FREE_OUTPUT_CEILING),
-            competing_jobs_ahead=0,
-            eligible_threads=1,
-        )
+    def test_a_short_wait_serves_up_to_the_ceiling_free(self):
+        result = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=FREE_OUTPUT_CEILING), estimated_wait_seconds=0.0)
         assert result == (False, FREE_OUTPUT_CEILING, False)
 
     def test_over_the_allowance_requires_upfront(self):
-        result = TextWaitingPrompt.require_upfront_kudos(
-            _wp(max_length=FREE_OUTPUT_CEILING + 1),
-            competing_jobs_ahead=0,
-            eligible_threads=1,
-        )
+        result = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=FREE_OUTPUT_CEILING + 1), estimated_wait_seconds=0.0)
         assert result == (True, FREE_OUTPUT_CEILING, False)
 
-    def test_saturated_fleet_serves_only_the_floor_free(self):
+    def test_a_long_wait_serves_only_the_floor_free(self):
         within_floor = TextWaitingPrompt.require_upfront_kudos(
             _wp(max_length=FREE_OUTPUT_FLOOR),
-            competing_jobs_ahead=40,
-            eligible_threads=4,
+            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
         )
         over_floor = TextWaitingPrompt.require_upfront_kudos(
             _wp(max_length=FREE_OUTPUT_FLOOR + 1),
-            competing_jobs_ahead=40,
-            eligible_threads=4,
+            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
         )
         assert within_floor == (False, FREE_OUTPUT_FLOOR, False)
         assert over_floor == (True, FREE_OUTPUT_FLOOR, False)
 
-    def test_no_eligible_thread_serves_only_the_floor_free(self):
-        result = TextWaitingPrompt.require_upfront_kudos(
-            _wp(max_length=FREE_OUTPUT_FLOOR + 1),
-            competing_jobs_ahead=0,
-            eligible_threads=0,
-        )
+    def test_no_eligible_worker_serves_only_the_floor_free(self):
+        result = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=FREE_OUTPUT_FLOOR + 1), estimated_wait_seconds=None)
         assert result == (True, FREE_OUTPUT_FLOOR, False)
 
     def test_no_slow_workers_always_requires_upfront(self):
-        result = TextWaitingPrompt.require_upfront_kudos(
-            _wp(slow_workers=False, max_length=80),
-            competing_jobs_ahead=0,
-            eligible_threads=1,
-        )
+        result = TextWaitingPrompt.require_upfront_kudos(_wp(slow_workers=False, max_length=80), estimated_wait_seconds=0.0)
         assert result == (True, FREE_OUTPUT_CEILING, False)
 
-    def test_configured_ceiling_and_floor_apply(self, monkeypatch):
+    def test_configured_ceiling_floor_and_thresholds_apply(self, monkeypatch):
         monkeypatch.setattr(Config, "text_free_output_ceiling", 1024)
         monkeypatch.setattr(Config, "text_free_output_floor", 256)
-        idle = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=1024), competing_jobs_ahead=0, eligible_threads=1)
-        busy = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=1024), competing_jobs_ahead=100, eligible_threads=1)
+        monkeypatch.setattr(Config, "text_free_output_wait_full_seconds", 10.0)
+        monkeypatch.setattr(Config, "text_free_output_wait_floor_seconds", 20.0)
+        idle = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=1024), estimated_wait_seconds=10.0)
+        halfway = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=1024), estimated_wait_seconds=15.0)
+        busy = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=1024), estimated_wait_seconds=20.0)
         assert idle == (False, 1024, False)
+        assert halfway == (True, 640, False)
         assert busy == (True, 256, False)
 
     def test_workerlist_env_forces_upfront_and_blocks_downgrade(self, monkeypatch):
         monkeypatch.setenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "1")
         result = TextWaitingPrompt.require_upfront_kudos(
             _wp(slow_workers=True, max_length=200, workers=["w"]),
-            competing_jobs_ahead=0,
-            eligible_threads=1,
+            estimated_wait_seconds=0.0,
         )
         assert result == (True, FREE_OUTPUT_CEILING, True)
 

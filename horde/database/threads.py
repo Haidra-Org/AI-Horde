@@ -126,8 +126,9 @@ def assign_monthly_kudos():
 def store_prioritized_wp_queue():
     """Store the prioritized queue of each request type and each request's position in it, horde-wide.
 
-    A text entry also lists the models its request accepts, so a text status can count only the requests ahead that
-    its eligible workers could take. Image entries do not: the image status reads only the precomputed positions.
+    A text entry also lists the models its request accepts, whether it is a chat request and its length limits, so a
+    text status can count only the requests ahead that its eligible workers could take. Image entries do not: the
+    image status reads only the precomputed positions.
     """
     with get_app().app_context():
         for wp_type in ["image", "text"]:
@@ -148,6 +149,9 @@ def store_prioritized_wp_queue():
                 }
                 if model_names_by_wp_id is not None:
                     wp_json["models"] = model_names_by_wp_id.get(str(wp.id), [])
+                    wp_json["is_chat"] = bool(wp.is_chat)
+                    wp_json["max_length"] = wp.max_length
+                    wp_json["max_context_length"] = wp.max_context_length
                 serialized_wp_list.append(wp_json)
                 queued_things = round(wp.things * wp.n / thing_divisor, 2)
                 things_ahead_in_queue += queued_things

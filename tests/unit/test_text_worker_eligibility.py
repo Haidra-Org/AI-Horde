@@ -24,6 +24,7 @@ from horde.classes.base.worker import WorkerBlackList, WorkerModel
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import (
     TEXT_WORKER_DECLARATION_GENERATION_KEY,
+    UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND,
     TextWorker,
     TextWorkerSoftprompts,
     get_minimum_text_worker_speed,
@@ -131,7 +132,18 @@ def test_queuing_a_text_request_seeds_the_availability_its_first_status_poll_rea
         "might_stall": False,
         "impossible_reason": None,
         "declaration_generation": 0,
-        "served_models": ["seeded-model"],
+        "worker_profiles": [
+            {
+                "models": ["seeded-model"],
+                "accepts_prompt_jobs": True,
+                "max_length": 512,
+                "max_context_length": 4096,
+                "chat_model_id": None,
+                "chat_max_length": None,
+                "chat_max_context_length": None,
+            },
+        ],
+        "tokens_per_second": 10.0,
     }
 
     def fail_worker_query(*_args: Any, **_kwargs: Any) -> None:
@@ -935,6 +947,51 @@ def test_a_request_behind_its_own_models_queue_reads_that_work_over_the_eligible
     assert status["wait_time"] == round(competing_work / (TEXT_REQUEST_AVG * 3))
 
 
+def test_the_wait_is_measured_at_the_eligible_workers_speed_rather_than_the_horde_average(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker faster than the horde average clears the same queue in proportionally less time."""
+    monkeypatch.setattr("horde.classes.kobold.worker.model_reference.get_text_model_multiplier", lambda _model_name: 20)
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    for _ in range(6):
+        _queue_text_request(user, ["shared-model"], max_length=200)
+    request = _queue_text_request(user, ["shared-model"], max_length=80)
+    fast_worker = _make_text_worker(user, "shared-model", speed=4 * TEXT_REQUEST_AVG)
+    fast_worker.threads = 2
+    db.session.commit()
+
+    status = _read_status_after_queue_refresh(request, fake_redis, monkeypatch)
+
+    assert status["wait_time"] == round((6 * 200 + 80) / (4 * TEXT_REQUEST_AVG * 2))
+
+
+def test_a_queued_request_over_every_eligible_workers_length_limit_does_not_count_ahead(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request ahead on the same model that asks for more tokens than the eligible worker generates is not ahead."""
+    monkeypatch.setattr("horde.classes.kobold.worker.model_reference.get_text_model_multiplier", lambda _model_name: 20)
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    _queue_text_request(user, ["shared-model"], max_length=1024)
+    _queue_text_request(user, ["shared-model"], max_length=200)
+    request = _queue_text_request(user, ["shared-model"], max_length=80)
+    _make_text_worker(user, "shared-model", speed=10)
+
+    status = _read_status_after_queue_refresh(request, fake_redis, monkeypatch)
+
+    assert status["queue_position"] == 2
+    assert status["wait_time"] == round((200 + 80) / TEXT_REQUEST_AVG)
+
+
 def test_a_request_without_eligible_threads_reads_impossible_with_the_horde_wide_estimate(
     db_session: Any,
     fake_redis: Any,
@@ -967,14 +1024,93 @@ def _refresh_stored_queue(fake_redis: Any, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setitem(functions._wp_queue_positions_cache, "text", {})
 
 
-def test_a_new_request_counts_every_queued_generation_its_eligible_workers_could_take(
+def _text_worker_profile(model_names: list[str], **declaration: Any) -> functions.EligibleTextWorkerProfile:
+    """Return the profile of a text worker serving ``model_names``, with the test worker's text limits by default."""
+    profile_fields: dict[str, Any] = {
+        "model_names": frozenset(model_names),
+        "accepts_prompt_jobs": True,
+        "max_length": 512,
+        "max_context_length": 4096,
+        "chat_model_id": None,
+        "chat_max_length": None,
+        "chat_max_context_length": None,
+        **declaration,
+    }
+    return functions.EligibleTextWorkerProfile(**profile_fields)
+
+
+def _queued_request(model_names: list[str], *, is_chat: bool = False, max_length: int = 200) -> functions.QueuedRequest:
+    return functions.QueuedRequest(
+        queued_things=max_length,
+        n=1,
+        model_names=frozenset(model_names),
+        is_chat=is_chat,
+        max_length=max_length,
+        max_context_length=2048,
+    )
+
+
+CHAT_WORKER_DECLARATION: dict[str, Any] = {
+    "chat_model_id": "shared-model",
+    "chat_max_length": 1024,
+    "chat_max_context_length": 8192,
+}
+"""The chat declaration of a worker that serves ``shared-model`` with chat."""
+
+
+def test_a_queued_request_on_an_overlapping_model_competes() -> None:
+    assert _queued_request(["shared-model", "other-model"]).can_be_taken_by(_text_worker_profile(["shared-model"]))
+
+
+def test_a_queued_request_accepting_any_model_competes() -> None:
+    assert _queued_request([]).can_be_taken_by(_text_worker_profile(["shared-model"]))
+
+
+def test_a_queued_request_on_other_models_does_not_compete() -> None:
+    assert not _queued_request(["busy-model"]).can_be_taken_by(_text_worker_profile(["shared-model"]))
+
+
+def test_a_queued_chat_request_does_not_compete_for_a_worker_without_chat() -> None:
+    """Sharing the model is not enough: a worker that does not take chat jobs cannot take a queued chat request."""
+    assert not _queued_request(["shared-model"], is_chat=True).can_be_taken_by(_text_worker_profile(["shared-model"]))
+
+
+def test_a_queued_chat_request_competes_for_a_worker_serving_its_model_with_chat() -> None:
+    chat_worker = _text_worker_profile(["shared-model"], **CHAT_WORKER_DECLARATION)
+    assert _queued_request(["shared-model"], is_chat=True).can_be_taken_by(chat_worker)
+
+
+def test_a_queued_request_over_the_workers_max_length_does_not_compete() -> None:
+    assert not _queued_request(["shared-model"], max_length=513).can_be_taken_by(_text_worker_profile(["shared-model"]))
+    assert _queued_request(["shared-model"], max_length=512).can_be_taken_by(_text_worker_profile(["shared-model"]))
+
+
+def test_a_queued_chat_request_is_bounded_by_the_chat_limits_rather_than_the_text_limits() -> None:
+    chat_worker = _text_worker_profile(["shared-model"], max_length=80, **CHAT_WORKER_DECLARATION)
+    assert _queued_request(["shared-model"], is_chat=True, max_length=1024).can_be_taken_by(chat_worker)
+    assert not _queued_request(["shared-model"], is_chat=True, max_length=1025).can_be_taken_by(chat_worker)
+    assert not _queued_request(["shared-model"], max_length=81).can_be_taken_by(chat_worker)
+
+
+def test_a_queued_text_request_does_not_compete_for_a_chat_only_worker() -> None:
+    chat_only_worker = _text_worker_profile(["shared-model"], accepts_prompt_jobs=False, **CHAT_WORKER_DECLARATION)
+    assert not _queued_request(["shared-model"]).can_be_taken_by(chat_only_worker)
+
+
+def test_a_queued_request_competes_when_any_eligible_worker_could_take_it() -> None:
+    worker_profiles = [_text_worker_profile(["shared-model"]), _text_worker_profile(["shared-model"], **CHAT_WORKER_DECLARATION)]
+    assert functions._queued_request_competes(_queued_request(["shared-model"], is_chat=True), worker_profiles)
+    assert not functions._queued_request_competes(_queued_request(["shared-model"], is_chat=True), worker_profiles[:1])
+
+
+def test_a_new_request_counts_the_work_of_every_queued_request_its_eligible_workers_could_take(
     db_session: Any,
     fake_redis: Any,
     make_user: Any,
     make_user_role: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every competing queued request counts, with its waiting generations, since the new request is not queued yet."""
+    """Every competing queued request counts, with its waiting generations and work, since the new request is not queued yet."""
     user = make_user()
     for _ in range(2):
         _queue_text_request(user, ["shared-model"], max_length=200)
@@ -986,12 +1122,38 @@ def test_a_new_request_counts_every_queued_generation_its_eligible_workers_could
     db.session.commit()
     _refresh_stored_queue(fake_redis, monkeypatch)
 
-    competing_jobs = functions.count_competing_queued_jobs("text", frozenset({"shared-model"}))
+    competing_work = functions.measure_competing_queued_work("text", [_text_worker_profile(["shared-model"])])
 
-    assert competing_jobs == 2 + 3 + 1
+    assert competing_work == functions.CompetingQueuedWork(queued_things=(2 + 3 + 1) * 200, queued_jobs=2 + 3 + 1)
 
 
-def test_a_new_request_has_no_competing_count_without_a_stored_queue(
+def test_a_queued_chat_request_does_not_count_against_a_text_request_whose_eligible_workers_lack_chat(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The competing work is judged per eligible worker, so a chat request on the shared model is not counted."""
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    queued_chat_request = _make_chat_request(user)
+    queued_chat_request.active = True
+    _queue_text_request(user, [CHAT_MODEL], max_length=200)
+    db.session.commit()
+    _make_text_worker(user, CHAT_MODEL, speed=10)
+    new_request = _make_text_request(user, CHAT_MODEL)
+    new_request.slow_workers = True
+    db.session.commit()
+    _refresh_stored_queue(fake_redis, monkeypatch)
+
+    availability = functions.get_worker_availability_for_request(new_request)
+    competing_work = functions.measure_competing_queued_work("text", availability.worker_profiles)
+
+    assert competing_work == functions.CompetingQueuedWork(queued_things=200, queued_jobs=1)
+
+
+def test_a_new_request_has_no_competing_work_without_a_stored_queue(
     db_session: Any,
     fake_redis: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -999,7 +1161,30 @@ def test_a_new_request_has_no_competing_count_without_a_stored_queue(
     monkeypatch.setitem(functions._wp_queue_cache, "text", None)
     monkeypatch.setitem(functions._wp_queue_positions_time, "text", 0.0)
 
-    assert functions.count_competing_queued_jobs("text", frozenset({"shared-model"})) is None
+    assert functions.measure_competing_queued_work("text", [_text_worker_profile(["shared-model"])]) is None
+
+
+def test_a_worker_without_performance_samples_counts_at_the_assumed_unmeasured_speed(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The baseline speed a new worker stores does not describe it, so its throughput is taken at the assumed speed."""
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    new_worker = _make_text_worker(user, "new-model", speed=1)
+    new_worker.threads = 2
+    _make_text_worker(user, "new-model", speed=7)
+    request = _make_text_request(user, "new-model")
+    request.slow_workers = True
+    db.session.commit()
+
+    availability = functions.get_worker_availability_for_request(request)
+
+    assert availability.worker_count == 2
+    assert availability.tokens_per_second == UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND * 2 + 7
 
 
 def test_the_check_after_activation_reuses_the_availability_measured_at_creation(

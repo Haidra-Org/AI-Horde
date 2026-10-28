@@ -868,20 +868,34 @@ kudos available, and they are held at admission. A chat request does not downgra
 the hold gets `403 KudosUpfront`, whose message states the allowance. A text request with `allow_downgrade` is
 lowered to the allowance instead.
 
-The allowance is measured when the request is created, over the workers eligible for it at its requested
-`max_length` (`TextWaitingPrompt.require_upfront_kudos`, `compute_free_output_allowance`):
+The allowance is measured when the request is created, from the request's estimated wait on the workers eligible for
+it at its requested `max_length` (`TextWaitingPrompt.require_upfront_kudos`, `compute_free_output_allowance`):
 
 ```text
-allowance = clamp(ceiling - slope * competing_jobs / eligible_threads, floor, ceiling)
+wait      = competing_tokens / (tokens_per_second * min(competing_jobs, eligible_threads) / eligible_threads)
+allowance = ceiling   if wait <= full_wait
+allowance = floor     if wait >= floor_wait
+allowance = round(ceiling - (ceiling - floor) * (wait - full_wait) / (floor_wait - full_wait))   otherwise
 ```
 
-| Input             | Value |
-| ----------------- | ----- |
-| `eligible_threads` | The advertised threads of the eligible workers. With none, the allowance is the floor |
-| `competing_jobs`  | The waiting generations of every queued text request that accepts any model or a model an eligible worker serves, read from the in-process copy of the stored queue; the horde-wide queued text generations when no queue is stored |
-| `ceiling`         | `HORDE_TEXT_FREE_OUTPUT_CEILING`, default 4096: what an idle fleet serves free |
-| `floor`           | `HORDE_TEXT_FREE_OUTPUT_FLOOR`, default 512: the chat default `max_tokens` stays free under any load |
-| `slope`           | `HORDE_TEXT_FREE_OUTPUT_SLOPE`, default 1792: one competing job per eligible thread halves the 3584 tokens above the floor, and two reach it |
+| Input               | Value |
+| ------------------- | ----- |
+| `competing_tokens`, `competing_jobs` | The outstanding tokens and generations of every queued text or chat request that at least one eligible worker could take, read from the in-process copy of the stored queue; the horde-wide queued text tokens and generations when no queue is stored |
+| `eligible_threads`  | The advertised threads of the eligible workers. With none, the allowance is the floor |
+| `tokens_per_second` | The eligible workers' measured speed, each counted once per thread. A worker that has not recorded a speed counts at the assumed speed of an unmeasured worker, 10 tokens per second |
+| `ceiling`           | `HORDE_TEXT_FREE_OUTPUT_CEILING`, default 4096: what an idle fleet serves free |
+| `floor`             | `HORDE_TEXT_FREE_OUTPUT_FLOOR`, default 512: the chat default `max_tokens` stays free under any load |
+| `full_wait`         | `HORDE_TEXT_FREE_OUTPUT_WAIT_FULL_SECONDS`, default 60: a worker that clears its queue within a minute keeps its users at the ceiling however many requests the queue holds |
+| `floor_wait`        | `HORDE_TEXT_FREE_OUTPUT_WAIT_FLOOR_SECONDS`, default 300: from five minutes of queue ahead, only the floor is free |
+
+The wait is the estimate the status route reports as `wait_time` (`estimate_queue_wait_seconds`), over the same
+competing requests and the same throughput, without the request's own output, which is not queued yet and whose
+length is what the allowance decides.
+
+A queued request competes when one eligible worker could take it by its models, its chat opt-in and its length
+limits: a chat request needs a worker serving one of its models with chat, within the worker's chat limits, and a text
+request needs a worker that takes text requests, within its text limits. A chat request queued on a model shared with
+text-only workers therefore does not count against a text request those workers serve.
 
 A request that does not allow slow workers always holds its kudos upfront. With `HORDE_UPFRONT_KUDOS_ON_WORKERLIST`
 set to `1`, a request that lists workers holds its kudos upfront as well and cannot be downgraded. The availability

@@ -86,6 +86,37 @@ FAULTED_GENERATIONS_LIMIT = 2
 attempt, such as one no worker can build, is otherwise dispatched again after each fault, and every fault counts
 toward the aborted-job threshold that puts the worker serving it into maintenance."""
 
+
+def estimate_queue_wait_seconds(
+    *,
+    queued_things: float,
+    queued_jobs: int,
+    worker_threads: int,
+    things_per_second: float,
+) -> float:
+    """Return the seconds that workers with ``things_per_second`` of throughput need to clear ``queued_things``.
+
+    The text status reports this for the work up to and including a request, and the free output allowance reads it
+    for the work ahead of a request being created, so both describe one estimate. Fewer queued jobs than threads
+    leave the other threads idle, so the throughput is scaled down to the threads the jobs occupy.
+
+    Args:
+        queued_things: The queued work, in the request type's things (tokens for text).
+        queued_jobs: The generations that work is split into.
+        worker_threads: The threads ``things_per_second`` is measured across.
+        things_per_second: The combined throughput of ``worker_threads`` when all of them are busy.
+
+    Returns:
+        The estimated seconds. Without any throughput the work is divided by one, which keeps the estimate defined
+        for a horde with no measured throughput and is 0 when nothing is queued.
+    """
+    occupied_threads = min(queued_jobs, worker_threads)
+    occupied_throughput = things_per_second * occupied_threads / worker_threads if worker_threads > 0 else 0.0
+    if occupied_throughput <= 0:
+        occupied_throughput = 1.0
+    return queued_things / occupied_throughput
+
+
 json_column_type = JSONB if not SQLITE_MODE else JSON
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -938,6 +969,7 @@ class WaitingPrompt(db.Model):
         eligible_worker_threads: int | None = None,
         might_stall: bool = False,
         forecast_queue_stats: tuple[int, float, int] | None = None,
+        things_per_second: float | None = None,
     ) -> dict[str, Any]:
         """Return the request's current generation and queue status.
 
@@ -961,6 +993,8 @@ class WaitingPrompt(db.Model):
             forecast_queue_stats: The horde-wide queue statistics the scheduling forecast reads, when
                 ``wp_queue_stats`` counts only part of the queue; ``wp_queue_stats`` otherwise. The forecast keeps
                 the global queue because compatible workers do not share one candidate queue.
+            things_per_second: The combined measured throughput, in things per second, of the threads in
+                ``active_worker_count``; None estimates it as ``request_avg`` for each of those threads.
 
         Returns:
             Materialized request status ready for API serialization.
@@ -1000,18 +1034,14 @@ class WaitingPrompt(db.Model):
         # This means when all our requests are currently processing or done, with nothing else in the queue,
         # we'll show queue position 0 which is appropriate.
         ret_dict["queue_position"] = queue_pos + 1
-        # If there's fewer requests than the number of active workers
-        # Then we need to adjust the parallelization accordingly
-        if queued_n < active_worker_thread_count:
-            active_worker_thread_count = queued_n
-        avg_things_per_sec = (request_avg / hv.thing_divisors[self.wp_type]) * active_worker_thread_count
-        # Is this is 0, it means one of two things:
-        # 1. This horde hasn't had any requests yet. So we'll initiate it to 1 avg_things_per_sec
-        # 2. All gens for this WP are being currently processed, so we'll just set it to 1 to avoid a div by zero,
-        # but it's not used anyway as it will just divide 0/1
-        if avg_things_per_sec == 0:
-            avg_things_per_sec = 1
-        wait_time = queued_things / avg_things_per_sec
+        if things_per_second is None:
+            things_per_second = (request_avg / hv.thing_divisors[self.wp_type]) * active_worker_thread_count
+        wait_time = estimate_queue_wait_seconds(
+            queued_things=queued_things,
+            queued_jobs=queued_n,
+            worker_threads=active_worker_thread_count,
+            things_per_second=things_per_second,
+        )
         # We add the expected running time of our processing gens
         highest_expected_time_left = 0
         for procgen in self.processing_gens:

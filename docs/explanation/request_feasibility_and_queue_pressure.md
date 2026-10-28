@@ -74,16 +74,18 @@ estimates delay from the work queued ahead and the throughput of the horde's act
 supported by only a few workers may wait longer than this estimate. It may also start sooner when its compatible
 workers have little competing work.
 
-For a text or chat request, both values count only the requests ahead whose models overlap a model one of its eligible
-workers serves, and a request that accepts any model. `wait_time` divides that work by the throughput of
-`eligible_worker_threads`, capped at the number of generations counted. A request for a lightly queued model therefore
-reads a short estimate however long the horde's queue is. With zero eligible threads there is no throughput to divide
+For a text or chat request, both values count only the requests ahead that at least one of its eligible workers could
+take, judged by their models, chat opt-in and length limits. `wait_time` divides that work by the eligible workers'
+measured speed over `eligible_worker_threads`, capped at the number of generations counted. A request for a lightly
+queued model therefore reads a short estimate however long the horde's queue is. The free output allowance reads the
+same estimate for a request being created. With zero eligible threads there is no throughput to divide
 by, so both values keep the horde-wide calculation; `is_possible` and the thread count report that case.
 
 Both are estimates, and clients should label `wait_time` as one. Each eligible worker sees its own candidate queue, and
 an exact compatibility-specific position would require a separate scheduling calculation for every eligible worker.
-Their candidate queues overlap without being identical, and they change as workers and requests arrive. The model
-overlap approximates them: a worker that serves several models can still prefer work this request cannot use.
+Their candidate queues overlap without being identical, and they change as workers and requests arrive. The
+per-worker check approximates them: a worker that serves several models can still prefer work this request cannot
+use.
 
 ### `might_stall`
 
