@@ -107,7 +107,7 @@ def assign_monthly_kudos():
         stripe_ids = stripe_subs.get_ids()
         or_conditions = []
         or_conditions.append(User.monthly_kudos > 0)
-        or_conditions.append(User.moderator == True)  # noqa E712
+        or_conditions.append(User.moderator.is_(True))
         if patron_ids:
             or_conditions.append(User.id.in_(patron_ids))
         if stripe_ids:
@@ -486,8 +486,8 @@ def check_waiting_prompts():
                     wp_class,
                 )
                 .filter(
-                    procgen_class.generation == None,  # noqa E712
-                    procgen_class.faulted == False,  # noqa E712
+                    procgen_class.generation.is_(None),
+                    procgen_class.faulted.is_(False),
                     # TODO: How do we calculate this in the query?
                     # cutoff_time - procgen_class.start_time > procgen_class.job_ttl,
                 )
@@ -513,12 +513,12 @@ def check_waiting_prompts():
                 db.session.query(
                     procgen_class.wp_id,
                 )
-                .filter(procgen_class.faulted == True)  # noqa E712
+                .filter(procgen_class.faulted.is_(True))
                 .group_by(procgen_class.wp_id)
                 .having(func.count(procgen_class.wp_id) > FAULTED_GENERATIONS_LIMIT)
             )
             wp_ids = [wp_id[0] for wp_id in wp_ids]
-            waiting_prompts = db.session.query(wp_class).filter(wp_class.id.in_(wp_ids)).filter(wp_class.faulted == False)  # noqa E712
+            waiting_prompts = db.session.query(wp_class).filter(wp_class.id.in_(wp_ids)).filter(wp_class.faulted.is_(False))
             newly_faulted_wp_ids = [wp_id for (wp_id,) in waiting_prompts.with_entities(wp_class.id).all()]
             logger.info(f"Found {len(newly_faulted_wp_ids)} New faulted WPs")
             waiting_prompts.update(
@@ -552,7 +552,7 @@ def check_interrogations():
         # Cleans expired interrogations
         cutoff_time = datetime.utcnow()
         expired_entries = db.session.query(Interrogation).filter(Interrogation.expiry < cutoff_time)
-        expired_r_entries = expired_entries.filter(Interrogation.r2stored == True)  # noqa E712
+        expired_r_entries = expired_entries.filter(Interrogation.r2stored.is_(True))
         all_source_image_ids = [i.id for i in expired_r_entries.all()]
         for source_image_id in all_source_image_ids:
             delete_source_image(str(source_image_id))
@@ -1162,8 +1162,8 @@ def increment_extra_priority():
             while True:
                 id_query = db.session.query(wp_class.id).filter(
                     wp_class.n > 0,
-                    wp_class.faulted == False,  # noqa E712
-                    wp_class.active == True,  # noqa E712
+                    wp_class.faulted.is_(False),
+                    wp_class.active.is_(True),
                 )
                 if last_id is not None:
                     id_query = id_query.filter(wp_class.id > last_id)

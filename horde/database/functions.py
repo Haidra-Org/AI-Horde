@@ -691,7 +691,7 @@ def get_available_models(filter_model_name: str = None):
             )
             .filter(
                 worker_class.last_check_in > datetime.utcnow() - timedelta(seconds=300),
-                worker_class.maintenance == False,  # noqa E712
+                worker_class.maintenance.is_(False),
             )
         )
         if filter_model_name:
@@ -988,8 +988,8 @@ def _count_waiting_requests(user, models=None, request_type="image"):
             .filter(
                 WPModels.model.in_(models),
                 wp_class.user_id == user.id,
-                wp_class.faulted == False,  # noqa E712
-                wp_class.active == True,  # noqa E712
+                wp_class.faulted.is_(False),
+                wp_class.active.is_(True),
                 wp_class.n >= 1,
             )
             .scalar()
@@ -1003,7 +1003,7 @@ def _count_waiting_requests(user, models=None, request_type="image"):
             db.session.query(func.sum(wp_class.n))
             .filter(
                 wp_class.user_id == user.id,
-                wp_class.faulted == False,  # noqa E712
+                wp_class.faulted.is_(False),
                 wp_class.n >= 1,
             )
             .scalar()
@@ -1067,13 +1067,13 @@ def count_totals():
             ImageProcessingGeneration,
             and_(
                 ImageWaitingPrompt.id == ImageProcessingGeneration.wp_id,
-                ImageProcessingGeneration.generation == None,  # noqa E712
+                ImageProcessingGeneration.generation.is_(None),
             ),
         )
         .filter(
             ImageWaitingPrompt.n > 0,
-            ImageWaitingPrompt.faulted == False,  # noqa E712
-            ImageWaitingPrompt.active == True,  # noqa E712
+            ImageWaitingPrompt.faulted.is_(False),
+            ImageWaitingPrompt.active.is_(True),
         )
         .group_by(ImageWaitingPrompt.id)
         .subquery("all_image_wp_counts")
@@ -1100,13 +1100,13 @@ def count_totals():
             TextProcessingGeneration,
             and_(
                 TextWaitingPrompt.id == TextProcessingGeneration.wp_id,
-                TextProcessingGeneration.generation == None,  # noqa E712
+                TextProcessingGeneration.generation.is_(None),
             ),
         )
         .filter(
             TextWaitingPrompt.n > 0,
-            TextWaitingPrompt.faulted == False,  # noqa E712
-            TextWaitingPrompt.active == True,  # noqa E712
+            TextWaitingPrompt.faulted.is_(False),
+            TextWaitingPrompt.active.is_(True),
         )
         .group_by(TextWaitingPrompt.id)
         .subquery("all_text_wp_counts")
@@ -1163,8 +1163,8 @@ def get_organized_wps_by_model(wp_class):
     all_wps = (
         db.session.query(wp_class)
         .filter(
-            wp_class.active == True,  # noqa E712
-            wp_class.faulted == False,  # noqa E712
+            wp_class.active.is_(True),
+            wp_class.faulted.is_(False),
             wp_class.n >= 1,
         )
         .options(selectinload(wp_class.models), selectinload(wp_class.processing_gens))
@@ -1214,16 +1214,16 @@ def count_things_for_specific_model(wp_class, procgen_class, model_name):
             procgen_class,
         )
         .filter(
-            wp_class.active == True,  # noqa E712
-            wp_class.faulted == False,  # noqa E712
+            wp_class.active.is_(True),
+            wp_class.faulted.is_(False),
             wp_class.n >= 0,
             WPModels.model == model_name,
             or_(
-                procgen_class.id == None,  # noqa E712
+                procgen_class.id.is_(None),
                 and_(
-                    procgen_class.generation == None,  # noqa E712
-                    procgen_class.cancelled == False,  # noqa E712
-                    procgen_class.faulted == False,  # noqa E712
+                    procgen_class.generation.is_(None),
+                    procgen_class.cancelled.is_(False),
+                    procgen_class.faulted.is_(False),
                 ),
             ),
         )
@@ -1298,8 +1298,8 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
         )
         .filter(
             ImageWaitingPrompt.n > 0,
-            ImageWaitingPrompt.active == True,  # noqa E712
-            ImageWaitingPrompt.faulted == False,  # noqa E712
+            ImageWaitingPrompt.active.is_(True),
+            ImageWaitingPrompt.faulted.is_(False),
             ImageWaitingPrompt.expiry > datetime.utcnow(),
             ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
             or_(
@@ -1311,29 +1311,29 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 ),
             ),
             or_(
-                ImageWaitingPrompt.source_image == None,  # noqa E712
-                worker.allow_img2img == True,  # noqa E712
+                ImageWaitingPrompt.source_image.is_(None),
+                worker.allow_img2img is True,
             ),
             or_(
                 ImageWaitingPrompt.source_processing.not_in(["inpainting", "outpainting"]),
-                worker.allow_painting == True,  # noqa E712
+                worker.allow_painting is True,
             ),
             or_(
-                ImageWaitingPrompt.extra_source_images == None,  # noqa E712
+                ImageWaitingPrompt.extra_source_images.is_(None),
                 check_bridge_capability("extra_source_images", worker.bridge_agent),
             ),
             or_(
-                ImageWaitingPrompt.safe_ip == True,  # noqa E712
-                worker.allow_unsafe_ipaddr == True,  # noqa E712
+                ImageWaitingPrompt.safe_ip.is_(True),
+                worker.allow_unsafe_ipaddr is True,
             ),
             or_(
-                ImageWaitingPrompt.nsfw == False,  # noqa E712
-                worker.nsfw == True,  # noqa E712
+                ImageWaitingPrompt.nsfw.is_(False),
+                worker.nsfw is True,
             ),
             or_(
                 not_(ImageWaitingPrompt.params.has_key("loras")),
                 and_(
-                    worker.allow_lora == True,  # noqa E712
+                    worker.allow_lora is True,
                     check_bridge_capability("lora", worker.bridge_agent),
                 ),
             ),
@@ -1344,20 +1344,20 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
             or_(
                 not_(_wp_requests_post_processing()),
                 and_(
-                    worker.allow_post_processing == True,  # noqa E712
+                    worker.allow_post_processing is True,
                     check_bridge_capability("post-processing", worker.bridge_agent),
                 ),
             ),
             or_(
                 not_(ImageWaitingPrompt.params.has_key("control_type")),
                 and_(
-                    worker.allow_controlnet == True,  # noqa E712
+                    worker.allow_controlnet is True,
                     check_bridge_capability("controlnet", worker.bridge_agent),
                     or_(
                         ImageWaitingPrompt.params["control_type"].astext.in_(LEGACY_IMAGE_CONTROL_TYPES),
                         and_(
                             check_bridge_capability("extended_controlnet", worker.bridge_agent),
-                            worker.allow_extended_controlnet == True,  # noqa E712
+                            worker.allow_extended_controlnet is True,
                         ),
                     ),
                 ),
@@ -1388,7 +1388,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
             ),
             or_(
                 worker.speed >= 500000,  # 0.5 MPS/s
-                ImageWaitingPrompt.slow_workers == True,  # noqa E712
+                ImageWaitingPrompt.slow_workers.is_(True),
             ),
             or_(
                 worker.extra_slow_worker is False,
@@ -1402,7 +1402,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 ImageWaitingPrompt.params["transparent"].astext.cast(Boolean).is_(False),
                 and_(
                     check_bridge_capability("layer_diffuse", worker.bridge_agent),
-                    worker.allow_sdxl_controlnet == True,  # noqa E712
+                    worker.allow_sdxl_controlnet is True,
                 ),
             ),
         )
@@ -1413,7 +1413,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
         final_wp_list = final_wp_list.filter(
             # Workers in maintenance can still pick up their owner or their friends
             or_(
-                worker.maintenance == False,  # noqa E712
+                worker.maintenance is False,
                 ImageWaitingPrompt.user_id.in_(priority_user_ids),
             ),
             or_(
@@ -1431,7 +1431,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
     else:
         final_wp_list = final_wp_list.filter(
             or_(
-                worker.maintenance == False,  # noqa E712
+                worker.maintenance is False,
                 ImageWaitingPrompt.user_id == worker.user_id,
             ),
         )
@@ -1509,8 +1509,8 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     # Base filters (shared across all counts)
     base_filters = [
         ImageWaitingPrompt.n > 0,
-        ImageWaitingPrompt.active == True,  # noqa E712
-        ImageWaitingPrompt.faulted == False,  # noqa E712
+        ImageWaitingPrompt.active.is_(True),
+        ImageWaitingPrompt.faulted.is_(False),
         ImageWaitingPrompt.expiry > datetime.utcnow(),
     ]
 
@@ -1531,7 +1531,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
     wp_has_worker_targets = db.session.query(WPAllowedWorkers.id).filter(WPAllowedWorkers.wp_id == ImageWaitingPrompt.id).exists()
 
     # models: WP specifies models that worker doesn't serve
-    count_exprs["models"] = count_distinct_wp(and_(WPModels.model.not_in(models_list), WPModels.id != None))  # noqa E712
+    count_exprs["models"] = count_distinct_wp(and_(WPModels.model.not_in(models_list), WPModels.id.is_not(None)))
 
     # worker_id: WP targets specific workers (allowlist/blocklist) in a way that
     # excludes this worker. Under HORDE_REQUIRE_MATCHED_TARGETING the general
@@ -1563,7 +1563,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
 
     # img2img (only counted if worker can't do it)
     if worker.allow_img2img is False or not can_img2img:
-        count_exprs["_img2img_raw"] = count_distinct_wp(ImageWaitingPrompt.source_image != None)  # noqa E712
+        count_exprs["_img2img_raw"] = count_distinct_wp(ImageWaitingPrompt.source_image.is_not(None))
 
     # painting (only counted if worker can't do it)
     if worker.allow_painting is False or not can_inpainting:
@@ -1571,11 +1571,11 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
 
     # unsafe_ip
     if worker.allow_unsafe_ipaddr is False:
-        count_exprs["unsafe_ip"] = count_distinct_wp(ImageWaitingPrompt.safe_ip == False)  # noqa E712
+        count_exprs["unsafe_ip"] = count_distinct_wp(ImageWaitingPrompt.safe_ip.is_(False))
 
     # nsfw
     if worker.nsfw is False:
-        count_exprs["nsfw"] = count_distinct_wp(ImageWaitingPrompt.nsfw == True)  # noqa E712
+        count_exprs["nsfw"] = count_distinct_wp(ImageWaitingPrompt.nsfw.is_(True))
 
     # lora
     if worker.allow_lora is False or not can_lora:
@@ -1611,15 +1611,15 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
 
     # performance (slow workers)
     if worker.speed <= 500000:
-        count_exprs["_perf_slow"] = count_distinct_wp(ImageWaitingPrompt.slow_workers == False)  # noqa E712
+        count_exprs["_perf_slow"] = count_distinct_wp(ImageWaitingPrompt.slow_workers.is_(False))
 
     # performance (extra slow workers)
     if worker.extra_slow_worker is True:
-        count_exprs["_perf_extra_slow"] = count_distinct_wp(ImageWaitingPrompt.extra_slow_workers == False)  # noqa E712
+        count_exprs["_perf_extra_slow"] = count_distinct_wp(ImageWaitingPrompt.extra_slow_workers.is_(False))
 
     # untrusted
     if worker.user.trusted is False:
-        count_exprs["untrusted"] = count_distinct_wp(ImageWaitingPrompt.trusted_workers == True)  # noqa E712
+        count_exprs["untrusted"] = count_distinct_wp(ImageWaitingPrompt.trusted_workers.is_(True))
 
     # bridge_version (sampler + capability checks)
     bv_conditions = []
@@ -1671,14 +1671,14 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
         query = query.filter(ImageWaitingPrompt.user_id.in_(priority_user_ids))
         query = query.filter(
             or_(
-                worker.maintenance == False,  # noqa E712
+                worker.maintenance is False,
                 ImageWaitingPrompt.user_id.in_(priority_user_ids),
             ),
         )
     else:
         query = query.filter(
             or_(
-                worker.maintenance == False,  # noqa E712
+                worker.maintenance is False,
                 ImageWaitingPrompt.user_id == worker.user_id,
             ),
         )
@@ -1807,20 +1807,20 @@ def get_sorted_forms_filtered_to_worker(
                 InterrogationForms.name != "annotation",
                 InterrogationForms.payload["control_type"].astext.in_(annotation_types),
             ),
-            InterrogationForms.expiry == None,  # noqa E712
-            Interrogation.source_image != None,  # noqa E712
+            InterrogationForms.expiry.is_(None),
+            Interrogation.source_image.is_not(None),
             Interrogation.image_tiles <= worker.max_power,
             or_(
-                Interrogation.safe_ip == True,  # noqa E712
-                worker.allow_unsafe_ipaddr == True,  # noqa E712
+                Interrogation.safe_ip.is_(True),
+                worker.allow_unsafe_ipaddr is True,
             ),
             or_(
-                worker.maintenance == False,  # noqa E712
+                worker.maintenance is False,
                 Interrogation.user_id == worker.user_id,
             ),
             or_(
                 worker.speed < 10,  # 10 seconds per form
-                Interrogation.slow_workers == True,  # noqa E712
+                Interrogation.slow_workers.is_(True),
             ),
         )
         .order_by(Interrogation.extra_priority.desc(), Interrogation.created.asc())
@@ -2165,8 +2165,8 @@ def get_all_wps():
     return (
         db.session.query(ImageWaitingPrompt)
         .filter(
-            ImageWaitingPrompt.active == True,  # noqa E712
-            ImageWaitingPrompt.faulted == False,  # noqa E712
+            ImageWaitingPrompt.active.is_(True),
+            ImageWaitingPrompt.faulted.is_(False),
             ImageWaitingPrompt.expiry > datetime.utcnow(),
         )
         .all()
@@ -2177,8 +2177,8 @@ def get_all_active_wps():
     return (
         db.session.query(ImageWaitingPrompt)
         .filter(
-            ImageWaitingPrompt.active == True,  # noqa E712
-            ImageWaitingPrompt.faulted == False,  # noqa E712
+            ImageWaitingPrompt.active.is_(True),
+            ImageWaitingPrompt.faulted.is_(False),
             ImageWaitingPrompt.n > 0,
             ImageWaitingPrompt.expiry > datetime.utcnow(),
         )

@@ -403,8 +403,8 @@ def get_all_text_wps():
     return (
         db.session.query(TextWaitingPrompt)
         .filter(
-            TextWaitingPrompt.active == True,  # noqa E712
-            TextWaitingPrompt.faulted == False,  # noqa E712
+            TextWaitingPrompt.active.is_(True),
+            TextWaitingPrompt.faulted.is_(False),
             TextWaitingPrompt.expiry > datetime.utcnow(),
         )
         .all()

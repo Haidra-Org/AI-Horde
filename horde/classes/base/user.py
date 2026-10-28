@@ -542,7 +542,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.FLAGGED,
-                UserRole.value == True,  # noqa E712
+                UserRole.value.is_(True),
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -560,7 +560,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.MODERATOR,
-                UserRole.value == True,  # noqa E712
+                UserRole.value.is_(True),
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -578,7 +578,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.CUSTOMIZER,
-                UserRole.value == True,  # noqa E712
+                UserRole.value.is_(True),
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -596,7 +596,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.VPN,
-                UserRole.value == True,  # noqa E712
+                UserRole.value.is_(True),
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -614,7 +614,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SERVICE,
-                UserRole.value == True,  # noqa E712
+                UserRole.value.is_(True),
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -632,7 +632,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.EDUCATION,
-                UserRole.value == True,  # noqa E712
+                UserRole.value.is_(True),
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -651,7 +651,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.SPECIAL,
-                UserRole.value == True,  # noqa E712
+                UserRole.value.is_(True),
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)
@@ -682,7 +682,7 @@ class User(db.Model):
             db.session.query(UserRole.user_id)
             .filter(
                 UserRole.user_role == UserRoleTypes.DELETED,
-                UserRole.value == True,  # noqa E712
+                UserRole.value.is_(True),
                 UserRole.user_id == cls.id,
             )
             .correlate(cls)

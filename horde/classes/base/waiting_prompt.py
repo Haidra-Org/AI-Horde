@@ -815,7 +815,7 @@ class WaitingPrompt(db.Model):
                 procgen_class.fake.is_(False),
                 or_(
                     procgen_class.faulted.is_(True),
-                    procgen_class.generation != None,  # noqa E712
+                    procgen_class.generation.is_not(None),
                 ),
             )
             .count()
