@@ -127,8 +127,7 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   then not sent to the worker, under either conformance mode, since a clamped value changes the request. Leave it out
   when the backend applies every temperature as sent.
 - `model_id` is the model the worker serves chat jobs with, and it has to be one of `models`. The native route treats
-  it as an opaque string. The OpenAI-compatible front reserves `:` for model variants and answers 404 for any model id
-  that contains one, so a model name with a colon can be served natively and cannot be reached through the front
+  it as an opaque string. The OpenAI-compatible front reserves `:` and answers 404 for any model id that contains one, so a model name with a colon can be served natively and cannot be reached through the front
   ([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). Choose a name without a
   colon.
 - `image_transports` lists how the worker accepts images: `url`, `base64` or both. Leave it out, or send it empty,
@@ -487,16 +486,19 @@ by these flags (help text as printed by `koboldcpp --help`):
 The worker starts only when both `--hordekey` and `--hordeworkername` are set. `--hordeurl` takes the horde root,
 such as `https://aihorde.net`, without `/api`.
 
-With `--hordechat`, each pop declares:
+Each pop of the embedded worker declares:
 
 - `chat_jobs: true`;
-- `chat_features` `seed`, `presence_penalty`, `tools`, `json_object` and `json_schema`, plus `vision` when a
-  multimodal projector is loaded. `frequency_penalty` is not declared, since koboldcpp treats it as an alias of the
-  presence penalty. `tools_with_response_format` is not declared: koboldcpp's generic tool path replaces the response
-  format grammar with its tool grammar, so a request carrying both is served by other workers;
-- `image_transports` `url` and `base64` when `vision` is declared, and none otherwise;
-- `chat_limits.max_context_length` as the smaller of the loaded context size and `--hordemaxctx`, and
-  `chat_limits.max_length` as `--hordegenlen` bounded by the room that context leaves for a reply;
+- `chat_features` `seed`, `presence_penalty`, `tools`, `json_object`, `json_schema`, `reasoning_effort`,
+  `structured_output_enforced` and `prompt_overflow_refused`, plus `vision` when a multimodal projector is loaded and
+  `tool_choice_enforced` when tools run on the generic path rather than through a Jinja chat template.
+  `frequency_penalty` is not declared, since koboldcpp treats it as an alias of the presence penalty.
+  `tools_with_response_format` is not declared: koboldcpp's generic tool path replaces the response format grammar
+  with its tool grammar, so a request carrying both is served by other workers;
+- `image_transports` `messages_url`, plus `base64` when `vision` is declared;
+- `chat_limits.max_context_length` as the smaller of the loaded context size and `--hordemaxctx`,
+  `chat_limits.max_length` as `--hordegenlen` bounded by the room that context leaves for a reply, and
+  `chat_limits.tools_max_temperature` as the temperature it clamps tool requests to;
 - `model_id` as the model name it registers, which koboldcpp prefixes with `koboldcpp/`.
 
 A chat job is fetched for images, checked for fit by `horde_chat_overflows`, and generated through koboldcpp's local

@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-10-17
+status: accepted
+date: 2026-10-28
 ---
 
 <!--
@@ -13,40 +13,63 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Context and Problem Statement
 
-A chat job needs facts about the worker that a text job does not: whether it accepts chat jobs, whether the loaded
-model has a projector, whether its template supports tools, its real context and output limits, and how it accepts
-images. The Horde gates image features by parsing the bridge agent string against a version table in
-`horde/bridge_reference.py`, `BRIDGE_CAPABILITIES`. How should chat capability reach the scheduler?
+A chat job needs facts about the worker that a text job does not: whether it accepts chat jobs, which model it serves
+them with, whether the loaded model has a projector, whether its template supports tools, its real context and output
+limits, and how it accepts images. The Horde gates image features by parsing the bridge agent string against a version
+table in `horde/bridge_reference.py`, `BRIDGE_CAPABILITIES`. How should chat capability reach the scheduler?
 
 ## Decision Drivers
 
 - A capability is a property of the running model and backend; a release version does not determine it.
 - Workers should opt in explicitly and be able to change what they declare without a release.
-- Any scribe, not only koboldcpp, must be able to participate.
-- The scheduler must never send a job a worker cannot run.
+- Any worker implementation, not only koboldcpp, must be able to participate.
+- The scheduler must not send a job a worker cannot run.
 
 ## Considered Options
 
-- Pop fields: `chat_jobs`, `chat_features`, `chat_limits`, `image_transports`
+- Pop fields: `chat_jobs`, `prompt_jobs`, `model_id`, `chat_features`, `chat_limits`, `image_transports`
 - Bridge agent version parsing, as for image capabilities
 - Server-side probes that verify a worker before it is eligible
 
 ## Decision Outcome
 
-Chosen option: "Pop fields: `chat_jobs`, `chat_features`, `chat_limits`, `image_transports`".
+Chosen option: "Pop fields: `chat_jobs`, `prompt_jobs`, `model_id`, `chat_features`, `chat_limits`,
+`image_transports`".
 
-Every chat capability is declared on each pop and stored on the worker row. `chat_features` is a list of strings
-from a vocabulary the Horde publishes; an absent feature means unsupported and an unknown string is ignored. Changed
-semantics get a new feature name. The bridge agent string is never parsed for chat. Eligibility in the pop query and
-in `horde/classes/kobold/worker.py`, `TextWorker.can_generate`, reads the declared features against the features a
-request needs.
+A worker declares its chat capability on every pop, and `TextWorker.check_in` stores the declaration on the worker row.
+The declaration is replaced at each pop, so a worker that stops declaring chat stops receiving chat jobs at its next
+pop.
+
+- `chat_jobs` opts in to chat jobs. It requires `model_id`, the model the worker serves chat jobs with, which must be
+  one of the worker's `models`, and `chat_limits` with `max_context_length` and `max_length`. `chat_limits` may add
+  `tools_max_temperature`, the highest temperature the backend keeps for a request with tools.
+- `prompt_jobs` defaults to true. A worker that sets it to false with `chat_jobs` is chat-only: it receives chat jobs
+  and does not receive text jobs, and its text `max_length` and `max_context_length` do not bound anything. Setting it
+  to false without `chat_jobs` is refused, since the worker could not receive any job.
+- `chat_features` lists the optional features the worker implements and the guarantees its backend keeps
+  ([ADR 0036](0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md)), from a vocabulary the SDK
+  publishes. An absent feature means unsupported, and an unknown string is dropped. Changed semantics get a new name.
+- `image_transports` lists how the worker accepts a request's images: `url`, `base64` or both.
+
+An incomplete declaration is refused with 400 `ChatDeclarationInvalid`. The pop query in
+`horde/database/text_functions.py` compares the chat model, the chat limits, the tool temperature limit and image
+support with the request. `TextWorker.chat_refusal_reason` in `horde/classes/kobold/worker.py`, reached through
+`TextWorker.can_generate_with_eligibility_inputs`, also compares the declared features with the request's stored
+`chat_required_features`. The bridge agent string does not decide chat capability. It still decides
+`validated_backends` eligibility and the reward cut for unvalidated backends, as for every text job.
+
+A generation keeps the model and chat limits the worker declared when it was assigned (`assigned_model`,
+`assigned_max_context_length`, `assigned_max_length`), so a later change of declaration does not change a job in
+flight.
 
 ### Consequences
 
-- Good: A worker operator controls eligibility from configuration; a new backend joins by declaring.
+- Good: A worker operator controls eligibility from configuration, and a new backend joins by declaring.
 - Good: The scheduler reasons about facts the worker asserted, without a table to maintain per release.
-- Bad: Declarations are claims; a misconfigured worker can declare what it cannot do. Probes remain a later option.
-- Bad: The draft's bridge gating for chat images is removed and replaced.
+- Good: A chat-only worker can serve chat without advertising text limits it does not serve at.
+- Bad: Declarations are claims, so a misconfigured worker can declare what it cannot do.
+- Bad: The union of declarations online is discovery metadata. It does not show that one worker supports every
+  advertised combination.
 
 ## Pros and Cons of the Options
 
@@ -57,21 +80,20 @@ request needs.
 
 ### Bridge agent version parsing
 
-- Good: Already exists for images.
-- Bad: Cannot express whether a projector is loaded or a template supports tools; couples eligibility to releases.
+- Good: The mechanism exists for images.
+- Bad: Cannot express whether a projector is loaded or a template supports tools, and couples eligibility to releases.
 
 ### Server-side probes
 
 - Good: Produces evidence of a capability.
-- Bad: Costs worker time before any job; unbuilt.
+- Bad: Costs worker time before any job.
 
-## More Information
+## Confirmation
 
-Ruling R21 of the review. The worker contract that carries these fields is sketched in the review document under
-"Worker contract v2".
-
-First-release scope: explicit chat opt-in, the current served model, actual chat limits and implemented optional sampling
-features. Opt-in includes a tested baseline text/history/defaults contract. Missing declarations disable support;
-model changes update the declaration, while an in-flight assignment retains its model/limit snapshot. Add vision,
-tools, logprobs or streaming declarations only alongside working payload, submit and response contracts. An online
-capability union is discovery metadata; it does not prove that one worker supports every advertised combination.
+`tests/integration/test_chat.py` pins the pop behaviour: a worker without the chat declaration does not pop a chat
+job, an invalid declaration is refused, `prompt_jobs` false without `chat_jobs` is refused, a chat-only worker pops
+chat jobs and not text jobs without text limits, a request needing an undeclared feature waits for a worker that
+declares it, each pop is judged by its own declaration, and the assigned model and limits survive a later change of
+declaration. `tests/unit/test_text_worker_eligibility.py` pins the chat refusal reasons and the separation of chat
+limits from text limits. `docs/reference/chat_requests.md` records the declaration fields and eligibility, and
+`docs/how-to/serve_chat_jobs.md` shows a worker how to declare them.

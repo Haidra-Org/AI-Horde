@@ -29,24 +29,28 @@ One decision per record: what was chosen, what was rejected, and what it cost.
 | [Decay moderation evidence in tiers under an anonymizing ceiling](0015-tiered-moderation-evidence-retention.md) | accepted | 2026-09-29 |
 | [Protect koboldcpp instruct placeholders and publish the style contract](0017-protect-koboldcpp-placeholders-and-publish-the-style-contract.md) | accepted | 2026-09-13 |
 | [Keep evidence text in object storage and bound rejection floods with countermeasures](0018-evidence-text-in-object-storage-behind-countermeasures.md) | accepted | 2026-09-30 |
-| [Carry chat requests as a text request subtype](0019-chat-requests-as-a-text-request-subtype.md) | proposed | 2026-10-17 |
-| [Select chat service behaviour through the request body and model id variants](0020-select-chat-service-by-request-body-and-model-variants.md) | proposed | 2026-10-17 |
-| [Select chat service behaviour through base-URL service profiles](0021-select-chat-service-by-base-url-profiles.md) | proposed | 2026-10-17 |
-| [Declare chat capabilities by pop fields alone](0022-declare-chat-capabilities-by-pop-fields.md) | proposed | 2026-10-17 |
-| [Run the chat front as a separate ASGI process woken by a Redis signal](0023-run-the-chat-front-as-a-separate-asgi-process-woken-by-redis.md) | proposed | 2026-10-17 |
-| [Stream chat deltas through a retained Redis stream per request](0024-stream-chat-deltas-through-a-retained-redis-stream.md) | proposed | 2026-10-17 |
-| [Stream chat deltas through progress rows in Postgres](0025-stream-chat-deltas-through-postgres-progress-rows.md) | proposed | 2026-10-17 |
-| [Classify client retries at the front and recover ambiguous submits by operation key](0026-classify-client-retries-and-recover-submits-by-operation-key.md) | proposed | 2026-10-17 |
-| [Price chat generations by the text output estimate, with the basis isolated](0027-price-chat-generations-by-the-text-output-estimate.md) | proposed | 2026-10-17 |
-| [Price chat generations on reported completion tokens](0028-price-chat-generations-on-reported-completion-tokens.md) | proposed | 2026-10-17 |
-| [Route by declared parameter support and refuse unsupported values by default](0029-route-unsupported-parameters-by-declared-support-refusing-by-default.md) | proposed | 2026-10-17 |
-| [Route by declared parameter support and drop unsupported sampling values by default](0030-route-unsupported-parameters-by-declared-support-ignoring-by-default.md) | proposed | 2026-10-17 |
-| [Prefer the worker that last served a conversation's prefix](0031-prefer-the-worker-that-served-the-conversation-prefix.md) | proposed | 2026-10-17 |
-| [Send chat images to workers as signed object storage URLs](0032-send-chat-images-to-workers-as-signed-urls.md) | proposed | 2026-10-17 |
-| [Fill OpenAI sampling defaults server-side and map the developer role to system](0033-fill-openai-sampling-defaults-and-map-the-developer-role.md) | proposed | 2026-10-17 |
-| [Map chat errors to the OpenAI envelope with OpenRouter's status vocabulary](0034-map-chat-errors-to-the-openai-envelope-with-openrouter-status-vocabulary.md) | proposed | 2026-10-17 |
-| [Keep anonymous access on the chat front](0035-keep-anonymous-access-on-the-chat-front.md) | proposed | 2026-10-17 |
-| [Route chat requests by declared guarantees under a conformance mode](0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md) | proposed | 2026-10-19 |
+| [Carry chat requests as a text request subtype](0019-chat-requests-as-a-text-request-subtype.md) | accepted | 2026-10-28 |
+| [Select chat service behaviour through a `horde` request body object](0020-select-chat-service-by-request-body-and-model-variants.md) | accepted | 2026-10-28 |
+| [Select chat service behaviour through base-URL service profiles](0021-select-chat-service-by-base-url-profiles.md) | rejected | 2026-10-28 |
+| [Declare chat capabilities by pop fields alone](0022-declare-chat-capabilities-by-pop-fields.md) | accepted | 2026-10-28 |
+| [Run the chat front as a separate ASGI process woken by a Redis signal](0023-run-the-chat-front-as-a-separate-asgi-process-woken-by-redis.md) | accepted | 2026-10-28 |
+| [Stream chat deltas through a retained Redis stream per request](0024-stream-chat-deltas-through-a-retained-redis-stream.md) | accepted | 2026-10-28 |
+| [Stream chat deltas through progress rows in Postgres](0025-stream-chat-deltas-through-postgres-progress-rows.md) | rejected | 2026-10-28 |
+| [Classify client retries at the front and recover ambiguous submits by operation key](0026-classify-client-retries-and-recover-submits-by-operation-key.md) | accepted | 2026-10-28 |
+| [Price chat generations by the text output estimate, with the basis isolated](0027-price-chat-generations-by-the-text-output-estimate.md) | accepted | 2026-10-28 |
+| [Price chat generations on reported completion tokens](0028-price-chat-generations-on-reported-completion-tokens.md) | rejected | 2026-10-28 |
+| [Route by declared parameter support and refuse unsupported values](0029-route-unsupported-parameters-by-declared-support-refusing-by-default.md) | accepted | 2026-10-28 |
+| [Route by declared parameter support and drop unsupported sampling values by default](0030-route-unsupported-parameters-by-declared-support-ignoring-by-default.md) | rejected | 2026-10-28 |
+| [Prefer the worker that last served a conversation's prefix](0031-prefer-the-worker-that-served-the-conversation-prefix.md) | rejected | 2026-10-28 |
+| [Send chat images to workers by the transport each worker declares](0032-send-chat-images-to-workers-as-signed-urls.md) | accepted | 2026-10-28 |
+| [Fill OpenAI sampling defaults server-side and map the developer role to system](0033-fill-openai-sampling-defaults-and-map-the-developer-role.md) | accepted | 2026-10-28 |
+| [Map chat errors to the OpenAI envelope with OpenRouter's status vocabulary](0034-map-chat-errors-to-the-openai-envelope-with-openrouter-status-vocabulary.md) | accepted | 2026-10-28 |
+| [Keep anonymous access on the chat front](0035-keep-anonymous-access-on-the-chat-front.md) | accepted | 2026-10-28 |
+| [Route chat requests by declared guarantees under a conformance mode](0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md) | accepted | 2026-10-28 |
+| [Size the free output allowance by the request's estimated wait](0037-size-the-free-output-allowance-by-the-estimated-wait.md) | accepted | 2026-10-28 |
+| [Lease text jobs for a fixed term renewed by progress](0038-lease-text-jobs-for-a-fixed-term-renewed-by-progress.md) | accepted | 2026-10-28 |
+| [Settle requests after cancellation and repeated faults](0039-settle-requests-after-cancellation-and-repeated-faults.md) | accepted | 2026-10-28 |
+| [Estimate text queue wait from the request's eligible workers](0040-estimate-text-queue-wait-from-the-eligible-workers.md) | accepted | 2026-10-28 |
 
 ## Relationships
 
@@ -84,11 +88,15 @@ flowchart TD
     r0029["0029: Route by declared parameter support a…"]
     r0030["0030: Route by declared parameter support a…"]
     r0031["0031: Prefer the worker that last served a…"]
-    r0032["0032: Send chat images to workers as signed…"]
+    r0032["0032: Send chat images to workers by the tr…"]
     r0033["0033: Fill OpenAI sampling defaults server-…"]
     r0034["0034: Map chat errors to the OpenAI envelop…"]
     r0035["0035: Keep anonymous access on the chat fro…"]
     r0036["0036: Route chat requests by declared guara…"]
+    r0037["0037: Size the free output allowance by the…"]
+    r0038["0038: Lease text jobs for a fixed term rene…"]
+    r0039["0039: Settle requests after cancellation an…"]
+    r0040["0040: Estimate text queue wait from the req…"]
     r0001 --> r0003
     r0001 --> r0004
     r0001 --> r0005
@@ -116,13 +124,34 @@ flowchart TD
     r0014 --> r0007
     r0017 --> r0012
     r0018 --> r0015
+    r0019 --> r0022
+    r0019 --> r0024
+    r0019 --> r0026
+    r0019 --> r0027
+    r0019 --> r0037
+    r0019 --> r0038
+    r0019 --> r0039
+    r0019 --> r0040
     r0020 --> r0021
+    r0020 --> r0026
+    r0020 --> r0036
     r0021 --> r0020
+    r0022 --> r0036
+    r0024 --> r0023
     r0024 --> r0025
-    r0025 --> r0023
+    r0024 --> r0038
     r0025 --> r0024
+    r0027 --> r0024
     r0027 --> r0028
     r0028 --> r0027
+    r0029 --> r0022
     r0029 --> r0030
+    r0029 --> r0036
     r0030 --> r0029
+    r0034 --> r0026
+    r0035 --> r0037
+    r0036 --> r0020
+    r0036 --> r0022
+    r0036 --> r0027
+    r0036 --> r0029
 ```

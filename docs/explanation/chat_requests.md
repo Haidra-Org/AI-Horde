@@ -341,13 +341,13 @@ it would any other refused request. The decision waits up to about 2 seconds for
 information, since a request just submitted is absent from the horde's cached queue positions until they refresh
 ([No eligible worker](../reference/chat_front.md#no-eligible-worker)).
 
-### Images as signed URLs
+### Images by the declared transport
 
 The horde fetches, checks and normalises each image at submit, stores it as JPEG, and keeps only a reference in the
-row ([Images](../reference/chat_requests.md#images)). At pop it signs a download URL per image, after the commits
-that release the queue's row lock, and the worker fetches it
-([ADR 0032](../decisions/0032-send-chat-images-to-workers-as-signed-urls.md)). A worker that declares only `base64`
-receives the bytes inline.
+row ([Images](../reference/chat_requests.md#images)). At pop, after the commits that release the queue's row lock,
+it sends the images by the transport the worker declares
+([ADR 0032](../decisions/0032-send-chat-images-to-workers-as-signed-urls.md)). A worker that declares `url` receives
+a signed download URL per image and fetches it. A worker that declares only `base64` receives the bytes inline.
 
 Inlining base64 read from object storage under the row lock was the alternative: a network read inside the lock, and
 megabytes in a JSON response. The `base64` transport reads the store after the lock is released. Storing base64 in the
@@ -357,8 +357,7 @@ storage reachability becomes the worker's concern, and a failed fetch is a fault
 A deployment can also offload a large request whole: the messages, images inlined, are stored as one JSON object at
 submit, and a worker that declares `messages_url` receives one short-lived signed URL in place of `messages`
 ([Messages offload](../reference/chat_requests.md#messages-offload)). The worker then makes one self-contained fetch
-with no partial download to manage, which the koboldcpp maintainer prefers, and large bodies stay off the pop
-response. The transport is chosen per generation, from what the request stored and what the popping worker declared:
+and does not manage partial downloads, and large bodies stay off the pop response. The transport is chosen per generation, from what the request stored and what the popping worker declared:
 
 ```mermaid
 flowchart TD
@@ -448,9 +447,8 @@ accepts, so it is the same operation in any order, and an unknown entry refuses 
 `context_fit: truncate_oldest` a history too long for any served context loses its oldest whole turns and keeps every
 system and developer message and the latest user turn. Moderation screens the full submitted messages before any
 message is dropped. For the request's lifetime its row stores the kept messages, which the worker receives, and, as on
-every request, the full flattened submission in `submitted_prompt`. The record also reserves `:variant` suffixes on
-the model id for presets that a model picker can show; the front does not serve a variant, and answers 404 for a
-model id that contains a colon. Base-URL profiles were the alternative
+every request, the full flattened submission in `submitted_prompt`. The model id is the exact native model name. The front
+reserves the colon, so a model id that contains one is refused as unknown with 404 `model_not_found`. Base-URL profiles were the alternative
 ([ADR 0021](../decisions/0021-select-chat-service-by-base-url-profiles.md)): one configuration per application, at the
 price of a resolver and revision store, invisible to model pickers, and lost by clients that hardcode `/v1`.
 

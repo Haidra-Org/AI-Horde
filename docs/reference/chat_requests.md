@@ -150,7 +150,9 @@ submission (ADR 0026). It is claimed for the submitting user, the owner of the s
 
 The fingerprint is the SHA-256 hex digest of canonical JSON (sorted keys, no insignificant whitespace, UTF-8) over the
 messages as stored (`developer` rewritten to `system`), the mapped text params, the model list sorted, every `horde`
-option with defaults filled in except `operation_key` and `dry_run`, and the stored `chat_extras` only when the request
+option with defaults filled in except the five in `OPERATION_FINGERPRINT_EXCLUDED_HORDE_KEYS`
+(`horde/classes/kobold/chat_request.py`): `availability_mode`, `dry_run`, `include_reasoning`, `max_kudos` and
+`operation_key`. It also covers the stored `chat_extras` only when the request
 has any. `max_tokens` and `max_completion_tokens` with the
 same value, or an option sent at its default and one left out, give the same fingerprint. Any listed model may serve
 the request, so `models` in another order is the same operation, and `model: "a"` gives the fingerprint of

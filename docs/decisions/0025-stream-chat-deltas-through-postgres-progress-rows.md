@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-10-17
+status: rejected
+date: 2026-10-28
 ---
 
 <!--
@@ -13,14 +13,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Context and Problem Statement
 
-The same question as [ADR 0024](0024-stream-chat-deltas-through-a-retained-redis-stream.md): where do a worker's
-delta batches go. This record proposes the primary database.
+A streaming chat worker posts batches of generated text while it generates, and the front forwards them to the client
+in order. This record evaluates the primary database as the store for those batches.
+[ADR 0024](0024-stream-chat-deltas-through-a-retained-redis-stream.md) is the accepted decision on this question.
 
 ## Decision Drivers
 
-- Postgres already holds every other fact about a request, and the cleanup thread already prunes request state.
-- A Redis failover must not lose in-flight output.
-- The progress route is already a database write for the cancel check and the job TTL refresh.
+- Postgres holds every other fact about a request, and the cleanup thread prunes request state.
+- A Redis failover must not lose output in flight.
 
 ## Considered Options
 
@@ -30,21 +30,17 @@ delta batches go. This record proposes the primary database.
 
 ## Decision Outcome
 
-Chosen option: "Progress rows in Postgres, one per batch, keyed by generation and sequence".
-
-The progress route inserts batches with a unique index on generation id and sequence. Identical repeats return the
-accepted sequence without a new row; changed content is rejected. Reject gaps with the expected sequence. Entries
-include stable choice and attempt identity. The front reads through a bounded native route; the design does not
-introduce a direct database connection or per-batch broadcast signal traffic.
-Retention and row/byte limits cover the bounded active stream lifetime and cleanup grace.
+Rejected. The evaluated option has the progress route insert each batch as a row with a unique index on generation
+id and sequence. An identical repeat returns the accepted sequence without a new row, changed content is refused, and
+a gap is refused with the expected sequence. The front reads the rows through a bounded native route, since it does
+not hold a database connection. Retention and row and byte limits cover the active stream and a cleanup grace.
 
 ### Consequences
 
-- Good: One store; survives a Redis failover; durable for audit.
-- Bad: One insert per batch per in-flight stream on the primary database, on the same connection pool as pops and
-  submits; at one batch per second per stream this is the dominant write load under concurrency.
-- Bad: The front gains native HTTP read traffic for deltas. It retains the no-database-connection boundary of
-  [ADR 0023](0023-run-the-chat-front-as-a-separate-asgi-process-woken-by-redis.md).
+- Good: One store, durable for audit, and a Redis failover does not lose output.
+- Bad: One insert per batch per stream in flight on the primary database, on the connection pool pops and submits
+  use. At one batch per second per stream this is the dominant write load under concurrency.
+- Bad: The front gains native HTTP read traffic for deltas.
 
 ## Pros and Cons of the Options
 
@@ -55,21 +51,10 @@ Retention and row/byte limits cover the bounded active stream lifetime and clean
 
 ### Redis stream per request
 
-- Good: Cheap and ordered.
-- Bad: In-flight output lost on failover.
+- Good: Cheap and ordered, with native trimming and expiry.
+- Bad: Output in flight can be lost on failover.
 
 ### Pub/sub only
 
 - Good: Does not need storage.
-- Bad: Lossy.
-
-## More Information
-
-This record and [ADR 0024](0024-stream-chat-deltas-through-a-retained-redis-stream.md) are mutually exclusive.
-Accepting one rejects the other. The review recommends ADR 0024; the measurement that decides is the write rate the
-primary database absorbs at the expected number of concurrent streams.
-
-This is deferred until after the buffered-SSE text release. Replay, attempt-fencing and partial-output rules are the same as ADR 0024:
-the front does not replay the whole result after exposure or splice a replacement attempt, and native cancellation
-settlement is unchanged.
-A unique index alone is not sufficient acknowledgment/replay semantics.
+- Bad: A lost message is lost output.
