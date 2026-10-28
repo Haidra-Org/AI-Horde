@@ -67,6 +67,7 @@ BASELINE_CASES: Final[tuple[tuple[str, str], ...]] = (
     ("z_image_turbo", KNOWN_IMAGE_GENERATION_BASELINE.z_image_turbo.value),
     ("krea2_turbo", KNOWN_IMAGE_GENERATION_BASELINE.krea2_turbo.value),
     ("anima", KNOWN_IMAGE_GENERATION_BASELINE.anima.value),
+    ("moss", KNOWN_IMAGE_GENERATION_BASELINE.moss_image.value),
     ("some_future_baseline", "some_future_baseline"),
     ("krea3_turbo", "krea3_turbo"),
 )
@@ -116,6 +117,7 @@ NEWLY_PRICED_BASELINES: Final[frozenset[str]] = frozenset(
         KNOWN_IMAGE_GENERATION_BASELINE.flux_schnell.value,
         KNOWN_IMAGE_GENERATION_BASELINE.flux_dev.value,
         KNOWN_IMAGE_GENERATION_BASELINE.anima.value,
+        KNOWN_IMAGE_GENERATION_BASELINE.moss_image.value,
     },
 )
 
@@ -430,6 +432,7 @@ class TestResolutionFloorParity:
             KNOWN_IMAGE_GENERATION_BASELINE.z_image_turbo.value: 1024,
             KNOWN_IMAGE_GENERATION_BASELINE.krea2_turbo.value: 1024,
             KNOWN_IMAGE_GENERATION_BASELINE.anima.value: 1024,
+            KNOWN_IMAGE_GENERATION_BASELINE.moss_image.value: 1024,
         }
         mismatches: list[str] = []
         for selection in ALL_BASELINE_SELECTIONS:
