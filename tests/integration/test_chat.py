@@ -522,6 +522,74 @@ def _stored_accepts_chat_jobs(app, worker_name: str) -> bool:
         return bool(db.session.query(TextWorker.accepts_chat_jobs).filter_by(name=worker_name).scalar())
 
 
+@pytest.fixture
+def details_worker(app, client, request_headers: dict[str, str]) -> Iterator[FakeChatWorker]:
+    """A worker under a fresh name, taken offline afterwards so its declaration does not reach later tests.
+
+    The fresh name keeps each test clear of the 30-second worker details cache.
+    """
+    worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Details {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
+    yield worker
+    _take_worker_offline(app, worker.name)
+
+
+def _worker_details(client, request_headers: dict[str, str], worker_name: str) -> dict[str, Any]:
+    details = client.get(f"/api/v2/workers/name/{worker_name}", headers=request_headers)
+    assert details.status_code == 200, details.get_data(as_text=True)
+    return details.get_json()
+
+
+def test_worker_details_read_back_the_chat_declaration_of_the_last_pop(
+    client,
+    request_headers: dict[str, str],
+    details_worker: FakeChatWorker,
+) -> None:
+    """A chat worker's details carry its declared model, features, limits and image transports under ``chat``."""
+    worker = details_worker
+    worker.pop(
+        prompt_jobs=False,
+        chat_features=["frequency_penalty"],
+        chat_guarantees=[],
+        chat_max_context_length=8192,
+        chat_max_length=1024,
+        tools_max_temperature=0.7,
+        image_transports=["url"],
+    )
+
+    details = _worker_details(client, request_headers, worker.name)
+
+    assert details["accepts_chat_jobs"] is True
+    assert details["accepts_prompt_jobs"] is False
+    assert details["chat"] == {
+        "model_id": CHAT_MODEL,
+        "features": ["frequency_penalty"],
+        "limits": {
+            "max_context_length": 8192,
+            "max_length": 1024,
+            "tools_max_temperature": 0.7,
+        },
+        "image_transports": ["url"],
+    }
+
+
+@pytest.mark.parametrize("chat_jobs", [pytest.param(False, id="declined"), pytest.param(None, id="predates-chat")])
+def test_worker_details_hold_no_chat_declaration_for_a_worker_that_does_not_accept_chat(
+    client,
+    request_headers: dict[str, str],
+    chat_jobs: bool | None,
+    details_worker: FakeChatWorker,
+) -> None:
+    """A text worker that did not opt into chat jobs has no ``chat`` in its details and still accepts text jobs."""
+    worker = details_worker
+    worker.pop(chat_jobs=chat_jobs)
+
+    details = _worker_details(client, request_headers, worker.name)
+
+    assert details["accepts_chat_jobs"] is False
+    assert details["accepts_prompt_jobs"] is True
+    assert "chat" not in details
+
+
 def test_each_pop_is_judged_by_its_own_chat_declaration_inside_the_check_in_debounce(
     app,
     client,

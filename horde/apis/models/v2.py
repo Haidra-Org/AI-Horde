@@ -937,6 +937,41 @@ class Models:
                 ),
             },
         )
+        self.response_model_worker_chat_limits = api.model(
+            "WorkerChatLimits",
+            {
+                "max_context_length": fields.Integer(
+                    description="The largest context, rendered messages and reply together, a chat job may need.",
+                ),
+                "max_length": fields.Integer(description="The most tokens the worker generates for a chat job."),
+                "tools_max_temperature": fields.Float(
+                    default=None,
+                    description=(
+                        "The highest temperature the backend applies as sent when tools are present. Null means "
+                        "every temperature is applied as sent."
+                    ),
+                ),
+            },
+        )
+        # Mirrors the chat declaration fields of the text pop, so a worker's details read back what it declared.
+        self.response_model_worker_chat_details = api.model(
+            "WorkerChatDetails",
+            {
+                "model_id": fields.String(description="The model the worker serves chat jobs with."),
+                "features": fields.List(
+                    fields.String,
+                    description="The chat features and guarantees the worker declared, from the pop's chat_features.",
+                ),
+                "limits": fields.Nested(
+                    self.response_model_worker_chat_limits,
+                    description="The limits chat jobs run under, in place of max_context_length and max_length.",
+                ),
+                "image_transports": fields.List(
+                    fields.String,
+                    description="How the worker accepts a chat job's images. Empty means the worker takes no images.",
+                ),
+            },
+        )
 
         self.response_model_worker_details = api.inherit(
             "WorkerDetails",
@@ -1062,6 +1097,12 @@ class Models:
                 "accepts_prompt_jobs": fields.Boolean(
                     default=None,
                     description="If True, this worker will pick up plain text jobs.",
+                ),
+                "chat": fields.Nested(
+                    self.response_model_worker_chat_details,
+                    default=None,
+                    allow_null=True,
+                    description="The chat declaration from this text worker's last pop. Absent when it does not accept chat jobs.",
                 ),
                 "max_length": fields.Integer(
                     example=80,

@@ -484,7 +484,27 @@ class TextWorker(Worker):
         ret_dict["max_context_length"] = self.max_context_length
         ret_dict["accepts_chat_jobs"] = self.accepts_chat_jobs
         ret_dict["accepts_prompt_jobs"] = self.accepts_prompt_jobs
+        ret_dict["chat"] = self.get_chat_details()
         return ret_dict
+
+    def get_chat_details(self) -> dict[str, Any] | None:
+        """Return the chat declaration of the worker's last pop for its details, or None when it does not accept chat.
+
+        The keys mirror the pop's chat fields (``model_id``, ``chat_features``, ``chat_limits``, ``image_transports``),
+        so a worker's details read back what it declared.
+        """
+        if not self.accepts_chat_jobs:
+            return None
+        return {
+            "model_id": self.chat_model_id,
+            "features": list(self.chat_features or ()),
+            "limits": {
+                "max_context_length": self.chat_max_context_length,
+                "max_length": self.chat_max_length,
+                "tools_max_temperature": self.chat_tools_max_temperature,
+            },
+            "image_transports": list(self.image_transports or ()),
+        }
 
     def parse_models(self, unchecked_models):
         # We don't allow more workers to claim they can server more than 200 models atm (to prevent abuse)
