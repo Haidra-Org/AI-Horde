@@ -98,8 +98,11 @@ The ceiling, the floor and both wait thresholds are deployment settings in `hord
 
 `tests/unit/test_kobold_text_wp.py` pins the curve at the thresholds, between them and beyond them, the floor without an
 eligible worker, the configured thresholds and the upfront decision. `tests/unit/test_text_worker_eligibility.py` pins
-the competing work and the eligible speed the estimate reads. `docs/reference/chat_requests.md` records the public
-rule under "Free output allowance" and `docs/explanation/kudos_accounting.md` explains it.
+the competing work and the eligible speed the estimate reads. `tests/integration/test_chat.py` pins that a quote cached
+for a funded requester does not answer an anonymous dry run above the allowance on the text route; chat dry runs are
+not answered from the quote cache, since no chat context fit is `ignore`.
+`docs/reference/chat_requests.md` records the public rule under "Free output allowance" and
+`docs/explanation/kudos_accounting.md` explains it.
 
 ## More Information
 

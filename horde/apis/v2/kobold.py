@@ -5,6 +5,7 @@
 import hmac
 import json
 import math
+import os
 from datetime import datetime
 
 import logfire
@@ -402,9 +403,29 @@ class TextAsyncGenerate(GenerateTemplate):
 
         Returns:
             bool: Whether the cached quote is the whole answer. A request that sizes its context
-                against its prompt is not answerable from a key built out of the params.
+                against its prompt is not answerable from a key built out of the params, nor is one a
+                requester without kudos could be refused upfront.
         """
-        return super().dry_run_answerable_from_cache() and self.context_fit is ContextFit.IGNORE
+        return super().dry_run_answerable_from_cache() and self.context_fit is ContextFit.IGNORE and not self.may_require_upfront_kudos()
+
+    def may_require_upfront_kudos(self) -> bool:
+        """Return whether a requester without kudos could be refused this request for want of upfront kudos.
+
+        The quote cache is keyed by the params and models alone, so a quote cached for a requester who holds kudos
+        would otherwise answer a dry run from one who does not, whose submission is refused. The free output allowance
+        never falls below ``Config.text_free_output_floor``, so a request at or under the floor that allows slow
+        workers is refused to nobody on it. The conditions follow
+        [`TextWaitingPrompt.require_upfront_kudos`][horde.classes.kobold.waiting_prompt.TextWaitingPrompt.require_upfront_kudos].
+
+        Returns:
+            True when the request asks for more than the allowance floor, disallows slow workers, or names workers
+            while worker-targeted requests need upfront kudos.
+        """
+        max_length = self.params.get(MAX_LENGTH_PARAMETER, DEFAULT_MAX_LENGTH)
+        exceeds_allowance_floor = max_length > Config.text_free_output_floor
+        disallows_slow_workers = not self.args.get("slow_workers", True)
+        worker_list_needs_kudos = os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "0") == "1" and bool(self.args.get("workers"))
+        return exceeds_allowance_floor or disallows_slow_workers or worker_list_needs_kudos
 
     def get_resolved_request(self):
         """Return the request as the horde resolved it, with what only a text request carries.
