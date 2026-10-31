@@ -1718,7 +1718,12 @@ class TextJobSubmit(JobSubmitTemplate):
         null, written in the same update as the message itself, so every predicate that reads ``generation`` treats
         chat and text alike.
 
+        A chat reply for an aborted generation is refused before it is checked, so a refusal is not stored on its
+        request and the worker's nonconformant replies do not change; the abort counts as a dropped job. A faulted
+        submit is not refused there, since the base accepts a fault for an aborted generation.
+
         Raises:
+            horde.exceptions.AbortedGen: When a chat job's generation is aborted and the submission is not faulted.
             horde.exceptions.BadRequest: With ``ChatSubmitInvalid`` when a chat job's submission lacks a valid
                 message or finish reason, calls a function the request did not offer or repeats a call id, or a text
                 job's carries a message; ``ChatSubmitNonconformant`` when a ``strict`` request's ``tool_choice`` or
@@ -1726,6 +1731,8 @@ class TextJobSubmit(JobSubmitTemplate):
                 the model it was assigned.
         """
         if self.procgen.wp.is_chat:
+            if self.args.state != "faulted" and is_aborted_generation(self.procgen):
+                raise e.AbortedGen(self.procgen.worker.name, self.args["id"], self.procgen.job_ttl)
             self.prepare_chat_submission()
         elif self.args.message is not None:
             raise e.BadRequest("'message' is only accepted for chat jobs; send 'generation'.", rc="ChatSubmitInvalid")

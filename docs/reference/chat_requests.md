@@ -705,6 +705,8 @@ A chat submit without a valid `message` or `finish_reason`, or with `generation`
 `400 ChatSubmitInvalid`, as does a text job's submit carrying `message`. A `model_id` other than the assigned model
 returns `400 ChatModelMismatch`. A faulted chat job submits `{id, state: "faulted", model_id}` without `generation`
 or `message`, and optionally `fault_reason`; it is handled as any faulted text submission.
+A chat reply for a faulted generation returns `400 AbortedGen` before the reply is checked, so a refusal is not
+stored on the request and the abort counts as a dropped job.
 
 A request whose faulted jobs exceed `FAULTED_GENERATIONS_LIMIT` (2) is faulted on the submit that crosses it, for
 text and image requests alike, and a chat request publishes its `faulted` signal at once. Without this, a request

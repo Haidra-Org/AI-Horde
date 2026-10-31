@@ -2333,6 +2333,59 @@ def test_a_fault_after_a_refused_reply_counts_as_a_dropped_job_unless_the_reply_
     _cancel(client, request_headers, "chat", request_id)
 
 
+def test_a_nonconformant_reply_for_a_stale_aborted_generation_is_refused_as_aborted_without_a_stored_refusal(
+    app,
+    client,
+    request_headers: dict[str, str],
+) -> None:
+    """A reply for a generation the stale-generation path faulted returns ``AbortedGen`` before its conformance check:
+    the request does not store a refusal, the abort counts as a dropped job and the worker's nonconformant replies do
+    not change."""
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+    from horde.flask import db
+
+    worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Stale {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
+    _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    pop_result = worker.pop(chat_features=VERIFIED_FEATURES)
+    assert pop_result["id"] is not None, pop_result
+    with app.app_context():
+        generation = db.session.get(TextProcessingGeneration, uuid.UUID(pop_result["id"]))
+        assert generation is not None
+        request_id = str(generation.wp_id)
+        generation.start_time = datetime.utcnow() - timedelta(seconds=generation.job_ttl + 1)
+        db.session.commit()
+        assert generation.is_stale()
+        generation.fault_and_restart(stale=True)
+
+    response = worker.submit(
+        build_chat_submit_body(
+            generation_id=pop_result["id"],
+            content="Blue.",
+            finish_reason="stop",
+            model_id=CHAT_MODEL,
+        ),
+    )
+
+    assert response.status_code == 400, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "AbortedGen"
+    assert _worker_counters(app, worker.name) == (1, 1, 0)
+    with app.app_context():
+        stored_refusal = (
+            db.session.query(TextWaitingPrompt.chat_fault_reason, TextWaitingPrompt.chat_fault_rc)
+            .filter(TextWaitingPrompt.id == uuid.UUID(request_id))
+            .one()
+        )
+        stored_refusal_rc = (
+            db.session.query(TextProcessingGeneration.chat_refusal_rc)
+            .filter(TextProcessingGeneration.id == uuid.UUID(pop_result["id"]))
+            .scalar()
+        )
+    assert tuple(stored_refusal) == (None, None)
+    assert stored_refusal_rc is None
+    _cancel(client, request_headers, "chat", request_id)
+
+
 def _fault_past_the_limit(chat_worker: FakeChatWorker, fault_reason: str) -> None:
     """Pop and fault the queued request's job with ``fault_reason`` until the request faults."""
     from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
