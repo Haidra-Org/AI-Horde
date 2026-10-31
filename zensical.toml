@@ -44,6 +44,7 @@ nav = [
         { "Outbound requests" = "reference/outbound_requests.md" },
         { "Chat requests" = "reference/chat_requests.md" },
         { "Chat front" = "reference/chat_front.md" },
+        { "Chat wire examples" = "reference/chat_wire_examples.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },
@@ -127,8 +128,9 @@ pygments_lang_class = true
 custom_fences = [
     { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
 ]
-# Example programs live as tested files under tools/ and are included into their pages, so a page shows the code the
-# tests run. check_paths fails the build when an included file is missing.
+# Example programs under tools/, and sections of docs/reference/chat_wire_examples.md, are included into the pages
+# that show them, so a page shows the code and bodies the tests check. check_paths fails the build when an included
+# file is missing.
 [project.markdown_extensions.pymdownx.snippets]
 base_path = ["."]
 check_paths = true

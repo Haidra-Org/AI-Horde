@@ -37,6 +37,37 @@ For why chat travels this way, see [Chat requests on the Horde](../explanation/c
 requests as a client, see [Send chat completions through the OpenAI-compatible front](send_chat_completions.md).
 To run this end to end with koboldcpp for the first time, follow [Serve your first chat job with koboldcpp](../tutorial/first_chat_worker.md).
 
+## One chat job in full
+
+A worker adds the five fields of its chat declaration to every pop, beside the usual text fields. The body in
+[step 1](#1-declare-chat-on-pop) is the smallest declaration: two optional features, the limits, the model and no
+image transport.
+
+A chat job arrives with `chat: true` and the conversation in `payload.messages`:
+
+```json
+--8<-- "docs/reference/chat_wire_examples.md:pop-chat-job"
+```
+
+The worker renders `payload.messages` with its chat template, generates, and submits an assistant message:
+
+```json
+--8<-- "docs/reference/chat_wire_examples.md:submit-reply"
+```
+
+The submit is answered with the kudos the worker earned:
+
+```json
+--8<-- "docs/reference/chat_wire_examples.md:submit-reply-response"
+```
+
+Every other body a worker meets (tools, images, offloaded messages, faults, progress posts, refusals and worker
+details) is in [Chat wire examples](../reference/chat_wire_examples.md#worker), checked against the running code.
+[Write a minimal chat worker](write_a_minimal_chat_worker.md) is a complete worker for an OpenAI-compatible backend
+in one file.
+
+## The pop loop
+
 The steps below build one pop loop. A pass through it, with the step that covers each part:
 
 ```mermaid
@@ -127,7 +158,8 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   then not sent to the worker, under either conformance mode, since a clamped value changes the request. Leave it out
   when the backend applies every temperature as sent.
 - `model_id` is the model the worker serves chat jobs with, and it has to be one of `models`. The native route treats
-  it as an opaque string. The OpenAI-compatible front reserves `:` and answers 404 for any model id that contains one, so a model name with a colon can be served natively and cannot be reached through the front
+  it as an opaque string. The OpenAI-compatible front reserves `:` and answers 404 for any model id that contains
+  one, so a model name with a colon can be served natively and cannot be reached through the front
   ([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). Choose a name without a
   colon.
 - `image_transports` lists how the worker accepts images: `url`, `base64` or both. Leave it out, or send it empty,
@@ -214,14 +246,16 @@ Only the worker knows how many tokens its template and tokenizer produce, which 
 worker ([Chat job pop response](../reference/chat_requests.md#chat-job-pop-response)).
 
 The fit check must not run side effects. A backend's request transform may do more than render. koboldcpp's chat
-transform runs a short in-process generation to choose a tool when `tool_choice` is `auto` or `required`. Running that
-transform to estimate the prompt would generate once more for every chat job with tools, outside the job's budget.
+transform, when it formats without a Jinja template, runs a short in-process generation to choose a tool when
+`tool_choice` is `auto` or `required`. Running that transform to estimate the prompt could generate once more for every
+chat job with tools, outside the job's budget.
 koboldcpp's embedded worker therefore does not render for the check. It counts the tokens of the JSON of `messages`,
 `tools` and `response_format`, adds 32 tokens, 16 for each message and 512 for each image, and faults the job with
 `prompt_overflow` when that count plus `max_length` exceeds its context.
 
 Verification: send a conversation longer than `chat_limits.max_context_length` allows. The worker submits
-`{"id": "<job-id>", "state": "faulted", "model_id": "<model-name>"}` and does not generate.
+`{"id": "<job-id>", "state": "faulted", "model_id": "<model-name>", "fault_reason": "prompt_overflow"}` and does not
+generate.
 
 ## 4. Serve tools and structured output
 
@@ -333,8 +367,10 @@ Send `message`, `finish_reason` and `model_id` in place of `generation`
   beside `finish_reason`.
 - `prompt_tokens` and `completion_tokens` are sent only when the backend reported them, and `reasoning_tokens`, how
   many of the completion tokens were reasoning, only when the backend counted it. Leave a count out and do not send
-  zero; the horde stores a missing count as null and shows it to the client, and the counts never change the
-  charge or the reward ([Pricing](../reference/chat_requests.md#pricing)).
+  zero. The horde stores a missing count as null, and the native status shows it as null. The OpenAI-compatible
+  front estimates a missing `prompt_tokens`, `completion_tokens` or `reasoning_tokens` from the text and sets
+  `x_horde.estimated_usage` to true ([Response shape](../reference/chat_front.md#response-shape)). The counts do
+  not change the charge or the reward ([Pricing](../reference/chat_requests.md#pricing)).
 - `model_id` is the model the job was assigned, the `model_id` the worker declared when it popped the job.
 - `state` is `ok`, `censored`, `csam` or `faulted`, as for text jobs.
 
@@ -526,46 +562,17 @@ endpoint, and the worker posts its progress about once a second; a `cancelled: t
 generation, and the job is not submitted. A job with tools is generated whole, since the tool calls are parsed from the complete reply.
 
 The reply is submitted with the backend's `finish_reason` and with each token count the backend reported. The worker
-faults the job with `prompt_overflow` when the fit check fails, and with `reply_refused` when the horde answers the
+faults the job with `prompt_overflow` when the fit check fails, and with `reply_refused` when the horde refuses the
 reply with `ChatSubmitInvalid`, `ChatSubmitNonconformant` or `ChatModelMismatch`. A failed fetch, a failed generation
 or a finish reason outside the four the horde accepts faults the job without a reason. A chat job is not generated a
 second time.
 
 ### Start koboldcpp as a chat worker
 
-```bash
-koboldcpp --model <model.gguf> --contextsize 4096 --jinja \
-  --hordekey <api-key> --hordeworkername <worker-name> \
-  --hordemodelname <model-name> --hordemaxctx 4096 --hordegenlen 512
-```
-
-`--jinja` formats the conversation with the model's Jinja chat template, including tool calls. Add `--mmproj
-<projector.gguf>` for a vision model.
-
-Verification: the log prints `Worker <n> - Embedded Horde Worker '<worker-name>' is started.`, and the worker's
-details show the declaration:
-
-```bash
-curl -s "https://aihorde.net/api/v2/workers/name/<worker-name>" | jq '{accepts_chat_jobs, accepts_prompt_jobs, chat}'
-```
-
-```json
-{
-  "accepts_chat_jobs": true,
-  "accepts_prompt_jobs": true,
-  "chat": {
-    "model_id": "koboldcpp/<model-name>",
-    "features": ["json_object", "json_schema", "presence_penalty", "prompt_overflow_refused", "reasoning_effort", "seed", "tools"],
-    "limits": {"max_context_length": 4096, "max_length": 512, "tools_max_temperature": 1.0},
-    "image_transports": ["messages_url"]
-  }
-}
-```
-
-With a projector loaded, `features` adds `vision` and `image_transports` adds `base64`.
-
-The embedded worker does not pop while koboldcpp's local API served a request in the last 20 seconds, so a local
-client in use delays Horde jobs.
+[Step 1 of Serve your first chat job with koboldcpp](../tutorial/first_chat_worker.md#1-start-koboldcpp-as-a-chat-worker)
+has the command and its log line, and step 2 checks the declaration. For a vision model, add `--mmproj
+<projector.gguf>` to that command. The worker's details show `accepts_prompt_jobs: true`, because the embedded worker
+also serves text jobs.
 
 Reversal: stop koboldcpp. A worker counts as online for 300 seconds after its last pop, so the declaration leaves the
 chat model list within that time.

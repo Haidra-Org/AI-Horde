@@ -39,6 +39,7 @@ procedure for one subject sit together.
 - How-to: [Add chat completions to a web frontend](how-to/add_chat_to_a_frontend.md)
 - How-to: [Write a minimal chat worker](how-to/write_a_minimal_chat_worker.md)
 - How-to: [Serve chat jobs from a text worker](how-to/serve_chat_jobs.md)
+- Reference: [Chat wire examples](reference/chat_wire_examples.md)
 - Tutorial: [Your first chat completion through the Horde](tutorial/first_chat_completion.md)
 - Tutorial: [Serve your first chat job with koboldcpp](tutorial/first_chat_worker.md)
 
@@ -91,6 +92,7 @@ procedure for one subject sit together.
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 - Reference: [Style contract reference](reference/style_contract.md)
 - Reference: [Chat requests reference](reference/chat_requests.md)
+- Reference: [Chat wire examples](reference/chat_wire_examples.md)
 - Reference: [Chat front reference](reference/chat_front.md)
 - Reference: [Outbound requests reference](reference/outbound_requests.md)
 - Tutorial: [Your first chat completion through the Horde](tutorial/first_chat_completion.md)
@@ -105,5 +107,6 @@ procedure for one subject sit together.
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
 - Reference: [Image model reference loader reference](reference/model_reference.md)
 - Reference: [Chat requests reference](reference/chat_requests.md)
+- Reference: [Chat wire examples](reference/chat_wire_examples.md)
 - Tutorial: [Serve your first chat job with koboldcpp](tutorial/first_chat_worker.md)
 <!-- END GENERATED: topics -->

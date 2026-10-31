@@ -51,6 +51,8 @@ model list routes over the horde's native `/v2/generate/chat` routes (see
 
 ## Request keys
 
+Example: [Front request](chat_wire_examples.md#front-request).
+
 The front validates a request against `ChatCompletionRequest` after three screening steps in `horde/oai/schema.py`.
 A body that is not JSON, or that holds `NaN`, `Infinity` or `-Infinity` (which Python's parser otherwise accepts), is
 400 `BadRequest` before screening.
@@ -121,6 +123,10 @@ An unserved role (such as `function`) or content part type (such as `input_audio
 `UnsupportedChatParameter`, with `param` such as `messages[0].role` or `messages[0].content[0].type=input_audio`.
 
 ## Response shape
+
+Examples: [Completion](chat_wire_examples.md#completion), [Tool-call completion](chat_wire_examples.md#tool-call-completion),
+and the streamed [Content chunk](chat_wire_examples.md#content-chunk),
+[Finish chunk](chat_wire_examples.md#finish-chunk) and [Usage chunk](chat_wire_examples.md#usage-chunk).
 
 `choices[i].message` is `{"role": "assistant", "content": ..., "tool_calls": [...]}`. `content` is always written and
 is null only when the worker returned tool calls without text; `tool_calls` is written only when the worker returned
@@ -265,7 +271,12 @@ the status carries an `impossible_reason` of kind `declaration_gap` (see
 [Impossible reason](chat_requests.md#impossible-reason)), it cancels at once and returns 404
 `no_worker_supports_features`, OpenRouter's status for no endpoint supporting the requested features, without
 a `Retry-After`. The message lists the missing declarations or the exceeded limit, and adds that guarantees are not
-required under `best_effort` when a guarantee is missing.
+required under `best_effort` when a guarantee is missing. The `type` is `not_found_error`, `param` is null, and
+`metadata.request_id` holds the cancelled native request:
+
+```json
+--8<-- "docs/reference/chat_wire_examples.md:front-no-worker-supports-features"
+```
 
 A gap of only `max_length` or `max_context_length` in `exceeded_limits` is a request over every online worker's
 size limits for the request's models. At submit the Horde lowers a `max_tokens` above the largest
@@ -319,11 +330,18 @@ An `impossible_reason` of a kind the front does not know is ignored, so the grac
 A request carrying `horde.max_kudos` is forwarded with it, and the native route refuses it before creating it when
 the kudos estimate exceeds the cap (`ChatKudosCapExceeded`, see [Request body](chat_requests.md#request-body)).
 `_kudos_cap_error` in `horde/oai/app.py` returns 400 `invalid_request_error` with code `max_kudos_exceeded`, `param`
-`horde.max_kudos`, the native message, and `metadata.kudos_estimate` and `metadata.max_kudos`. The native error body
-holds only the message and the `rc`, so both values are read from the message with `KUDOS_CAP_EXCESS_PATTERN` in
-`horde/chat_contract.py`, the module that writes it; a message that does not match leaves them out of `metadata`.
+`horde.max_kudos`, the native message, and `metadata.rc`, `metadata.kudos_estimate` and `metadata.max_kudos`. The
+native error body holds only the message and the `rc`, so both values are read from the message with
+`KUDOS_CAP_EXCESS_PATTERN` in `horde/chat_contract.py`, the module that writes it; a message that does not match
+leaves them out of `metadata`.
+
+```json
+--8<-- "docs/reference/chat_wire_examples.md:front-kudos-cap"
+```
 
 ## Model card fields
+
+Example: [Model list](chat_wire_examples.md#model-list).
 
 `GET /v1/models` lists each text model with at least one online chat worker. `context_length` and
 `top_provider.max_completion_tokens` are the largest the workers declare; `architecture.input_modalities` adds `image`

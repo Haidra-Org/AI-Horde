@@ -261,6 +261,36 @@ client can dispatch or answer such a reply. A refused submit faults the job on t
 the request, so the check refuses only what OpenAI would never return. A trimmed prompt or a hidden tool-selection pass
 does not show in the reply and is not verified.
 
+### Prompt fit on the worker
+
+The guarantee `prompt_overflow_refused` promises that a worker faults a conversation that does not fit instead of
+trimming it. Only the worker can keep this promise. The horde does not run a tokenizer and sizes context at 3
+characters per token (`CHARS_PER_TOKEN_ESTIMATE` in `horde/classes/kobold/request_fit.py`), and a trimmed prompt
+does not show in the reply. The worker's count has to be at least the count used by generation. A lower count lets a
+prompt pass the fit check and still overflow, and the backend then trims it.
+
+An exact counter renders the conversation with the backend's template and tokenizes it. Its count matches the count
+used by generation when both render with the same template and the same BOS token, and falls short when they differ.
+The minimal worker in `tools/chat_worker_example/` therefore compares its counter with the backend's
+`usage.prompt_tokens` for one probe conversation at startup. It declares the guarantee only when the counter is not
+short.
+
+A backend without a counter route can still back the guarantee with an upper bound. A byte-level BPE tokenizer emits
+at least one UTF-8 byte per token, so the byte length of the messages' JSON bounds the token count of the message
+text. The JSON keys around each message stand in for its role markup. The template's fixed part is the BOS token, any
+system prompt injected by the template, and the generation prompt. The worker measures it once from the probe's
+`usage.prompt_tokens` and adds it to the bound. The probe has no tools, so it does not measure a tool preamble, and
+the bound backs the guarantee for tool requests only when the operator adds the preamble's size with
+`--template-overhead`.
+
+The bound costs capacity. It counts one token per byte, which for ASCII text is about three times the horde's
+estimate of 3 characters per token, and more for text outside ASCII. The horde sends a worker conversations that fit
+by its own estimate, so a worker on the byte bound faults long conversations with `prompt_overflow`. A worker that
+aborts more than 20 jobs in an hour is put into maintenance. The alternative is to trim the prompt, which keeps the
+job and breaks the guarantee, so a worker that trims does not declare it and serves only `best_effort` requests. The
+counters and the check script are in
+[Write a minimal chat worker](../how-to/write_a_minimal_chat_worker.md#fit-check-and-the-overflow-guarantee).
+
 ### Strict handling of unsupported parameters
 
 A key or value the service does not implement is refused with `400 UnsupportedChatParameter`, and the message states

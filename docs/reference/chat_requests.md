@@ -87,7 +87,7 @@ those workers keep receiving text jobs.
 
 | Method and path                            | Behavior                                                                   |
 | ------------------------------------------ | -------------------------------------------------------------------------- |
-| `POST /v2/generate/chat/async`             | Queue a chat request. `202` with `{id, kudos, message, warnings}`, as text; `200` with `{id, kudos}` for a repeated operation key |
+| `POST /v2/generate/chat/async`             | Queue a chat request. `202` with `{id, kudos}`, plus `message` and `warnings` when the horde warns, as text; `200` with `{id, kudos}` for a repeated operation key. See [Request accepted](chat_wire_examples.md#request-accepted) |
 | `GET /v2/generate/chat/status/<id>`        | Full status, with each finished generation and its structured reply        |
 | `DELETE /v2/generate/chat/status/<id>`     | Cancel, as text                                                            |
 
@@ -198,6 +198,9 @@ text route's. Each route counts its requests separately, so chat submits do not 
 returns `429`.
 
 ## Request body
+
+Examples: [Request](chat_wire_examples.md#request), [Request accepted](chat_wire_examples.md#request-accepted),
+[Dry run](chat_wire_examples.md#dry-run), [Status when done](chat_wire_examples.md#status-when-done).
 
 | Key                                      | Mapping                                                                          |
 | ---------------------------------------- | -------------------------------------------------------------------------------- |
@@ -445,6 +448,8 @@ the client's; only the worker's copy is narrowed (see [Chat job pop response](#c
 
 ### Refused keys and values
 
+Example: [UnsupportedChatParameter](chat_wire_examples.md#unsupportedchatparameter).
+
 Any key outside the lists above returns `400 UnsupportedChatParameter`, and the message holds the key. This covers
 `logprobs`, `top_logprobs`, `logit_bias`, `modalities`, `audio` and `prediction`, as well as:
 
@@ -468,6 +473,8 @@ UUID, neither `model` nor `models`, a `models` that is empty, holds an empty ent
 5 entries, or an empty `messages` returns `400 BadRequest`.
 
 ### Context adjustments
+
+Example: [Status with context adjustments](chat_wire_examples.md#status-with-context-adjustments).
 
 When sizing under `grow` or `truncate_oldest` raises the context length to fit the messages, the request stores the change and the status
 route returns it as `context_adjustments`: `[{"from": 2048, "to": 4096, "reason": "grow"}]`, where `from` is the
@@ -538,6 +545,8 @@ stored or charged; `submitted_prompt` holds the full flattened submission, which
 arguments, the tool definitions and the response format are JSON documents and are not rewritten.
 
 ## Chat declaration on pop
+
+Examples: [Pop request](chat_wire_examples.md#pop-request), [ChatDeclarationInvalid](chat_wire_examples.md#chatdeclarationinvalid).
 
 `POST /v2/generate/text/pop` takes six further fields. The worker row stores them at every pop, including a pop
 inside the 30 second window in which the other check-in fields are not rewritten, and the pop is matched against
@@ -655,6 +664,10 @@ not redefine work already handed out.
 
 ### Chat job pop response
 
+Examples: [Chat job](chat_wire_examples.md#chat-job), [with tools](chat_wire_examples.md#chat-job-with-tools),
+[with an image](chat_wire_examples.md#chat-job-with-an-image),
+[with offloaded messages](chat_wire_examples.md#chat-job-with-offloaded-messages), [No job](chat_wire_examples.md#no-job).
+
 A text job's pop response does not carry a `chat` key. A chat job's response has the same top-level fields plus
 `chat: true`, and its payload is:
 
@@ -755,6 +768,10 @@ pop.
 
 ## Structured submit
 
+Examples: [Reply](chat_wire_examples.md#reply), [Tool-call reply](chat_wire_examples.md#tool-call-reply),
+[Reply with reasoning](chat_wire_examples.md#reply-with-reasoning), [Fault](chat_wire_examples.md#fault), and the
+refusals from [ChatSubmitInvalid](chat_wire_examples.md#chatsubmitinvalid) on.
+
 `POST /v2/generate/text/submit` keeps `generation` for text jobs. A chat job sends these instead:
 
 | Field                  | Type                                      | Required | Meaning                                                    |
@@ -847,10 +864,8 @@ a completion without visible text is logged with its completion limit (see [Metr
 Before the compare-and-set, `verify_chat_reply` checks the reply against the request's stored `chat_extras` (the
 client's values, not the narrowed copy the worker received) under its `chat_conformance`. It is the third layer of
 ADR 0036, after eligibility and dispatch narrowing, and does not trust any worker declaration. A refused submit leaves the
-generation pending, the koboldcpp worker faults the job with `reply_refused` after `ChatSubmitInvalid`,
-`ChatSubmitNonconformant` or `ChatModelMismatch`, and the request faults after
-`FAULTED_GENERATIONS_LIMIT` faulted jobs, so the checks cover only what the payload proves and what OpenAI never
-returns.
+generation pending for the worker to fault ([Fault a job](../how-to/serve_chat_jobs.md#7-fault-a-job)), and the
+request faults after `FAULTED_GENERATIONS_LIMIT` faulted jobs. The checks therefore cover only what the payload proves and what OpenAI never returns.
 
 | Rule                                                                                | `strict`                         | `best_effort`      |
 | ----------------------------------------------------------------------------------- | -------------------------------- | ------------------ |
@@ -903,6 +918,8 @@ whose reply was refused as nonconformant. Worker details (`GET /v2/workers`, `/v
 `/v2/workers/name/{name}`) and the moderation worker report expose `nonconformant_replies`.
 
 ### Worker details
+
+Example: [Worker details](chat_wire_examples.md#worker-details).
 
 Text worker details carry the declaration of the worker's last pop. `accepts_chat_jobs` and `accepts_prompt_jobs` are
 the pop's `chat_jobs` and `prompt_jobs`. `chat` mirrors the pop's chat fields, and is absent when the worker does not
@@ -1008,11 +1025,7 @@ the model" for exceeded limits. With a gap, the body also carries `impossible_re
 reports (see [Impossible reason](#impossible-reason)):
 
 ```json
-{
-  "message": "No online worker can serve this request: no online worker serving the model declares vision.",
-  "rc": "NoEligibleWorker",
-  "impossible_reason": {"kind": "declaration_gap", "missing_declarations": ["vision"], "exceeded_limits": []}
-}
+--8<-- "docs/reference/chat_wire_examples.md:refusal-no-eligible-worker"
 ```
 
 A request that covers its hold, or fits the floor, is created and queued whether or not a worker can serve it.
@@ -1066,6 +1079,8 @@ the stored `max_length` at assignment. The downgrade log line is kept beside the
 
 ## Chat model list
 
+Example: [Chat model list](chat_wire_examples.md#chat-model-list).
+
 `GET /v2/status/models?type=text&chat=true` lists only the text models that at least one online chat worker serves,
 each with the usual fields plus a `chat` object. Without `chat=true` the entries do not carry `chat` and the
 response is the plain list. `chat=true` with another `type` returns `400`.
@@ -1087,6 +1102,10 @@ online chat workers. Both responses go through the route's two-second cache, key
 changes when the earliest of those workers goes offline; the Horde does not keep a first-seen time per model.
 
 ## Streaming progress
+
+Examples: [Progress post](chat_wire_examples.md#progress-post), [Progress accepted](chat_wire_examples.md#progress-accepted),
+[Progress after a cancel](chat_wire_examples.md#progress-after-a-cancel),
+[Progress out of sequence](chat_wire_examples.md#progress-out-of-sequence).
 
 A request sent with `stream: true` is stored with the stream hint, `stream_progress: true` in `chat_extras`, and its
 job payload carries the same key. The hint does not change the reply and is not in the operation fingerprint. A worker posts

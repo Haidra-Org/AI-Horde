@@ -65,7 +65,7 @@ Worker <n> - Embedded Horde Worker '<worker-name>' is started.
 ```
 
 Leave koboldcpp running, and do not use its local web interface during the tutorial: the embedded worker pauses
-popping for 20 seconds after each local request.
+popping for 20 seconds after each local generation request.
 
 ## 2. Watch the worker register as a chat worker
 
