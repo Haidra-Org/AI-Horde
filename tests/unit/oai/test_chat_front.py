@@ -142,6 +142,23 @@ async def test_truncate_oldest_is_forwarded_and_its_context_adjustments_reach_x_
     assert response.json()["x_horde"]["context_adjustments"] == context_adjustments
 
 
+async def test_a_request_without_context_fit_leaves_the_native_default_and_its_truncation_reaches_x_horde(
+    start_front: StartFront,
+) -> None:
+    """The front forwards no ``context_fit`` of its own, so the native default ``truncate_oldest`` fits the request."""
+    context_adjustments = [
+        {"from": 21000, "to": 7900, "reason": "truncate_oldest", "dropped_messages": 10},
+    ]
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        front.horde.status_payload["context_adjustments"] = context_adjustments
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 200
+    assert "context_fit" not in front.horde.submitted_body()["horde"]
+    assert response.json()["x_horde"]["context_adjustments"] == context_adjustments
+
+
 async def test_an_unknown_conformance_mode_is_refused_before_submitting(start_front: StartFront) -> None:
     async with start_front() as front:
         response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"conformance": "lenient"}))

@@ -223,7 +223,7 @@ and values:
 | `trusted_workers`, `validated_backends`         | boolean               | `false` | As on text requests                                            |
 | `slow_workers`                                  | boolean               | `true`  | As on text requests                                            |
 | `max_context_length`                            | positive integer      | none    | An explicit context length                                     |
-| `context_fit`                                   | `grow`, `reject` or `truncate_oldest` | `grow`  | With `grow`, the context grows only up to the largest chat context an online chat worker serving the model declares. With `truncate_oldest`, the context grows as under `grow`; when the messages do not fit even at that bound, whole turns are dropped from the oldest forward until they do. See [Context adjustments](#context-adjustments) |
+| `context_fit`                                   | `grow`, `reject` or `truncate_oldest` | `truncate_oldest` | With `grow`, the context grows only up to the largest chat context an online chat worker serving the model declares. With `truncate_oldest`, the context grows as under `grow`; when the messages do not fit even at that bound, whole turns are dropped from the oldest forward until they do. See [Context adjustments](#context-adjustments) |
 | `conformance`                                   | `strict` or `best_effort` | `strict` | With `strict`, only workers declaring every guarantee the request needs serve it; `best_effort` drops that requirement. See [Guarantees](#guarantees) |
 | `openai_guards`                                 | boolean               | `false` | Turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format without the word "json" (any case) in some message text returns `400 ChatRequestConflict` with OpenAI's message. Acts on admission only; not stored |
 | `include_reasoning`                             | boolean               | `false` | Read by the OpenAI front, which returns the model's reasoning only when it is set. The native route accepts it and does not store it; it is not in the operation fingerprint, and the native status shows a submitted `reasoning_content` either way |
@@ -456,13 +456,15 @@ UUID, neither `model` nor `models`, a `models` that is empty, holds an empty ent
 
 ### Context adjustments
 
-When `context_fit` `grow` raises the context length to fit the messages, the request stores the change and the status
+When sizing under `grow` or `truncate_oldest` raises the context length to fit the messages, the request stores the change and the status
 route returns it as `context_adjustments`: `[{"from": 2048, "to": 4096, "reason": "grow"}]`, where `from` is the
 requested `max_context_length` or the default. It is `null` when sizing did not change the context. The list is
 stored in a separate nullable JSONB column: the requested length is not kept anywhere else once growth overwrites
 it, so the adjustment cannot be recomputed at status time.
 
-Under `truncate_oldest` the context first grows as under `grow`. When the messages do not fit at the growth bound, the
+`truncate_oldest` is the default, so a request that keeps a long history is served with its oldest turns dropped
+rather than refused; `grow` and `reject` are explicit choices. Under `truncate_oldest` the context first grows as
+under `grow`. When the messages do not fit at the growth bound, the
 request runs under the larger of that bound and the requested length, and its oldest turns are dropped one at a time
 until the token estimate of the remaining messages fits (`truncate_oldest_messages`, `horde/classes/kobold/chat_request.py`).
 A turn is a `user` message with the `assistant` message right after it, or an `assistant` message carrying

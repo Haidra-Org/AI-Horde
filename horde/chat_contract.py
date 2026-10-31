@@ -246,8 +246,10 @@ class ChatHordeOptions(BaseModel):
     max_context_length: StrictInt | None = Field(default=None, ge=1)
     """An explicit context length in tokens, in place of the one fitted to the messages."""
 
-    context_fit: ChatContextFit = ChatContextFit.GROW
-    """What to do when the messages do not fit the context."""
+    context_fit: ChatContextFit = ChatContextFit.TRUNCATE_OLDEST
+    """What to do when the messages do not fit the context. The default is ``truncate_oldest``: a client that keeps
+    a long history is served with its oldest turns dropped rather than refused, and the request records the drop in
+    its context adjustments. ``grow`` and ``reject`` are explicit choices."""
 
     conformance: ChatConformance = DEFAULT_CHAT_CONFORMANCE
     """How closely the serving worker has to follow the OpenAI chat contract (ADR 0036). ``best_effort`` drops the

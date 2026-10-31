@@ -23,6 +23,7 @@ from horde.chat_contract import (
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
     ChatAvailabilityMode,
     ChatContextFit,
+    ChatHordeOptions,
 )
 from horde.chat_progress import CHAT_PROGRESS_BYTES_PER_TOKEN
 from horde.classes.base.style_application import MAX_TEMPLATE_FIELD_WORDS
@@ -1268,14 +1269,15 @@ class TextModels(v2.Models):
                 "slow_workers": fields.Boolean(default=True, description="When false, workers below the speed threshold are skipped."),
                 "max_context_length": fields.Integer(description="An explicit context length."),
                 "context_fit": fields.String(
-                    default=ChatContextFit.GROW.value,
+                    default=ChatHordeOptions.model_fields["context_fit"].default.value,
                     enum=[setting.value for setting in ChatContextFit],
                     description=(
                         "What to do when the messages do not fit the context: grow it up to what an online chat worker "
                         "serves, reject the request, or truncate_oldest: grow, then drop whole turns from the oldest "
                         "forward until the messages fit. Every system and developer message is kept, as are the latest "
                         "user message and everything after it; a request that still does not fit is refused as under "
-                        "reject."
+                        "reject. The default is truncate_oldest, and the status reports any dropped turns in "
+                        "context_adjustments."
                     ),
                 ),
                 "conformance": fields.String(

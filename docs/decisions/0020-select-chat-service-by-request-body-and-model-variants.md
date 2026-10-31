@@ -44,6 +44,9 @@ defines it for both the front and the native route, and an unknown key is refuse
 - `only` and `ignore`: worker ids the request is limited to or excludes; the two cannot be combined.
 - `trusted_workers`, `validated_backends` and `slow_workers`: the native worker filters.
 - `max_context_length` and `context_fit`: an explicit context length, and what to do when the messages do not fit.
+  The default fit is `truncate_oldest`: clients that keep a long history expect the oldest turns to be dropped, and
+  refusing them serves nobody. The request records the drop in its context adjustments. `grow` and `reject` are explicit
+  choices.
 - `conformance`: how closely the serving worker has to follow the OpenAI chat contract
   ([ADR 0036](0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md)).
 - `openai_guards`: turns on the request refusals OpenAI applies and the Horde relaxes.

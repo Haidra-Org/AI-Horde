@@ -197,7 +197,7 @@ The `horde` object carries the Horde options OpenAI does not have a key for:
 | `validated_backends` | `false` | `true` restricts the request to workers on validated backends. |
 | `slow_workers` | `true` | `false` excludes workers the Horde marks slow. |
 | `max_context_length` | none | An explicit context length; a worker serves the request only when its declared chat context is at least this. |
-| `context_fit` | `grow` | `grow` raises the context to fit the messages, up to the largest chat context an online worker for the model declares. `reject` refuses messages that do not fit the context. `truncate_oldest` grows as `grow` does, then drops whole turns from the oldest forward until the messages fit, keeping every system and developer message and the latest user message with what follows it. |
+| `context_fit` | `truncate_oldest` | `truncate_oldest` grows the context as `grow` does, then drops whole turns from the oldest forward until the messages fit, keeping every system and developer message and the latest user message with what follows it. `grow` raises the context to fit the messages, up to the largest chat context an online worker for the model declares, and refuses messages that do not fit at that bound. `reject` refuses messages that do not fit the context. |
 | `conformance` | `strict` | `strict` sends the request only to workers that follow every part of the OpenAI contract it relies on. `best_effort` also accepts workers that may deviate; see [Conformance](#conformance). |
 | `openai_guards` | `false` | `true` turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format whose messages never mention "json" is 400 `ChatRequestConflict`. |
 | `include_reasoning` | `false` | `true` returns the model's reasoning as `reasoning_content`; see [Reasoning](#reasoning). |
@@ -210,15 +210,15 @@ narrow the eligible workers, so a combination no online worker satisfies ends wi
 With the Python SDK, send the object as `extra_body={"horde": {...}}`; other clients add it to the JSON body.
 
 Verification: `x_horde.worker_id` of the response is one of the `only` ids, and `x_horde.context_adjustments` lists
-`{"from", "to", "reason": "grow"}` when `grow` raised the context, null otherwise.
+`{"from", "to", "reason": "grow"}` when the context grew and a `truncate_oldest` entry when the oldest turns were
+dropped, null otherwise.
 
-A long conversation can be sent whole under `truncate_oldest`, and the Horde drops what does not fit:
+A long conversation can be sent whole. Under the default `truncate_oldest`, the Horde drops what does not fit:
 
 ```python
 completion = client.chat.completions.create(
     model="<MODEL>",
     messages=conversation,
-    extra_body={"horde": {"context_fit": "truncate_oldest"}},
 )
 for adjustment in completion.x_horde["context_adjustments"] or []:
     if adjustment["reason"] == "truncate_oldest":

@@ -1501,7 +1501,7 @@ def test_a_grown_context_is_reported_on_the_chat_status(client, request_headers:
     chat_worker.pop()
     long_messages = [{"role": "user", "content": "word " * 1700}]
 
-    grown_id = _submit_chat_request(client, request_headers, messages=long_messages, max_tokens=64)
+    grown_id = _submit_chat_request(client, request_headers, messages=long_messages, max_tokens=64, horde={"context_fit": "grow"})
     fitting_id = _submit_chat_request(client, request_headers, max_tokens=64)
 
     [adjustment] = _chat_status(client, request_headers, grown_id)["context_adjustments"]
@@ -1530,11 +1530,18 @@ LONG_HISTORY = [
 """A history whose estimate is far above any context the fake worker serves, while its latest turn is short."""
 
 
+@pytest.mark.parametrize(
+    "context_fit_options",
+    [{"context_fit": "truncate_oldest"}, {}],
+    ids=["explicit", "default"],
+)
 def test_a_long_history_under_truncate_oldest_is_admitted_with_its_oldest_turns_dropped(
     client,
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
+    context_fit_options: dict[str, str],
 ) -> None:
+    """A long history is admitted with its oldest turns dropped, whether ``truncate_oldest`` is sent or is the default."""
     chat_worker.pop()
 
     request_id = _submit_chat_request(
@@ -1542,7 +1549,7 @@ def test_a_long_history_under_truncate_oldest_is_admitted_with_its_oldest_turns_
         request_headers,
         messages=LONG_HISTORY,
         max_tokens=64,
-        horde={"max_context_length": 2048, "context_fit": "truncate_oldest"},
+        horde={"max_context_length": 2048, **context_fit_options},
     )
 
     grow_adjustment, truncate_adjustment = _chat_status(client, request_headers, request_id)["context_adjustments"]

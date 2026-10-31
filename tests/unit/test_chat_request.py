@@ -561,10 +561,10 @@ class TestParameterMapping:
     def test_no_targeting_leaves_every_worker_eligible(self) -> None:
         assert build_worker_targeting(parse_chat_request(_body())) == ([], False)
 
-    def test_the_horde_options_default_to_growing_the_context(self) -> None:
+    def test_the_horde_options_default_to_truncating_the_oldest_turns(self) -> None:
         chat_request = parse_chat_request(_body())
 
-        assert chat_request.horde.context_fit == "grow"
+        assert chat_request.horde.context_fit == "truncate_oldest"
         assert chat_request.horde.slow_workers is True
 
 
