@@ -28,12 +28,14 @@ from horde import exceptions as e
 from horde import metrics
 from horde.apis.v2 import kobold as text_api_module
 from horde.apis.v2.kobold import TextAsyncGenerate
+from horde.chat_contract import ChatImpossibleReason
 from horde.classes.base.waiting_prompt import estimate_queue_wait_seconds
 from horde.classes.kobold import processing_generation as text_processing_generation
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, compute_free_output_allowance
 from horde.classes.kobold.worker import TextWorker
 from horde.config import Config
+from horde.database.functions import RequestWorkerAvailability
 from horde.flask import db
 
 
@@ -199,6 +201,27 @@ class TestCalculateKudos:
 ALLOWANCE_MODEL = "allowance-model"
 """The model every request in the allowance records tests asks for."""
 
+ONE_ELIGIBLE_WORKER = RequestWorkerAvailability(
+    worker_count=1,
+    thread_count=1,
+)
+"""The availability of a request one online worker can serve, which keeps a kudos refusal a ``KudosUpfront``."""
+
+NO_ELIGIBLE_WORKER = RequestWorkerAvailability(
+    worker_count=0,
+    thread_count=0,
+)
+"""The availability of a request no online worker can serve, without a declaration gap."""
+
+VISION_GAP = RequestWorkerAvailability(
+    worker_count=0,
+    thread_count=0,
+    impossible_reason=ChatImpossibleReason(
+        missing_declarations=("vision",),
+    ),
+)
+"""The availability of a request with an image that no online worker serving the model declares ``vision`` for."""
+
 
 class _CounterRecorder:
     """Stands in for a metric counter and keeps every increment with its attributes."""
@@ -230,9 +253,10 @@ def _queue_allowance_request(
     allow_downgrade: bool = False,
     is_chat: bool = False,
     sharedkey: object | None = None,
+    availability: RequestWorkerAvailability = ONE_ELIGIBLE_WORKER,
 ) -> TextAsyncGenerate:
-    """Create a text request through ``TextAsyncGenerate.initiate_waiting_prompt`` with the wait and the kudos
-    reservation fixed, so each allowance outcome is reached deterministically.
+    """Create a text request through ``TextAsyncGenerate.initiate_waiting_prompt`` with the wait, the eligible workers
+    and the kudos reservation fixed, so each allowance outcome is reached deterministically.
 
     A request costs one kudo per token, so any request that needs kudos upfront needs a reservation.
     """
@@ -279,6 +303,7 @@ def _queue_allowance_request(
         },
     )
     monkeypatch.setattr(resource, "estimate_competing_wait_seconds", lambda: estimated_wait_seconds)
+    monkeypatch.setattr(text_api_module.database, "get_worker_availability_for_request", lambda _wp: availability)
     monkeypatch.setattr(
         text_api_module,
         "reserve_kudos",
@@ -496,6 +521,163 @@ class TestFreeAllowanceRecords:
 
         assert [attributes["horde.allowance_bucket"] for _, attributes in decisions.increments] == ["<=512"]
         assert estimated_waits.records == []
+
+
+class TestNoEligibleWorkerRefusal:
+    """A request the kudos rules would refuse while no online worker can serve it is refused ``NoEligibleWorker``, with
+    the declaration gap in its message and body when there is one."""
+
+    @pytest.fixture(autouse=True)
+    def default_allowance_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(Config, "text_free_output_ceiling", FREE_OUTPUT_CEILING)
+        monkeypatch.setattr(Config, "text_free_output_floor", FREE_OUTPUT_FLOOR)
+        monkeypatch.setattr(Config, "text_free_output_wait_full_seconds", FULL_WAIT_SECONDS)
+        monkeypatch.setattr(Config, "text_free_output_wait_floor_seconds", FLOOR_WAIT_SECONDS)
+        monkeypatch.delenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", raising=False)
+        monkeypatch.setattr(text_api_module.model_reference, "get_text_model_multiplier", lambda _model_name: 21)
+
+    @pytest.fixture
+    def decisions(self, monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+        recorder = _CounterRecorder()
+        monkeypatch.setattr(metrics, "text_free_allowance_decisions", recorder)
+        return recorder
+
+    def test_an_anonymous_request_over_the_floor_with_a_declaration_gap_is_refused_with_the_gap(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """An anonymous 2048-token chat request that no online worker declares ``vision`` for is refused 403
+        ``NoEligibleWorker`` stating the gap, its body carries ``impossible_reason``, its row is deleted, and the
+        decision is counted ``refused``."""
+        with pytest.raises(e.NoEligibleWorker) as refusal:
+            _queue_allowance_request(
+                monkeypatch,
+                make_user(oauth_id="anon"),
+                max_length=2048,
+                estimated_wait_seconds=None,
+                reservation_granted=False,
+                is_chat=True,
+                availability=VISION_GAP,
+            )
+
+        body, status_code = e.handle_bad_requests(refusal.value)
+        assert status_code == 403
+        assert body == {
+            "message": "No online worker can serve this request: no online worker serving the model declares vision.",
+            "rc": "NoEligibleWorker",
+            "impossible_reason": {
+                "kind": "declaration_gap",
+                "missing_declarations": ["vision"],
+                "exceeded_limits": [],
+            },
+        }
+        assert db.session.query(TextWaitingPrompt).count() == 0
+        assert [attributes["horde.outcome"] for _, attributes in decisions.increments] == ["refused"]
+
+    def test_an_anonymous_request_over_the_floor_without_a_worker_or_gap_is_refused_without_a_gap(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """An anonymous 2048-token request for a model no online worker serves is refused 403 ``NoEligibleWorker``
+        with only ``message`` and ``rc`` in its body."""
+        with pytest.raises(e.NoEligibleWorker) as refusal:
+            _queue_allowance_request(
+                monkeypatch,
+                make_user(oauth_id="anon"),
+                max_length=2048,
+                estimated_wait_seconds=None,
+                reservation_granted=False,
+                availability=NO_ELIGIBLE_WORKER,
+            )
+
+        body, status_code = e.handle_bad_requests(refusal.value)
+        assert status_code == 403
+        assert body == {
+            "message": "No online worker can serve this request.",
+            "rc": "NoEligibleWorker",
+        }
+        assert db.session.query(TextWaitingPrompt).count() == 0
+
+    def test_a_shared_key_without_kudos_and_without_a_worker_is_refused_no_eligible_worker(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """A request whose shared key cannot cover it, for a model no online worker serves, is refused
+        ``NoEligibleWorker`` in place of ``SharedKeyInsufficientKudos``."""
+        empty_sharedkey = SimpleNamespace(
+            id="empty-key",
+            kudos=0,
+            is_job_within_limits=lambda **_limits: (True, None),
+        )
+
+        with pytest.raises(e.NoEligibleWorker):
+            _queue_allowance_request(
+                monkeypatch,
+                make_user(),
+                max_length=2048,
+                estimated_wait_seconds=None,
+                reservation_granted=False,
+                sharedkey=empty_sharedkey,
+                availability=NO_ELIGIBLE_WORKER,
+            )
+
+        assert db.session.query(TextWaitingPrompt).count() == 0
+
+    def test_an_anonymous_request_over_the_floor_with_an_eligible_worker_is_refused_for_kudos(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """An anonymous 2048-token request at a 300 s wait that one online worker can serve is refused
+        ``KudosUpfront``."""
+        with pytest.raises(e.KudosUpfront) as refusal:
+            _queue_allowance_request(
+                monkeypatch,
+                make_user(oauth_id="anon"),
+                max_length=2048,
+                estimated_wait_seconds=FLOOR_WAIT_SECONDS,
+                reservation_granted=False,
+                availability=ONE_ELIGIBLE_WORKER,
+            )
+
+        assert refusal.value.rc == "KudosUpfront"
+
+    def test_a_funded_request_without_an_eligible_worker_is_created(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """A registered user's 2048-token request whose kudos are reserved is created and counted ``funded`` although
+        no online worker can serve it."""
+        resource = _queue_allowance_request(
+            monkeypatch,
+            make_user(),
+            max_length=2048,
+            estimated_wait_seconds=None,
+            reservation_granted=True,
+            availability=VISION_GAP,
+        )
+
+        assert db.session.query(TextWaitingPrompt).filter_by(id=resource.wp.id).count() == 1
+        assert [attributes["horde.outcome"] for _, attributes in decisions.increments] == ["funded"]
 
 
 class TestQueueWaitRecord:

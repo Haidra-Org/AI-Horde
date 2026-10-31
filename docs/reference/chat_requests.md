@@ -898,6 +898,24 @@ kudos available, and they are held at admission. A chat request does not downgra
 the hold gets `403 KudosUpfront`, whose message states the allowance. A text request with `allow_downgrade` is
 lowered to the allowance instead.
 
+A request with no eligible worker gets the floor. When no online worker can serve it and it would be refused for
+kudos (`KudosUpfront` or `SharedKeyInsufficientKudos`), the route deletes its row and returns `403 NoEligibleWorker`
+instead, since kudos do not help it until such a worker comes online. The message reads "No online worker can serve
+this request", followed, when the workers' declarations are the cause, by the gap: "no online worker serving the model
+declares vision" for missing declarations, "the request exceeds the max_length limit of every online worker serving
+the model" for exceeded limits. With a gap, the body also carries `impossible_reason` in the shape the status route
+reports (see [Impossible reason](#impossible-reason)):
+
+```json
+{
+  "message": "No online worker can serve this request: no online worker serving the model declares vision.",
+  "rc": "NoEligibleWorker",
+  "impossible_reason": {"kind": "declaration_gap", "missing_declarations": ["vision"], "exceeded_limits": []}
+}
+```
+
+A request that covers its hold, or fits the floor, is created and queued whether or not a worker can serve it.
+
 The allowance is measured when the request is created, from the request's estimated wait on the workers eligible for
 it at its requested `max_length` (`TextWaitingPrompt.require_upfront_kudos`, `compute_free_output_allowance`):
 
@@ -937,7 +955,7 @@ These instruments, in `horde/metrics.py`, show the allowance's effect. A dry run
 
 | Instrument | Attributes | Records |
 | --- | --- | --- |
-| `horde.text.free_allowance.decisions` (counter) | `horde.requester` (`anonymous`, `registered`, `shared_key`), `horde.outcome` (`free`, `funded`, `refused`, `downgraded`), `horde.requested_bucket`, `horde.allowance_bucket`, `horde.chat` | Each request creation: admitted without a hold, admitted with kudos reserved, refused with `KudosUpfront` (including `SharedKeyInsufficientKudos`), or lowered to the allowance |
+| `horde.text.free_allowance.decisions` (counter) | `horde.requester` (`anonymous`, `registered`, `shared_key`), `horde.outcome` (`free`, `funded`, `refused`, `downgraded`), `horde.requested_bucket`, `horde.allowance_bucket`, `horde.chat` | Each request creation: admitted without a hold, admitted with kudos reserved, refused with `KudosUpfront` (including `SharedKeyInsufficientKudos`) or with `NoEligibleWorker` in their place, or lowered to the allowance |
 | `horde.text.free_allowance.estimated_wait_seconds` (histogram) | `horde.chat`, `horde.requester` | The wait the allowance was sized by; not recorded when no worker is eligible |
 | `horde.text.queue_wait_seconds` (histogram) | `horde.requester`, `horde.chat`, `horde.requested_bucket` | Each assignment's time from request creation to pop; a fake generation is not recorded |
 

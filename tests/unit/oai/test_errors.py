@@ -600,6 +600,101 @@ async def test_an_impossible_reason_of_an_unknown_kind_waits_out_the_grace(start
     assert response.json()["error"]["code"] == "no_eligible_worker"
 
 
+def no_eligible_worker_refusal(
+    *,
+    missing_declarations: list[str] | None = None,
+    exceeded_limits: list[str] | None = None,
+) -> dict[str, object]:
+    """Return the native body of a submit refused ``NoEligibleWorker``, with ``impossible_reason`` when a gap is given."""
+    if missing_declarations is None and exceeded_limits is None:
+        return {
+            "message": "No online worker can serve this request.",
+            "rc": "NoEligibleWorker",
+        }
+    return {
+        "message": "No online worker can serve this request: a declaration gap.",
+        "rc": "NoEligibleWorker",
+        "impossible_reason": {
+            "kind": "declaration_gap",
+            "missing_declarations": missing_declarations or [],
+            "exceeded_limits": exceeded_limits or [],
+        },
+    }
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_a_submit_refused_for_a_declaration_gap_is_404_without_a_request(start_front: StartFront, stream: bool) -> None:
+    """The Horde refuses the submit and creates no request, so the 404 states the gap, carries no request id and
+    leaves retrying to the client; a streaming request gets the same JSON error before any stream header."""
+    async with start_front() as front:
+        front.horde.submit_route.respond(403, json=no_eligible_worker_refusal(missing_declarations=["vision"]))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream))
+
+    assert front.horde.status_route.call_count == 0
+    assert front.horde.cancel_route.call_count == 0
+    assert SHOULD_RETRY not in response.headers
+    assert "retry-after" not in response.headers
+    assert response.status_code == 404
+    assert response.headers["content-type"] == "application/json"
+    assert response.json() == {
+        "error": {
+            "message": "No worker can serve this request: no online worker serving the model declares vision.",
+            "type": "not_found_error",
+            "param": None,
+            "code": "no_worker_supports_features",
+            "metadata": {},
+        },
+    }
+    assert front.inflight == 0
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_a_submit_refused_for_a_size_limit_gap_is_400_stating_the_largest_declared(
+    start_front: StartFront,
+    stream: bool,
+) -> None:
+    async with start_front() as front:
+        front.horde.models_route.respond(200, json=MODEL_LIST)
+        front.horde.submit_route.respond(403, json=no_eligible_worker_refusal(exceeded_limits=["max_length"]))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream))
+
+    assert SHOULD_RETRY not in response.headers
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "message": (
+                "No worker eligible for this request currently declares a completion limit that high; the largest any online "
+                "worker for the model declares now is 1024 tokens."
+            ),
+            "type": "invalid_request_error",
+            "param": "max_tokens",
+            "code": "no_worker_supports_limit",
+            "metadata": {},
+        },
+    }
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_a_submit_refused_without_a_gap_is_503_no_eligible_worker_without_a_request(start_front: StartFront, stream: bool) -> None:
+    async with start_front() as front:
+        front.horde.submit_route.respond(403, json=no_eligible_worker_refusal())
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream))
+
+    assert front.horde.cancel_route.call_count == 0
+    assert SHOULD_RETRY not in response.headers
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "30"
+    assert response.json() == {
+        "error": {
+            "message": "No online worker can serve this request at the moment. Retry later.",
+            "type": "api_error",
+            "param": None,
+            "code": "no_eligible_worker",
+            "metadata": {"retry_after": 30},
+        },
+    }
+
+
 async def test_no_eligible_worker_does_not_fail_while_a_worker_is_processing(start_front: StartFront) -> None:
     fail_fast_settings = FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 0.1, "fallback_poll_seconds": 0.05})
     async with start_front(fail_fast_settings, with_redis=False) as front:

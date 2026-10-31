@@ -1177,11 +1177,14 @@ def test_a_quote_cached_for_a_funded_requester_does_not_answer_an_anonymous_text
     make_api_user,
     settle_kudos,
 ) -> None:
-    """The quote cache is keyed by the params alone, so it must not answer a dry run the requester would be refused."""
+    """The quote cache is keyed by the params alone, so it must not answer a dry run the requester would be refused.
+
+    No worker serves the model, so the allowance is at its floor, 2048 tokens is above it, and the anonymous dry run is
+    refused ``NoEligibleWorker`` in place of ``KudosUpfront``, without a declaration gap to state.
+    """
     funded = make_api_user(kudos=100000)
     settle_kudos()
     funded_headers = {"apikey": funded.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
-    # No worker serves the model, so the allowance is at its floor and 2048 tokens is above it.
     text_body = {
         "prompt": "Rivers.",
         "params": {"max_length": 2048, "max_context_length": 8192},
@@ -1194,7 +1197,10 @@ def test_a_quote_cached_for_a_funded_requester_does_not_answer_an_anonymous_text
     anonymous_quote = client.post("/api/v2/generate/text/async", json=text_body, headers=ANONYMOUS_HEADERS)
 
     assert anonymous_quote.status_code == 403, anonymous_quote.get_data(as_text=True)
-    assert anonymous_quote.get_json()["rc"] == "KudosUpfront"
+    assert anonymous_quote.get_json() == {
+        "message": "No online worker can serve this request.",
+        "rc": "NoEligibleWorker",
+    }
 
 
 def test_a_repeated_operation_key_is_answered_while_admission_is_off(client, make_api_user, monkeypatch) -> None:

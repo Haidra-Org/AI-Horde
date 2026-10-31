@@ -6,7 +6,7 @@ from flask import has_request_context, request
 from werkzeug import exceptions as wze
 
 from horde import metrics
-from horde.chat_contract import CHAT_KUDOS_CAP_EXCEEDED_RC, KudosCapExcess
+from horde.chat_contract import CHAT_KUDOS_CAP_EXCEEDED_RC, NO_ELIGIBLE_WORKER_RC, ChatImpossibleReason, KudosCapExcess
 from horde.logger import logger
 from horde.vars import horde_title
 
@@ -231,6 +231,7 @@ KNOWN_RC = [
     "ChatProgressCapReached",
     "ChatProgressUnavailable",
     "ChatJobAborted",
+    "NoEligibleWorker",
 ]
 
 
@@ -569,6 +570,43 @@ class KudosUpfront(wze.Forbidden):
         self.rc = rc
 
 
+class NoEligibleWorker(wze.Forbidden):
+    """A request the kudos rules would refuse while no online worker can serve it.
+
+    Kudos do not help such a request until a worker that can serve it comes online, so it is refused with the
+    declaration gap, when there is one, in place of ``KudosUpfront``. The status stays 403, as for ``KudosUpfront``.
+    """
+
+    body_fields: dict[str, object]
+    """Fields added to the error body beside ``message`` and ``rc``: ``impossible_reason`` in the shape the status
+    route reports it, when there is a declaration gap."""
+
+    def __init__(self, impossible_reason: ChatImpossibleReason | None, rc: str = NO_ELIGIBLE_WORKER_RC) -> None:
+        """Create the refusal.
+
+        Args:
+            impossible_reason: The missing declarations and exceeded limits that leave no worker eligible; None when
+                the cause is not a declaration gap, such as no online worker serving the model.
+            rc: The return code.
+        """
+        causes: list[str] = []
+        if impossible_reason is not None and impossible_reason.missing_declarations:
+            causes.append(
+                "no online worker serving the model declares " + ", ".join(impossible_reason.missing_declarations),
+            )
+        if impossible_reason is not None and impossible_reason.exceeded_limits:
+            causes.append(
+                f"the request exceeds the {', '.join(impossible_reason.exceeded_limits)} limit of every online worker serving the model",
+            )
+        self.specific = "No online worker can serve this request"
+        self.specific += f": {'; '.join(causes)}." if causes else "."
+        self.log = None
+        self.rc = rc
+        self.body_fields = {}
+        if impossible_reason is not None:
+            self.body_fields["impossible_reason"] = impossible_reason.model_dump(mode="json")
+
+
 class InvalidJobID(wze.NotFound):
     def __init__(self, job_id, rc="InvalidJobID"):
         self.specific = f"Processing Job with ID {job_id} does not exist."
@@ -759,6 +797,7 @@ def handle_bad_requests(error):
         {
             "message": error.specific,
             "rc": error.rc,
+            **getattr(error, "body_fields", {}),
         },
         error.code,
     )

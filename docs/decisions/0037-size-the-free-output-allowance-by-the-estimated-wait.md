@@ -47,7 +47,9 @@ Chosen option: "Estimated wait on the request's eligible workers".
 The allowance is `HORDE_TEXT_FREE_OUTPUT_CEILING` (4096 tokens) when the request's estimated wait is at or below
 `HORDE_TEXT_FREE_OUTPUT_WAIT_FULL_SECONDS` (60 s). It falls linearly to `HORDE_TEXT_FREE_OUTPUT_FLOOR` (512 tokens)
 at `HORDE_TEXT_FREE_OUTPUT_WAIT_FLOOR_SECONDS` (300 s) and stays at the floor beyond that. A request with no eligible
-worker gets the floor.
+worker gets the floor. A request the floor would refuse for kudos, when no online worker can serve it, is refused as
+`NoEligibleWorker` instead, with the declaration gap when there is one, since kudos do not help it and a kudos message
+would mislead the requester. A funded request with no eligible worker is admitted and queued.
 
 The estimated wait is the one ADR 0040 defines: the queued output ahead of the request that its eligible workers could
 take, divided by the combined measured speed of those workers. It is the same figure the status route reports as

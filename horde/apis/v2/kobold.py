@@ -280,6 +280,8 @@ class TextAsyncGenerate(GenerateTemplate):
         self.upload_source_images_or_delete_waiting_prompt()
         # Measured once here, at the requested max_length, and reused by the check after activation.
         self.creation_availability = database.get_worker_availability_for_request(self.wp)
+        # Kept apart from creation_availability, which a downgrade discards, for the kudos refusals below.
+        measured_availability = self.creation_availability
         highest_multiplier = 0
         if len(self.models) == 0:
             required_kudos = 20 * self.wp.n
@@ -309,6 +311,7 @@ class TextAsyncGenerate(GenerateTemplate):
                 self.downgrade_wp_priority = True
             else:
                 record_allowance_decision(metrics.FreeAllowanceOutcome.REFUSED)
+                self.refuse_when_no_worker_is_eligible(measured_availability)
                 self.wp.delete()
                 raise e.KudosUpfront(
                     required_kudos,
@@ -332,6 +335,7 @@ class TextAsyncGenerate(GenerateTemplate):
                     record_allowance_decision(metrics.FreeAllowanceOutcome.DOWNGRADED)
                 else:
                     record_allowance_decision(metrics.FreeAllowanceOutcome.REFUSED)
+                    self.refuse_when_no_worker_is_eligible(measured_availability)
                     # The quote is computed on the row before it is deleted, and only on this path: the refusal
                     # states the quoted cost beside the reservation so the two figures are not mistaken for one.
                     quoted_kudos = self.quote_kudos()
@@ -356,6 +360,24 @@ class TextAsyncGenerate(GenerateTemplate):
                 if not (self.existing_style and self.existing_style.sharedkey and self.existing_style.sharedkey.id == self.sharedkey.id):
                     self.wp.delete()
                     raise e.BadRequest(fail_message)
+
+    def refuse_when_no_worker_is_eligible(self, availability: database.RequestWorkerAvailability) -> None:
+        """Delete the waiting prompt and raise ``NoEligibleWorker`` when no online worker can serve the request.
+
+        Called only where the request would be refused for kudos. With no eligible worker the free allowance takes
+        its floor, and kudos do not help until a worker that can serve the request comes online, so the refusal
+        states the declaration gap, when there is one, in place of the kudos message.
+
+        Args:
+            availability: The eligible workers measured at creation, at the requested max_length.
+
+        Raises:
+            NoEligibleWorker: No online worker passes the dispatch gates for the request.
+        """
+        if availability.worker_count > 0:
+            return
+        self.wp.delete()
+        raise e.NoEligibleWorker(availability.impossible_reason)
 
     def refuse_over_kudos_cap(self) -> None:
         """Refuse the request when its kudos estimate exceeds a cap its client set, deleting its row first.

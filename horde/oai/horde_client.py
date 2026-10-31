@@ -208,6 +208,7 @@ class HordeAPIError(Exception):
         message: str,
         forwarded_headers: Mapping[str, str],
         field_errors: Mapping[str, str] | None = None,
+        impossible_reason: ChatImpossibleReason | None = None,
     ) -> None:
         """Create the error.
 
@@ -218,6 +219,8 @@ class HordeAPIError(Exception):
             forwarded_headers: The ``Retry-After`` and rate-limit headers to pass back to the client.
             field_errors: The native payload validation failures by dotted field path, such as
                 ``{"temperature": "5.5 is greater than the maximum of 5.0"}``; empty when the body listed none.
+            impossible_reason: The declaration gap a ``NoEligibleWorker`` refusal reports; None when the body has none
+                or holds a reason of a kind this front does not know.
         """
         super().__init__(f"{status_code} {return_code}: {message}")
         self.status_code: int = status_code
@@ -230,6 +233,8 @@ class HordeAPIError(Exception):
         """The headers to pass back to the client."""
         self.field_errors: dict[str, str] = dict(field_errors) if field_errors is not None else {}
         """The native payload validation failures by dotted field path, in the Horde's order."""
+        self.impossible_reason: ChatImpossibleReason | None = impossible_reason
+        """The declaration gap the refusal reports."""
 
 
 class HordeUnavailableError(Exception):
@@ -819,6 +824,7 @@ def _api_error_from_response(response: httpx.Response) -> HordeAPIError:
     return_code: str | None = None
     message = response.text[:MAX_ERROR_BODY_CHARACTERS]
     field_errors: dict[str, str] = {}
+    impossible_reason: ChatImpossibleReason | None = None
     try:
         error_body = response.json()
     except ValueError:
@@ -833,10 +839,18 @@ def _api_error_from_response(response: httpx.Response) -> HordeAPIError:
         body_field_errors = error_body.get("errors")
         if isinstance(body_field_errors, dict):
             field_errors = {str(field_path): str(field_message) for field_path, field_message in body_field_errors.items()}
+        body_impossible_reason = error_body.get("impossible_reason")
+        if body_impossible_reason is not None:
+            # A reason of a kind this front does not know is read as none, as on the status route.
+            try:
+                impossible_reason = ChatImpossibleReason.model_validate(body_impossible_reason)
+            except ValidationError:
+                impossible_reason = None
     return HordeAPIError(
         status_code=response.status_code,
         return_code=return_code,
         message=message,
         forwarded_headers=forwarded_headers,
         field_errors=field_errors,
+        impossible_reason=impossible_reason,
     )

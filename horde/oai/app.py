@@ -60,6 +60,7 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_IMAGE_TOTAL_BYTES,
+    NO_ELIGIBLE_WORKER_RC,
     ChatAvailabilityMode,
     ChatImpossibleReason,
     ChatRequestRefusal,
@@ -790,15 +791,42 @@ def _request_source(request: Request) -> str:
     return request.client.host if request.client is not None else UNKNOWN_SOURCE
 
 
-def _horde_error(error: HordeAPIError, *, request_id: str | None, job_may_exist: bool) -> ChatFrontError:
+def _horde_error(
+    error: HordeAPIError,
+    *,
+    request_id: str | None,
+    job_may_exist: bool,
+    chat_offers: Sequence[HordeChatModelOffer] = (),
+    listed_model_count: int = 1,
+) -> ChatFrontError:
     """Create the front error for a Horde error, keeping its status, ``rc`` and forwarded headers.
 
     A native payload validation failure, which has no ``rc``, is reported as ``BadRequest`` with its first failing
     field as ``param``. A 429 without an ``rc`` is reported as ``rate_limit_exceeded``, keeping the Horde's message and
-    ``Retry-After``. A refusal over the client's kudos cap is reported as ``max_kudos_exceeded``.
+    ``Retry-After``. A refusal over the client's kudos cap is reported as ``max_kudos_exceeded``. A ``NoEligibleWorker``
+    refusal is reported as the declaration gap or size limit gap its body holds, as for a wait that ends on that gap,
+    and as ``no_eligible_worker`` when the body holds none.
+
+    Args:
+        error: The Horde error.
+        request_id: The Horde request id, or None when the Horde did not create a request.
+        job_may_exist: Whether the Horde holds, or may hold, a request for this call.
+        chat_offers: What the online workers serving each requested model declare, for the largest limit a size
+            limit gap states.
+        listed_model_count: How many models the request accepts, which words the size limit gap message.
     """
     if error.return_code == CHAT_KUDOS_CAP_EXCEEDED_RC:
         return _kudos_cap_error(error, request_id=request_id, job_may_exist=job_may_exist)
+    if error.return_code == NO_ELIGIBLE_WORKER_RC:
+        if error.impossible_reason is None:
+            return _no_eligible_worker_error(request_id=request_id, job_may_exist=job_may_exist)
+        return _gap_error(
+            error.impossible_reason,
+            request_id=request_id,
+            job_may_exist=job_may_exist,
+            chat_offers=chat_offers,
+            listed_model_count=listed_model_count,
+        )
     retry_after_header = next(
         (
             header_value
@@ -1174,6 +1202,7 @@ async def _submit(
     operation_key: uuid.UUID,
     credentials: HordeCredentials,
     deadline: float,
+    models: Sequence[str],
 ) -> HordeAsyncSubmission:
     """Submit a chat request within the time left in its budget and return the Horde's acknowledgement.
 
@@ -1186,6 +1215,7 @@ async def _submit(
         operation_key: The key of this client request.
         credentials: Who the call is made for.
         deadline: The monotonic time the request's total budget ends.
+        models: The models the request accepts, for the largest limit a size limit gap refusal states.
 
     Raises:
         ChatFrontError: The Horde refused the request, no root accepted the connection, or the outcome stayed unknown.
@@ -1200,7 +1230,19 @@ async def _submit(
             "ChatImageStorageUnavailable",
         }
         if error.status_code < HTTPStatus.INTERNAL_SERVER_ERROR or native_refusal:
-            front_error = _horde_error(error, request_id=None, job_may_exist=False)
+            chat_offers = await _size_limit_gap_chat_offers(
+                front_state,
+                error.impossible_reason,
+                models=models,
+                credentials=credentials,
+            )
+            front_error = _horde_error(
+                error,
+                request_id=None,
+                job_may_exist=False,
+                chat_offers=chat_offers,
+                listed_model_count=len(models),
+            )
             if error.status_code == HTTPStatus.SERVICE_UNAVAILABLE and front_error.metadata.retry_after is None:
                 front_error.headers[RETRY_AFTER_HEADER] = str(HORDE_UNAVAILABLE_RETRY_AFTER_SECONDS)
                 front_error.metadata = front_error.metadata.model_copy(update={"retry_after": HORDE_UNAVAILABLE_RETRY_AFTER_SECONDS})
@@ -1731,7 +1773,7 @@ async def _settle_wait_failure(
     requested_models = chat_request.requested_models()
     chat_offers = await _size_limit_gap_chat_offers(
         front_state,
-        error,
+        error.impossible_reason if isinstance(error, DeclarationGapError) else None,
         models=requested_models,
         credentials=open_request.credentials,
     )
@@ -1798,26 +1840,69 @@ def _wait_error(
             job_may_exist=True,
         )
     if isinstance(error, DeclarationGapError):
-        if _is_size_limit_gap(error.impossible_reason):
-            return _size_limit_gap_error(
-                error.impossible_reason,
-                request_id=request_id,
-                chat_offers=chat_offers,
-                listed_model_count=listed_model_count,
-            )
-        return _declaration_gap_error(error.impossible_reason, request_id=request_id)
+        return _gap_error(
+            error.impossible_reason,
+            request_id=request_id,
+            job_may_exist=True,
+            chat_offers=chat_offers,
+            listed_model_count=listed_model_count,
+        )
     if isinstance(error, QueueUnavailableError):
         return _queue_unavailable_error(error, request_id=request_id)
     if isinstance(error, NoEligibleWorkerError):
-        return ChatFrontError(
-            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-            message="No online worker can serve this request at the moment; it was cancelled. Retry later.",
-            code=NO_ELIGIBLE_WORKER_CODE,
-            metadata=ErrorMetadata(request_id=request_id, retry_after=NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS),
-            headers={RETRY_AFTER_HEADER: str(NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS)},
-            job_may_exist=True,
-        )
+        return _no_eligible_worker_error(request_id=request_id, job_may_exist=True)
     return _horde_error(error, request_id=request_id, job_may_exist=True)
+
+
+def _no_eligible_worker_error(*, request_id: str | None, job_may_exist: bool) -> ChatFrontError:
+    """Create the 503 for a request no online worker can serve, without a declaration gap to state.
+
+    Args:
+        request_id: The Horde request id, which the front cancelled; None when the Horde refused the request at
+            creation and holds no request.
+        job_may_exist: Whether the Horde holds, or may hold, a request for this call.
+    """
+    message = "No online worker can serve this request at the moment"
+    message += "; it was cancelled. Retry later." if request_id is not None else ". Retry later."
+    return ChatFrontError(
+        status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+        message=message,
+        code=NO_ELIGIBLE_WORKER_CODE,
+        metadata=ErrorMetadata(request_id=request_id, retry_after=NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS),
+        headers={RETRY_AFTER_HEADER: str(NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS)},
+        job_may_exist=job_may_exist,
+    )
+
+
+def _gap_error(
+    impossible_reason: ChatImpossibleReason,
+    *,
+    request_id: str | None,
+    job_may_exist: bool,
+    chat_offers: Sequence[HordeChatModelOffer],
+    listed_model_count: int,
+) -> ChatFrontError:
+    """Create the front error for a declaration gap: the size limit gap 400 when the gap holds only size limits, the
+    declaration gap 404 otherwise.
+
+    Args:
+        impossible_reason: The gap.
+        request_id: The Horde request id, which the front cancelled; None when the Horde refused the request at
+            creation and holds no request.
+        job_may_exist: Whether the Horde holds, or may hold, a request for this call.
+        chat_offers: What the online workers serving each requested model declare, for the largest limit a size
+            limit gap states.
+        listed_model_count: How many models the request accepts.
+    """
+    if _is_size_limit_gap(impossible_reason):
+        return _size_limit_gap_error(
+            impossible_reason,
+            request_id=request_id,
+            job_may_exist=job_may_exist,
+            chat_offers=chat_offers,
+            listed_model_count=listed_model_count,
+        )
+    return _declaration_gap_error(impossible_reason, request_id=request_id, job_may_exist=job_may_exist)
 
 
 def _queue_unavailable_error(error: QueueUnavailableError, *, request_id: str) -> ChatFrontError:
@@ -1866,11 +1951,22 @@ def _queue_unavailable_error(error: QueueUnavailableError, *, request_id: str) -
     )
 
 
-def _declaration_gap_error(impossible_reason: ChatImpossibleReason, *, request_id: str) -> ChatFrontError:
+def _declaration_gap_error(
+    impossible_reason: ChatImpossibleReason,
+    *,
+    request_id: str | None,
+    job_may_exist: bool,
+) -> ChatFrontError:
     """Create the 404 for a request the online workers serving its model cannot take because of what they declare.
 
     Retrying the same request does not help until a worker declaring the missing values comes online, so the error
     carries no ``Retry-After``.
+
+    Args:
+        impossible_reason: The gap.
+        request_id: The Horde request id, which the front cancelled; None when the Horde refused the request at
+            creation and holds no request.
+        job_may_exist: Whether the Horde holds, or may hold, a request for this call.
     """
     causes: list[str] = []
     if impossible_reason.missing_declarations:
@@ -1884,13 +1980,14 @@ def _declaration_gap_error(impossible_reason: ChatImpossibleReason, *, request_i
     message = f"No worker can serve this request: {'; '.join(causes) or 'the workers lack a declaration it needs'}."
     if GUARANTEE_NAMES.intersection(impossible_reason.missing_declarations):
         message += " Guarantees are not required under horde.conformance 'best_effort'."
-    message += " The request was cancelled."
+    if request_id is not None:
+        message += " The request was cancelled."
     return ChatFrontError(
         status_code=HTTPStatus.NOT_FOUND,
         message=message,
         code=NO_WORKER_SUPPORTS_FEATURES_CODE,
         metadata=ErrorMetadata(request_id=request_id),
-        job_may_exist=True,
+        job_may_exist=job_may_exist,
     )
 
 
@@ -1910,7 +2007,8 @@ def _is_size_limit_gap(impossible_reason: ChatImpossibleReason) -> bool:
 def _size_limit_gap_error(
     impossible_reason: ChatImpossibleReason,
     *,
-    request_id: str,
+    request_id: str | None,
+    job_may_exist: bool,
     chat_offers: Sequence[HordeChatModelOffer],
     listed_model_count: int,
 ) -> ChatFrontError:
@@ -1923,7 +2021,9 @@ def _size_limit_gap_error(
 
     Args:
         impossible_reason: The gap, with only size limits in ``exceeded_limits``.
-        request_id: The Horde request id.
+        request_id: The Horde request id, which the front cancelled; None when the Horde refused the request at
+            creation and holds no request.
+        job_may_exist: Whether the Horde holds, or may hold, a request for this call.
         chat_offers: What the online workers serving each requested model declare, for the models the model list has.
         listed_model_count: How many models the request accepts.
     """
@@ -1943,7 +2043,8 @@ def _size_limit_gap_error(
                 f"No worker eligible for this request currently declares a {limit_wording} that high; "
                 f"the largest any online worker for {model_wording} declares now is {largest_declared} tokens.",
             )
-    sentences.append("The request was cancelled.")
+    if request_id is not None:
+        sentences.append("The request was cancelled.")
     param_limit = "max_length" if "max_length" in impossible_reason.exceeded_limits else "max_context_length"
     return ChatFrontError(
         status_code=HTTPStatus.BAD_REQUEST,
@@ -1951,18 +2052,18 @@ def _size_limit_gap_error(
         code=NO_WORKER_SUPPORTS_LIMIT_CODE,
         param=NATIVE_FIELD_PARAMETERS[param_limit],
         metadata=ErrorMetadata(request_id=request_id),
-        job_may_exist=True,
+        job_may_exist=job_may_exist,
     )
 
 
 async def _size_limit_gap_chat_offers(
     front_state: FrontState,
-    error: Exception,
+    impossible_reason: ChatImpossibleReason | None,
     *,
     models: Sequence[str],
     credentials: HordeCredentials,
 ) -> list[HordeChatModelOffer]:
-    """Return the requested models' chat entries from the model list when a wait ended on a size limit gap.
+    """Return the requested models' chat entries from the model list when a request was refused on a size limit gap.
 
     Any requested model may serve the request, so the 400 states the largest limit across all of them. The list is
     read through the process cache. A failed read, or a gap of another kind, returns no entries and leaves the 400
@@ -1970,11 +2071,12 @@ async def _size_limit_gap_chat_offers(
 
     Args:
         front_state: The process state holding the model list cache.
-        error: The error that ended the wait.
+        impossible_reason: The gap a wait ended on or a ``NoEligibleWorker`` refusal reported; None when there is
+            none.
         models: The models the request accepts.
         credentials: The client's credentials, used for the model list read.
     """
-    if not isinstance(error, DeclarationGapError) or not _is_size_limit_gap(error.impossible_reason):
+    if impossible_reason is None or not _is_size_limit_gap(impossible_reason):
         return []
     try:
         active_models = await front_state.model_list_cache.get(front_state.horde_client, credentials)
@@ -2087,6 +2189,7 @@ async def _chat_completions(request: Request) -> Response:
             operation_key=operation_key,
             credentials=credentials,
             deadline=deadline,
+            models=chat_request.requested_models(),
         )
     except ChatFrontError as error:
         inflight_slot.release()

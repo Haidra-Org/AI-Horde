@@ -64,6 +64,7 @@ __all__ = [
     "MAX_CHAT_TOOL_NAME_LENGTH",
     "JSON_WORD",
     "KUDOS_CAP_EXCESS_PATTERN",
+    "NO_ELIGIBLE_WORKER_RC",
     "OBJECT_SCHEMA_TYPE",
     "SCHEMA_KEYWORDS_HOLDING_A_SCHEMA",
     "SCHEMA_KEYWORDS_HOLDING_SCHEMA_ARRAYS",
@@ -171,6 +172,10 @@ request without a model; the Horde's generic code for a 400, which the native ro
 
 CHAT_KUDOS_CAP_EXCEEDED_RC: str = "ChatKudosCapExceeded"
 """Return code for a request whose kudos estimate exceeds the ``horde.max_kudos`` its client set."""
+
+NO_ELIGIBLE_WORKER_RC: str = "NoEligibleWorker"
+"""Return code for a request the kudos rules would refuse while no online worker can serve it; the error body holds
+``impossible_reason`` when a declaration gap is the cause."""
 
 KUDOS_CAP_EXCESS_PATTERN: re.Pattern[str] = re.compile(
     r"kudos estimate at current pricing is (?P<kudos_estimate>\d+), above its horde\.max_kudos of (?P<max_kudos>\d+)",

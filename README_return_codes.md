@@ -98,6 +98,7 @@ The errors returned by the AI horde are always in this json format
 | TimeoutIP | Operation rejected because user IP in timeout |
 | TooManyNewIPs | Too many workers from new IPs currently |
 | KudosUpfront | This request requires upfront kudos to accept |
+| NoEligibleWorker | A text or chat request would be refused for kudos while no online worker can serve it (HTTP 403); the message states the declaration gap when there is one, and the body then carries `impossible_reason`. Nothing was queued or charged |
 | SharedKeyEmpty | Shared Key used in the request does not have any more kudos |
 | InvalidJobID | Job not found when trying to submit. This probably means its request was delected for inactivity |
 | RequestNotFound | Request not found. This probably means it was delected for inactivity |

@@ -242,6 +242,14 @@ when the model list does not hold an entry for any requested model, the sentence
 limit name in its place. Volunteer workers come and go, so the message describes the online workers at the time and
 leaves retrying to the client. Any other gap, including a size limit beside another cause, keeps the 404.
 
+The Horde can also refuse the submit with 403 `NoEligibleWorker`, when the request would be refused for kudos while
+no online worker can serve it (see [Free output allowance](chat_requests.md#free-output-allowance)). The front
+answers it as above: the body's `impossible_reason` gives 404 `no_worker_supports_features` or 400
+`no_worker_supports_limit`, and a body without one gives 503 `no_eligible_worker` with `Retry-After: 30`. The Horde
+did not create a request, so these answers carry no `request_id`, do not state that the request was cancelled and
+do not set `x-should-retry: false`. The refusal comes before any stream header, so a streaming request gets the same
+JSON error.
+
 A request with `horde.availability_mode: "fail_fast"` is also decided at its first successful status read, with
 nothing processing or finished. Zero `eligible_worker_threads` cancels it at once and returns 503
 `queue_unavailable` with `Retry-After: 30`; a `wait_time` over the time left in the budget
