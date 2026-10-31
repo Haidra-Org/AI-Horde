@@ -83,6 +83,10 @@ jobs:
     name: In-process pytest suite
     runs-on: ubuntu-latest
     needs: resolve-and-validate-pr
+    env:
+      # The suite runs against the local test stack; the chat front SDK tests need its Redis for chat signals,
+      # and the limiter is off so a burst of requests in one test module is not refused as too many per second.
+      HORDE_TEST_RATELIMIT_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,6 +96,7 @@ jobs:
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
+      - uses: ./.github/actions/start-test-stack
       - name: Run unit and integration tests through shared pytest runtime
         run: uv run pytest tests/unit tests/integration -q -rs
 
