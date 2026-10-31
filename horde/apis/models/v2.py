@@ -1055,6 +1055,14 @@ class Models:
                     default=None,
                     description="If True, this worker supports and allows SDXL controlnet requests.",
                 ),
+                "accepts_chat_jobs": fields.Boolean(
+                    default=None,
+                    description="If True, this worker will pick up structured chat jobs.",
+                ),
+                "accepts_prompt_jobs": fields.Boolean(
+                    default=None,
+                    description="If True, this worker will pick up plain text jobs.",
+                ),
                 "max_length": fields.Integer(
                     example=80,
                     description="The maximum tokens this worker can generate.",

@@ -482,10 +482,12 @@ class TextWorker(Worker):
         ret_dict = super().get_details(is_privileged)
         ret_dict["max_length"] = self.max_length
         ret_dict["max_context_length"] = self.max_context_length
+        ret_dict["accepts_chat_jobs"] = self.accepts_chat_jobs
+        ret_dict["accepts_prompt_jobs"] = self.accepts_prompt_jobs
         return ret_dict
 
     def parse_models(self, unchecked_models):
-        # We don't allow more workers to claim they can server more than 100 models atm (to prevent abuse)
+        # We don't allow more workers to claim they can server more than 200 models atm (to prevent abuse)
         del unchecked_models[200:]
         models = set()
         for model in unchecked_models:
