@@ -1571,9 +1571,9 @@ class TextJobPop(JobPopTemplate):
         self.args = parsers.job_pop_parser.parse_args()
         self.validate_chat_declaration()
         pop_response, status_code = super().post()
-        # The pop is the hot path, so the gate is observed from values already loaded for it: a pop by a worker whose
-        # measured speed caps the output it is offered below what it declares is counted, without a second query
-        # over the queue to count the requests withheld.
+        # The pop is the hot path, so the gate is observed from values already loaded for it: a pop by a chat worker
+        # whose measured speed caps the chat output it is offered below what it declares is counted, without a second
+        # query over the queue to count the requests withheld.
         if status_code == 200 and text_database.worker_may_be_speed_gated(self.worker, self.models):
             metrics.pop_lease_capacity_limited.add(1, {"horde.gentype": self.gentype})
         # A text job's response is marshalled by the text model alone, so it never carries the chat key.

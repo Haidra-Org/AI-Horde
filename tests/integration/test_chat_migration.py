@@ -90,6 +90,7 @@ def test_chat_migration_adds_the_chat_columns_with_existing_rows_marked_text_and
                 ("processing_gens", "image_transport", "character varying", 16, "YES"),
                 ("processing_gens", "message", "jsonb", None, "YES"),
                 ("processing_gens", "native_finish_reason", "character varying", 32, "YES"),
+                ("processing_gens", "over_capacity_at_assignment", "boolean", None, "NO"),
                 ("processing_gens", "prompt_tokens", "integer", None, "YES"),
                 ("processing_gens", "reasoning_tokens", "integer", None, "YES"),
                 ("processing_gens", "settled_character_count", "integer", None, "YES"),

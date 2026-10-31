@@ -31,7 +31,7 @@ How long should a text job's lease be, and how should long replies become servic
 - A stalled or disconnected worker must lose the job within a short, fixed time.
 - A worker that is visibly producing output should keep its job for as long as the reply takes, within a bound.
 - The bound must be tighter for workers the horde has no history with.
-- Long replies should go to workers fast enough to finish them rather than to anyone with a longer lease.
+- Long chat replies should go to workers fast enough to finish them rather than to anyone with a longer lease.
 - The rule must be observable in metrics so its effect on the fleet can be watched.
 
 ## Considered Options
@@ -55,12 +55,14 @@ after the lease has lapsed does not revive it. Posts past the cap are accepted a
 extend the lease. The lease state lives with the stream lease in Redis; a granted renewal writes the new `job_ttl` to
 the generation row.
 
-The pop offers a job to a worker only when the worker's measured speed can produce the job's `max_length` inside the
-base lease after the preparation allowance, that is when `speed × 120 s` is at least `max_length`. A worker that has
+The pop offers a chat job to a worker only when the worker's measured speed can produce the job's `max_length` inside
+the base lease after the preparation allowance, that is when `speed × 120 s` is at least `max_length`. ADR 0041
+scopes this gate to chat requests: a legacy text job is offered whatever its length, and an assignment the gate would
+refuse is recorded with its outcome. A worker that has
 not recorded a speed yet is taken to run at `UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND` (10 tokens per second) until
 its completed jobs record a measured speed. The same rule
 is applied in the pop query and in the eligibility check that the status route and ADR 0040 use, so a worker that
-cannot be offered a job is not counted as capacity for it either.
+cannot be offered a chat job is not counted as capacity for it either.
 
 A job past its lease is aborted as stale and restarted at the next pass of the stale-generation thread, which runs
 every 60 s, so a submit up to 60 s past the deadline is still accepted. The same holds for a renewed deadline and for
@@ -69,20 +71,21 @@ abort is refused with `AbortedGen`, whose message states the lease the job had, 
 worker's maintenance threshold.
 
 Three counters in `horde/metrics.py` expose the rule: `horde.text.lease_renewals` (granted or at cap, by worker
-trust), `horde.text.stale_aborts` (by worker trust) and `horde.pop.lease_capacity_limited` (pops by a worker whose
-speed caps the output it is offered below a length it declares).
+trust), `horde.text.stale_aborts` (by worker trust) and `horde.pop.lease_capacity_limited` (pops by a chat worker
+whose speed caps the chat output it is offered below the length it declares).
 
 ### Consequences
 
 - A worker that stalls loses the job within 150 s whatever it was asked for.
 - A streaming chat worker can finish a reply of any permitted length within its cap: about 11 tokens per second for
   16384 tokens at the trusted cap.
-- A plain text job and a non-streamed chat job keep the flat 150 s; they are finishable because they are offered only
-  to workers fast enough for them.
-- A slow worker is offered shorter jobs than it declares. The gap is visible in `horde.pop.lease_capacity_limited`.
+- A non-streamed chat job keeps the flat 150 s and is finishable because it is offered only to workers fast enough
+  for it. A plain text job keeps the flat 150 s and may be assigned to a slower worker, as ADR 0041 records.
+- A slow worker is offered shorter chat jobs than it declares. The gap is visible in
+  `horde.pop.lease_capacity_limited`.
 - A new worker is treated as running at 10 tokens per second and so is offered up to 1200 tokens until it records
   its speed; the assumption is replaced after its first completed jobs.
-- A request asking for more than a worker's capacity waits for a faster worker; a worker measured at 10 tokens per
+- A chat request asking for more than a worker's capacity waits for a faster worker; a worker measured at 10 tokens per
   second is offered up to 1200 tokens, one at 40 tokens per second up to 4800.
 
 ## Pros and Cons of the Options
@@ -119,4 +122,5 @@ tells worker authors how progress posts renew it.
 ## More Information
 
 ADR 0013 sets the image job lease. ADR 0024 defines the progress posts that renew this lease. ADR 0040 uses the same
-speed gate when it selects the workers eligible for a request.
+speed gate when it selects the workers eligible for a request. ADR 0041 enforces the speed gate for chat requests
+only and records the legacy text assignments it would refuse.

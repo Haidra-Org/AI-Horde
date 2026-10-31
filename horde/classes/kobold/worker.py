@@ -388,9 +388,10 @@ class TextWorker(Worker):
                 return [False, "max_length"]
         if not waiting_prompt.slow_workers and self.speed < get_minimum_text_worker_speed(model_names):
             return [False, "performance"]
-        # A job the worker cannot finish inside the base lease would only be renewed by progress posts, which a
-        # worker that never posts does not send; refusing it at offer time keeps every assignment finishable.
-        if waiting_prompt.max_length > get_text_worker_lease_capacity(self.speed):
+        # A chat job the worker cannot finish inside the base lease would only be renewed by progress posts, which a
+        # worker that never posts does not send; refusing it at offer time keeps every chat assignment finishable.
+        # A legacy text job is assigned whatever its length, and an over-capacity assignment is recorded at pop.
+        if waiting_prompt.is_chat and waiting_prompt.max_length > get_text_worker_lease_capacity(self.speed):
             return [False, "lease_speed"]
         if waiting_prompt.validated_backends and not is_backed_validated(self.bridge_agent):
             return [False, "bridge_version"]

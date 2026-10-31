@@ -185,8 +185,11 @@ def text_wp_offer_clauses(worker, models_list):
 
 
 def text_wp_speed_gate_clause(worker, models_list):
-    """Return the clause offering a worker only the requests whose ``max_length`` it finishes inside the base lease.
+    """Return the clause offering a worker only the chat requests whose ``max_length`` it finishes inside the base lease.
 
+    A legacy text request passes the clause whatever its ``max_length``: the gate is enforced for chat requests only,
+    and a legacy job assigned over the worker's capacity is recorded by
+    [`TextProcessingGeneration`][horde.classes.kobold.processing_generation.TextProcessingGeneration] instead.
     [`TextWorker.can_generate_with_eligibility_inputs`][horde.classes.kobold.worker.TextWorker.can_generate_with_eligibility_inputs]
     applies the same rule through the same capacity.
 
@@ -197,33 +200,37 @@ def text_wp_speed_gate_clause(worker, models_list):
     Returns:
         The clause.
     """
-    # The capacity is a scalar computed once per pop from the popping worker, so the clause compares a column with a
-    # bound parameter and adds no join. For a worker measured at 2 tokens/s (capacity 2 * 120 = 240):
+    # The capacity is a scalar computed once per pop from the popping worker, so the clause compares columns with a
+    # bound parameter and adds no join.
+    # - is_chat IS false: a legacy text request is offered at any max_length.
+    # - max_length <= capacity: a chat request is offered only when the worker finishes it inside the base lease.
+    # For a worker measured at 2 tokens/s (capacity 2 * 120 = 240):
     #
-    # wp.id | max_length | offered
-    # A     | 240        | yes
-    # B     | 512        | no
-    return TextWaitingPrompt.max_length <= get_text_worker_lease_capacity(worker.speed)
+    # wp.id | is_chat | max_length | offered
+    # A     | true    | 240        | yes
+    # B     | true    | 512        | no
+    # C     | false   | 512        | yes
+    return or_(
+        TextWaitingPrompt.is_chat.is_(False),
+        TextWaitingPrompt.max_length <= get_text_worker_lease_capacity(worker.speed),
+    )
 
 
 def worker_may_be_speed_gated(worker, models_list) -> bool:
-    """Return whether the speed gate can exclude any request the worker's declared limits would otherwise admit.
+    """Return whether the speed gate can exclude any chat request the worker's chat declaration would otherwise admit.
+
+    The gate does not apply to legacy text requests, so the worker's text limits do not bear on it.
 
     Args:
         worker: The popping text worker.
         models_list: The models the worker advertises, in bridge preference order.
 
     Returns:
-        True when the worker's lease capacity is below the longest output it declares for text or chat jobs.
+        True when the worker accepts chat jobs and its lease capacity is below the chat output it declares.
     """
-    declared_lengths = []
-    if worker.accepts_prompt_jobs:
-        declared_lengths.append(worker.max_length)
-    if worker.accepts_chat_jobs and worker.chat_max_length is not None:
-        declared_lengths.append(worker.chat_max_length)
-    if not declared_lengths:
+    if not worker.accepts_chat_jobs or worker.chat_max_length is None:
         return False
-    return get_text_worker_lease_capacity(worker.speed) < max(declared_lengths)
+    return get_text_worker_lease_capacity(worker.speed) < worker.chat_max_length
 
 
 def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_user_ids=None, page=0):
@@ -244,8 +251,9 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
             # Computed for the returned page only, so eligibility never loads a candidate's deferred messages.
             with_expression(TextWaitingPrompt.carries_chat_images, chat_images_clause()),
         )
-        # The speed gate is kept apart from the offer clauses so each rule reads on its own. A request the worker's
-        # speed cannot finish inside the base lease is not paged here, so it never takes one of the page's slots.
+        # The speed gate is kept apart from the offer clauses so each rule reads on its own. A chat request the
+        # worker's speed cannot finish inside the base lease is not paged here, so it never takes one of the page's
+        # slots.
         .filter(
             *text_wp_offer_clauses(worker, models_list),
             text_wp_speed_gate_clause(worker, models_list),

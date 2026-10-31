@@ -43,8 +43,9 @@ Chosen option: "The eligible workers' threads and measured speed with the queue 
 could take".
 
 The eligible workers for a request are those whose declarations and measured speed pass the eligibility check used
-by the pop: model, chat opt-in, length and context limits, slow-worker and trust settings, and the speed gate of
-ADR 0038. Their availability is measured when the request is created and cached for a short time for the status
+by the pop: model, chat opt-in, length and context limits, slow-worker and trust settings, and for a chat request
+the speed gate of ADR 0038. ADR 0041 leaves legacy text requests ungated, so slow workers count toward them. Their
+availability is measured when the request is created and cached for a short time for the status
 polls that follow.
 
 A queued request ahead of this one counts as competing when at least one of the eligible workers could take it,
@@ -111,4 +112,4 @@ explains the estimate and `docs/reference/chat_requests.md` records the status f
 ## More Information
 
 ADR 0037 reads this estimate for the free output allowance. ADR 0038 defines the speed gate that is part of worker
-eligibility. ADR 0019 places chat requests in the text queue.
+eligibility for chat requests, and ADR 0041 scopes it. ADR 0019 places chat requests in the text queue.

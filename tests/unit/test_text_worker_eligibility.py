@@ -324,6 +324,29 @@ def test_availability_counts_a_chat_worker_by_its_chat_limits(
     assert availability.worker_count == 1
 
 
+def test_availability_counts_a_slow_worker_for_a_legacy_request_over_its_capacity_and_not_for_a_chat_request(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """A worker at 3 tokens/s (capacity 360) counts toward a legacy request for 512 tokens, which the speed gate does
+    not bound, and not toward a chat request for 512 tokens, which the gate refuses it with ``lease_speed``."""
+    user = make_user()
+    _make_text_worker(user, "slow-model", speed=3)
+    slow_chat_worker = _make_chat_worker(user, speed=3)
+    legacy_request = _queue_text_request(user, ["slow-model"], max_length=512)
+    legacy_request.slow_workers = True
+    db.session.commit()
+    chat_request = _make_chat_request(user, {"max_length": 512})
+
+    legacy_availability = functions.get_worker_availability_for_request(legacy_request)
+    chat_availability = functions.get_worker_availability_for_request(chat_request)
+
+    assert legacy_availability.worker_count == 1
+    assert chat_availability.worker_count == 0
+    assert _chat_eligibility(slow_chat_worker, chat_request) == [False, "lease_speed"]
+
+
 @pytest.mark.parametrize(
     ("request_params", "exceeded_limits"),
     [

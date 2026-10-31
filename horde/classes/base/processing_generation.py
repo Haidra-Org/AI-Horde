@@ -495,7 +495,7 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
         self._record_capacity_return()
 
-    def fault_and_restart(self, *, stale: bool = False) -> None:
+    def fault_and_restart(self, *, stale: bool = False) -> bool:
         """Fault this pending generation on a worker report or timeout and apply retries and the fault limit atomically.
 
         A status read between a separate fault commit and the restart would show the request with nothing waiting, and
@@ -507,6 +507,10 @@ class ProcessingGeneration(db.Model):
         Args:
             stale: Retry a timed-out job even when the image worker-fault policy would stop retrying. A request
                 cancelled by maintenance never receives a retry, regardless of this flag.
+
+        Returns:
+            Whether this call faulted the generation; False when another submit or the stale-generation thread had
+            already finished or faulted it.
 
         Concurrency:
             The fault is a compare-and-set on the stored row: only a submit that moves the generation from pending to
@@ -529,7 +533,7 @@ class ProcessingGeneration(db.Model):
         )
         if claimed_rows != 1:
             # Already finished or faulted by another submit or the stale-generation thread; this submit did not write.
-            return
+            return False
         if restarts_job:
             self.wp.requeue_faulted_job()
         request_faulted = self.wp.mark_faulted_after_repeated_faults()
@@ -551,6 +555,7 @@ class ProcessingGeneration(db.Model):
         except SQLAlchemyError as error:
             db.session.rollback()
             logger.error(f"Recording the fault of generation {self.id} failed after the fault was committed: {error}")
+        return True
 
     def restarts_after_fault(self) -> bool:
         """Return whether a worker's fault of this generation puts its job back on the request; it always does."""

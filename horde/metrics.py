@@ -28,6 +28,7 @@ module-level constant. The helper auto-registers the bucket profile.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import logfire
@@ -291,6 +292,69 @@ text_stale_aborts = logfire.metric_counter(
     description="Text and chat jobs aborted because their lease lapsed before a submit, split by worker trust",
 )
 
+
+@dataclass(frozen=True)
+class LengthBuckets:
+    """Represents a bounded vocabulary of labels for a token length recorded as a metric attribute.
+
+    A length is labelled by the first upper bound it does not exceed, and by the last label when it exceeds them all,
+    so an attribute never carries the raw length.
+    """
+
+    upper_bounds: tuple[int, ...]
+    """The inclusive upper bound of each label but the last, ascending."""
+    labels: tuple[str, ...]
+    """One label per upper bound, then the label for a length above the last bound."""
+
+    def label(self, length: int) -> str:
+        """Return the label of ``length``."""
+        for upper_bound, bucket_label in zip(self.upper_bounds, self.labels, strict=False):
+            if length <= upper_bound:
+                return bucket_label
+        return self.labels[-1]
+
+
+TEXT_LENGTH_BUCKETS = LengthBuckets(
+    upper_bounds=(
+        512,
+        1024,
+        2048,
+        4096,
+    ),
+    labels=(
+        "<=512",
+        "513-1024",
+        "1025-2048",
+        "2049-4096",
+        ">4096",
+    ),
+)
+"""The labels of a text request's ``max_length`` and of its free output allowance in every text metric that records a
+length. Nearly every legacy request asks for at most 512 tokens, the free allowance floor. 1024 and 2048 are the output
+limits slow workers commonly declare, so the gate shadow records separate the requests each of those workers would be
+refused. 4096 is the free allowance ceiling, so ``>4096`` holds the requests that always need kudos upfront."""
+
+text_gate_shadow_assignments = logfire.metric_counter(
+    "horde.text.gate_shadow.assignments",
+    unit="1",
+    description=(
+        "Legacy text jobs assigned to a worker whose measured speed does not finish their max_length inside the base "
+        "lease, split by worker trust and size bucket"
+    ),
+)
+text_gate_shadow_outcomes = logfire.metric_counter(
+    "horde.text.gate_shadow.outcomes",
+    unit="1",
+    description=(
+        "Outcomes (completed, faulted, aborted) of legacy text jobs assigned over the worker's lease capacity, split by "
+        "worker trust and size bucket"
+    ),
+)
+text_gate_shadow_service_seconds = _request_lifecycle_histogram(
+    "horde.text.gate_shadow.service_seconds",
+    "Pop to submit time of completed legacy text jobs assigned over the worker's lease capacity",
+)
+
 # These instruments form the shadow-validation contract for scheduling
 # estimators. Candidate code records paired forecasts and observations through
 # the helpers below. Monitoring opens promotion only after every request type
@@ -546,7 +610,7 @@ pop_skipped = logfire.metric_counter(
 pop_lease_capacity_limited = logfire.metric_counter(
     "horde.pop.lease_capacity_limited",
     unit="1",
-    description="Text pops by a worker whose measured speed caps the max_length it is offered below a length it declares",
+    description="Text pops by a chat worker whose measured speed caps the chat max_length it is offered below its declared one",
 )
 
 # --- submit ------------------------------------------------------------------

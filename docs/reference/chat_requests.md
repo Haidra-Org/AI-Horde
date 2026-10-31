@@ -62,7 +62,8 @@ those workers keep receiving text jobs.
 | Stream lease at pop and fault    | `horde/classes/kobold/processing_generation.py` | `TextProcessingGeneration._write_stream_lease`, `TextProcessingGeneration.end_progress_after_fault` |
 | Progress route                   | `horde/apis/v2/kobold.py`                       | `TextJobProgress`                                     |
 | Job lease and its renewal        | `horde/classes/kobold/processing_generation.py` | `TextProcessingGeneration.set_job_ttl`, `renew_text_job_ttl`, `renew_text_job_lease`, `text_job_lease_cap` |
-| Speed gate                       | `horde/classes/kobold/worker.py`, `horde/database/text_functions.py` | `get_text_worker_lease_capacity`, `get_effective_text_worker_speed`, `text_wp_speed_gate_clause` |
+| Speed gate (chat requests only)  | `horde/classes/kobold/worker.py`, `horde/database/text_functions.py` | `get_text_worker_lease_capacity`, `get_effective_text_worker_speed`, `text_wp_speed_gate_clause`, `worker_may_be_speed_gated` |
+| Speed gate shadow for legacy text | `horde/classes/kobold/processing_generation.py` | `TextProcessingGeneration.over_capacity_at_assignment`, `TextProcessingGeneration._record_over_capacity_assignment`, `GateShadowOutcome` |
 | Lease, append script and stream  | `horde/chat_progress.py`                        | `write_stream_lease`, `append_progress`, `end_progress_stream`, `APPEND_PROGRESS_SCRIPT` |
 | Structured submit                | `horde/apis/v2/kobold.py`                       | `TextJobSubmit.prepare_chat_submission`               |
 | Reply verification               | `horde/classes/kobold/chat_request.py`          | `verify_chat_reply`                                   |
@@ -664,13 +665,18 @@ A retried post, which repeats the last delta, does not extend the lease, nor doe
 post on a cancelled request. Posts after the cap is reached are accepted as before and leave the lease at the cap. A
 chat job that does not stream, and a text job, keep the base lease.
 
-The pop offers a text or chat job only to a worker whose speed finishes the job's `max_length` inside the base lease
-after a 30 second preparation allowance (`TEXT_JOB_PREPARATION_SECONDS`): `speed * (150 - 30) >= max_length`, with
-`speed` in tokens per second (`get_text_worker_lease_capacity`). A worker that has not recorded a speed stores
-the speed baseline and is taken to run at `UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND` (10 tokens per second), which
-admits 1200 tokens until its first completed jobs record a measured speed. The pop query and
+The pop offers a chat job only to a worker whose speed finishes the job's `max_length` inside the base lease after a
+30 second preparation allowance (`TEXT_JOB_PREPARATION_SECONDS`): `speed * (150 - 30) >= max_length`, with `speed` in
+tokens per second (`get_text_worker_lease_capacity`). A worker that has not recorded a speed stores the speed baseline
+and is taken to run at `UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND` (10 tokens per second), which admits 1200 tokens
+until its first completed jobs record a measured speed. The pop query and
 `TextWorker.can_generate_with_eligibility_inputs` apply the same capacity, and the latter reports `lease_speed` for a
-job it refuses on it.
+chat job it refuses on it. Status, availability and the wait estimate read the same check.
+
+A legacy text job is offered whatever its `max_length` (ADR 0041). When one is assigned over the worker's capacity,
+the generation stores `over_capacity_at_assignment`, an INFO log line records the generation, request and worker ids
+with the `max_length`, capacity and speed, and the job's assignment and end are counted below. A fake generation is
+not recorded.
 
 These counters, in `horde/metrics.py`, show how the rule behaves:
 
@@ -678,7 +684,13 @@ These counters, in `horde/metrics.py`, show how the rule behaves:
 | --------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
 | `horde.text.lease_renewals`       | `horde.outcome` (`granted`, `at_cap`), `horde.worker_trusted` | Posts that extended a lease, and posts that found it at its cap |
 | `horde.text.stale_aborts`         | `horde.worker_trusted`                                    | Text and chat jobs aborted because the lease lapsed               |
-| `horde.pop.lease_capacity_limited` | `horde.gentype`                                          | Pops by a worker whose measured speed caps the output it is offered below a length it declares |
+| `horde.pop.lease_capacity_limited` | `horde.gentype`                                          | Pops by a chat worker whose measured speed caps the chat output it is offered below the length it declares |
+| `horde.text.gate_shadow.assignments` | `horde.worker_trusted`, `horde.size_bucket`            | Legacy text jobs assigned over the worker's capacity |
+| `horde.text.gate_shadow.outcomes` | `horde.worker_trusted`, `horde.size_bucket`, `horde.outcome` (`completed`, `faulted`, `aborted`) | How those jobs ended: a stored submit, the submit that faulted the job, or a lapsed lease |
+
+`horde.size_bucket` is the request's `max_length` as `<=512`, `513-1024`, `1025-2048`, `2049-4096` or `>4096`. The histogram
+`horde.text.gate_shadow.service_seconds`, with the same attributes as the assignment counter, records the pop to submit
+time of each completed over-capacity legacy job.
 
 The capacity-limited count comes from values the pop already holds, so it adds no query; the requests the gate
 withholds from a given pop are not counted. The stream lease and a chat image URL's lifetime derive from the `ttl` at

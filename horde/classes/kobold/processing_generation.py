@@ -6,7 +6,9 @@ import enum
 import math
 import os
 import time
-from datetime import UTC
+from datetime import UTC, datetime
+
+from sqlalchemy.sql import expression
 
 from horde import vars as hv
 from horde.bridge_reference import (
@@ -31,13 +33,22 @@ from horde.classes.kobold.chat_request import (
     streams_progress,
 )
 from horde.classes.kobold.genstats import record_text_statistic
-from horde.classes.kobold.worker import TEXT_JOB_LEASE_SECONDS
+from horde.classes.kobold.worker import (
+    TEXT_JOB_LEASE_SECONDS,
+    TextWorker,
+    get_effective_text_worker_speed,
+    get_text_worker_lease_capacity,
+)
 from horde.flask import db
 from horde.logger import logger
 from horde.metrics import (
+    TEXT_LENGTH_BUCKETS,
     submit_genstats_record_duration,
     submit_state_handling_duration,
     text_empty_generations,
+    text_gate_shadow_assignments,
+    text_gate_shadow_outcomes,
+    text_gate_shadow_service_seconds,
     text_lease_renewals,
     text_stale_aborts,
 )
@@ -70,6 +81,19 @@ class LeaseRenewal(enum.StrEnum):
 
     LAPSED = "lapsed"
     """The lease ended before the post; the stale-generation thread aborts the job."""
+
+
+class GateShadowOutcome(enum.StrEnum):
+    """How a legacy text job assigned over its worker's lease capacity ended."""
+
+    COMPLETED = "completed"
+    """The worker submitted a generation that was stored."""
+
+    FAULTED = "faulted"
+    """The worker submitted a fault."""
+
+    ABORTED = "aborted"
+    """The lease lapsed before a submit and the stale-generation thread aborted the job."""
 
 
 def text_job_lease_cap(trusted: bool) -> int:
@@ -260,10 +284,87 @@ class TextProcessingGeneration(ProcessingGeneration):
     read by ``get_things_count`` in place of a stored reply. The posted text is not retained and a stored
     ``generation`` would count the faulted generation as a delivered result, so this count is the record cancels are
     analysed by. NULL on every other generation."""
+    over_capacity_at_assignment = db.Column(
+        db.Boolean,
+        default=False,
+        nullable=False,
+        server_default=expression.false(),
+    )
+    """Whether a legacy text job's ``max_length`` exceeded the worker's lease capacity when it was assigned. The speed
+    gate is enforced for chat requests only, so the outcome of such an assignment is recorded against this marker
+    rather than against the worker's speed at submit, which moves between pop and submit. False on chat and fake
+    generations."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
+        over_capacity = self._assignment_exceeds_lease_capacity(kwargs)
+        if over_capacity:
+            # Passed as a column value, so the base constructor's commit of the new row writes the marker.
+            kwargs["over_capacity_at_assignment"] = True
         super().__init__(*args, **kwargs)
         self._write_stream_lease()
+        if over_capacity:
+            self._record_over_capacity_assignment()
+
+    @classmethod
+    def _assignment_exceeds_lease_capacity(cls, assignment: dict[str, object]) -> bool:
+        """Return whether an assignment gives a legacy text job to a worker whose speed does not finish it in the base lease.
+
+        The speed gate refuses such a job to a chat request only; for a legacy request the assignment proceeds and is
+        marked, so the effect the gate would have is measurable. A fake generation is not a real assignment and is
+        not marked.
+
+        Args:
+            assignment: The constructor's keyword arguments, which carry the request and worker ids.
+        """
+        if assignment.get("fake"):
+            return False
+        # Imported here because the request module imports this one.
+        from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+
+        # The pop passes ids rather than rows. The request and worker rows it locked and loaded are in the session, so
+        # get() takes them from the identity map.
+        waiting_prompt = db.session.get(TextWaitingPrompt, assignment["wp_id"])
+        worker = db.session.get(TextWorker, assignment["worker_id"])
+        if waiting_prompt is None or worker is None or waiting_prompt.is_chat:
+            return False
+        return waiting_prompt.max_length > get_text_worker_lease_capacity(worker.speed)
+
+    def _gate_shadow_attributes(self) -> dict[str, str]:
+        """Return the metric attributes of a gate shadow record: the worker owner's trust and the request's size."""
+        return {
+            "horde.worker_trusted": str(bool(self.worker.user.trusted)).lower(),
+            "horde.size_bucket": TEXT_LENGTH_BUCKETS.label(self.wp.max_length),
+        }
+
+    def _record_over_capacity_assignment(self) -> None:
+        """Count and log a legacy text job assigned over its worker's lease capacity, once its row has an id.
+
+        Side Effects:
+            Increments ``horde.text.gate_shadow.assignments`` and logs the assignment with its ids.
+        """
+        lease_capacity = get_text_worker_lease_capacity(self.worker.speed)
+        text_gate_shadow_assignments.add(1, self._gate_shadow_attributes())
+        logger.info(
+            f"Legacy text generation {self.id} of wp {self.wp_id} assigned over the lease capacity of worker "
+            f"{self.worker_id}: max_length={self.wp.max_length} capacity={lease_capacity} "
+            f"speed={get_effective_text_worker_speed(self.worker.speed)}",
+        )
+
+    def _record_gate_shadow_outcome(self, outcome: GateShadowOutcome) -> None:
+        """Count how a legacy text job assigned over its worker's lease capacity ended; other jobs are not counted.
+
+        Args:
+            outcome: How the job ended.
+        """
+        if not self.over_capacity_at_assignment:
+            return
+        text_gate_shadow_outcomes.add(
+            1,
+            {
+                **self._gate_shadow_attributes(),
+                "horde.outcome": outcome.value,
+            },
+        )
 
     def set_job_ttl(self) -> None:
         """Persist the base lease, the deadline from pop to submission offered to the worker for this assignment.
@@ -303,8 +404,12 @@ class TextProcessingGeneration(ProcessingGeneration):
         )
 
     def record_stale_abort(self) -> None:
-        """Count this generation's abort for a lapsed lease, split by whether its worker's owner is trusted."""
+        """Count this generation's abort for a lapsed lease, split by whether its worker's owner is trusted.
+
+        A legacy text job assigned over its worker's lease capacity is also counted as an aborted gate shadow outcome.
+        """
         text_stale_aborts.add(1, {"horde.worker_trusted": str(bool(self.worker.user.trusted)).lower()})
+        self._record_gate_shadow_outcome(GateShadowOutcome.ABORTED)
 
     def end_progress_after_fault(self) -> None:
         """Append the ended marker for a faulted chat generation that holds a stream lease, and delete the lease.
@@ -460,7 +565,9 @@ class TextProcessingGeneration(ProcessingGeneration):
         state_t0 = time.monotonic()
         state = kwargs.get("state", "ok")
         if state == "faulted":
-            self.fault_and_restart()
+            # Counted only by the submit that faulted the job, so a repeated fault submit is not counted again.
+            if self.fault_and_restart():
+                self._record_gate_shadow_outcome(GateShadowOutcome.FAULTED)
         elif state in ("censored", "csam"):
             self.censored = True
             db.session.commit()
@@ -492,6 +599,12 @@ class TextProcessingGeneration(ProcessingGeneration):
         # neither stores this submission.
         if kudos in (-1, 0):
             return kudos
+        if self.over_capacity_at_assignment:
+            self._record_gate_shadow_outcome(GateShadowOutcome.COMPLETED)
+            text_gate_shadow_service_seconds.record(
+                max((datetime.utcnow() - self.start_time).total_seconds(), 0),
+                self._gate_shadow_attributes(),
+            )
         if self.wp.is_chat:
             # The submit route verified the reply against the extras, so reading the hint does not load anything more.
             if streams_progress(self.wp.chat_extras):

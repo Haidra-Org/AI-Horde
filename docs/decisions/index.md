@@ -51,6 +51,7 @@ One decision per record: what was chosen, what was rejected, and what it cost.
 | [Lease text jobs for a fixed term renewed by progress](0038-lease-text-jobs-for-a-fixed-term-renewed-by-progress.md) | accepted | 2026-10-28 |
 | [Settle requests after cancellation and repeated faults](0039-settle-requests-after-cancellation-and-repeated-faults.md) | accepted | 2026-10-28 |
 | [Estimate text queue wait from the request's eligible workers](0040-estimate-text-queue-wait-from-the-eligible-workers.md) | accepted | 2026-10-28 |
+| [Enforce the speed gate for chat requests and shadow it for legacy text](0041-enforce-the-speed-gate-for-chat-requests-and-shadow-it-for-legacy-text.md) | accepted | 2026-10-30 |
 
 ## Relationships
 
@@ -97,6 +98,7 @@ flowchart TD
     r0038["0038: Lease text jobs for a fixed term rene…"]
     r0039["0039: Settle requests after cancellation an…"]
     r0040["0040: Estimate text queue wait from the req…"]
+    r0041["0041: Enforce the speed gate for chat reque…"]
     r0001 --> r0003
     r0001 --> r0004
     r0001 --> r0005

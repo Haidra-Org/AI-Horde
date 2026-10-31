@@ -6,7 +6,9 @@
 
 A job is leased a flat base at pop. A chat job's progress post that adds output extends the lease to end the base
 after the post, up to a cap measured from pop that depends on whether the worker's owner is trusted. The pop offers a
-job only to a worker whose speed finishes its ``max_length`` inside the base lease after the preparation allowance.
+chat job only to a worker whose speed finishes its ``max_length`` inside the base lease after the preparation
+allowance. A legacy text job is assigned whatever its length, and an assignment over the worker's capacity is
+recorded with its outcome.
 """
 
 from __future__ import annotations
@@ -64,6 +66,9 @@ WORKER_API_KEY = "worker-owner-plain-key"
 
 PROGRESS_ROUTE = "/api/v2/generate/text/progress"
 
+CHAT_MESSAGES = [{"role": "user", "content": "a unit-test prompt"}]
+"""The conversation of every chat request in this module."""
+
 
 class _CounterRecorder:
     """Stands in for a metric counter and keeps every increment with its attributes."""
@@ -73,6 +78,16 @@ class _CounterRecorder:
 
     def add(self, amount: int, attributes: dict[str, str]) -> None:
         self.increments.append((amount, attributes))
+
+
+class _HistogramRecorder:
+    """Stands in for a metric histogram and keeps every recorded value with its attributes."""
+
+    def __init__(self) -> None:
+        self.records: list[tuple[float, dict[str, str]]] = []
+
+    def record(self, amount: float, attributes: dict[str, str]) -> None:
+        self.records.append((amount, attributes))
 
 
 @pytest.fixture(autouse=True)
@@ -137,7 +152,15 @@ def _make_worker(user: Any, *, speed: float | None = None, max_length: int = 409
     return worker
 
 
-def _make_request(user: Any, max_length: int) -> TextWaitingPrompt:
+def _make_request(user: Any, max_length: int, *, is_chat: bool = False) -> TextWaitingPrompt:
+    chat_fields: dict[str, Any] = (
+        {
+            "is_chat": True,
+            "messages": CHAT_MESSAGES,
+        }
+        if is_chat
+        else {}
+    )
     waiting_prompt = TextWaitingPrompt(
         worker_ids=[],
         models=[MODEL_NAME],
@@ -148,6 +171,7 @@ def _make_request(user: Any, max_length: int) -> TextWaitingPrompt:
             "max_length": max_length,
             "max_context_length": 2048,
         },
+        **chat_fields,
     )
     # Activation is written directly, keeping the tests independent of the kudos machinery activate() carries.
     waiting_prompt.active = True
@@ -157,9 +181,24 @@ def _make_request(user: Any, max_length: int) -> TextWaitingPrompt:
     return waiting_prompt
 
 
-def _create_generation(make_user: MakeUser, *, max_length: int = 80) -> TextProcessingGeneration:
+def _declare_chat(worker: TextWorker, waiting_prompt: TextWaitingPrompt) -> None:
+    """Declare chat jobs on ``worker`` with every feature ``waiting_prompt`` needs and limits above its own."""
+    worker.accepts_chat_jobs = True
+    worker.chat_model_id = MODEL_NAME
+    worker.chat_max_length = 4096
+    worker.chat_max_context_length = 32768
+    worker.chat_features = list(waiting_prompt.chat_required_features or ())
+    db.session.commit()
+
+
+def _create_generation(
+    make_user: MakeUser,
+    *,
+    max_length: int = 80,
+    speed: float | None = None,
+) -> TextProcessingGeneration:
     user = make_user()
-    worker = _make_worker(user)
+    worker = _make_worker(user, speed=speed)
     waiting_prompt = _make_request(user, max_length)
     return TextProcessingGeneration(
         wp_id=waiting_prompt.id,
@@ -411,7 +450,10 @@ class TestStaleAbortMetric:
 
 
 class TestSpeedGate:
-    """A worker is offered a job only when its speed finishes the job's ``max_length`` inside the base lease."""
+    """A worker is offered a chat job only when its speed finishes the job's ``max_length`` inside the base lease.
+
+    A legacy text job is offered whatever its length.
+    """
 
     def test_a_measured_worker_is_gated_by_its_own_speed(self) -> None:
         """A worker measured at 10 tokens/s finishes 1200 tokens in the 120 seconds the gate allows."""
@@ -431,10 +473,12 @@ class TestSpeedGate:
         assert get_text_worker_lease_capacity(worker.speed) == UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND * GENERATION_SECONDS
 
     @pytest.mark.parametrize(
-        ("max_length", "offered"),
+        ("is_chat", "max_length", "offered"),
         [
-            (2 * GENERATION_SECONDS, True),
-            (2 * GENERATION_SECONDS + 1, False),
+            (True, 2 * GENERATION_SECONDS, True),
+            (True, 2 * GENERATION_SECONDS + 1, False),
+            (False, 2 * GENERATION_SECONDS, True),
+            (False, 2 * GENERATION_SECONDS + 1, True),
         ],
     )
     def test_the_pop_and_the_eligibility_check_apply_the_same_gate(
@@ -443,14 +487,17 @@ class TestSpeedGate:
         fake_redis: object,
         make_user: MakeUser,
         make_user_role: MakeUserRole,
+        is_chat: bool,
         max_length: int,
         offered: bool,
     ) -> None:
-        """A worker at 2 tokens/s is offered a job it finishes in time and refused one a token longer."""
+        """A worker at 2 tokens/s is refused a chat job a token longer than it finishes in time, and is offered a
+        legacy job of either length."""
         user = make_user()
         make_user_role(user, UserRoleTypes.TRUSTED, value=True)
         worker = _make_worker(user, speed=2)
-        waiting_prompt = _make_request(user, max_length)
+        waiting_prompt = _make_request(user, max_length, is_chat=is_chat)
+        _declare_chat(worker, waiting_prompt)
 
         popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
         eligibility = worker.can_generate(waiting_prompt)
@@ -458,19 +505,191 @@ class TestSpeedGate:
         assert [wp.id for wp in popped] == ([waiting_prompt.id] if offered else [])
         assert eligibility == ([True, None] if offered else [False, "lease_speed"])
 
-    def test_a_worker_fast_enough_for_its_declared_lengths_is_not_capacity_limited(
+    def test_a_measured_slow_worker_is_refused_a_chat_request_over_its_capacity_and_assigned_a_legacy_one(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        make_user_role: MakeUserRole,
+    ) -> None:
+        """Of a chat and a legacy request for 512 tokens, a worker at 2 tokens/s (capacity 240) pops only the legacy
+        one, and the assignment creates its generation."""
+        user = make_user()
+        make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+        worker = _make_worker(user, speed=2)
+        chat_request = _make_request(user, 512, is_chat=True)
+        legacy_request = _make_request(user, 512)
+        _declare_chat(worker, chat_request)
+
+        popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
+        legacy_request.start_generation(worker, declared_models=[MODEL_NAME])
+
+        generation_request_ids = [generation.wp_id for generation in db.session.query(TextProcessingGeneration).all()]
+        assert [wp.id for wp in popped] == [legacy_request.id]
+        assert worker.can_generate(chat_request) == [False, "lease_speed"]
+        assert generation_request_ids == [legacy_request.id]
+
+    def test_only_a_chat_declaration_above_the_capacity_makes_a_pop_capacity_limited(
         self,
         db_session: Session,
         fake_redis: object,
         make_user: MakeUser,
     ) -> None:
-        """A pop is counted as capacity-limited only when the worker's capacity is below a length it declares."""
+        """A pop is counted as capacity-limited only when the worker's capacity is below the chat length it declares.
+        A text limit above the capacity does not count, since legacy text jobs are not gated."""
         user = make_user()
-        fast_worker = _make_worker(user, speed=50, max_length=4096)
-        slow_worker = _make_worker(user, speed=2, max_length=4096)
+        chat_request = _make_request(user, 80, is_chat=True)
+        fast_chat_worker = _make_worker(user, speed=50, max_length=4096)
+        slow_chat_worker = _make_worker(user, speed=2, max_length=4096)
+        slow_text_worker = _make_worker(user, speed=2, max_length=4096)
+        _declare_chat(fast_chat_worker, chat_request)
+        _declare_chat(slow_chat_worker, chat_request)
 
-        assert not text_functions.worker_may_be_speed_gated(fast_worker, [MODEL_NAME])
-        assert text_functions.worker_may_be_speed_gated(slow_worker, [MODEL_NAME])
+        assert not text_functions.worker_may_be_speed_gated(fast_chat_worker, [MODEL_NAME])
+        assert text_functions.worker_may_be_speed_gated(slow_chat_worker, [MODEL_NAME])
+        assert not text_functions.worker_may_be_speed_gated(slow_text_worker, [MODEL_NAME])
+
+
+class TestGateShadow:
+    """A legacy text job assigned over its worker's lease capacity is marked at assignment and counted with its outcome."""
+
+    @pytest.fixture(autouse=True)
+    def _settings_row(self, db_session: Session) -> None:
+        """Seed the settings row the abort's raid-mode check reads."""
+        if db_session.query(HordeSettings).first() is None:
+            db_session.add(HordeSettings())
+            db_session.flush()
+
+    @pytest.fixture
+    def assignments(self, monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+        recorder = _CounterRecorder()
+        monkeypatch.setattr(text_processing_generation, "text_gate_shadow_assignments", recorder)
+        return recorder
+
+    @pytest.fixture
+    def outcomes(self, monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+        recorder = _CounterRecorder()
+        monkeypatch.setattr(text_processing_generation, "text_gate_shadow_outcomes", recorder)
+        return recorder
+
+    @pytest.fixture
+    def service_seconds(self, monkeypatch: pytest.MonkeyPatch) -> _HistogramRecorder:
+        recorder = _HistogramRecorder()
+        monkeypatch.setattr(text_processing_generation, "text_gate_shadow_service_seconds", recorder)
+        return recorder
+
+    def test_an_over_capacity_legacy_assignment_is_marked_and_counted(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        assignments: _CounterRecorder,
+    ) -> None:
+        """A 512-token legacy job assigned to a worker at 2 tokens/s (capacity 240) stores the marker and is counted
+        once by trust and size."""
+        generation = _create_generation(make_user, max_length=512, speed=2)
+
+        db.session.expire_all()
+        stored = db.session.get(TextProcessingGeneration, generation.id)
+        assert stored.over_capacity_at_assignment is True
+        assert assignments.increments == [
+            (
+                1,
+                {
+                    "horde.worker_trusted": "false",
+                    "horde.size_bucket": "<=512",
+                },
+            ),
+        ]
+
+    def test_its_completed_submit_records_the_outcome_and_the_service_time(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        outcomes: _CounterRecorder,
+        service_seconds: _HistogramRecorder,
+    ) -> None:
+        """A stored submit of an over-capacity legacy job counts ``completed`` and records its pop to submit time."""
+        generation = _create_generation(make_user, max_length=1500, speed=2)
+
+        generation.set_generation("a unit-test reply", things_per_sec=2, seed=1)
+
+        expected_attributes = {
+            "horde.worker_trusted": "false",
+            "horde.size_bucket": "1025-2048",
+        }
+        assert outcomes.increments == [
+            (
+                1,
+                {
+                    **expected_attributes,
+                    "horde.outcome": "completed",
+                },
+            ),
+        ]
+        assert [attributes for _, attributes in service_seconds.records] == [expected_attributes]
+        assert service_seconds.records[0][0] >= 0
+
+    def test_its_faulted_submit_records_the_outcome_once(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        outcomes: _CounterRecorder,
+        service_seconds: _HistogramRecorder,
+    ) -> None:
+        """A fault submit of an over-capacity legacy job counts ``faulted``; a repeated fault submit is not counted."""
+        generation = _create_generation(make_user, max_length=512, speed=2)
+
+        generation.set_generation("", things_per_sec=0, state="faulted")
+        generation.set_generation("", things_per_sec=0, state="faulted")
+
+        assert [attributes["horde.outcome"] for _, attributes in outcomes.increments] == ["faulted"]
+        assert service_seconds.records == []
+
+    def test_its_stale_abort_records_the_outcome(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        outcomes: _CounterRecorder,
+    ) -> None:
+        """The stale-generation thread's abort of an over-capacity legacy job counts ``aborted``."""
+        generation = _create_generation(make_user, max_length=4096, speed=2)
+
+        generation.fault_and_restart(stale=True)
+
+        assert outcomes.increments == [
+            (
+                1,
+                {
+                    "horde.worker_trusted": "false",
+                    "horde.size_bucket": "2049-4096",
+                    "horde.outcome": "aborted",
+                },
+            ),
+        ]
+
+    def test_an_under_capacity_assignment_is_not_recorded(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        assignments: _CounterRecorder,
+        outcomes: _CounterRecorder,
+        service_seconds: _HistogramRecorder,
+    ) -> None:
+        """A 240-token legacy job on a worker at 2 tokens/s fits its capacity, so neither its assignment nor its submit
+        is marked or counted."""
+        generation = _create_generation(make_user, max_length=2 * GENERATION_SECONDS, speed=2)
+
+        generation.set_generation("a unit-test reply", things_per_sec=2, seed=1)
+
+        assert generation.over_capacity_at_assignment is False
+        assert assignments.increments == []
+        assert outcomes.increments == []
+        assert service_seconds.records == []
 
 
 def _read_lease(generation: TextProcessingGeneration) -> StreamLease:
