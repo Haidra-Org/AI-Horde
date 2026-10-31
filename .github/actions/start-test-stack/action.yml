@@ -42,6 +42,8 @@ runs:
           printf 'R2_TRANSIENT_BUCKET=%s\n' "$R2_TRANSIENT_BUCKET"
           printf 'R2_PERMANENT_BUCKET=%s\n' "$R2_PERMANENT_BUCKET"
           printf 'R2_SOURCE_IMAGE_BUCKET=%s\n' "$R2_SOURCE_IMAGE_BUCKET"
+          printf 'R2_EVIDENCE_ACCOUNT=%s\n' "$R2_EVIDENCE_ACCOUNT"
+          printf 'R2_EVIDENCE_BUCKET=%s\n' "$R2_EVIDENCE_BUCKET"
           printf 'POSTGRES_URL=%s\n' "$POSTGRES_URL"
           printf 'PGUSER=%s\n' "${PGUSER:-postgres}"
           printf 'PGPASSWORD=%s\n' "${PGPASSWORD:-postgres}"

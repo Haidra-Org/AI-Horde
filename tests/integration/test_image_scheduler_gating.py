@@ -10,10 +10,24 @@ legacy schedules stay ungated because the flag can express them, which is what k
 request reaching the same population of workers it always did.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from horde_sdk.ai_horde_api.apimodels import ImageGenerateJobPopResponse
 
 from horde.bridge_reference import CAPABILITY_EXPANDED_REGEN_VERSION
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _no_rate_limit() -> Iterator[None]:
+    """Lift the per-path submit limit; the tests in this module post a burst of requests from one client."""
+    from horde.limiter import limiter
+
+    previous = limiter.enabled
+    limiter.enabled = False
+    yield
+    limiter.enabled = previous
+
 
 TEST_MODELS = ["stable_diffusion"]
 FLOW_MODELS = ["Flux.1-Schnell fp8 (Compact)"]
