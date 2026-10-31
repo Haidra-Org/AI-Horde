@@ -43,6 +43,7 @@ from horde.flask import db
 from horde.logger import logger
 from horde.metrics import (
     TEXT_LENGTH_BUCKETS,
+    TextRequester,
     submit_genstats_record_duration,
     submit_state_handling_duration,
     text_empty_generations,
@@ -50,6 +51,7 @@ from horde.metrics import (
     text_gate_shadow_outcomes,
     text_gate_shadow_service_seconds,
     text_lease_renewals,
+    text_queue_wait_seconds,
     text_stale_aborts,
 )
 from horde.model_reference import model_reference
@@ -304,6 +306,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         self._write_stream_lease()
         if over_capacity:
             self._record_over_capacity_assignment()
+        self._record_queue_wait()
 
     @classmethod
     def _assignment_exceeds_lease_capacity(cls, assignment: dict[str, object]) -> bool:
@@ -328,6 +331,23 @@ class TextProcessingGeneration(ProcessingGeneration):
         if waiting_prompt is None or worker is None or waiting_prompt.is_chat:
             return False
         return waiting_prompt.max_length > get_text_worker_lease_capacity(worker.speed)
+
+    def _record_queue_wait(self) -> None:
+        """Record the time from the request's creation to this assignment; a fake generation is not an assignment."""
+        if self.fake:
+            return
+        requester = TextRequester.from_request(
+            anonymous=self.wp.user.is_anon(),
+            shared_key=self.wp.sharedkey_id is not None,
+        )
+        text_queue_wait_seconds.record(
+            max((self.start_time - self.wp.created).total_seconds(), 0),
+            {
+                "horde.requester": requester.value,
+                "horde.chat": bool(self.wp.is_chat),
+                "horde.requested_bucket": TEXT_LENGTH_BUCKETS.label(self.wp.max_length),
+            },
+        )
 
     def _gate_shadow_attributes(self) -> dict[str, str]:
         """Return the metric attributes of a gate shadow record: the worker owner's trust and the request's size."""

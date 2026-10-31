@@ -921,6 +921,18 @@ measured for the allowance is cached for the request's status and reused by the 
 creation runs the eligible-worker query once; a dry run runs it as well. A downgrade changes the eligible workers, so
 the check after a downgrade queries them again.
 
+These instruments, in `horde/metrics.py`, show the allowance's effect. A dry run is not recorded.
+
+| Instrument | Attributes | Records |
+| --- | --- | --- |
+| `horde.text.free_allowance.decisions` (counter) | `horde.requester` (`anonymous`, `registered`, `shared_key`), `horde.outcome` (`free`, `funded`, `refused`, `downgraded`), `horde.requested_bucket`, `horde.allowance_bucket`, `horde.chat` | Each request creation: admitted without a hold, admitted with kudos reserved, refused with `KudosUpfront` (including `SharedKeyInsufficientKudos`), or lowered to the allowance |
+| `horde.text.free_allowance.estimated_wait_seconds` (histogram) | `horde.chat`, `horde.requester` | The wait the allowance was sized by; not recorded when no worker is eligible |
+| `horde.text.queue_wait_seconds` (histogram) | `horde.requester`, `horde.chat`, `horde.requested_bucket` | Each assignment's time from request creation to pop; a fake generation is not recorded |
+
+The size buckets are those of `horde.size_bucket` under "Job lease": `<=512` (at most the floor), `513-1024`,
+`1025-2048`, `2049-4096` (up to the ceiling) and `>4096`. `horde.requested_bucket` is the `max_length` the request asked for, before any downgrade, at creation and
+the stored `max_length` at assignment. The downgrade log line is kept beside the `downgraded` outcome.
+
 ## Chat model list
 
 `GET /v2/status/models?type=text&chat=true` lists only the text models that at least one online chat worker serves,

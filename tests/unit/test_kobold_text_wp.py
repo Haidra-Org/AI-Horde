@@ -10,17 +10,31 @@ read a handful of attributes off ``self`` and an env var, so we exercise the
 branch matrix by binding each method to a lightweight stub rather than building a
 full persisted ORM graph (``WaitingPrompt.__init__`` commits to the DB). This
 keeps the test hermetic and fast while still locking the real arithmetic.
+
+The allowance and queue wait records are read at request creation and at assignment, so their tests create
+persisted requests and generations.
 """
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
+from horde import exceptions as e
+from horde import metrics
+from horde.apis.v2 import kobold as text_api_module
+from horde.apis.v2.kobold import TextAsyncGenerate
 from horde.classes.base.waiting_prompt import estimate_queue_wait_seconds
+from horde.classes.kobold import processing_generation as text_processing_generation
+from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, compute_free_output_allowance
+from horde.classes.kobold.worker import TextWorker
 from horde.config import Config
+from horde.flask import db
 
 
 def _wp(slow_workers=True, max_length=80, max_context_length=2048, workers=(), models=()):
@@ -180,3 +194,399 @@ class TestCalculateKudos:
 
         context_multiplier = 1.2 + (2.2**0)
         assert kudos == pytest.approx(100 * (2.7 / 100) * context_multiplier)
+
+
+ALLOWANCE_MODEL = "allowance-model"
+"""The model every request in the allowance records tests asks for."""
+
+
+class _CounterRecorder:
+    """Stands in for a metric counter and keeps every increment with its attributes."""
+
+    def __init__(self) -> None:
+        self.increments: list[tuple[int, dict[str, object]]] = []
+
+    def add(self, amount: int, attributes: dict[str, object]) -> None:
+        self.increments.append((amount, attributes))
+
+
+class _HistogramRecorder:
+    """Stands in for a metric histogram and keeps every recorded value with its attributes."""
+
+    def __init__(self) -> None:
+        self.records: list[tuple[float, dict[str, object]]] = []
+
+    def record(self, amount: float, attributes: dict[str, object]) -> None:
+        self.records.append((amount, attributes))
+
+
+def _queue_allowance_request(
+    monkeypatch: pytest.MonkeyPatch,
+    user: Any,
+    *,
+    max_length: int,
+    estimated_wait_seconds: float | None,
+    reservation_granted: bool,
+    allow_downgrade: bool = False,
+    is_chat: bool = False,
+    sharedkey: object | None = None,
+) -> TextAsyncGenerate:
+    """Create a text request through ``TextAsyncGenerate.initiate_waiting_prompt`` with the wait and the kudos
+    reservation fixed, so each allowance outcome is reached deterministically.
+
+    A request costs one kudo per token, so any request that needs kudos upfront needs a reservation.
+    """
+    chat_fields: dict[str, object] = (
+        {
+            "is_chat": True,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Hello?",
+                },
+            ],
+        }
+        if is_chat
+        else {}
+    )
+    resource = TextAsyncGenerate()
+    resource.args = SimpleNamespace(
+        allow_downgrade=allow_downgrade,
+        dry_run=False,
+        extra_source_images=None,
+    )
+    resource.models = [ALLOWANCE_MODEL]
+    resource.user = user
+    resource.username = user.get_unique_alias()
+    resource.sharedkey = sharedkey
+    resource.existing_style = None
+    # The route sets this before any style is applied; the refusal path quotes the request through it.
+    resource.style_kudos = False
+    monkeypatch.setattr(
+        resource,
+        "get_waiting_prompt_arguments",
+        lambda: {
+            "worker_ids": [],
+            "models": [ALLOWANCE_MODEL],
+            "prompt": "allowance records test",
+            "user_id": user.id,
+            "params": {
+                "n": 1,
+                "max_length": max_length,
+                "max_context_length": 2048,
+            },
+            **chat_fields,
+        },
+    )
+    monkeypatch.setattr(resource, "estimate_competing_wait_seconds", lambda: estimated_wait_seconds)
+    monkeypatch.setattr(
+        text_api_module,
+        "reserve_kudos",
+        lambda *_args, **_kwargs: object() if reservation_granted else None,
+    )
+    resource.initiate_waiting_prompt()
+    return resource
+
+
+class TestFreeAllowanceRecords:
+    """Every text request creation counts its allowance decision once, with the estimated wait it was sized by."""
+
+    @pytest.fixture(autouse=True)
+    def default_allowance_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(Config, "text_free_output_ceiling", FREE_OUTPUT_CEILING)
+        monkeypatch.setattr(Config, "text_free_output_floor", FREE_OUTPUT_FLOOR)
+        monkeypatch.setattr(Config, "text_free_output_wait_full_seconds", FULL_WAIT_SECONDS)
+        monkeypatch.setattr(Config, "text_free_output_wait_floor_seconds", FLOOR_WAIT_SECONDS)
+        monkeypatch.delenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", raising=False)
+        monkeypatch.setattr(text_api_module.model_reference, "get_text_model_multiplier", lambda _model_name: 21)
+
+    @pytest.fixture
+    def decisions(self, monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+        recorder = _CounterRecorder()
+        monkeypatch.setattr(metrics, "text_free_allowance_decisions", recorder)
+        return recorder
+
+    @pytest.fixture
+    def estimated_waits(self, monkeypatch: pytest.MonkeyPatch) -> _HistogramRecorder:
+        recorder = _HistogramRecorder()
+        monkeypatch.setattr(metrics, "text_free_allowance_estimated_wait_seconds", recorder)
+        return recorder
+
+    def test_a_request_within_the_allowance_is_counted_free(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+        estimated_waits: _HistogramRecorder,
+    ) -> None:
+        """A registered user's 512-token request at no wait gets the 4096 ceiling and is counted ``free``."""
+        _queue_allowance_request(
+            monkeypatch,
+            make_user(),
+            max_length=512,
+            estimated_wait_seconds=0.0,
+            reservation_granted=False,
+        )
+
+        assert decisions.increments == [
+            (
+                1,
+                {
+                    "horde.requester": "registered",
+                    "horde.outcome": "free",
+                    "horde.requested_bucket": "<=512",
+                    "horde.allowance_bucket": "2049-4096",
+                    "horde.chat": False,
+                },
+            ),
+        ]
+        assert estimated_waits.records == [
+            (
+                0.0,
+                {
+                    "horde.chat": False,
+                    "horde.requester": "registered",
+                },
+            ),
+        ]
+
+    def test_a_request_over_the_allowance_with_kudos_reserved_is_counted_funded(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """A 6000-token request over the 4096 ceiling whose kudos are reserved is counted ``funded``."""
+        _queue_allowance_request(
+            monkeypatch,
+            make_user(),
+            max_length=6000,
+            estimated_wait_seconds=0.0,
+            reservation_granted=True,
+        )
+
+        assert decisions.increments == [
+            (
+                1,
+                {
+                    "horde.requester": "registered",
+                    "horde.outcome": "funded",
+                    "horde.requested_bucket": ">4096",
+                    "horde.allowance_bucket": "2049-4096",
+                    "horde.chat": False,
+                },
+            ),
+        ]
+
+    def test_a_request_over_the_allowance_without_kudos_is_counted_refused(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """An anonymous 2048-token request at a 300 s wait, over the 512 floor without kudos and without downgrade, is
+        refused with ``KudosUpfront`` and counted ``refused``."""
+        with pytest.raises(e.KudosUpfront):
+            _queue_allowance_request(
+                monkeypatch,
+                make_user(oauth_id="anon"),
+                max_length=2048,
+                estimated_wait_seconds=FLOOR_WAIT_SECONDS,
+                reservation_granted=False,
+            )
+
+        assert decisions.increments == [
+            (
+                1,
+                {
+                    "horde.requester": "anonymous",
+                    "horde.outcome": "refused",
+                    "horde.requested_bucket": "1025-2048",
+                    "horde.allowance_bucket": "<=512",
+                    "horde.chat": False,
+                },
+            ),
+        ]
+
+    def test_a_downgraded_request_is_counted_downgraded_by_its_requested_length(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """A 1024-token request at a 300 s wait without kudos that allows downgrade is lowered to the 512 floor and
+        counted ``downgraded`` with the length it asked for."""
+        resource = _queue_allowance_request(
+            monkeypatch,
+            make_user(),
+            max_length=1024,
+            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
+            reservation_granted=False,
+            allow_downgrade=True,
+        )
+
+        assert resource.wp.max_length == FREE_OUTPUT_FLOOR
+        assert decisions.increments == [
+            (
+                1,
+                {
+                    "horde.requester": "registered",
+                    "horde.outcome": "downgraded",
+                    "horde.requested_bucket": "513-1024",
+                    "horde.allowance_bucket": "<=512",
+                    "horde.chat": False,
+                },
+            ),
+        ]
+
+    def test_a_shared_key_chat_request_is_counted_by_its_requester_and_family(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """A chat request made with a shared key is counted with ``shared_key`` and ``horde.chat`` true."""
+        unlimited_sharedkey = SimpleNamespace(
+            id="unlimited-key",
+            kudos=-1,
+            is_job_within_limits=lambda **_limits: (True, None),
+        )
+
+        _queue_allowance_request(
+            monkeypatch,
+            make_user(),
+            max_length=512,
+            estimated_wait_seconds=0.0,
+            reservation_granted=False,
+            is_chat=True,
+            sharedkey=unlimited_sharedkey,
+        )
+
+        assert [(attributes["horde.requester"], attributes["horde.chat"]) for _, attributes in decisions.increments] == [
+            ("shared_key", True),
+        ]
+
+    def test_the_wait_is_not_recorded_when_no_worker_is_eligible(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+        estimated_waits: _HistogramRecorder,
+    ) -> None:
+        """Without an eligible worker the allowance takes its floor; the decision is counted and no wait is recorded."""
+        _queue_allowance_request(
+            monkeypatch,
+            make_user(),
+            max_length=512,
+            estimated_wait_seconds=None,
+            reservation_granted=False,
+        )
+
+        assert [attributes["horde.allowance_bucket"] for _, attributes in decisions.increments] == ["<=512"]
+        assert estimated_waits.records == []
+
+
+class TestQueueWaitRecord:
+    """Every real assignment records the time from its request's creation to the pop."""
+
+    def test_an_assignment_records_its_queue_wait(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A legacy 1500-token request created 30 s before its pop records about 30 s by requester, family and size."""
+        recorder = _HistogramRecorder()
+        monkeypatch.setattr(text_processing_generation, "text_queue_wait_seconds", recorder)
+        user = make_user()
+        worker = TextWorker(
+            user_id=user.id,
+            name=f"queue-wait-{uuid.uuid4().hex[:12]}",
+            max_length=4096,
+            max_context_length=4096,
+            last_check_in=datetime.utcnow(),
+        )
+        db.session.add(worker)
+        db.session.commit()
+        request = TextWaitingPrompt(
+            worker_ids=[],
+            models=[ALLOWANCE_MODEL],
+            prompt="queue wait test",
+            user_id=user.id,
+            params={
+                "n": 1,
+                "max_length": 1500,
+                "max_context_length": 2048,
+            },
+        )
+        request.created = datetime.utcnow() - timedelta(seconds=30)
+        db.session.commit()
+
+        TextProcessingGeneration(
+            wp_id=request.id,
+            worker_id=worker.id,
+            model=ALLOWANCE_MODEL,
+        )
+
+        assert [attributes for _, attributes in recorder.records] == [
+            {
+                "horde.requester": "registered",
+                "horde.chat": False,
+                "horde.requested_bucket": "1025-2048",
+            },
+        ]
+        assert 30 <= recorder.records[0][0] < 60
+
+    def test_a_fake_generation_does_not_record_a_queue_wait(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A fake generation handed to a tricked worker is not an assignment and is not recorded."""
+        recorder = _HistogramRecorder()
+        monkeypatch.setattr(text_processing_generation, "text_queue_wait_seconds", recorder)
+        user = make_user()
+        worker = TextWorker(
+            user_id=user.id,
+            name=f"queue-wait-{uuid.uuid4().hex[:12]}",
+            max_length=4096,
+            max_context_length=4096,
+            last_check_in=datetime.utcnow(),
+        )
+        db.session.add(worker)
+        db.session.commit()
+        request = TextWaitingPrompt(
+            worker_ids=[],
+            models=[ALLOWANCE_MODEL],
+            prompt="queue wait test",
+            user_id=user.id,
+            params={
+                "n": 1,
+                "max_length": 80,
+                "max_context_length": 2048,
+            },
+        )
+
+        TextProcessingGeneration(
+            wp_id=request.id,
+            worker_id=worker.id,
+            model=ALLOWANCE_MODEL,
+            fake=True,
+        )
+
+        assert recorder.records == []

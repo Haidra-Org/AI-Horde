@@ -62,6 +62,14 @@ A request that disallows slow workers always holds its kudos, whatever the allow
 
 The ceiling, the floor and both wait thresholds are deployment settings in `horde/config.py`.
 
+The allowance's effect is exported from every non-dry-run text and chat request creation.
+`horde.text.free_allowance.decisions` counts each decision by requester (`anonymous`, `registered`, `shared_key`),
+outcome (`free`, `funded`, `refused`, `downgraded`), requested and allowance size bucket (`<=512`, `513-1024`,
+`1025-2048`, `2049-4096`, `>4096`) and whether the request is a chat request.
+`horde.text.free_allowance.estimated_wait_seconds` records the wait the allowance was sized by, and
+`horde.text.queue_wait_seconds` records each assignment's time from request creation to pop, so the ceiling and floor
+can be judged against the waits requesters see.
+
 ### Consequences
 
 - An idle model serves up to 4096 tokens to any user. A model with a five-minute backlog serves 512.
@@ -97,7 +105,8 @@ The ceiling, the floor and both wait thresholds are deployment settings in `hord
 ## Confirmation
 
 `tests/unit/test_kobold_text_wp.py` pins the curve at the thresholds, between them and beyond them, the floor without an
-eligible worker, the configured thresholds and the upfront decision. `tests/unit/test_text_worker_eligibility.py` pins
+eligible worker, the configured thresholds, the upfront decision, each allowance outcome counted once with its
+attributes and the queue wait recorded at assignment. `tests/unit/test_text_worker_eligibility.py` pins
 the competing work and the eligible speed the estimate reads. `tests/integration/test_chat.py` pins that a quote cached
 for a funded requester does not answer an anonymous dry run above the allowance on the text route; chat dry runs are
 not answered from the quote cache, since no chat context fit is `ignore`.

@@ -274,6 +274,7 @@ class TextAsyncGenerate(GenerateTemplate):
 
     def initiate_waiting_prompt(self):
         self.wp = TextWaitingPrompt(**self.get_waiting_prompt_arguments())
+        requested_max_length = self.wp.max_length
         self.refuse_over_kudos_cap()
         self.upload_source_images_or_delete_waiting_prompt()
         # Measured once here, at the requested max_length, and reused by the check after activation.
@@ -289,13 +290,24 @@ class TextAsyncGenerate(GenerateTemplate):
                 if model_multiplier > highest_multiplier:
                     highest_multiplier = model_multiplier
             required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
+        estimated_wait_seconds = self.estimate_competing_wait_seconds()
         needs_kudos, tokens, disable_downgrade = self.wp.require_upfront_kudos(
-            estimated_wait_seconds=self.estimate_competing_wait_seconds(),
+            estimated_wait_seconds=estimated_wait_seconds,
         )
+
+        def record_allowance_decision(outcome: metrics.FreeAllowanceOutcome) -> None:
+            self.record_free_allowance_decision(
+                outcome,
+                requested_max_length=requested_max_length,
+                allowance=tokens,
+                estimated_wait_seconds=estimated_wait_seconds,
+            )
+
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
             if self.args.allow_downgrade and not disable_downgrade:
                 self.downgrade_wp_priority = True
             else:
+                record_allowance_decision(metrics.FreeAllowanceOutcome.REFUSED)
                 self.wp.delete()
                 raise e.KudosUpfront(
                     required_kudos,
@@ -316,7 +328,9 @@ class TextAsyncGenerate(GenerateTemplate):
                     # The downgrade lowers max_length and allows slow workers, which changes the eligible workers.
                     database.discard_cached_worker_availability(self.wp)
                     self.creation_availability = None
+                    record_allowance_decision(metrics.FreeAllowanceOutcome.DOWNGRADED)
                 else:
+                    record_allowance_decision(metrics.FreeAllowanceOutcome.REFUSED)
                     # The quote is computed on the row before it is deleted, and only on this path: the refusal
                     # states the quoted cost beside the reservation so the two figures are not mistaken for one.
                     quoted_kudos = self.quote_kudos()
@@ -326,6 +340,10 @@ class TextAsyncGenerate(GenerateTemplate):
                         self.username,
                         message=self.get_kudos_upfront_message(tokens, required_kudos, quoted_kudos),
                     )
+            else:
+                record_allowance_decision(metrics.FreeAllowanceOutcome.FUNDED)
+        else:
+            record_allowance_decision(metrics.FreeAllowanceOutcome.FREE)
 
         if self.sharedkey:
             is_in_limit, fail_message = self.sharedkey.is_job_within_limits(
@@ -375,6 +393,50 @@ class TextAsyncGenerate(GenerateTemplate):
             worker_threads=availability.thread_count,
             things_per_second=availability.tokens_per_second,
         )
+
+    def record_free_allowance_decision(
+        self,
+        outcome: metrics.FreeAllowanceOutcome,
+        *,
+        requested_max_length: int,
+        allowance: int,
+        estimated_wait_seconds: float | None,
+    ) -> None:
+        """Count how the free output allowance decided the request being created, with the wait it was sized by.
+
+        A dry run is a quote and is not counted. The estimated wait is not recorded when no worker is eligible, which
+        gives the allowance its floor.
+
+        Args:
+            outcome: How the allowance decided the request.
+            requested_max_length: The ``max_length`` the request asked for, before any downgrade.
+            allowance: The most tokens the request could ask for without kudos held upfront.
+            estimated_wait_seconds: The wait the allowance was sized by; None when no worker is eligible.
+        """
+        if self.args.dry_run:
+            return
+        requester = metrics.TextRequester.from_request(
+            anonymous=self.user.is_anon(),
+            shared_key=self.sharedkey is not None,
+        )
+        metrics.text_free_allowance_decisions.add(
+            1,
+            {
+                "horde.requester": requester.value,
+                "horde.outcome": outcome.value,
+                "horde.requested_bucket": metrics.TEXT_LENGTH_BUCKETS.label(requested_max_length),
+                "horde.allowance_bucket": metrics.TEXT_LENGTH_BUCKETS.label(allowance),
+                "horde.chat": bool(self.wp.is_chat),
+            },
+        )
+        if estimated_wait_seconds is not None:
+            metrics.text_free_allowance_estimated_wait_seconds.record(
+                estimated_wait_seconds,
+                {
+                    "horde.chat": bool(self.wp.is_chat),
+                    "horde.requester": requester.value,
+                },
+            )
 
     def get_kudos_upfront_message(self, free_tokens: int, required_kudos: float, quoted_kudos: float) -> str:
         """Return the ``KudosUpfront`` message for a request whose requester cannot cover its kudos hold.

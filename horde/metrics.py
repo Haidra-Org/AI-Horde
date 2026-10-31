@@ -28,6 +28,7 @@ module-level constant. The helper auto-registers the bucket profile.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -119,6 +120,20 @@ BUCKETS_REQUEST_LIFECYCLE_SECONDS = (
     1800,
     3600,
 )
+BUCKETS_FREE_ALLOWANCE_WAIT_SECONDS = (
+    0,
+    10,
+    30,
+    60,
+    120,
+    180,
+    240,
+    300,
+    600,
+)
+"""The bucket boundaries of the estimated wait the free output allowance is sized by. The allowance is the ceiling up to
+60 s and falls linearly to the floor at 300 s, so the boundaries split that span into 60 s steps; 600 s separates a
+backed-up queue from one just past the floor."""
 
 REQUEST_ESTIMATE_MINIMUM_ABSOLUTE_TOLERANCE_SECONDS = 60
 REQUEST_ESTIMATE_RELATIVE_TOLERANCE = 0.5
@@ -161,6 +176,11 @@ def _ratio_histogram(name: str, description: str) -> Histogram:
 
 def _request_lifecycle_histogram(name: str, description: str) -> Histogram:
     _BUCKET_REGISTRY[name] = BUCKETS_REQUEST_LIFECYCLE_SECONDS
+    return logfire.metric_histogram(name, unit="s", description=description)
+
+
+def _free_allowance_wait_histogram(name: str, description: str) -> Histogram:
+    _BUCKET_REGISTRY[name] = BUCKETS_FREE_ALLOWANCE_WAIT_SECONDS
     return logfire.metric_histogram(name, unit="s", description=description)
 
 
@@ -353,6 +373,67 @@ text_gate_shadow_outcomes = logfire.metric_counter(
 text_gate_shadow_service_seconds = _request_lifecycle_histogram(
     "horde.text.gate_shadow.service_seconds",
     "Pop to submit time of completed legacy text jobs assigned over the worker's lease capacity",
+)
+
+
+class TextRequester(enum.StrEnum):
+    """The kind of requester a text request was created by, as a metric attribute."""
+
+    ANONYMOUS = "anonymous"
+    """The anonymous user, without a shared key."""
+
+    REGISTERED = "registered"
+    """A registered user with the user's own API key."""
+
+    SHARED_KEY = "shared_key"
+    """Any user through a shared key."""
+
+    @classmethod
+    def from_request(cls, *, anonymous: bool, shared_key: bool) -> TextRequester:
+        """Return the kind of requester of a request.
+
+        Args:
+            anonymous: Whether the requesting user is the anonymous user.
+            shared_key: Whether the request was made with a shared key, which takes precedence.
+        """
+        if shared_key:
+            return cls.SHARED_KEY
+        if anonymous:
+            return cls.ANONYMOUS
+        return cls.REGISTERED
+
+
+class FreeAllowanceOutcome(enum.StrEnum):
+    """How the free output allowance decided a text request at its creation."""
+
+    FREE = "free"
+    """The request was created without kudos held upfront."""
+
+    FUNDED = "funded"
+    """The request needed kudos upfront and the requester's kudos were reserved."""
+
+    REFUSED = "refused"
+    """The request was refused with ``KudosUpfront`` for want of kudos."""
+
+    DOWNGRADED = "downgraded"
+    """The request's ``max_length`` was lowered to the allowance, which the requester allowed."""
+
+
+text_free_allowance_decisions = logfire.metric_counter(
+    "horde.text.free_allowance.decisions",
+    unit="1",
+    description=(
+        "Free output allowance decisions at text request creation, split by requester, outcome, requested and "
+        "allowance size bucket and whether the request is a chat request"
+    ),
+)
+text_free_allowance_estimated_wait_seconds = _free_allowance_wait_histogram(
+    "horde.text.free_allowance.estimated_wait_seconds",
+    "Estimated wait the free output allowance of a text request is sized by, at the request's creation",
+)
+text_queue_wait_seconds = _request_lifecycle_histogram(
+    "horde.text.queue_wait_seconds",
+    "Time from a text request's creation to a job's assignment, split by requester, chat and requested size bucket",
 )
 
 # These instruments form the shadow-validation contract for scheduling
