@@ -57,6 +57,7 @@ nav = [
         { "Run the OpenAI-compatible chat front" = "how-to/run_openai_chat_front.md" },
         { "Send chat completions" = "how-to/send_chat_completions.md" },
         { "Add chat to a frontend" = "how-to/add_chat_to_a_frontend.md" },
+        { "Write a minimal chat worker" = "how-to/write_a_minimal_chat_worker.md" },
         { "Serve chat jobs" = "how-to/serve_chat_jobs.md" },
     ] },
     { "Decisions" = "decisions/index.md" },
@@ -126,3 +127,8 @@ pygments_lang_class = true
 custom_fences = [
     { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
 ]
+# Example programs live as tested files under tools/ and are included into their pages, so a page shows the code the
+# tests run. check_paths fails the build when an included file is missing.
+[project.markdown_extensions.pymdownx.snippets]
+base_path = ["."]
+check_paths = true
