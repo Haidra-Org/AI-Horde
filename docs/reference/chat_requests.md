@@ -822,6 +822,22 @@ maintenance. The job still does not earn kudos. The same rule applies when the s
 whose reply was refused as nonconformant. Worker details (`GET /v2/workers`, `/v2/workers/{id}`,
 `/v2/workers/name/{name}`) and the moderation worker report expose `nonconformant_replies`.
 
+### Worker details
+
+Text worker details carry the declaration of the worker's last pop. `accepts_chat_jobs` and `accepts_prompt_jobs` are
+the pop's `chat_jobs` and `prompt_jobs`. `chat` mirrors the pop's chat fields, and is absent when the worker does not
+accept chat jobs:
+
+| `chat` key         | Pop field          |
+| ------------------ | ------------------ |
+| `model_id`         | `model_id`         |
+| `features`         | `chat_features`    |
+| `limits`           | `chat_limits`      |
+| `image_transports` | `image_transports` |
+
+`features` and `image_transports` list only the names the horde recognized, sorted. Single worker details are cached
+for 30 seconds, so a changed declaration can take that long to appear.
+
 ### Worker fault reasons
 
 A faulted chat submit may carry `fault_reason`, one of the SDK's `ChatFaultReason` values
