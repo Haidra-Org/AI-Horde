@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
 from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 
+from horde.apis.v2.stable import ImageJobPop, parsers
 from horde.classes.base.user import UserRoleTypes
 from horde.classes.base.waiting_prompt import WPModels
 from horde.classes.base.worker import WorkerModel
@@ -244,3 +245,145 @@ def test_runtime_gate_judges_baseline_features_on_the_requested_models_only(
     request.models = [WPModels(model=flux_model, wp_id=request.id)]
     db.session.commit()
     assert _judge_with_model_names(worker, request, [_MODEL, flux_model]) == [False, "bridge_version"]
+
+
+def _reload_policy_worker(make_user: Any, make_user_role: Any, *, debounced: bool = True) -> ImageWorker:
+    """Load a fresh ORM worker so request-local policy cannot leak from a previous pop."""
+    owner = make_user()
+    make_user_role(owner, UserRoleTypes.TRUSTED)
+    worker = _make_worker(owner)
+    worker.created = datetime.utcnow() - timedelta(minutes=5)
+    worker.last_check_in = datetime.utcnow() - timedelta(seconds=0 if debounced else 40)
+    worker.uptime = worker.last_reward_uptime = 1000
+    db.session.commit()
+    worker_id = worker.id
+    db.session.expunge(worker)
+    return db.session.get(ImageWorker, worker_id)
+
+
+def _check_in_image_pop(
+    app: Any,
+    worker: ImageWorker,
+    *,
+    require_upfront_kudos: bool,
+    priority_usernames: list[str] | None = None,
+) -> None:
+    """Exercise the image parser and its actual check-in keyword mapping."""
+    with app.test_request_context(
+        "/api/v2/generate/pop",
+        method="POST",
+        headers={"apikey": "test-worker-key"},
+        json={
+            "name": worker.name,
+            "models": [_MODEL],
+            "max_pixels": worker.max_pixels,
+            "bridge_agent": "AI Horde Worker reGen:18.4.1:https://github.com/Haidra-Org/horde-worker-reGen",
+            "require_upfront_kudos": require_upfront_kudos,
+            "priority_usernames": priority_usernames or [],
+        },
+    ):
+        pop = ImageJobPop()
+        pop.args = parsers.job_pop_parser.parse_args()
+        pop.worker = worker
+        pop.models = pop.args.models
+        pop.blacklist = pop.args.blacklist or []
+        pop.priority_usernames = pop.args.priority_usernames or []
+        pop.safe_ip = True
+        pop.worker_ip = "127.0.0.1"
+        pop.check_in()
+
+
+@pytest.mark.parametrize("debounced", [False, True], ids=["bookkeeping-due", "debounced"])
+@pytest.mark.parametrize(
+    ("require_upfront_kudos", "trusted", "priority", "kudos", "expected"),
+    [
+        (True, False, False, 10, [False, "kudos"]),
+        (True, True, False, 10, [True, None]),
+        (True, False, True, 10, [True, None]),
+        (False, False, False, 10, [True, None]),
+        (True, False, False, 124, [False, "kudos"]),
+        (True, False, False, 125, [True, None]),
+    ],
+    ids=[
+        "insufficient-kudos",
+        "trusted-exception",
+        "priority-exception",
+        "no-upfront-requirement",
+        "below-spendable-threshold",
+        "at-spendable-threshold",
+    ],
+)
+def test_image_pop_applies_policy_to_a_fresh_worker(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    debounced: bool,
+    require_upfront_kudos: bool,
+    trusted: bool,
+    priority: bool,
+    kudos: int,
+    expected: list[bool | str | None],
+) -> None:
+    worker = _reload_policy_worker(make_user, make_user_role, debounced=debounced)
+    requester = make_user(kudos=kudos)
+    if trusted:
+        make_user_role(requester, UserRoleTypes.TRUSTED)
+    request = _make_request(requester)
+    request.kudos = 100
+
+    _check_in_image_pop(
+        app,
+        worker,
+        require_upfront_kudos=require_upfront_kudos,
+        priority_usernames=[requester.get_unique_alias()] if priority else [],
+    )
+
+    assert _judge_with_model_names(worker, request, [_MODEL]) == expected
+
+
+def test_debounced_image_policy_does_not_write_check_in_bookkeeping(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    assert_query_count: Any,
+) -> None:
+    worker = _reload_policy_worker(make_user, make_user_role)
+    last_check_in, uptime, last_reward = worker.last_check_in, worker.uptime, worker.last_reward_uptime
+
+    with assert_query_count() as queries:
+        _check_in_image_pop(app, worker, require_upfront_kudos=True, priority_usernames=["priority#123"])
+        db.session.flush()
+
+    assert worker.require_upfront_kudos is True
+    assert worker.prioritized_users == ["priority#123"]
+    assert (worker.last_check_in, worker.uptime, worker.last_reward_uptime) == (last_check_in, uptime, last_reward)
+    assert not queries.of_kind("INSERT")
+    assert not queries.of_kind("UPDATE")
+    assert not queries.of_kind("DELETE")
+
+
+@pytest.mark.parametrize("require_upfront_kudos", [False, True])
+def test_next_debounced_pop_replaces_previous_policy_inputs(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    require_upfront_kudos: bool,
+) -> None:
+    worker = _reload_policy_worker(make_user, make_user_role)
+    requester = make_user(kudos=10)
+    request = _make_request(requester)
+    request.kudos = 100
+    _check_in_image_pop(app, worker, require_upfront_kudos=True, priority_usernames=[requester.get_unique_alias()])
+    assert _judge_with_model_names(worker, request, [_MODEL]) == [True, None]
+
+    _check_in_image_pop(app, worker, require_upfront_kudos=require_upfront_kudos)
+
+    assert worker.require_upfront_kudos is require_upfront_kudos
+    assert worker.prioritized_users == []
+    assert _judge_with_model_names(worker, request, [_MODEL]) == ([False, "kudos"] if require_upfront_kudos else [True, None])
