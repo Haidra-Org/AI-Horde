@@ -683,7 +683,7 @@ These counters, in `horde/metrics.py`, show how the rule behaves:
 | Counter                           | Attributes                                                | Counts                                                            |
 | --------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
 | `horde.text.lease_renewals`       | `horde.outcome` (`granted`, `at_cap`), `horde.worker_trusted` | Posts that extended a lease, and posts that found it at its cap |
-| `horde.text.stale_aborts`         | `horde.worker_trusted`                                    | Text and chat jobs aborted because the lease lapsed               |
+| `horde.text.stale_aborts`         | `horde.worker_trusted`, `horde.chat`                      | Text and chat jobs aborted because the lease lapsed               |
 | `horde.pop.lease_capacity_limited` | `horde.gentype`                                          | Pops by a chat worker whose measured speed caps the chat output it is offered below the length it declares |
 | `horde.text.gate_shadow.assignments` | `horde.worker_trusted`, `horde.size_bucket`            | Legacy text jobs assigned over the worker's capacity |
 | `horde.text.gate_shadow.outcomes` | `horde.worker_trusted`, `horde.size_bucket`, `horde.outcome` (`completed`, `faulted`, `aborted`) | How those jobs ended: a stored submit, the submit that faulted the job, or a lapsed lease |
@@ -843,6 +843,18 @@ fault is accepted as one without a reason, so a worker sending a reason this hor
 on every submit other than a chat job's fault. A failed write is logged and the fault is still applied. The fault
 counts toward the worker's counters as the table in [Refusal record and worker counters](#refusal-record-and-worker-counters)
 states; a reason does not exempt it.
+
+The route counts every faulted chat submit by the reason the worker sent, in `horde/metrics.py`:
+
+| Counter                    | Attributes                                                                                   | Counts                    |
+| -------------------------- | -------------------------------------------------------------------------------------------- | ------------------------- |
+| `horde.chat.worker_faults` | `horde.reason` (a `fault_reason` from the table above, `unknown` or `none`), `horde.worker_trusted` | Faulted chat submits |
+
+`unknown` is a value that is not in `CHAT_WORKER_FAULT_MESSAGES`, and `none` is a submit without `fault_reason`; the
+text a worker sends is never an attribute. The count is taken before the fault is applied, so a repeated fault submit
+for a generation that is already faulted is counted again. The counter records only the worker's reason: a refusal the
+horde stored is not counted, and the worker's fault after it is counted once, with the reason the worker sent
+(`reply_refused` from a worker that follows the SDK).
 
 ### Pricing
 

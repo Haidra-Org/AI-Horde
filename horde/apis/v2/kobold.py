@@ -81,6 +81,7 @@ from horde.classes.kobold.chat_request import (
     build_worker_targeting,
     chat_reply_finish_reason,
     chat_worker_fault_message,
+    chat_worker_fault_reason_label,
     check_data_url_image_total,
     create_image_total_refusal,
     estimate_chat_prompt_tokens,
@@ -1841,12 +1842,22 @@ class TextJobSubmit(JobSubmitTemplate):
             logger.warning(f"Unable to store the refusal of chat generation {self.procgen.id}: {write_error}")
 
     def record_chat_worker_fault(self) -> None:
-        """Store the Horde's message for the ``fault_reason`` of a faulted chat submit on its request.
+        """Count a faulted chat submit by its ``fault_reason`` and store the Horde's message for the reason on its request.
 
-        A missing or unknown reason stores nothing, so a worker that sends no reason or one this Horde does not know
-        is handled as before. It is stored before the fault is applied, so the request status and the client signal
-        of a fault past the limit carry it. A failed write is logged and the fault is still applied.
+        Every faulted chat submit is counted, a repeated fault submit for the same generation included, since the
+        fault is applied after this. The count carries the reason as a bounded label and never the text the worker
+        sent. A missing or unknown reason does not store a message, so a worker that sends no reason or one this Horde
+        does not know still has its fault applied. The message is stored before the fault is applied, so the request
+        status and the client signal of a fault past the limit carry it. A failed write is logged and the fault is
+        still applied.
         """
+        metrics.chat_worker_faults.add(
+            1,
+            {
+                "horde.reason": chat_worker_fault_reason_label(self.args.fault_reason),
+                "horde.worker_trusted": str(bool(self.procgen.worker.user.trusted)).lower(),
+            },
+        )
         fault_message = chat_worker_fault_message(self.args.fault_reason)
         if fault_message is None:
             return

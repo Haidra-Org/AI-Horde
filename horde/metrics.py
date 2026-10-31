@@ -309,7 +309,7 @@ text_lease_renewals = logfire.metric_counter(
 text_stale_aborts = logfire.metric_counter(
     "horde.text.stale_aborts",
     unit="1",
-    description="Text and chat jobs aborted because their lease lapsed before a submit, split by worker trust",
+    description="Text and chat jobs aborted because their lease lapsed before a submit, split by worker trust and horde.chat",
 )
 
 
@@ -776,6 +776,11 @@ chat_progress_outcomes = logfire.metric_counter(
     "horde.chat_progress.outcomes",
     unit="1",
     description="/generate/text/progress outcomes, one of horde.chat_progress.ProgressOutcome",
+)
+chat_worker_faults = logfire.metric_counter(
+    "horde.chat.worker_faults",
+    unit="1",
+    description="Faulted chat submits, split by the fault_reason the worker sent (a known reason, unknown or none) and worker trust",
 )
 
 # --- styles ------------------------------------------------------------------

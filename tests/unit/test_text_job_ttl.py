@@ -196,10 +196,11 @@ def _create_generation(
     *,
     max_length: int = 80,
     speed: float | None = None,
+    is_chat: bool = False,
 ) -> TextProcessingGeneration:
     user = make_user()
     worker = _make_worker(user, speed=speed)
-    waiting_prompt = _make_request(user, max_length)
+    waiting_prompt = _make_request(user, max_length, is_chat=is_chat)
     return TextProcessingGeneration(
         wp_id=waiting_prompt.id,
         worker_id=worker.id,
@@ -407,7 +408,7 @@ class TestRenewalByProgressRoute:
 
 
 class TestStaleAbortMetric:
-    """A job aborted because its lease lapsed is counted with its worker's trust."""
+    """A job aborted because its lease lapsed is counted with its worker's trust and whether it is a chat job."""
 
     @pytest.fixture(autouse=True)
     def _settings_row(self, db_session: Session) -> None:
@@ -416,21 +417,31 @@ class TestStaleAbortMetric:
             db_session.add(HordeSettings())
             db_session.flush()
 
-    def test_a_stale_abort_is_counted_by_trust(
+    @pytest.mark.parametrize("is_chat", [False, True])
+    def test_a_stale_abort_is_counted_by_trust_and_chat(
         self,
         db_session: Session,
         fake_redis: object,
         make_user: MakeUser,
         monkeypatch: pytest.MonkeyPatch,
+        is_chat: bool,
     ) -> None:
-        """The stale-generation thread's fault of a text job increments the stale-abort counter once."""
+        """The stale-generation thread's fault of a legacy text or chat job increments the stale-abort counter once."""
         recorder = _CounterRecorder()
         monkeypatch.setattr(text_processing_generation, "text_stale_aborts", recorder)
-        generation = _create_generation(make_user)
+        generation = _create_generation(make_user, is_chat=is_chat)
 
         generation.fault_and_restart(stale=True)
 
-        assert recorder.increments == [(1, {"horde.worker_trusted": "false"})]
+        assert recorder.increments == [
+            (
+                1,
+                {
+                    "horde.worker_trusted": "false",
+                    "horde.chat": is_chat,
+                },
+            ),
+        ]
 
     def test_a_worker_fault_is_not_counted_as_stale(
         self,

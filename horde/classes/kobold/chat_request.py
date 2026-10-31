@@ -139,8 +139,10 @@ __all__ = [
     "CHAT_STREAM_PROGRESS_KEY",
     "CHAT_SUBMIT_INVALID_RC",
     "CHAT_SUBMIT_NONCONFORMANT_RC",
+    "CHAT_WORKER_FAULT_ABSENT_LABEL",
     "CHAT_WORKER_FAULT_MESSAGES",
     "CHAT_WORKER_FAULT_RC",
+    "CHAT_WORKER_FAULT_UNKNOWN_LABEL",
     "DEFAULT_CHAT_MAX_TOKENS",
     "MAX_CHAT_FAULT_REASON_LENGTH",
     "MAX_CHAT_REFUSAL_RC_LENGTH",
@@ -173,6 +175,7 @@ __all__ = [
     "chat_reply_finish_reason",
     "chat_tools_temperature",
     "chat_worker_fault_message",
+    "chat_worker_fault_reason_label",
     "create_image_total_refusal",
     "estimate_chat_prompt_tokens",
     "flatten_messages",
@@ -369,6 +372,31 @@ def chat_worker_fault_message(fault_reason: object) -> str | None:
     if not isinstance(fault_reason, str):
         return None
     return CHAT_WORKER_FAULT_MESSAGES.get(fault_reason)
+
+
+CHAT_WORKER_FAULT_ABSENT_LABEL = "none"
+"""The metric label of a faulted chat submit that sent no ``fault_reason``."""
+
+CHAT_WORKER_FAULT_UNKNOWN_LABEL = "unknown"
+"""The metric label of a ``fault_reason`` that is not a key of ``CHAT_WORKER_FAULT_MESSAGES``. A worker may send
+any text up to ``MAX_CHAT_FAULT_REASON_LENGTH`` characters, so an unknown value is not a label of its own."""
+
+
+def chat_worker_fault_reason_label(fault_reason: object) -> str:
+    """Return the bounded metric label of a fault reason a worker sent.
+
+    Args:
+        fault_reason: The ``fault_reason`` of a faulted chat submit, as parsed.
+
+    Returns:
+        The reason when it is a key of ``CHAT_WORKER_FAULT_MESSAGES``, ``CHAT_WORKER_FAULT_ABSENT_LABEL`` when no
+        reason was sent, else ``CHAT_WORKER_FAULT_UNKNOWN_LABEL``.
+    """
+    if fault_reason is None:
+        return CHAT_WORKER_FAULT_ABSENT_LABEL
+    if isinstance(fault_reason, str) and fault_reason in CHAT_WORKER_FAULT_MESSAGES:
+        return str(fault_reason)
+    return CHAT_WORKER_FAULT_UNKNOWN_LABEL
 
 
 class ChargeBasis(enum.StrEnum):

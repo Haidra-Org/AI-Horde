@@ -478,6 +478,9 @@ class ProcessingGeneration(db.Model):
                 f"New{cancel_txt} Generation {self.id} worth {kudos} kudos, delivered by worker: {self.worker.name} for wp {self.wp.id} "
             )
             log_string += f" (requesting user {self.wp.user.get_unique_alias()} [{self.wp.ipaddr}])"
+            # Only a text request carries is_chat; a chat settlement is logged as chat so it can be told apart.
+            settlement_gentype = "chat" if getattr(self.wp, "is_chat", False) else self.procgen_type
+            log_string += f" gentype={settlement_gentype}"
             logger.info(log_string)
 
     def adjust_user_kudos(self, kudos):

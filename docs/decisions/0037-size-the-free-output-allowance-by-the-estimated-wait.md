@@ -69,6 +69,10 @@ outcome (`free`, `funded`, `refused`, `downgraded`), requested and allowance siz
 `horde.text.free_allowance.estimated_wait_seconds` records the wait the allowance was sized by, and
 `horde.text.queue_wait_seconds` records each assignment's time from request creation to pop, so the ceiling and floor
 can be judged against the waits requesters see.
+The queue-wait histogram carries the requester kind and not whether kudos were held upfront, so the funded wait is
+read as the `registered` requester's wait, which overstates it because a registered request under the allowance is
+free. The exact signal needs a per-request record of the allowance outcome, which is deferred until the first
+production week's data shows it is needed.
 
 ### Consequences
 

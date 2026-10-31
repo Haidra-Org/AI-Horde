@@ -256,6 +256,40 @@ def test_an_empty_reply_completes_charges_and_is_counted_as_empty(
     assert [attributes["model"] for attributes in empty_generation_counts] == [CHAT_MODEL]
 
 
+def test_the_settlement_log_line_ends_with_the_gentype_of_a_chat_or_text_request(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """The settlement line of a chat reply ends with ``gentype=chat`` and that of a text generation with ``gentype=text``."""
+    from horde.logger import logger
+
+    settlement_lines: list[str] = []
+    sink_id = logger.add(
+        lambda message: settlement_lines.append(message.record["message"]),
+        level="INFO",
+        filter=lambda record: " kudos, delivered by worker: " in record["message"],
+    )
+    try:
+        _submit_chat_request(client, request_headers, max_tokens=80)
+        chat_pop = chat_worker.pop()
+        chat_submit = chat_worker.submit(build_chat_submit_body(generation_id=chat_pop["id"], content="Blue.", model_id=CHAT_MODEL))
+        assert chat_submit.status_code == 200, chat_submit.get_data(as_text=True)
+        _submit_text_request(client, request_headers)
+        text_pop = chat_worker.pop()
+        assert text_pop["id"] is not None, text_pop
+        text_submit = chat_worker.submit({"id": text_pop["id"], "generation": "Blue.", "state": "ok", "seed": 0})
+        assert text_submit.status_code == 200, text_submit.get_data(as_text=True)
+    finally:
+        logger.remove(sink_id)
+
+    assert [line.split(" ")[-1] for line in settlement_lines] == [
+        "gentype=chat",
+        "gentype=text",
+    ]
+    assert f"Generation {chat_pop['id']} worth " in settlement_lines[0]
+
+
 def test_a_submit_naming_another_model_than_the_assigned_one_is_refused(
     client,
     request_headers: dict[str, str],
@@ -2465,6 +2499,87 @@ def test_a_reply_refused_fault_keeps_the_message_of_the_refusal_it_follows(
     assert status["faulted"] is True
     assert status["fault_reason"] == refusals[-1].get_json()["message"]
     assert status["fault_rc"] == "ChatSubmitNonconformant"
+
+
+class _CounterRecorder:
+    """Stands in for a metric counter and keeps every increment with its attributes."""
+
+    def __init__(self) -> None:
+        self.increments: list[tuple[int, dict[str, str]]] = []
+
+    def add(self, amount: int, attributes: dict[str, str]) -> None:
+        self.increments.append((amount, attributes))
+
+
+@pytest.fixture
+def worker_fault_counter(monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+    """Replace the chat worker fault counter with a recorder."""
+    from horde import metrics
+
+    recorder = _CounterRecorder()
+    monkeypatch.setattr(metrics, "chat_worker_faults", recorder)
+    return recorder
+
+
+@pytest.mark.parametrize(
+    ("fault_reason", "expected_label"),
+    [
+        ("prompt_overflow", "prompt_overflow"),
+        ("reactor_meltdown", "unknown"),
+        (None, "none"),
+    ],
+)
+def test_a_faulted_chat_submit_is_counted_once_by_its_reason_label(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    worker_fault_counter: _CounterRecorder,
+    fault_reason: str | None,
+    expected_label: str,
+) -> None:
+    """A known reason is counted as itself, any other text as ``unknown`` and a missing reason as ``none``."""
+    request_id = _submit_chat_request(client, request_headers)
+    pop_result = chat_worker.pop()
+
+    response = chat_worker.submit(
+        build_faulted_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL, fault_reason=fault_reason),
+    )
+
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert worker_fault_counter.increments == [
+        (
+            1,
+            {
+                "horde.reason": expected_label,
+                "horde.worker_trusted": "true",
+            },
+        ),
+    ]
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_refused_reply_and_the_fault_after_it_are_counted_once_by_the_workers_reason(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    worker_fault_counter: _CounterRecorder,
+) -> None:
+    """The refusal the Horde stores is not counted; the worker's fault after it is counted with the worker's reason."""
+    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+
+    refusal = _refuse_then_fault(chat_worker, content="Blue.", fault_reason="reply_refused")
+
+    assert refusal.status_code == 400, refusal.get_data(as_text=True)
+    assert worker_fault_counter.increments == [
+        (
+            1,
+            {
+                "horde.reason": "reply_refused",
+                "horde.worker_trusted": "true",
+            },
+        ),
+    ]
+    _cancel(client, request_headers, "chat", request_id)
 
 
 def _status_of_loaded_request(app, loaded_request: Any) -> dict[str, Any]:

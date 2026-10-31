@@ -424,11 +424,17 @@ class TextProcessingGeneration(ProcessingGeneration):
         )
 
     def record_stale_abort(self) -> None:
-        """Count this generation's abort for a lapsed lease, split by whether its worker's owner is trusted.
+        """Count this generation's abort for a lapsed lease, split by worker owner trust and by chat or legacy text.
 
         A legacy text job assigned over its worker's lease capacity is also counted as an aborted gate shadow outcome.
         """
-        text_stale_aborts.add(1, {"horde.worker_trusted": str(bool(self.worker.user.trusted)).lower()})
+        text_stale_aborts.add(
+            1,
+            {
+                "horde.worker_trusted": str(bool(self.worker.user.trusted)).lower(),
+                "horde.chat": bool(self.wp.is_chat),
+            },
+        )
         self._record_gate_shadow_outcome(GateShadowOutcome.ABORTED)
 
     def end_progress_after_fault(self) -> None:
