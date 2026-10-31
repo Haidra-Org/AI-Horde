@@ -472,17 +472,17 @@ class WorkerTemplate(db.Model):
         # we only update the worker on check_in every 30 seconds (after the first 30s of life).
         # Returns True if the check_in actually performed work, False if it was debounced.
         # Subclasses should also short-circuit when this returns False.
+        # These are the current pop's policy inputs, not persisted check-in bookkeeping.
+        # Apply them even when a freshly loaded worker's bookkeeping is debounced.
+        self.require_upfront_kudos = kwargs.get("require_upfront_kudos", False)
+        self.prioritized_users = kwargs.get("priority_usernames", [])
         now = datetime.utcnow()
         if (now - self.last_check_in).total_seconds() < 30 and (now - self.created).total_seconds() > 30:
             return False
         self.ipaddr = kwargs.get("ipaddr", None)
         self.bridge_agent = sanitize_string(kwargs.get("bridge_agent", "unknown:0:unknown"))
         self.threads = kwargs.get("threads", 1)
-        self.require_upfront_kudos = kwargs.get("require_upfront_kudos", False)
         self.allow_unsafe_ipaddr = kwargs.get("allow_unsafe_ipaddr", True)
-        # If's OK to provide an empty list here as we don't actually modify this var
-        # We only check it in can_generate
-        self.prioritized_users = kwargs.get("prioritized_users", [])
         if not kwargs.get("safe_ip", True) and not self.user.trusted:
             self.report_suspicion(reason=Suspicions.UNSAFE_IP)
         if not self.is_stale() and not self.paused and not self.maintenance:
