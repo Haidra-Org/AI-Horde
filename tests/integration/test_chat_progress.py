@@ -170,6 +170,66 @@ def test_progress_for_a_generation_without_a_lease_is_refused_as_not_streaming(
     assert response.get_json()["rc"] == "ChatProgressNotStreaming"
 
 
+def test_progress_for_a_streamed_generation_faulted_for_a_lapsed_lease_is_refused_as_aborted(
+    app: Flask,
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    """The stale-generation fault deletes a streamed generation's lease, and the next post returns ``ChatJobAborted``
+    so its worker stops generating and does not submit."""
+    from datetime import datetime, timedelta
+
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.flask import db
+
+    _submit_chat_request(client, request_headers, stream=True)
+    pop_result = chat_worker.pop()
+    request_id = progress_redis.hget(chat_lease_key(pop_result["id"]), "request")
+    assert request_id is not None
+    with app.app_context():
+        generation = db.session.get(TextProcessingGeneration, uuid.UUID(pop_result["id"]))
+        assert generation is not None
+        generation.start_time = datetime.utcnow() - timedelta(seconds=generation.job_ttl + 1)
+        db.session.commit()
+        assert generation.is_stale()
+        generation.fault_and_restart(stale=True)
+
+    response = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue")
+    client.delete(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
+
+    assert response.status_code == 404, response.get_data(as_text=True)
+    assert response.get_json() == {
+        "message": f"Generation {pop_result['id']} was aborted; stop generating and do not submit.",
+        "rc": "ChatJobAborted",
+    }
+
+
+def test_progress_for_a_generation_whose_request_was_deleted_is_refused_as_aborted(
+    app: Flask,
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    progress_redis: fakeredis.FakeStrictRedis,
+) -> None:
+    """A generation whose row went with its deleted request, as on expiry, is refused with ``ChatJobAborted``."""
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.flask import db
+
+    _submit_chat_request(client, request_headers)
+    pop_result = chat_worker.pop()
+    with app.app_context():
+        generation = db.session.get(TextProcessingGeneration, uuid.UUID(pop_result["id"]))
+        assert generation is not None
+        generation.wp.delete()
+
+    response = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue")
+
+    assert response.status_code == 404, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "ChatJobAborted"
+
+
 def test_progress_with_a_key_other_than_the_worker_owners_is_refused(
     client: FlaskClient,
     request_headers: dict[str, str],

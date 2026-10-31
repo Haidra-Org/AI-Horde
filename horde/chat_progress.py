@@ -73,8 +73,8 @@ CHAT_PROGRESS_STREAM_MAX_ENTRIES = 4 * MAX_CHAT_PROGRESS_ENTRIES
 faults fault it, so four generations' worth of deltas plus their ended markers fit."""
 
 CHAT_PROGRESS_NOT_STREAMING_RC = "ChatProgressNotStreaming"
-"""Return code for a post for a generation without a lease: not streamed, finished, faulted, expired or unknown.
-The worker stops posting and still submits."""
+"""Return code for a post for a stored, unfaulted generation without a lease: not streamed, finished or past its
+lease. The worker stops posting and still submits."""
 
 CHAT_PROGRESS_OUT_OF_SEQUENCE_RC = "ChatProgressOutOfSequence"
 """Return code for a post whose ``seq`` is not the next one, or that changes the content of the last one; the
@@ -86,6 +86,10 @@ submits."""
 
 CHAT_PROGRESS_UNAVAILABLE_RC = "ChatProgressUnavailable"
 """Return code for a post Redis could not take. The worker may retry the same ``seq`` or stop posting."""
+
+CHAT_JOB_ABORTED_RC = "ChatJobAborted"
+"""Return code for a post for a generation without a lease that is faulted, as by a lapsed lease or a cancel, or not
+stored, as after its request expired. The worker stops generating and does not submit."""
 
 LEASE_REQUEST_FIELD = "request"
 """Lease field holding the request id."""
@@ -178,10 +182,13 @@ class ProgressOutcome(enum.StrEnum):
     """The delta would pass the generation's entry or byte cap; the delta was not appended."""
 
     NO_LEASE = "no_lease"
-    """The generation has no lease: it is not streamed, finished, faulted, expired or unknown."""
+    """The generation has no lease and is stored and not faulted: it is not streamed, finished or past its lease."""
 
     FORBIDDEN = "forbidden"
     """The API key is not the key of the generation's worker owner."""
+
+    ABORTED = "aborted"
+    """The generation has no lease and is faulted or not stored; the worker stops generating and does not submit."""
 
     UNAVAILABLE = "unavailable"
     """Redis could not be reached."""

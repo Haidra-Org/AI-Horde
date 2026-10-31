@@ -953,7 +953,8 @@ again unchanged.
 | Status | Return code                 | Meaning                                                                      |
 | ------ | --------------------------- | ---------------------------------------------------------------------------- |
 | `400`  | `BadRequest`                | The delta carries neither content nor reasoning                              |
-| `404`  | `ChatProgressNotStreaming`  | The generation has no lease: not streamed, already submitted or faulted, expired or unknown. Stop posting; still submit |
+| `404`  | `ChatJobAborted`            | The generation has no lease and is faulted, as after its lease lapsed or its request was cancelled, or is not stored, as after its request expired. Stop generating; do not submit |
+| `404`  | `ChatProgressNotStreaming`  | The generation has no lease and is stored and not faulted: not streamed, already submitted or past its lease. Stop posting; still submit |
 | `403`  | `WrongCredentials`          | The API key is not the key of the worker's owner                             |
 | `409`  | `ChatProgressOutOfSequence` | `seq` is not the next one, or repeats the last one with other content. The body adds `expected_seq` |
 | `413`  | `ChatProgressCapReached`    | The generation reached its entry or byte cap. Stop posting; still submit     |
@@ -965,7 +966,7 @@ stored key hash), `max_bytes`, `fake`, the job lease's `started` (Unix seconds),
 (`1` or `0`) and, once the request is cancelled, `cancelled` (`1`). It expires `CHAT_PROGRESS_LEASE_GRACE_SECONDS` (90) after the job's TTL,
 which covers the stale-generation thread's 60 second tick, and a renewal of the job lease moves that expiry with it. The route
 authenticates from the lease alone and does not read Postgres; a key reset during the job therefore takes effect for posts only once the
-lease ends. Only a post that extends the job lease writes Postgres (see [Job lease](#job-lease)). A fake generation's posts are answered as a
+lease ends. A post without a lease reads the generation once to tell `ChatJobAborted` from `ChatProgressNotStreaming`. Only a post that extends the job lease writes Postgres (see [Job lease](#job-lease)). A fake generation's posts are answered as a
 real one's and not appended.
 
 One Lua script checks and appends a post atomically. The lease hash also holds the last accepted `seq`, the bytes

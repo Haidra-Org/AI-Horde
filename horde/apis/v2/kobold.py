@@ -7,6 +7,7 @@ import json
 import math
 import os
 from datetime import datetime
+from typing import NoReturn
 
 import logfire
 import redis
@@ -41,6 +42,7 @@ from horde.chat_contract import (
     refuse_json_constant,
 )
 from horde.chat_progress import (
+    CHAT_JOB_ABORTED_RC,
     CHAT_PROGRESS_CAP_REACHED_RC,
     CHAT_PROGRESS_NOT_STREAMING_RC,
     CHAT_PROGRESS_OUT_OF_SEQUENCE_RC,
@@ -54,6 +56,7 @@ from horde.chat_progress import (
 )
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base import settings
+from horde.classes.base.processing_generation import is_aborted_generation
 from horde.classes.base.style_application import count_literal_text_template_fields, format_text_style_prompt
 from horde.classes.base.style_contract import (
     ParameterCeilingBound,
@@ -1891,8 +1894,10 @@ class TextJobProgress(Resource):
 
         Refused with:
 
-        - `ChatProgressNotStreaming` (404): the generation is not streamed, already finished or faulted, expired or
-          unknown. Stop posting; still submit.
+        - `ChatJobAborted` (404): the generation was aborted: it is faulted, as when its lease lapsed or its request was
+          cancelled, or unknown, as when its request expired. Stop generating; do not submit.
+        - `ChatProgressNotStreaming` (404): the generation is not streamed, already finished, or its lease expired. Stop
+          posting; still submit.
         - `WrongCredentials` (403): the API key is not the key of the worker's owner.
         - `ChatProgressOutOfSequence` (409): `seq` is not the next one, or repeats the last one with other content.
           The body carries `expected_seq`.
@@ -1910,11 +1915,7 @@ class TextJobProgress(Resource):
         try:
             lease = read_stream_lease(generation_id)
             if lease is None:
-                metrics.chat_progress_outcomes.add(1, {"horde.outcome": ProgressOutcome.NO_LEASE.value})
-                raise e.NotFound(
-                    f"Generation {generation_id} does not take progress: it is not streamed, finished, faulted or expired.",
-                    rc=CHAT_PROGRESS_NOT_STREAMING_RC,
-                )
+                self.refuse_without_lease(generation_id)
             if not hmac.compare_digest(lease.key_digest, api_key_digest(hash_api_key(header_args["apikey"]))):
                 metrics.chat_progress_outcomes.add(1, {"horde.outcome": ProgressOutcome.FORBIDDEN.value})
                 raise e.Forbidden("Wrong credentials to post progress for this generation.", rc="WrongCredentials")
@@ -1948,8 +1949,31 @@ class TextJobProgress(Resource):
                 rc=CHAT_PROGRESS_CAP_REACHED_RC,
             )
         # The lease expired or was deleted between the read and the append.
+        self.refuse_without_lease(generation_id)
+
+    def refuse_without_lease(self, generation_id: str) -> NoReturn:
+        """Refuse a progress post for a generation that holds no stream lease.
+
+        Only a post without a lease reads the database. An aborted generation (faulted, or no longer stored) gets its
+        own code so its worker stops generating the rest of a job that nobody receives or pays for; any other
+        generation without a lease is not streamed, finished or past its lease, and its worker still submits.
+
+        Args:
+            generation_id: The generation the post is for.
+
+        Raises:
+            horde.exceptions.NotFound: With ``ChatJobAborted`` for an aborted generation and
+                ``ChatProgressNotStreaming`` otherwise.
+        """
+        if is_aborted_generation(text_database.get_text_progen_by_id(generation_id)):
+            metrics.chat_progress_outcomes.add(1, {"horde.outcome": ProgressOutcome.ABORTED.value})
+            raise e.NotFound(
+                f"Generation {generation_id} was aborted; stop generating and do not submit.",
+                rc=CHAT_JOB_ABORTED_RC,
+            )
+        metrics.chat_progress_outcomes.add(1, {"horde.outcome": ProgressOutcome.NO_LEASE.value})
         raise e.NotFound(
-            f"Generation {generation_id} does not take progress: it is not streamed, finished, faulted or expired.",
+            f"Generation {generation_id} does not take progress: it is not streamed, finished or expired.",
             rc=CHAT_PROGRESS_NOT_STREAMING_RC,
         )
 

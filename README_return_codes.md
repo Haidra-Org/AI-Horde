@@ -234,4 +234,9 @@ The errors returned by the AI horde are always in this json format
 | ChatImageStorageUnavailable | A chat request's images could not be stored; nothing was queued or charged (HTTP 503) |
 | OperationKeyConflict | A chat request reused an operation key the same user already claimed with a different request |
 | RequestTooLarge | The request body is larger than the route accepts (HTTP 413) |
+| ChatProgressNotStreaming | A chat job's progress post named a stored, unfaulted generation without a lease: not streamed, already submitted or past its lease (HTTP 404); the worker stops posting and still submits |
+| ChatProgressOutOfSequence | A chat job's progress post sent a `seq` other than the next one, or repeated the last one with other content (HTTP 409); the body carries `expected_seq` |
+| ChatProgressCapReached | A chat job's progress post would pass the generation's entry or byte cap (HTTP 413); the worker stops posting and still submits |
+| ChatProgressUnavailable | A chat job's progress post could not be stored because Redis could not be reached (HTTP 503) |
+| ChatJobAborted | A chat job's progress post named a generation without a lease that is faulted, as after its lease lapsed or its request was cancelled, or not stored, as after its request expired (HTTP 404); the worker stops generating and does not submit |
 | UserNotDeleted | The user is not deleted and cannot be undeleted |

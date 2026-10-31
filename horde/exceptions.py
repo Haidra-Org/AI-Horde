@@ -230,6 +230,7 @@ KNOWN_RC = [
     "ChatProgressOutOfSequence",
     "ChatProgressCapReached",
     "ChatProgressUnavailable",
+    "ChatJobAborted",
 ]
 
 

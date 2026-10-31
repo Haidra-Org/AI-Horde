@@ -190,6 +190,21 @@ def enqueue_webhook(url: str, data: dict[str, Any], wp_id: str, procgen_id: str)
         logger.warning(f"Webhook queue full; dropping delivery for {procgen_id}")
 
 
+def is_aborted_generation(generation: "ProcessingGeneration | None") -> bool:
+    """Return whether a generation read from the database is aborted: its row is gone or it is faulted.
+
+    A worker does not submit an aborted generation. A faulted one was faulted by its worker, by a lapsed lease or by
+    a cancel; a missing one belonged to a request that expired or was deleted.
+
+    Args:
+        generation: The generation as read from the database, or None when no row was found.
+
+    Returns:
+        bool: True when the generation is missing or faulted.
+    """
+    return generation is None or generation.is_faulted()
+
+
 class ProcessingGeneration(db.Model):
     """For storing processing generations in the DB"""
 
@@ -326,11 +341,9 @@ class ProcessingGeneration(db.Model):
         submit_claim_duration.record(time.monotonic() - _t, gentype_label)
         if updated_rows == 0:
             current_procgen = db.session.query(type(self)).filter(type(self).id == self.id).populate_existing().first()
-            if current_procgen is None:
+            if is_aborted_generation(current_procgen):
                 return -1
-            if current_procgen.is_faulted():
-                return -1
-            if current_procgen.is_completed():
+            if current_procgen is not None and current_procgen.is_completed():
                 return 0
             return -1
         # Sanitize NUL char away from string literal we store in the DB
