@@ -21,17 +21,19 @@ from horde.chat_contract import KudosCapExcess
 from horde.chat_signal import chat_signal_channel
 from horde.classes.kobold.request_fit import MAX_LENGTH_LIMIT
 from tests.integration._fake_chat_worker import (
+    CHAT_MESSAGES,
+    CHAT_MODEL,
     FakeChatWorker,
     build_chat_submit_body,
     build_faulted_chat_submit_body,
+    build_tool_call,
+    cancel_request,
+    chat_status,
+    submit_chat_request,
+    take_worker_offline,
 )
 
-CHAT_MODEL = "elinas/chronos-70b-v2"
 WORKER_NAME = "CICD Fake Chat Scribe"
-CHAT_MESSAGES = [
-    {"role": "system", "content": "You are a terse assistant."},
-    {"role": "user", "content": [{"type": "text", "text": "Name one colour."}]},
-]
 TEXT_POP_RESPONSE_KEYS = {"payload", "id", "ids", "messages", "ttl", "extra_source_images", "skipped", "softprompt", "model"}
 """The top-level keys of a text job's pop response, which chat support leaves unchanged."""
 
@@ -85,19 +87,6 @@ def _received_events(subscription: Any) -> list[tuple[str, dict[str, Any]]]:
             events.append((message["channel"], json.loads(message["data"])))
 
 
-def _submit_chat_request(client, request_headers: dict[str, str], **overrides: Any) -> str:
-    chat_body: dict[str, Any] = {
-        "model": CHAT_MODEL,
-        "messages": CHAT_MESSAGES,
-        "temperature": 0.5,
-        "stop": "\nuser:",
-    }
-    chat_body.update(overrides)
-    response = client.post("/api/v2/generate/chat/async", json=chat_body, headers=request_headers)
-    assert response.status_code == 202, response.get_data(as_text=True)
-    return response.get_json()["id"]
-
-
 def _submit_text_request(client, request_headers: dict[str, str], prompt: str = "a plain text prompt for a plain text worker") -> str:
     text_body = {
         "prompt": prompt,
@@ -109,24 +98,13 @@ def _submit_text_request(client, request_headers: dict[str, str], prompt: str = 
     return response.get_json()["id"]
 
 
-def _cancel(client, request_headers: dict[str, str], route_family: str, request_id: str) -> None:
-    response = client.delete(f"/api/v2/generate/{route_family}/status/{request_id}", headers=request_headers)
-    assert response.status_code == 200, response.get_data(as_text=True)
-
-
-def _chat_status(client, request_headers: dict[str, str], request_id: str) -> dict[str, Any]:
-    response = client.get(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
-    assert response.status_code == 200, response.get_data(as_text=True)
-    return response.get_json()
-
-
 def test_a_chat_request_completes_with_its_structured_reply_and_signals(
     client,
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
     chat_events: Any,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
 
     pop_result = chat_worker.pop()
 
@@ -160,7 +138,7 @@ def test_a_chat_request_completes_with_its_structured_reply_and_signals(
     )
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["done"] is True
     [generation] = status["generations"]
     assert generation["text"] == "Blue."
@@ -185,13 +163,13 @@ def test_unreported_token_counts_and_backend_reason_are_null_on_the_status(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
 
     submit_response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], content="Red.", model_id=CHAT_MODEL))
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
 
-    [generation] = _chat_status(client, request_headers, request_id)["generations"]
+    [generation] = chat_status(client, request_headers, request_id)["generations"]
     assert generation["native_finish_reason"] is None
     assert generation["prompt_tokens"] is None
     assert generation["completion_tokens"] is None
@@ -209,7 +187,7 @@ def test_the_structured_reply_is_written_with_the_generation_and_charged_as_text
     from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
     from horde.flask import db
 
-    chat_request_id = _submit_chat_request(client, request_headers, max_tokens=80)
+    chat_request_id = submit_chat_request(client, request_headers, max_tokens=80)
     chat_pop = chat_worker.pop()
     chat_submit = chat_worker.submit(build_chat_submit_body(generation_id=chat_pop["id"], content="Blue.", model_id=CHAT_MODEL))
     assert chat_submit.status_code == 200, chat_submit.get_data(as_text=True)
@@ -249,14 +227,14 @@ def test_an_empty_reply_completes_charges_and_is_counted_as_empty(
             empty_generation_counts.append(attributes)
 
     monkeypatch.setattr(processing_generation, "text_empty_generations", RecordingCounter())
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
 
     submit_response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], content="", model_id=CHAT_MODEL))
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
     assert submit_response.get_json()["reward"] > 0
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["done"] is True
     assert status["generations"][0]["message"] == {"role": "assistant", "content": ""}
     assert [attributes["model"] for attributes in empty_generation_counts] == [CHAT_MODEL]
@@ -277,7 +255,7 @@ def test_the_settlement_log_line_ends_with_the_gentype_of_a_chat_or_text_request
         filter=lambda record: " kudos, delivered by worker: " in record["message"],
     )
     try:
-        _submit_chat_request(client, request_headers, max_tokens=80)
+        submit_chat_request(client, request_headers, max_tokens=80)
         chat_pop = chat_worker.pop()
         chat_submit = chat_worker.submit(build_chat_submit_body(generation_id=chat_pop["id"], content="Blue.", model_id=CHAT_MODEL))
         assert chat_submit.status_code == 200, chat_submit.get_data(as_text=True)
@@ -301,14 +279,14 @@ def test_a_submit_naming_another_model_than_the_assigned_one_is_refused(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
 
     response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], content="Blue.", model_id="another/model"))
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "ChatModelMismatch"
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_the_assigned_model_and_limits_survive_a_later_change_of_declaration(
@@ -320,7 +298,7 @@ def test_the_assigned_model_and_limits_survive_a_later_change_of_declaration(
     from horde.classes.kobold.processing_generation import TextProcessingGeneration
     from horde.flask import db
 
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop(chat_max_context_length=8192, chat_max_length=1024)
     chat_worker.pop(chat_max_context_length=4096, chat_max_length=600)
 
@@ -329,7 +307,7 @@ def test_the_assigned_model_and_limits_survive_a_later_change_of_declaration(
         assert (stored.assigned_model, stored.assigned_max_context_length, stored.assigned_max_length) == (CHAT_MODEL, 8192, 1024)
     response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], content="Blue.", model_id=CHAT_MODEL))
     assert response.status_code == 200, response.get_data(as_text=True)
-    assert _chat_status(client, request_headers, request_id)["done"] is True
+    assert chat_status(client, request_headers, request_id)["done"] is True
 
 
 @pytest.mark.parametrize(
@@ -359,14 +337,14 @@ def test_a_chat_submit_without_a_valid_structured_reply_is_refused(
     chat_worker: FakeChatWorker,
     submit_body: dict[str, Any],
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
 
     response = chat_worker.submit({"id": pop_result["id"], **submit_body})
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "ChatSubmitInvalid"
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_submitted_message_from_another_role_than_assistant_is_refused(client, request_headers: dict[str, str]) -> None:
@@ -383,7 +361,7 @@ def test_a_faulted_chat_submit_needs_neither_generation_nor_message(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
 
     response = chat_worker.submit(build_faulted_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL))
@@ -392,7 +370,7 @@ def test_a_faulted_chat_submit_needs_neither_generation_nor_message(
     assert response.get_json()["reward"] == 0
     reissued = chat_worker.pop()
     assert reissued["id"] not in (None, pop_result["id"])
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_request_faults_on_the_submit_that_takes_it_past_the_faulted_generations_limit(
@@ -404,15 +382,15 @@ def test_a_request_faults_on_the_submit_that_takes_it_past_the_faulted_generatio
     """The submit route faults the request and signals its client without waiting for the stale-generation thread."""
     from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
 
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     for _ in range(FAULTED_GENERATIONS_LIMIT + 1):
-        assert _chat_status(client, request_headers, request_id)["faulted"] is False
+        assert chat_status(client, request_headers, request_id)["faulted"] is False
         pop_result = chat_worker.pop()
         assert pop_result["id"] is not None, pop_result
         response = chat_worker.submit(build_faulted_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL))
         assert response.status_code == 200, response.get_data(as_text=True)
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["faulted"] is True
     assert chat_worker.pop()["id"] is None
     assert (chat_signal_channel(request_id), {"id": request_id, "event": "faulted", "generations": 0}) in _received_events(chat_events)
@@ -434,13 +412,13 @@ def test_a_worker_without_the_chat_declaration_never_pops_a_chat_job(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
 
     for chat_jobs in (None, False):
         pop_result = chat_worker.pop(chat_jobs=chat_jobs)
         assert pop_result["id"] is None, pop_result
 
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_chat_worker_still_pops_text_jobs_with_an_unchanged_response(
@@ -467,14 +445,14 @@ def test_chat_limits_and_not_text_limits_admit_a_chat_request(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, horde={"max_context_length": 6144})
+    request_id = submit_chat_request(client, request_headers, horde={"max_context_length": 6144})
 
     too_small = chat_worker.pop(chat_max_context_length=4096, max_context_length=8192)
     assert too_small["id"] is None, too_small
     fits = chat_worker.pop(chat_max_context_length=8192, max_context_length=2048)
     assert fits["id"] is not None, fits
     assert fits["payload"]["max_context_length"] == 6144
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_request_needing_an_undeclared_feature_waits_for_a_worker_that_declares_it(
@@ -482,14 +460,14 @@ def test_a_request_needing_an_undeclared_feature_waits_for_a_worker_that_declare
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, frequency_penalty=0.5)
+    request_id = submit_chat_request(client, request_headers, frequency_penalty=0.5)
 
     without_feature = chat_worker.pop()
     assert without_feature["id"] is None, without_feature
     with_feature = chat_worker.pop(chat_features=["frequency_penalty", "not_a_known_feature"])
     assert with_feature["id"] is not None, with_feature
     assert with_feature["payload"]["frequency_penalty"] == 0.5
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_reasoning_effort_waits_for_a_worker_that_declares_it_and_reaches_the_payload_unchanged(
@@ -498,14 +476,14 @@ def test_a_reasoning_effort_waits_for_a_worker_that_declares_it_and_reaches_the_
     chat_worker: FakeChatWorker,
 ) -> None:
     """``none`` needs the feature as any other value does, since a backend that ignores the key would reason anyway."""
-    request_id = _submit_chat_request(client, request_headers, reasoning_effort="none")
+    request_id = submit_chat_request(client, request_headers, reasoning_effort="none")
 
     without_feature = chat_worker.pop()
     assert without_feature["id"] is None, without_feature
     with_feature = chat_worker.pop(chat_features=["reasoning_effort"])
     assert with_feature["id"] is not None, with_feature
     assert with_feature["payload"]["reasoning_effort"] == "none"
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_an_omitted_reasoning_effort_reaches_a_declaring_worker_as_medium(
@@ -514,12 +492,12 @@ def test_an_omitted_reasoning_effort_reaches_a_declaring_worker_as_medium(
     chat_worker: FakeChatWorker,
 ) -> None:
     """``medium`` is OpenAI's default."""
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
 
     with_feature = chat_worker.pop(chat_features=["reasoning_effort"])
     assert with_feature["id"] is not None, with_feature
     assert with_feature["payload"]["reasoning_effort"] == "medium"
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_an_omitted_reasoning_effort_reaches_a_worker_without_the_feature_without_the_key(
@@ -528,12 +506,12 @@ def test_an_omitted_reasoning_effort_reaches_a_worker_without_the_feature_withou
     chat_worker: FakeChatWorker,
 ) -> None:
     """An omitted value does not restrict routing, so a worker that does not declare the feature serves the request."""
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
 
     without_feature = chat_worker.pop()
     assert without_feature["id"] is not None, without_feature
     assert "reasoning_effort" not in without_feature["payload"]
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 @pytest.fixture
@@ -561,7 +539,7 @@ def test_a_pop_without_a_client_reasoning_effort_is_counted_by_whether_the_defau
     chat_features: list[str] | None,
     expected_applied: str,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
 
     pop_options = {} if chat_features is None else {"chat_features": chat_features}
     pop_result = chat_worker.pop(**pop_options)
@@ -570,7 +548,7 @@ def test_a_pop_without_a_client_reasoning_effort_is_counted_by_whether_the_defau
     assert reasoning_effort_default_counter.increments == [
         (1, {"horde.model": CHAT_MODEL, "horde.applied": expected_applied}),
     ]
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_pop_with_a_client_reasoning_effort_is_not_counted_as_a_default(
@@ -579,13 +557,13 @@ def test_a_pop_with_a_client_reasoning_effort_is_not_counted_as_a_default(
     chat_worker: FakeChatWorker,
     reasoning_effort_default_counter: _CounterRecorder,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, reasoning_effort="low")
+    request_id = submit_chat_request(client, request_headers, reasoning_effort="low")
 
     pop_result = chat_worker.pop(chat_features=["reasoning_effort"])
 
     assert pop_result["id"] is not None, pop_result
     assert reasoning_effort_default_counter.increments == []
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def _age_worker_into_the_check_in_debounce(app, worker_name: str) -> None:
@@ -616,7 +594,7 @@ def details_worker(app, client, request_headers: dict[str, str]) -> Iterator[Fak
     """
     worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Details {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
     yield worker
-    _take_worker_offline(app, worker.name)
+    take_worker_offline(app, worker.name)
 
 
 def _worker_details(client, request_headers: dict[str, str], worker_name: str) -> dict[str, Any]:
@@ -686,7 +664,7 @@ def test_each_pop_is_judged_by_its_own_chat_declaration_inside_the_check_in_debo
     fitting_declaration: dict[str, Any] = {"chat_features": ["frequency_penalty"], "chat_max_context_length": 8192}
     chat_worker.pop(**fitting_declaration)
     _age_worker_into_the_check_in_debounce(app, WORKER_NAME)
-    request_id = _submit_chat_request(client, request_headers, frequency_penalty=0.5, horde={"max_context_length": 6144})
+    request_id = submit_chat_request(client, request_headers, frequency_penalty=0.5, horde={"max_context_length": 6144})
 
     for chat_jobs in (None, False):
         undeclared = chat_worker.pop(chat_jobs=chat_jobs)
@@ -701,7 +679,7 @@ def test_each_pop_is_judged_by_its_own_chat_declaration_inside_the_check_in_debo
     assert fits["id"] is not None, fits
     assert fits["payload"]["frequency_penalty"] == 0.5
     assert _stored_accepts_chat_jobs(app, WORKER_NAME)
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_request_at_default_values_needs_no_feature(
@@ -709,12 +687,12 @@ def test_a_request_at_default_values_needs_no_feature(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, frequency_penalty=0, presence_penalty=0)
+    request_id = submit_chat_request(client, request_headers, frequency_penalty=0, presence_penalty=0)
 
     pop_result = chat_worker.pop(chat_features=[])
 
     assert pop_result["id"] is not None, pop_result
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 @pytest.mark.parametrize(
@@ -785,7 +763,7 @@ def test_a_chat_only_worker_pops_chat_jobs_and_never_text_jobs(
 ) -> None:
     """With prompt_jobs false a worker receives the queued chat job and leaves the queued text job waiting."""
     text_request_id = _submit_text_request(client, request_headers)
-    chat_request_id = _submit_chat_request(client, request_headers)
+    chat_request_id = submit_chat_request(client, request_headers)
 
     chat_only = chat_worker.pop(prompt_jobs=False)
     nothing_else = chat_worker.pop(prompt_jobs=False)
@@ -796,8 +774,8 @@ def test_a_chat_only_worker_pops_chat_jobs_and_never_text_jobs(
     assert nothing_else["id"] is None, nothing_else
     assert text_pop["id"] is not None, text_pop
     assert text_pop["payload"]["prompt"] == "a plain text prompt for a plain text worker"
-    _cancel(client, request_headers, "chat", chat_request_id)
-    _cancel(client, request_headers, "text", text_request_id)
+    cancel_request(client, request_headers, "chat", chat_request_id)
+    cancel_request(client, request_headers, "text", text_request_id)
 
 
 def test_a_chat_only_pop_needs_no_text_limits(client, request_headers: dict[str, str]) -> None:
@@ -835,7 +813,7 @@ def test_the_text_job_opt_out_is_applied_inside_the_check_in_debounce(
 
     assert text_pop["id"] is not None, text_pop
     assert _stored_accepts_prompt_jobs(app, WORKER_NAME)
-    _cancel(client, request_headers, "text", text_request_id)
+    cancel_request(client, request_headers, "text", text_request_id)
 
 
 def _stored_accepts_prompt_jobs(app, worker_name: str) -> bool:
@@ -851,7 +829,7 @@ def test_a_developer_message_reaches_the_worker_as_a_system_message(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(
+    request_id = submit_chat_request(
         client,
         request_headers,
         messages=[{"role": "developer", "content": "Be terse."}, {"role": "user", "content": "Hi"}],
@@ -860,11 +838,11 @@ def test_a_developer_message_reaches_the_worker_as_a_system_message(
     pop_result = chat_worker.pop()
 
     assert pop_result["payload"]["messages"] == [{"role": "system", "content": "Be terse."}, {"role": "user", "content": "Hi"}]
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_each_route_family_reports_the_other_familys_requests_as_not_found(client, request_headers: dict[str, str]) -> None:
-    chat_request_id = _submit_chat_request(client, request_headers)
+    chat_request_id = submit_chat_request(client, request_headers)
     text_request_id = _submit_text_request(client, request_headers)
 
     for method, path in (
@@ -878,28 +856,28 @@ def test_each_route_family_reports_the_other_familys_requests_as_not_found(clien
         assert response.status_code == 404, path
         assert response.get_json()["rc"] == "RequestNotFound"
 
-    _cancel(client, request_headers, "chat", chat_request_id)
-    _cancel(client, request_headers, "text", text_request_id)
+    cancel_request(client, request_headers, "chat", chat_request_id)
+    cancel_request(client, request_headers, "text", text_request_id)
 
 
 def test_there_is_no_chat_stored_parameters_route(client, request_headers: dict[str, str]) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
 
     response = client.get(f"/api/v2/generate/chat/request/{request_id}", headers=request_headers)
 
     assert response.status_code == 404
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_cancelling_a_chat_request_publishes_a_cancelled_event(client, request_headers: dict[str, str], chat_events: Any) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
 
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
     assert _received_events(chat_events) == [
         (chat_signal_channel(request_id), {"id": request_id, "event": "cancelled", "generations": 0}),
     ]
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["done"] is True
     assert status["faulted"] is False
     assert status["processing"] == status["waiting"] == 0
@@ -913,7 +891,7 @@ def test_faulted_chat_requests_publish_a_faulted_event_and_text_requests_publish
 ) -> None:
     from horde.database.threads import collect_chat_faults, publish_chat_faults
 
-    chat_request_id = _submit_chat_request(client, request_headers)
+    chat_request_id = submit_chat_request(client, request_headers)
     text_request_id = _submit_text_request(client, request_headers)
 
     publish_chat_faults(collect_chat_faults([uuid.UUID(chat_request_id), uuid.UUID(text_request_id)]))
@@ -921,8 +899,8 @@ def test_faulted_chat_requests_publish_a_faulted_event_and_text_requests_publish
     assert _received_events(chat_events) == [
         (chat_signal_channel(chat_request_id), {"id": chat_request_id, "event": "faulted", "generations": 0}),
     ]
-    _cancel(client, request_headers, "chat", chat_request_id)
-    _cancel(client, request_headers, "text", text_request_id)
+    cancel_request(client, request_headers, "chat", chat_request_id)
+    cancel_request(client, request_headers, "text", text_request_id)
 
 
 def test_an_expired_chat_request_is_signalled_after_its_row_is_gone(
@@ -935,7 +913,7 @@ def test_an_expired_chat_request_is_signalled_after_its_row_is_gone(
     from horde.database import threads
     from horde.flask import db
 
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     with app.app_context():
         expired_request = db.session.get(TextWaitingPrompt, uuid.UUID(request_id))
         expired_request.expiry = datetime.utcnow() - timedelta(hours=1)
@@ -962,19 +940,19 @@ def test_turning_admission_off_refuses_new_chat_requests_and_keeps_serving_queue
 ) -> None:
     from horde.config import Config
 
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     monkeypatch.setattr(Config, "chat_admission_enabled", False)
 
     refused = client.post("/api/v2/generate/chat/async", json={"model": CHAT_MODEL, "messages": CHAT_MESSAGES}, headers=request_headers)
     assert refused.status_code == 503
     assert refused.get_json()["rc"] == "ChatAdmissionDisabled"
 
-    assert _chat_status(client, request_headers, request_id)["done"] is False
+    assert chat_status(client, request_headers, request_id)["done"] is False
     pop_result = chat_worker.pop()
     assert pop_result["id"] is not None, pop_result
     submit_response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], content="Blue.", model_id=CHAT_MODEL))
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
-    assert _chat_status(client, request_headers, request_id)["done"] is True
+    assert chat_status(client, request_headers, request_id)["done"] is True
 
 
 @pytest.mark.parametrize(
@@ -1099,7 +1077,7 @@ def test_a_validation_rewrite_of_the_prompt_is_applied_to_every_message_text(
     monkeypatch.setattr(prompt_checker, "nsfw_model_prompt_replace", replace_colour)
     flagged_headers = {**request_headers, "apikey": flagged_user.api_key}
 
-    request_id = _submit_chat_request(client, flagged_headers)
+    request_id = submit_chat_request(client, flagged_headers)
 
     pop_result = chat_worker.pop()
     assert pop_result["payload"]["messages"] == [
@@ -1109,7 +1087,7 @@ def test_a_validation_rewrite_of_the_prompt_is_applied_to_every_message_text(
     with app.app_context():
         submitted_prompt = db.session.query(TextWaitingPrompt.submitted_prompt).filter_by(id=uuid.UUID(request_id)).scalar()
         assert submitted_prompt == "system: You are a terse assistant.\nuser: Name one colour."
-    _cancel(client, flagged_headers, "chat", request_id)
+    cancel_request(client, flagged_headers, "chat", request_id)
 
 
 def _count_chat_requests(app, user_id: int) -> int:
@@ -1154,16 +1132,6 @@ def _serve_custom_chat_model(client, headers: dict[str, str]) -> tuple[str, Fake
     return custom_model, custom_worker
 
 
-def _take_worker_offline(app, worker_name: str) -> None:
-    from horde.classes.kobold.worker import TextWorker
-    from horde.flask import db
-
-    with app.app_context():
-        worker = db.session.query(TextWorker).filter_by(name=worker_name).one()
-        worker.last_check_in = datetime.utcnow() - timedelta(hours=1)
-        db.session.commit()
-
-
 def _set_worker_speed(app, worker_name: str, *, tokens_per_second: float) -> None:
     """Record a measured speed for a worker, as the speed refresh would after it completed jobs at that rate."""
     from horde import vars as hv
@@ -1199,13 +1167,13 @@ def test_a_chat_request_over_the_capacity_of_every_online_worker_is_assigned_to_
     assert response.status_code == 202, response.get_data(as_text=True)
     request_id = response.get_json()["id"]
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     pop_result = slow_worker.pop()
 
     assert status["is_possible"] is True
     assert pop_result["id"] is not None, pop_result
     assert pop_result["payload"]["max_length"] == 512
-    _take_worker_offline(app, slow_worker.name)
+    take_worker_offline(app, slow_worker.name)
 
 
 def test_a_chat_request_a_capable_worker_can_take_is_not_assigned_to_a_slower_worker(
@@ -1234,8 +1202,8 @@ def test_a_chat_request_a_capable_worker_can_take_is_not_assigned_to_a_slower_wo
 
     assert slow_pop_result["id"] is None, slow_pop_result
     assert fast_pop_result["id"] is not None, fast_pop_result
-    _take_worker_offline(app, slow_worker.name)
-    _take_worker_offline(app, fast_worker.name)
+    take_worker_offline(app, slow_worker.name)
+    take_worker_offline(app, fast_worker.name)
 
 
 def test_a_model_unknown_to_the_reference_and_every_online_chat_worker_is_404_with_no_row_and_no_tax(app, client, make_api_user) -> None:
@@ -1355,7 +1323,7 @@ def idle_long_output_worker(app, client, request_headers: dict[str, str]) -> Ite
     # tokens per second.
     _set_worker_speed(app, worker.name, tokens_per_second=80)
     yield worker
-    _take_worker_offline(app, worker.name)
+    take_worker_offline(app, worker.name)
 
 
 def test_an_anonymous_chat_request_within_the_ceiling_is_free_with_an_idle_eligible_worker(
@@ -1365,7 +1333,7 @@ def test_an_anonymous_chat_request_within_the_ceiling_is_free_with_an_idle_eligi
     response = _post_chat(client, ANONYMOUS_HEADERS, _long_output_chat_body(2048))
 
     assert response.status_code == 202, response.get_data(as_text=True)
-    _cancel(client, ANONYMOUS_HEADERS, "chat", response.get_json()["id"])
+    cancel_request(client, ANONYMOUS_HEADERS, "chat", response.get_json()["id"])
 
 
 def test_an_anonymous_chat_request_above_the_ceiling_is_refused_stating_the_allowance(
@@ -1433,7 +1401,7 @@ def test_a_repeated_operation_key_is_answered_while_admission_is_off(client, mak
 
     assert repeated_response.status_code == 200, repeated_response.get_data(as_text=True)
     assert repeated_response.get_json()["id"] == first_response.get_json()["id"]
-    _cancel(client, headers, "chat", first_response.get_json()["id"])
+    cancel_request(client, headers, "chat", first_response.get_json()["id"])
 
 
 def test_a_model_only_an_online_chat_worker_serves_is_accepted(client, request_headers: dict[str, str]) -> None:
@@ -1445,7 +1413,7 @@ def test_a_model_only_an_online_chat_worker_serves_is_accepted(client, request_h
     response = _post_chat(client, request_headers, _chat_body(custom_model))
 
     assert response.status_code == 202, response.get_data(as_text=True)
-    _cancel(client, request_headers, "chat", response.get_json()["id"])
+    cancel_request(client, request_headers, "chat", response.get_json()["id"])
 
 
 def _unserved_reference_model() -> str:
@@ -1528,7 +1496,7 @@ def test_a_text_request_for_a_model_no_worker_serves_still_queues(client, reques
     response = client.post("/api/v2/generate/text/async", json=text_body, headers=request_headers)
 
     assert response.status_code == 202, response.get_data(as_text=True)
-    _cancel(client, request_headers, "text", response.get_json()["id"])
+    cancel_request(client, request_headers, "text", response.get_json()["id"])
 
 
 @pytest.fixture
@@ -1547,7 +1515,7 @@ def short_output_worker(app, client, request_headers: dict[str, str]) -> Iterato
     )
     worker.pop()
     yield worker
-    _take_worker_offline(app, worker.name)
+    take_worker_offline(app, worker.name)
 
 
 @pytest.fixture
@@ -1568,9 +1536,9 @@ def test_a_max_tokens_above_every_worker_limit_is_lowered_to_the_largest_and_rep
 ) -> None:
     """The request is served with the largest completion length declared by an online chat worker for the model.
     The worker receives that length and the status reports the change. The counter records both length buckets."""
-    request_id = _submit_chat_request(client, request_headers, model=short_output_worker.models[0], max_tokens=4096)
+    request_id = submit_chat_request(client, request_headers, model=short_output_worker.models[0], max_tokens=4096)
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["context_adjustments"] == [{"from": 4096, "to": 300, "reason": "worker_max_length"}]
     assert status["is_possible"] is True
     assert max_length_lowered_counter.increments == [
@@ -1579,7 +1547,7 @@ def test_a_max_tokens_above_every_worker_limit_is_lowered_to_the_largest_and_rep
     job = short_output_worker.pop()
     assert job["id"] is not None
     assert job["payload"]["max_length"] == 300
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_max_tokens_within_the_largest_worker_limit_is_left_unchanged(
@@ -1588,11 +1556,11 @@ def test_a_max_tokens_within_the_largest_worker_limit_is_left_unchanged(
     short_output_worker: FakeChatWorker,
     max_length_lowered_counter: _CounterRecorder,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, model=short_output_worker.models[0], max_tokens=300)
+    request_id = submit_chat_request(client, request_headers, model=short_output_worker.models[0], max_tokens=300)
 
-    assert _chat_status(client, request_headers, request_id)["context_adjustments"] is None
+    assert chat_status(client, request_headers, request_id)["context_adjustments"] is None
     assert max_length_lowered_counter.increments == []
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_lowered_max_tokens_is_reported_before_a_grown_context(
@@ -1603,7 +1571,7 @@ def test_a_lowered_max_tokens_is_reported_before_a_grown_context(
     """The context is sized after the completion length is lowered. The status reports both changes in that order."""
     long_messages = [{"role": "user", "content": "word " * 1700}]
 
-    request_id = _submit_chat_request(
+    request_id = submit_chat_request(
         client,
         request_headers,
         model=short_output_worker.models[0],
@@ -1612,12 +1580,12 @@ def test_a_lowered_max_tokens_is_reported_before_a_grown_context(
         horde={"context_fit": "grow"},
     )
 
-    worker_max_length_adjustment, grow_adjustment = _chat_status(client, request_headers, request_id)["context_adjustments"]
+    worker_max_length_adjustment, grow_adjustment = chat_status(client, request_headers, request_id)["context_adjustments"]
     assert worker_max_length_adjustment == {"from": 4096, "to": 300, "reason": "worker_max_length"}
     assert grow_adjustment["reason"] == "grow"
     assert grow_adjustment["from"] == 2048
     assert 2048 < grow_adjustment["to"] <= 8192
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_context_above_every_worker_limit_is_still_refused_as_a_declaration_gap(
@@ -1626,7 +1594,7 @@ def test_a_context_above_every_worker_limit_is_still_refused_as_a_declaration_ga
     short_output_worker: FakeChatWorker,
 ) -> None:
     """Only the completion length is lowered. A context above every worker's declaration stays a gap."""
-    request_id = _submit_chat_request(
+    request_id = submit_chat_request(
         client,
         request_headers,
         model=short_output_worker.models[0],
@@ -1634,7 +1602,7 @@ def test_a_context_above_every_worker_limit_is_still_refused_as_a_declaration_ga
         horde={"max_context_length": 16384},
     )
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["context_adjustments"] is None
     assert status["is_possible"] is False
     assert status["impossible_reason"] == {
@@ -1642,7 +1610,7 @@ def test_a_context_above_every_worker_limit_is_still_refused_as_a_declaration_ga
         "missing_declarations": [],
         "exceeded_limits": ["max_context_length"],
     }
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_repeated_operation_key_returns_the_first_request_after_its_model_went_offline(app, client, make_api_user) -> None:
@@ -1654,7 +1622,7 @@ def test_a_repeated_operation_key_returns_the_first_request_after_its_model_went
     first_response = _post_chat(client, headers, _chat_body(custom_model, operation_key=operation_key))
     assert first_response.status_code == 202, first_response.get_data(as_text=True)
     first_submission = first_response.get_json()
-    _take_worker_offline(app, custom_worker.name)
+    take_worker_offline(app, custom_worker.name)
     assert _post_chat(client, headers, _chat_body(custom_model)).status_code == 404
 
     # max_completion_tokens in place of max_tokens is the same effective request.
@@ -1666,7 +1634,7 @@ def test_a_repeated_operation_key_returns_the_first_request_after_its_model_went
     assert repeated_response.get_json() == {"id": first_submission["id"], "kudos": first_submission["kudos"]}
     assert _count_chat_requests(app, requester.id) == 1
     assert _count_generation_debits(app, requester.id) == 1
-    _cancel(client, headers, "chat", first_submission["id"])
+    cancel_request(client, headers, "chat", first_submission["id"])
 
 
 def test_a_repeated_operation_key_with_a_changed_request_is_refused(app, client, make_api_user) -> None:
@@ -1683,7 +1651,7 @@ def test_a_repeated_operation_key_with_a_changed_request_is_refused(app, client,
     assert refused.status_code == 400, refused.get_data(as_text=True)
     assert refused.get_json()["rc"] == "OperationKeyConflict"
     assert _count_chat_requests(app, requester.id) == 1
-    _cancel(client, headers, "chat", first_response.get_json()["id"])
+    cancel_request(client, headers, "chat", first_response.get_json()["id"])
 
 
 def _listing_body(models: list[str], **horde_options: Any) -> dict[str, Any]:
@@ -1708,7 +1676,7 @@ def test_a_request_listing_models_is_served_by_a_worker_of_one_and_reports_the_s
     assert pop_result["model"] == custom_model
     submit_response = custom_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], content="Blue.", model_id=custom_model))
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
-    [generation] = _chat_status(client, headers, request_id)["generations"]
+    [generation] = chat_status(client, headers, request_id)["generations"]
     assert generation["model"] == custom_model
 
 
@@ -1751,7 +1719,7 @@ def test_a_repeated_operation_key_with_the_models_reordered_returns_the_first_re
     assert repeated_response.status_code == 200, repeated_response.get_data(as_text=True)
     assert repeated_response.get_json() == {"id": first_submission["id"], "kudos": first_submission["kudos"]}
     assert _count_chat_requests(app, requester.id) == 1
-    _cancel(client, headers, "chat", first_submission["id"])
+    cancel_request(client, headers, "chat", first_submission["id"])
 
 
 def test_one_operation_key_from_two_users_creates_two_requests(client, make_api_user) -> None:
@@ -1763,7 +1731,7 @@ def test_one_operation_key_from_two_users_creates_two_requests(client, make_api_
         response = _post_chat(client, headers, _chat_body(operation_key=operation_key))
         assert response.status_code == 202, response.get_data(as_text=True)
         request_ids.append(response.get_json()["id"])
-        _cancel(client, headers, "chat", request_ids[-1])
+        cancel_request(client, headers, "chat", request_ids[-1])
 
     assert request_ids[0] != request_ids[1]
 
@@ -1780,7 +1748,7 @@ def test_a_dry_run_with_an_operation_key_quotes_without_claiming_it(app, client,
     queued = _post_chat(client, headers, _chat_body(operation_key=operation_key))
     assert queued.status_code == 202, queued.get_data(as_text=True)
     assert _count_chat_requests(app, requester.id) == 1
-    _cancel(client, headers, "chat", queued.get_json()["id"])
+    cancel_request(client, headers, "chat", queued.get_json()["id"])
 
 
 def test_two_concurrent_submits_with_one_operation_key_make_one_activation_one_tax_and_one_job(
@@ -1826,7 +1794,7 @@ def test_two_concurrent_submits_with_one_operation_key_make_one_activation_one_t
     assert responses[0].get_json()["id"] == responses[1].get_json()["id"]
     assert _count_chat_requests(app, requester.id) == 1
     assert _count_generation_debits(app, requester.id) == 1
-    _cancel(client, headers, "chat", responses[0].get_json()["id"])
+    cancel_request(client, headers, "chat", responses[0].get_json()["id"])
 
 
 def test_a_body_with_a_length_above_the_limit_is_refused_before_it_is_parsed(client, request_headers: dict[str, str]) -> None:
@@ -1897,16 +1865,16 @@ def test_a_grown_context_is_reported_on_the_chat_status(client, request_headers:
     chat_worker.pop()
     long_messages = [{"role": "user", "content": "word " * 1700}]
 
-    grown_id = _submit_chat_request(client, request_headers, messages=long_messages, max_tokens=64, horde={"context_fit": "grow"})
-    fitting_id = _submit_chat_request(client, request_headers, max_tokens=64)
+    grown_id = submit_chat_request(client, request_headers, messages=long_messages, max_tokens=64, horde={"context_fit": "grow"})
+    fitting_id = submit_chat_request(client, request_headers, max_tokens=64)
 
-    [adjustment] = _chat_status(client, request_headers, grown_id)["context_adjustments"]
+    [adjustment] = chat_status(client, request_headers, grown_id)["context_adjustments"]
     assert adjustment["from"] == 2048
     assert 2048 < adjustment["to"] <= 8192
     assert adjustment["reason"] == "grow"
-    assert _chat_status(client, request_headers, fitting_id)["context_adjustments"] is None
-    _cancel(client, request_headers, "chat", grown_id)
-    _cancel(client, request_headers, "chat", fitting_id)
+    assert chat_status(client, request_headers, fitting_id)["context_adjustments"] is None
+    cancel_request(client, request_headers, "chat", grown_id)
+    cancel_request(client, request_headers, "chat", fitting_id)
 
 
 LONG_HISTORY_SYSTEM = {"role": "system", "content": "You are a terse assistant."}
@@ -1940,7 +1908,7 @@ def test_a_long_history_under_truncate_oldest_is_admitted_with_its_oldest_turns_
     """A long history is admitted with its oldest turns dropped, whether ``truncate_oldest`` is sent or is the default."""
     chat_worker.pop()
 
-    request_id = _submit_chat_request(
+    request_id = submit_chat_request(
         client,
         request_headers,
         messages=LONG_HISTORY,
@@ -1948,7 +1916,7 @@ def test_a_long_history_under_truncate_oldest_is_admitted_with_its_oldest_turns_
         horde={"max_context_length": 2048, **context_fit_options},
     )
 
-    grow_adjustment, truncate_adjustment = _chat_status(client, request_headers, request_id)["context_adjustments"]
+    grow_adjustment, truncate_adjustment = chat_status(client, request_headers, request_id)["context_adjustments"]
     assert grow_adjustment["reason"] == "grow"
     assert grow_adjustment["from"] == 2048
     assert 2048 < grow_adjustment["to"] <= 8192
@@ -1966,7 +1934,7 @@ def test_a_long_history_under_truncate_oldest_is_admitted_with_its_oldest_turns_
     assert kept_messages[0] == LONG_HISTORY_SYSTEM
     assert kept_messages[-1] == LONG_HISTORY_LATEST_USER
     assert kept_messages[1:] == LONG_HISTORY[1 + truncate_adjustment["dropped_messages"] :]
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_long_history_under_reject_is_refused(client, request_headers: dict[str, str], chat_worker: FakeChatWorker) -> None:
@@ -2023,14 +1991,14 @@ def test_native_http_refuses_nonfinite_sampling_values(client, request_headers: 
 def test_worker_nuls_are_sanitised_in_the_atomic_structured_submission(
     client, request_headers: dict[str, str], chat_worker: FakeChatWorker, content: str, reason: str
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     popped = chat_worker.pop()
     response = chat_worker.submit(
         build_chat_submit_body(generation_id=popped["id"], content=content, model_id=CHAT_MODEL, native_finish_reason=reason)
     )
     assert response.status_code == 200, response.get_data(as_text=True)
     assert response.get_json()["reward"] > 0
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["done"]
     [generation] = status["generations"]
     assert generation["text"] == generation["message"]["content"] == content.replace("\x00", "\ufffd")
@@ -2041,7 +2009,7 @@ def test_worker_nuls_are_sanitised_in_the_atomic_structured_submission(
     assert duplicate.status_code == 400
     assert duplicate.get_json()["rc"] == "DuplicateGen"
     assert "reward" not in duplicate.get_json()
-    after_duplicate = _chat_status(client, request_headers, request_id)
+    after_duplicate = chat_status(client, request_headers, request_id)
     assert after_duplicate["generations"] == status["generations"]
     assert after_duplicate["kudos"] == status["kudos"]
 
@@ -2072,8 +2040,8 @@ def test_client_nuls_are_refused_before_storage_and_leave_the_session_usable(
     assert response.get_json()["rc"] == "NulByteInPayload"
     with app.app_context():
         assert db.session.query(TextWaitingPrompt).count() == before
-    valid_id = _submit_chat_request(client, request_headers)
-    _cancel(client, request_headers, "chat", valid_id)
+    valid_id = submit_chat_request(client, request_headers)
+    cancel_request(client, request_headers, "chat", valid_id)
 
 
 LOOKUP_TOOL: dict[str, Any] = {
@@ -2118,12 +2086,12 @@ def test_a_tools_request_waits_for_a_worker_declaring_tools_and_is_not_possible_
     chat_worker: FakeChatWorker,
 ) -> None:
     assert chat_worker.pop(chat_features=["json_object"])["id"] is None
-    request_id = _submit_chat_request(client, request_headers, messages=TOOL_HISTORY, **TOOLS_REQUEST_EXTRAS)
+    request_id = submit_chat_request(client, request_headers, messages=TOOL_HISTORY, **TOOLS_REQUEST_EXTRAS)
 
     assert chat_worker.pop(chat_features=["json_object"])["id"] is None
-    assert _chat_status(client, request_headers, request_id)["is_possible"] is False
+    assert chat_status(client, request_headers, request_id)["is_possible"] is False
     assert chat_worker.pop(chat_features=TOOLS_FEATURES)["id"] is not None
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_tool_history_alone_needs_a_worker_declaring_tools(
@@ -2131,13 +2099,13 @@ def test_a_tool_history_alone_needs_a_worker_declaring_tools(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, messages=TOOL_HISTORY)
+    request_id = submit_chat_request(client, request_headers, messages=TOOL_HISTORY)
 
     assert chat_worker.pop(chat_features=[])["id"] is None
     pop_result = chat_worker.pop(chat_features=["tools"])
     assert pop_result["id"] is not None, pop_result
     assert not {"tools", "tool_choice", "parallel_tool_calls", "response_format"} & set(pop_result["payload"])
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_tool_call_reply_is_popped_submitted_shown_and_charged_by_its_arguments(
@@ -2158,7 +2126,7 @@ def test_a_tool_call_reply_is_popped_submitted_shown_and_charged_by_its_argument
             empty_generation_counts.append(attributes)
 
     monkeypatch.setattr(processing_generation, "text_empty_generations", RecordingCounter())
-    request_id = _submit_chat_request(client, request_headers, messages=TOOL_HISTORY, max_tokens=80, **TOOLS_REQUEST_EXTRAS)
+    request_id = submit_chat_request(client, request_headers, messages=TOOL_HISTORY, max_tokens=80, **TOOLS_REQUEST_EXTRAS)
 
     pop_result = chat_worker.pop(chat_features=TOOLS_FEATURES)
 
@@ -2177,7 +2145,7 @@ def test_a_tool_call_reply_is_popped_submitted_shown_and_charged_by_its_argument
     )
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["done"] is True
     [generation] = status["generations"]
     assert generation["message"] == {"role": "assistant", "content": None, "tool_calls": [tool_call]}
@@ -2208,14 +2176,14 @@ def test_a_json_schema_request_goes_only_to_a_worker_declaring_json_schema(
         "type": "json_schema",
         "json_schema": {"name": "colour", "schema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     }
-    request_id = _submit_chat_request(client, request_headers, response_format=response_format)
+    request_id = submit_chat_request(client, request_headers, response_format=response_format)
 
     assert chat_worker.pop(chat_features=["json_object", "tools"])["id"] is None
     pop_result = chat_worker.pop(chat_features=["json_schema"])
 
     assert pop_result["id"] is not None, pop_result
     assert pop_result["payload"]["response_format"] == response_format
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 @pytest.mark.parametrize(
@@ -2291,7 +2259,7 @@ def test_a_strict_named_tool_choice_waits_for_a_worker_enforcing_tool_choice_and
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, tools=[EMAIL_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)
+    request_id = submit_chat_request(client, request_headers, tools=[EMAIL_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)
 
     assert chat_worker.pop(chat_features=["tools"], chat_guarantees=["prompt_overflow_refused"])["id"] is None
     pop_result = chat_worker.pop(chat_features=["tools"])
@@ -2299,7 +2267,7 @@ def test_a_strict_named_tool_choice_waits_for_a_worker_enforcing_tool_choice_and
     assert pop_result["id"] is not None, pop_result
     assert pop_result["payload"]["tools"] == [LOOKUP_TOOL]
     assert pop_result["payload"]["tool_choice"] == "required"
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_best_effort_named_tool_choice_is_served_by_a_worker_without_guarantees(
@@ -2307,7 +2275,7 @@ def test_a_best_effort_named_tool_choice_is_served_by_a_worker_without_guarantee
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(
+    request_id = submit_chat_request(
         client,
         request_headers,
         tools=[EMAIL_TOOL, LOOKUP_TOOL],
@@ -2319,7 +2287,7 @@ def test_a_best_effort_named_tool_choice_is_served_by_a_worker_without_guarantee
 
     assert pop_result["id"] is not None, pop_result
     assert pop_result["payload"]["tools"] == [LOOKUP_TOOL]
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_tool_choice_none_forwards_no_tool_fields(
@@ -2327,13 +2295,13 @@ def test_tool_choice_none_forwards_no_tool_fields(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], tool_choice="none", parallel_tool_calls=False)
+    request_id = submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], tool_choice="none", parallel_tool_calls=False)
 
     pop_result = chat_worker.pop(chat_features=[], chat_guarantees=["prompt_overflow_refused"])
 
     assert pop_result["id"] is not None, pop_result
     assert not TOOL_KEYS & set(pop_result["payload"])
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_tool_request_hotter_than_a_worker_tool_temperature_limit_waits_for_another_worker(
@@ -2341,11 +2309,11 @@ def test_a_tool_request_hotter_than_a_worker_tool_temperature_limit_waits_for_an
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], temperature=1.5)
+    request_id = submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], temperature=1.5)
 
     assert chat_worker.pop(chat_features=["tools"], tools_max_temperature=1.0)["id"] is None
     assert chat_worker.pop(chat_features=["tools"])["id"] is not None
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_strict_named_tool_choice_no_online_worker_enforces_reports_the_missing_guarantee(
@@ -2353,10 +2321,10 @@ def test_a_strict_named_tool_choice_no_online_worker_enforces_reports_the_missin
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, tools=[EMAIL_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)
+    request_id = submit_chat_request(client, request_headers, tools=[EMAIL_TOOL, LOOKUP_TOOL], tool_choice=NAMED_LOOKUP_CHOICE)
 
     assert chat_worker.pop(chat_features=["tools"], chat_guarantees=["prompt_overflow_refused"])["id"] is None
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
 
     assert status["is_possible"] is False
     assert status["impossible_reason"] == {
@@ -2364,7 +2332,7 @@ def test_a_strict_named_tool_choice_no_online_worker_enforces_reports_the_missin
         "missing_declarations": ["tool_choice_enforced"],
         "exceeded_limits": [],
     }
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_tool_request_hotter_than_every_worker_tool_temperature_limit_reports_the_limit(
@@ -2372,10 +2340,10 @@ def test_a_tool_request_hotter_than_every_worker_tool_temperature_limit_reports_
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], temperature=1.5)
+    request_id = submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], temperature=1.5)
 
     assert chat_worker.pop(chat_features=["tools"], tools_max_temperature=1.0)["id"] is None
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
 
     assert status["is_possible"] is False
     assert status["impossible_reason"] == {
@@ -2383,7 +2351,7 @@ def test_a_tool_request_hotter_than_every_worker_tool_temperature_limit_reports_
         "missing_declarations": [],
         "exceeded_limits": ["tools_max_temperature"],
     }
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_request_over_every_worker_chat_output_limit_reports_the_limit(
@@ -2391,10 +2359,10 @@ def test_a_request_over_every_worker_chat_output_limit_reports_the_limit(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, max_tokens=400)
+    request_id = submit_chat_request(client, request_headers, max_tokens=400)
 
     assert chat_worker.pop(chat_max_length=300)["id"] is None
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
 
     assert status["is_possible"] is False
     assert status["impossible_reason"] == {
@@ -2402,7 +2370,7 @@ def test_a_request_over_every_worker_chat_output_limit_reports_the_limit(
         "missing_declarations": [],
         "exceeded_limits": ["max_length"],
     }
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 @pytest.mark.parametrize("conformance", ["strict", "best_effort"])
@@ -2412,7 +2380,7 @@ def test_tools_beside_a_response_format_without_a_worker_serving_the_combination
     chat_worker: FakeChatWorker,
     conformance: str,
 ) -> None:
-    request_id = _submit_chat_request(
+    request_id = submit_chat_request(
         client,
         request_headers,
         tools=[LOOKUP_TOOL],
@@ -2422,7 +2390,7 @@ def test_tools_beside_a_response_format_without_a_worker_serving_the_combination
 
     worker_guarantees = ["prompt_overflow_refused"]
     assert chat_worker.pop(chat_features=["tools", "json_object"], chat_guarantees=worker_guarantees)["id"] is None
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
 
     assert status["is_possible"] is False
     assert status["impossible_reason"] == {
@@ -2431,7 +2399,7 @@ def test_tools_beside_a_response_format_without_a_worker_serving_the_combination
         "exceeded_limits": [],
     }
     assert chat_worker.pop(chat_features=TOOLS_FEATURES, chat_guarantees=worker_guarantees)["id"] is not None
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_request_a_worker_can_take_reports_no_impossible_reason(
@@ -2440,13 +2408,13 @@ def test_a_request_a_worker_can_take_reports_no_impossible_reason(
     chat_worker: FakeChatWorker,
 ) -> None:
     chat_worker.pop(chat_features=["tools"])
-    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL])
+    request_id = submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL])
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
 
     assert status["is_possible"] is True
     assert status["impossible_reason"] is None
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 VERIFIED_FEATURES = ["tools", "json_object", "json_schema", "tools_with_response_format"]
@@ -2465,10 +2433,6 @@ def _colour_format(*, strict: bool) -> dict[str, Any]:
     return {"type": "json_schema", "json_schema": {"name": "colour", "schema": COLOUR_SCHEMA, "strict": strict}}
 
 
-def _tool_call(name: str = "lookup_weather", call_id: str = "call_one") -> dict[str, Any]:
-    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": '{"city":"Bergen"}'}}
-
-
 def _serve_reply(
     client,
     request_headers: dict[str, str],
@@ -2479,7 +2443,7 @@ def _serve_reply(
     tool_calls: list[dict[str, Any]] | None = None,
 ) -> tuple[str, Any]:
     """Queue a chat request, pop it with every feature and guarantee declared, and submit one reply to it."""
-    request_id = _submit_chat_request(client, request_headers, **request_overrides)
+    request_id = submit_chat_request(client, request_headers, **request_overrides)
     pop_result = chat_worker.pop(chat_features=VERIFIED_FEATURES)
     assert pop_result["id"] is not None, pop_result
     submit_response = chat_worker.submit(
@@ -2495,13 +2459,13 @@ def _serve_reply(
 
 
 NONCONFORMANT_REPLIES = [
-    pytest.param({"tools": [LOOKUP_TOOL], "tool_choice": "none"}, None, [_tool_call()], id="none-with-call"),
+    pytest.param({"tools": [LOOKUP_TOOL], "tool_choice": "none"}, None, [build_tool_call()], id="none-with-call"),
     pytest.param({"tools": [LOOKUP_TOOL], "tool_choice": "required"}, "Sunny.", None, id="required-without-call"),
     pytest.param({"tools": [EMAIL_TOOL, LOOKUP_TOOL], "tool_choice": NAMED_LOOKUP_CHOICE}, "Sunny.", None, id="named-without-call"),
     pytest.param(
         {"tools": [EMAIL_TOOL, LOOKUP_TOOL], "tool_choice": NAMED_LOOKUP_CHOICE},
         None,
-        [_tool_call("send_email")],
+        [build_tool_call("send_email")],
         id="named-other-function",
     ),
     pytest.param({"response_format": {"type": "json_object"}}, "Blue.", None, id="json-object-not-json"),
@@ -2525,8 +2489,8 @@ def test_a_strict_request_refuses_a_reply_its_tool_choice_or_response_format_rul
 
     assert submit_response.status_code == 400
     assert submit_response.get_json()["rc"] == "ChatSubmitNonconformant"
-    assert _chat_status(client, request_headers, request_id)["done"] is False
-    _cancel(client, request_headers, "chat", request_id)
+    assert chat_status(client, request_headers, request_id)["done"] is False
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 @pytest.mark.parametrize(("request_overrides", "content", "tool_calls"), NONCONFORMANT_REPLIES)
@@ -2545,7 +2509,7 @@ def test_a_best_effort_request_shows_that_reply_as_submitted(
     )
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
-    [generation] = _chat_status(client, request_headers, request_id)["generations"]
+    [generation] = chat_status(client, request_headers, request_id)["generations"]
     expected_message: dict[str, Any] = {"role": "assistant", "content": content}
     if tool_calls is not None:
         expected_message["tool_calls"] = tool_calls
@@ -2555,7 +2519,7 @@ def test_a_best_effort_request_shows_that_reply_as_submitted(
 @pytest.mark.parametrize("conformance", ["strict", "best_effort"])
 @pytest.mark.parametrize(
     "tool_calls",
-    [[_tool_call("send_email")], [_tool_call(), _tool_call()]],
+    [[build_tool_call("send_email")], [build_tool_call(), build_tool_call()]],
     ids=["function-not-offered", "repeated-call-id"],
 )
 def test_a_reply_no_client_could_use_is_refused_under_every_conformance_mode(
@@ -2571,7 +2535,7 @@ def test_a_reply_no_client_could_use_is_refused_under_every_conformance_mode(
 
     assert submit_response.status_code == 400
     assert submit_response.get_json()["rc"] == "ChatSubmitInvalid"
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_strict_single_call_request_shows_only_the_first_of_several_calls(
@@ -2584,7 +2548,7 @@ def test_a_strict_single_call_request_shows_only_the_first_of_several_calls(
 
     log_records: list[tuple[str, dict[str, Any]]] = []
     monkeypatch.setattr(base.logfire, "info", lambda event_name, **attributes: log_records.append((event_name, attributes)))
-    first_call, second_call = _tool_call(call_id="call_one"), _tool_call("send_email", "call_two")
+    first_call, second_call = build_tool_call(call_id="call_one"), build_tool_call("send_email", "call_two")
     request_overrides = {"tools": [EMAIL_TOOL, LOOKUP_TOOL], "parallel_tool_calls": False}
 
     request_id, submit_response = _serve_reply(
@@ -2592,7 +2556,7 @@ def test_a_strict_single_call_request_shows_only_the_first_of_several_calls(
     )
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
-    [generation] = _chat_status(client, request_headers, request_id)["generations"]
+    [generation] = chat_status(client, request_headers, request_id)["generations"]
     assert generation["message"] == {"role": "assistant", "content": None, "tool_calls": [first_call]}
     assert generation["finish_reason"] == "tool_calls"
     [submit_record] = [attributes for event_name, attributes in log_records if event_name == "horde.job_submit.done"]
@@ -2606,13 +2570,13 @@ def test_a_strict_request_without_parallel_tool_calls_goes_to_a_worker_without_t
 ) -> None:
     """The Horde reduces a strict reply's tool calls to the first itself, so routing does not need
     ``single_tool_call_enforced``."""
-    request_id = _submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], parallel_tool_calls=False)
+    request_id = submit_chat_request(client, request_headers, tools=[LOOKUP_TOOL], parallel_tool_calls=False)
 
     pop_result = chat_worker.pop(chat_features=["tools"], chat_guarantees=["prompt_overflow_refused"])
 
     assert pop_result["id"] is not None, pop_result
     assert pop_result["payload"]["parallel_tool_calls"] is False
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 @pytest.mark.parametrize("conformance", ["strict", "best_effort"])
@@ -2625,13 +2589,13 @@ def test_a_named_tool_choice_reply_finishes_with_stop_as_under_openai(
     request_overrides = {"tools": [EMAIL_TOOL, LOOKUP_TOOL], "tool_choice": NAMED_LOOKUP_CHOICE, "horde": {"conformance": conformance}}
 
     request_id, submit_response = _serve_reply(
-        client, request_headers, chat_worker, request_overrides, content=None, tool_calls=[_tool_call()]
+        client, request_headers, chat_worker, request_overrides, content=None, tool_calls=[build_tool_call()]
     )
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
-    [generation] = _chat_status(client, request_headers, request_id)["generations"]
+    [generation] = chat_status(client, request_headers, request_id)["generations"]
     assert generation["finish_reason"] == "stop"
-    assert generation["message"]["tool_calls"] == [_tool_call()]
+    assert generation["message"]["tool_calls"] == [build_tool_call()]
 
 
 def test_a_strict_schema_reply_matching_the_schema_completes(
@@ -2644,7 +2608,7 @@ def test_a_strict_schema_reply_matching_the_schema_completes(
     request_id, submit_response = _serve_reply(client, request_headers, chat_worker, request_overrides, content='{"name": "blue"}')
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
-    assert _chat_status(client, request_headers, request_id)["generations"][0]["text"] == '{"name": "blue"}'
+    assert chat_status(client, request_headers, request_id)["generations"][0]["text"] == '{"name": "blue"}'
 
 
 def test_a_non_strict_schema_accepts_any_json_object(
@@ -2657,7 +2621,7 @@ def test_a_non_strict_schema_accepts_any_json_object(
     request_id, submit_response = _serve_reply(client, request_headers, chat_worker, request_overrides, content='{"name": 7}')
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
-    assert _chat_status(client, request_headers, request_id)["done"] is True
+    assert chat_status(client, request_headers, request_id)["done"] is True
 
 
 def _refuse_then_fault(
@@ -2708,14 +2672,14 @@ def test_a_request_faulted_after_refused_replies_reports_the_last_refusal(
 ) -> None:
     from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
 
-    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    request_id = submit_chat_request(client, request_headers, response_format={"type": "json_object"})
     replies = ["Blue."] * FAULTED_GENERATIONS_LIMIT + ["[1]"]
     refusals = [_refuse_then_fault(chat_worker, content=reply) for reply in replies]
 
     assert [refusal.status_code for refusal in refusals] == [400] * len(replies)
     last_refusal = refusals[-1].get_json()
     assert refusals[0].get_json()["message"] != last_refusal["message"]
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["faulted"] is True
     assert status["fault_reason"] == last_refusal["message"]
     assert status["fault_rc"] == "ChatSubmitNonconformant"
@@ -2734,22 +2698,22 @@ def test_an_unfaulted_request_reports_no_fault_reason_after_a_refused_reply(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    request_id = submit_chat_request(client, request_headers, response_format={"type": "json_object"})
 
     assert _refuse_then_fault(chat_worker, content="Blue.").status_code == 400
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["faulted"] is False
     assert status["fault_reason"] is None
     assert status["fault_rc"] is None
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 @pytest.mark.parametrize(
     ("request_overrides", "content", "tool_calls", "refusal_rc", "dropped_jobs", "nonconformant_replies"),
     [
         pytest.param({"response_format": {"type": "json_object"}}, "Blue.", None, "ChatSubmitNonconformant", 0, 1, id="nonconformant"),
-        pytest.param({"tools": [LOOKUP_TOOL]}, None, [_tool_call("send_email")], "ChatSubmitInvalid", 1, 0, id="invalid"),
+        pytest.param({"tools": [LOOKUP_TOOL]}, None, [build_tool_call("send_email")], "ChatSubmitInvalid", 1, 0, id="invalid"),
     ],
 )
 def test_a_fault_after_a_refused_reply_counts_as_a_dropped_job_unless_the_reply_was_nonconformant(
@@ -2764,7 +2728,7 @@ def test_a_fault_after_a_refused_reply_counts_as_a_dropped_job_unless_the_reply_
     nonconformant_replies: int,
 ) -> None:
     worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Refusals {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
-    request_id = _submit_chat_request(client, request_headers, **request_overrides)
+    request_id = submit_chat_request(client, request_headers, **request_overrides)
 
     refusal = _refuse_then_fault(worker, content=content, tool_calls=tool_calls)
 
@@ -2773,7 +2737,7 @@ def test_a_fault_after_a_refused_reply_counts_as_a_dropped_job_unless_the_reply_
     details = client.get(f"/api/v2/workers/name/{worker.name}", headers=request_headers)
     assert details.status_code == 200, details.get_data(as_text=True)
     assert details.get_json()["nonconformant_replies"] == nonconformant_replies
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_nonconformant_reply_for_a_stale_aborted_generation_is_refused_as_aborted_without_a_stored_refusal(
@@ -2789,7 +2753,7 @@ def test_a_nonconformant_reply_for_a_stale_aborted_generation_is_refused_as_abor
     from horde.flask import db
 
     worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Stale {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
-    _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    submit_chat_request(client, request_headers, response_format={"type": "json_object"})
     pop_result = worker.pop(chat_features=VERIFIED_FEATURES)
     assert pop_result["id"] is not None, pop_result
     with app.app_context():
@@ -2826,7 +2790,7 @@ def test_a_nonconformant_reply_for_a_stale_aborted_generation_is_refused_as_abor
         )
     assert tuple(stored_refusal) == (None, None)
     assert stored_refusal_rc is None
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def _fault_past_the_limit(chat_worker: FakeChatWorker, fault_reason: str) -> None:
@@ -2855,12 +2819,12 @@ def test_a_request_faulted_with_a_worker_fault_reason_reports_the_horde_message_
     from horde.classes.kobold.chat_request import CHAT_WORKER_FAULT_MESSAGES
 
     worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Faults {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
 
     _fault_past_the_limit(worker, "prompt_overflow")
 
     expected_message = CHAT_WORKER_FAULT_MESSAGES[ChatFaultReason.PROMPT_OVERFLOW]
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["faulted"] is True
     assert status["fault_reason"] == expected_message
     assert status["fault_rc"] == "ChatWorkerFault"
@@ -2881,11 +2845,11 @@ def test_an_unknown_worker_fault_reason_is_ignored(
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
 
     _fault_past_the_limit(chat_worker, "reactor_meltdown")
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["faulted"] is True
     assert status["fault_reason"] is None
     assert status["fault_rc"] is None
@@ -2898,13 +2862,13 @@ def test_a_reply_refused_fault_keeps_the_message_of_the_refusal_it_follows(
 ) -> None:
     from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
 
-    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    request_id = submit_chat_request(client, request_headers, response_format={"type": "json_object"})
     refusals = [
         _refuse_then_fault(chat_worker, content="Blue.", fault_reason="reply_refused") for _ in range(FAULTED_GENERATIONS_LIMIT + 1)
     ]
 
     assert [refusal.status_code for refusal in refusals] == [400] * len(refusals)
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["faulted"] is True
     assert status["fault_reason"] == refusals[-1].get_json()["message"]
     assert status["fault_rc"] == "ChatSubmitNonconformant"
@@ -2947,7 +2911,7 @@ def test_a_faulted_chat_submit_is_counted_once_by_its_reason_label(
     expected_label: str,
 ) -> None:
     """A known reason is counted as itself, any other text as ``unknown`` and a missing reason as ``none``."""
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
 
     response = chat_worker.submit(
@@ -2964,7 +2928,7 @@ def test_a_faulted_chat_submit_is_counted_once_by_its_reason_label(
             },
         ),
     ]
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_refused_reply_and_the_fault_after_it_are_counted_once_by_the_workers_reason(
@@ -2974,7 +2938,7 @@ def test_a_refused_reply_and_the_fault_after_it_are_counted_once_by_the_workers_
     worker_fault_counter: _CounterRecorder,
 ) -> None:
     """The refusal the Horde stores is not counted; the worker's fault after it is counted with the worker's reason."""
-    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    request_id = submit_chat_request(client, request_headers, response_format={"type": "json_object"})
 
     refusal = _refuse_then_fault(chat_worker, content="Blue.", fault_reason="reply_refused")
 
@@ -2988,7 +2952,7 @@ def test_a_refused_reply_and_the_fault_after_it_are_counted_once_by_the_workers_
             },
         ),
     ]
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def _status_of_loaded_request(app, loaded_request: Any) -> dict[str, Any]:
@@ -3009,10 +2973,10 @@ def test_cancelled_chat_status_settles_only_after_in_flight_work(
     chat_worker,
     in_flight_result,
 ):
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     popped = chat_worker.pop() if in_flight_result else None
-    _cancel(client, request_headers, "chat", request_id)
-    status = _chat_status(client, request_headers, request_id)
+    cancel_request(client, request_headers, "chat", request_id)
+    status = chat_status(client, request_headers, request_id)
     assert status["waiting"] == 0
     assert status["done"] is (in_flight_result is None)
     if popped:
@@ -3028,7 +2992,7 @@ def test_cancelled_chat_status_settles_only_after_in_flight_work(
         else:
             response = chat_worker.submit(build_faulted_chat_submit_body(generation_id=popped["id"], model_id=CHAT_MODEL))
         assert response.status_code == 200, response.get_data(as_text=True)
-        status = _chat_status(client, request_headers, request_id)
+        status = chat_status(client, request_headers, request_id)
         assert status["done"] is True
         assert status["processing"] == status["waiting"] == 0
         assert len(status["generations"]) == int(in_flight_result == "success")
@@ -3048,7 +3012,7 @@ def test_a_status_built_from_a_request_loaded_before_a_refused_reply_is_not_done
     from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
     from horde.flask import db
 
-    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    request_id = submit_chat_request(client, request_headers, response_format={"type": "json_object"})
     pop_result = chat_worker.pop(chat_features=VERIFIED_FEATURES)
     assert pop_result["id"] is not None, pop_result
     with app.app_context():
@@ -3069,7 +3033,7 @@ def test_a_status_built_from_a_request_loaded_before_a_refused_reply_is_not_done
     finally:
         status_reader_session.close()
     assert (status["done"], status["faulted"], status["restarted"], status["waiting"]) == (False, False, 1, 1)
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_restarted_request_is_not_completed_while_a_worker_takes_its_job_again(
@@ -3088,7 +3052,7 @@ def test_a_restarted_request_is_not_completed_while_a_worker_takes_its_job_again
     from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
     from horde.flask import db
 
-    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    request_id = submit_chat_request(client, request_headers, response_format={"type": "json_object"})
     assert _refuse_then_fault(chat_worker, content="Blue.").get_json()["rc"] == "ChatSubmitNonconformant"
     completed_while_taken: list[bool] = []
     select_model = WaitingPrompt._select_model
@@ -3114,7 +3078,7 @@ def test_a_restarted_request_is_not_completed_while_a_worker_takes_its_job_again
 
     assert reissued["id"] is not None, reissued
     assert completed_while_taken == [False]
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_repeated_faulted_submit_restarts_the_job_once(
@@ -3131,7 +3095,7 @@ def test_a_repeated_faulted_submit_restarts_the_job_once(
     from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
     from horde.flask import db
 
-    request_id = _submit_chat_request(client, request_headers)
+    request_id = submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
     assert pop_result["id"] is not None, pop_result
     with app.app_context():
@@ -3151,9 +3115,9 @@ def test_a_repeated_faulted_submit_restarts_the_job_once(
         stale_session.close()
 
     assert stored_n == 1
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
     assert (status["restarted"], status["waiting"], status["done"], status["faulted"]) == (1, 1, False, False)
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_a_request_on_its_third_attempt_is_not_done_while_the_job_is_processing(
@@ -3163,16 +3127,16 @@ def test_a_request_on_its_third_attempt_is_not_done_while_the_job_is_processing(
 ) -> None:
     """Faulted generations do not count toward completion: two faulted attempts and a third one processing leave the
     request open, not done without a generation for the whole third attempt."""
-    request_id = _submit_chat_request(client, request_headers, response_format={"type": "json_object"})
+    request_id = submit_chat_request(client, request_headers, response_format={"type": "json_object"})
     for _ in range(2):
         assert _refuse_then_fault(chat_worker, content="Blue.").get_json()["rc"] == "ChatSubmitNonconformant"
     third_attempt = chat_worker.pop(chat_features=VERIFIED_FEATURES)
     assert third_attempt["id"] is not None, third_attempt
 
-    status = _chat_status(client, request_headers, request_id)
+    status = chat_status(client, request_headers, request_id)
 
     assert (status["done"], status["faulted"], status["processing"], status["restarted"]) == (False, False, 1, 2)
-    _cancel(client, request_headers, "chat", request_id)
+    cancel_request(client, request_headers, "chat", request_id)
 
 
 def test_reasoning_is_stored_beside_the_reply_and_its_characters_are_charged_rewarded_and_sampled_as_content(
@@ -3193,7 +3157,7 @@ def test_reasoning_is_stored_beside_the_reply_and_its_characters_are_charged_rew
     def submit_reply(**submit_fields: Any) -> tuple[str, str, float, float]:
         """Submit a reply to a new request of 400 tokens, so the cap does not apply, and return the request id, the
         generation id, the reward and the things count of the speed sample recorded by the submit."""
-        request_id = _submit_chat_request(client, request_headers, max_tokens=400)
+        request_id = submit_chat_request(client, request_headers, max_tokens=400)
         pop_result = chat_worker.pop()
         response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL, **submit_fields))
         assert response.status_code == 200, response.get_data(as_text=True)
@@ -3210,7 +3174,7 @@ def test_reasoning_is_stored_beside_the_reply_and_its_characters_are_charged_rew
     _, _, same_length_reward, same_length_sample = submit_reply(content="Blue." + "x" * len(reasoning_content))
     _, _, plain_reward, plain_sample = submit_reply(content="Blue.")
 
-    [generation] = _chat_status(client, request_headers, reasoning_request_id)["generations"]
+    [generation] = chat_status(client, request_headers, reasoning_request_id)["generations"]
     assert generation["text"] == "Blue."
     assert generation["message"] == {
         "role": "assistant",
@@ -3237,7 +3201,7 @@ def test_a_submit_with_reasoning_over_the_text_cap_is_refused_as_invalid(
 ) -> None:
     from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_TEXT_BYTES
 
-    _submit_chat_request(client, request_headers)
+    submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
 
     response = chat_worker.submit(
@@ -3296,7 +3260,7 @@ def test_a_stored_chat_reply_is_counted_once_for_each_reasoning_budget_sign(
     submit_fields: dict[str, Any],
     expected_places: list[str],
 ) -> None:
-    _submit_chat_request(client, request_headers)
+    submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
 
     response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL, **submit_fields))
@@ -3311,7 +3275,7 @@ def test_a_repeated_submit_of_a_reply_does_not_count_its_reasoning_budget_sign_a
     chat_worker: FakeChatWorker,
     reasoning_marker_counter: _CounterRecorder,
 ) -> None:
-    _submit_chat_request(client, request_headers)
+    submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
     submit_body = build_chat_submit_body(
         generation_id=pop_result["id"],

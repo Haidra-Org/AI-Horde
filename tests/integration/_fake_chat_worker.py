@@ -2,27 +2,52 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""A fake text worker that speaks the chat pop and submit fields.
+"""A fake text worker that speaks the chat pop and submit fields, and the requester calls chat tests share.
 
 The body builders are plain functions so a suite that mocks the native API can reuse them; the
 [`FakeChatWorker`][tests.integration._fake_chat_worker.FakeChatWorker] drives them through a Flask test client.
+[`submit_chat_request`][tests.integration._fake_chat_worker.submit_chat_request],
+[`chat_status`][tests.integration._fake_chat_worker.chat_status],
+[`cancel_request`][tests.integration._fake_chat_worker.cancel_request] and
+[`take_worker_offline`][tests.integration._fake_chat_worker.take_worker_offline] are the requester and cleanup calls
+around it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 from horde_sdk.generation_parameters.text.chat_policy import ChatGuarantee
 
+if TYPE_CHECKING:
+    from werkzeug.test import TestResponse
+
 __all__ = [
+    "CHAT_MESSAGES",
+    "CHAT_MODEL",
     "DEFAULT_CHAT_FEATURES",
     "DEFAULT_CHAT_GUARANTEES",
     "FakeChatWorker",
     "build_chat_submit_body",
     "build_faulted_chat_submit_body",
     "build_pop_body",
+    "build_tool_call",
+    "cancel_request",
+    "chat_status",
+    "submit_chat_request",
+    "take_worker_offline",
 ]
+
+CHAT_MODEL = "elinas/chronos-70b-v2"
+"""A text model the horde's reference lists, so a chat request for it is accepted."""
+
+CHAT_MESSAGES = [
+    {"role": "system", "content": "You are a terse assistant."},
+    {"role": "user", "content": [{"type": "text", "text": "Name one colour."}]},
+]
+"""The conversation a chat request sends unless a test gives another."""
 
 DEFAULT_CHAT_FEATURES = ("seed", "presence_penalty")
 """The features the fake worker declares unless told otherwise, matching what koboldcpp declares."""
@@ -149,6 +174,19 @@ def build_chat_submit_body(
     return submit_body
 
 
+def build_tool_call(name: str = "lookup_weather", call_id: str = "call_one") -> dict[str, Any]:
+    """Return one function tool call as a reply's ``tool_calls`` holds it.
+
+    Args:
+        name: The function the call invokes.
+        call_id: The call's id.
+
+    Returns:
+        The tool call.
+    """
+    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": '{"city":"Bergen"}'}}
+
+
 def build_faulted_chat_submit_body(*, generation_id: str, model_id: str, fault_reason: str | None = None) -> dict[str, Any]:
     """Return the submit body of a chat job that failed, with neither ``generation`` nor ``message``.
 
@@ -200,7 +238,7 @@ class FakeChatWorker:
         pop_result: dict[str, Any] = response.get_json()
         return pop_result
 
-    def pop_response(self, *, chat_jobs: bool | None = True, **pop_overrides: Any) -> Any:
+    def pop_response(self, *, chat_jobs: bool | None = True, **pop_overrides: Any) -> TestResponse:
         """Pop once and return the raw response.
 
         Args:
@@ -217,9 +255,10 @@ class FakeChatWorker:
             chat_jobs=chat_jobs,
             **{**self.pop_options, **pop_overrides},
         )
-        return self.client.post("/api/v2/generate/text/pop", json=pop_body, headers=self.headers)
+        response: TestResponse = self.client.post("/api/v2/generate/text/pop", json=pop_body, headers=self.headers)
+        return response
 
-    def submit(self, submit_body: dict[str, Any]) -> Any:
+    def submit(self, submit_body: dict[str, Any]) -> TestResponse:
         """Submit a body and return the raw response.
 
         Args:
@@ -228,4 +267,78 @@ class FakeChatWorker:
         Returns:
             The Flask test response.
         """
-        return self.client.post("/api/v2/generate/text/submit", json=submit_body, headers=self.headers)
+        response: TestResponse = self.client.post("/api/v2/generate/text/submit", json=submit_body, headers=self.headers)
+        return response
+
+
+def submit_chat_request(client: Any, request_headers: dict[str, str], **overrides: Any) -> str:
+    """Queue a chat request on the native route and return its id, asserting it was accepted.
+
+    Args:
+        client: The Flask test client.
+        request_headers: The requester's headers.
+        **overrides: Request body keys that replace or extend the default body.
+
+    Returns:
+        The request id.
+    """
+    chat_body: dict[str, Any] = {
+        "model": CHAT_MODEL,
+        "messages": CHAT_MESSAGES,
+        "temperature": 0.5,
+        "stop": "\nuser:",
+    }
+    chat_body.update(overrides)
+    response = client.post("/api/v2/generate/chat/async", json=chat_body, headers=request_headers)
+    assert response.status_code == 202, response.get_data(as_text=True)
+    request_id: str = response.get_json()["id"]
+    return request_id
+
+
+def cancel_request(client: Any, request_headers: dict[str, str], route_family: str, request_id: str) -> None:
+    """Cancel a request through its status route, asserting the cancel succeeded.
+
+    Args:
+        client: The Flask test client.
+        request_headers: The requester's headers.
+        route_family: ``chat`` or ``text``, the route family the request was queued on.
+        request_id: The request id.
+    """
+    response = client.delete(f"/api/v2/generate/{route_family}/status/{request_id}", headers=request_headers)
+    assert response.status_code == 200, response.get_data(as_text=True)
+
+
+def chat_status(client: Any, request_headers: dict[str, str], request_id: str) -> dict[str, Any]:
+    """Return a chat request's status, asserting the route answered.
+
+    Args:
+        client: The Flask test client.
+        request_headers: The requester's headers.
+        request_id: The request id.
+
+    Returns:
+        The status body.
+    """
+    response = client.get(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    status: dict[str, Any] = response.get_json()
+    return status
+
+
+def take_worker_offline(app: Any, worker_name: str) -> None:
+    """Move a worker's last check-in an hour back, so it no longer counts as online.
+
+    A worker left online makes later tests' requests for its models possible, which tests of an unserved model rely
+    on not being.
+
+    Args:
+        app: The Flask app.
+        worker_name: The worker's name.
+    """
+    from horde.classes.kobold.worker import TextWorker
+    from horde.flask import db
+
+    with app.app_context():
+        worker = db.session.query(TextWorker).filter_by(name=worker_name).one()
+        worker.last_check_in = datetime.utcnow() - timedelta(hours=1)
+        db.session.commit()
