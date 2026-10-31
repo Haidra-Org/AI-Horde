@@ -332,8 +332,8 @@ modes: a worker that clamps the temperature when tools are present does not rece
 and a tools request above the limit of every online worker ends at once with 404 `no_worker_supports_features`.
 `tool_choice: "none"` does not need a guarantee, since the worker does not receive tool definitions under it.
 
-Verification: a request with a forced `tool_choice` that waited under `strict` on a model whose card does not list
-`tool_choice` is picked up under `best_effort`.
+Verification: a request with a forced `tool_choice` that ended with 404 `no_worker_supports_features` under `strict`,
+on a model whose card does not list `tool_choice`, is picked up under `best_effort`.
 
 ## Structured output
 

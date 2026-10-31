@@ -153,6 +153,19 @@ serving the model, and the sorted union of their `features`
 `tests/integration/test_statistics.py`, `test_text_models_carry_the_chat_declarations_only_when_asked_for`, and
 `tests/integration/test_chat.py`, `test_an_invalid_chat_declaration_is_refused_on_pop`.
 
+The worker's details show the declaration the horde stored from the last pop:
+
+```bash
+curl -s "<HORDE_URL>/api/v2/workers/name/<worker-name>" | jq '{accepts_chat_jobs, accepts_prompt_jobs, chat}'
+```
+
+`accepts_chat_jobs` and `accepts_prompt_jobs` are the pop's `chat_jobs` and `prompt_jobs`. `chat` holds `model_id`,
+`features`, `limits` and `image_transports` as the pop sent them, without the feature and transport names the horde
+does not know, and is absent while the worker does not accept chat jobs
+([Worker details](../reference/chat_requests.md#worker-details)). Worker details are cached for 30 seconds, so a
+changed declaration can take that long to show. Covered by
+`test_worker_details_read_back_the_chat_declaration_of_the_last_pop`.
+
 Reversal: pop without `chat_jobs`. The worker stops receiving chat jobs from that pop on. A chat job already assigned
 keeps the model and limits recorded at assignment, so the worker still submits it under the old `model_id`
 (`test_the_assigned_model_and_limits_survive_a_later_change_of_declaration`).
@@ -203,8 +216,9 @@ worker ([Chat job pop response](../reference/chat_requests.md#chat-job-pop-respo
 The fit check must not run side effects. A backend's request transform may do more than render. koboldcpp's chat
 transform runs a short in-process generation to choose a tool when `tool_choice` is `auto` or `required`. Running that
 transform to estimate the prompt would generate once more for every chat job with tools, outside the job's budget.
-koboldcpp's `horde_chat_overflows` therefore removes `tools` and `tool_choice` from a copy of the payload before
-rendering it, and adds the token count of the tools' JSON instead, which bounds what the template renders of them.
+koboldcpp's embedded worker therefore does not render for the check. It counts the tokens of the JSON of `messages`,
+`tools` and `response_format`, adds 32 tokens, 16 for each message and 512 for each image, and faults the job with
+`prompt_overflow` when that count plus `max_length` exceeds its context.
 
 Verification: send a conversation longer than `chat_limits.max_context_length` allows. The worker submits
 `{"id": "<job-id>", "state": "faulted", "model_id": "<model-name>"}` and does not generate.
@@ -250,8 +264,6 @@ At pop, each `image_url` part's `url` is replaced according to the declared tran
 - With `url` declared, it is a signed object storage URL, valid for the job's TTL and at least 600 seconds. Fetch it
   before generating, bound the bytes read, and take the media type from the bytes. The horde stores every image as
   JPEG, and an object store may answer with a generic `Content-Type`, so the header is not a reliable media type.
-  koboldcpp's `horde_chat_fetch_images` reads at most 16 MiB, recognises PNG, JPEG and WebP signatures, and rewrites
-  the part as a data URL for its local chat endpoint.
 - With `base64` alone, it is a `data:image/jpeg;base64,` URL with the bytes inline.
 
 The horde prefers `url` when a worker declares both ([ADR 0032](../decisions/0032-send-chat-images-to-workers-as-signed-urls.md)).
@@ -476,70 +488,87 @@ Covered by `test_a_chat_worker_still_pops_text_jobs_with_an_unchanged_response`.
 
 ## Worked example: koboldcpp's embedded worker
 
-koboldcpp's embedded Horde worker, `run_horde_worker` in `koboldcpp.py`, implements every step above. It is enabled
-by these flags (help text as printed by `koboldcpp --help`):
+koboldcpp's embedded Horde worker, `run_horde_worker` in `koboldcpp.py`, serves chat jobs from koboldcpp 1.124. Every
+embedded worker of that release declares chat on each pop, beside its text limits, and koboldcpp has no option to turn
+chat off. The worker pops from and submits to `https://aihorde.net`, which koboldcpp sets in code. It is configured by
+these flags (help text as printed by `koboldcpp --help`):
 
-- `--hordechat`: Lets your AI Horde worker accept chat jobs, which are rendered with the loaded chat template.
 - `--hordemodelname [name]`: Sets your AI Horde display model name.
 - `--hordegenlen [amount]`: Sets the maximum number of tokens your worker will generate from an AI horde job.
 - `--hordemaxctx [amount]`: Sets the maximum context length your worker will accept from an AI Horde job. If 0, matches
   main context limit.
 - `--hordekey [apikey]`: Sets your AI Horde API key.
 - `--hordeworkername [name]`: Sets your AI Horde worker name.
-- `--hordeurl [url]`: Sets the AI Horde cluster your worker pops jobs from and submits them to.
 
-The worker starts only when both `--hordekey` and `--hordeworkername` are set. `--hordeurl` takes the horde root,
-such as `https://aihorde.net`, without `/api`.
+The worker starts only when both `--hordekey` and `--hordeworkername` are set.
 
 Each pop of the embedded worker declares:
 
 - `chat_jobs: true`;
-- `chat_features` `seed`, `presence_penalty`, `tools`, `json_object`, `json_schema`, `reasoning_effort`,
-  `structured_output_enforced` and `prompt_overflow_refused`, plus `vision` when a multimodal projector is loaded and
-  `tool_choice_enforced` when tools run on the generic path rather than through a Jinja chat template.
-  `frequency_penalty` is not declared, since koboldcpp treats it as an alias of the presence penalty.
-  `tools_with_response_format` is not declared: koboldcpp's generic tool path replaces the response format grammar
-  with its tool grammar, so a request carrying both is served by other workers;
+- `chat_features` `seed`, `presence_penalty`, `tools`, `json_object`, `json_schema`, `reasoning_effort` and the
+  guarantee `prompt_overflow_refused`, plus `vision` when a multimodal projector is loaded. The worker declares no
+  other guarantee, so a `strict` request that needs `tool_choice_enforced` or `structured_output_enforced` does not
+  reach it. `frequency_penalty` is not declared, since koboldcpp reads it only as a fallback for a missing presence
+  penalty. `tools_with_response_format` is not declared either: koboldcpp's generic tool path replaces the response
+  format grammar with its tool grammar, so a request carrying both is served by other workers;
 - `image_transports` `messages_url`, plus `base64` when `vision` is declared;
 - `chat_limits.max_context_length` as the smaller of the loaded context size and `--hordemaxctx`,
-  `chat_limits.max_length` as `--hordegenlen` bounded by the room that context leaves for a reply, and
-  `chat_limits.tools_max_temperature` as the temperature it clamps tool requests to;
-- `model_id` as the model name it registers, which koboldcpp prefixes with `koboldcpp/`.
+  `chat_limits.max_length` as `--hordegenlen`, and `chat_limits.tools_max_temperature` as 1.0, the temperature
+  koboldcpp clamps tool requests to;
+- `model_id` as the model name it registers: `--hordemodelname`, or the model file's name without its extension when
+  the flag is not set, prefixed with `koboldcpp/`. A `--hordemodelname` combined with `--debugmode 1` or
+  `--gendefaults` carries `debug-` after the prefix.
 
-A chat job is fetched for images, checked for fit by `horde_chat_overflows`, and generated through koboldcpp's local
-`/v1/chat/completions`; a text job still goes to `/api/v1/generate`. The reply is submitted with `finish_reason`
-`tool_calls` when the backend returned calls, `length` when it reported `length`, and `stop` otherwise, and with each
-token count only when the backend reported it. A fetch failure, an overflow, a render failure or a failed generation
-is submitted as `faulted`.
+The worker fetches a chat job's `messages_url` when the payload carries one, checks the job for fit as in
+[step 3](#3-render-and-fit-the-conversation), and generates it through koboldcpp's local `/v1/chat/completions`. A text
+job still goes to `/api/v1/generate`. A job with `stream_progress: true` and no tools is streamed from the local
+endpoint, and the worker posts its progress about once a second; a `cancelled: true` answer aborts the local
+generation, and the job is not submitted. A job with tools is generated whole, since the tool calls are parsed from the complete reply.
+
+The reply is submitted with the backend's `finish_reason` and with each token count the backend reported. The worker
+faults the job with `prompt_overflow` when the fit check fails, and with `reply_refused` when the horde answers the
+reply with `ChatSubmitInvalid`, `ChatSubmitNonconformant` or `ChatModelMismatch`. A failed fetch, a failed generation
+or a finish reason outside the four the horde accepts faults the job without a reason. A chat job is not generated a
+second time.
 
 ### Start koboldcpp as a chat worker
 
 ```bash
 koboldcpp --model <model.gguf> --contextsize 4096 --jinja \
-  --hordechat --hordeurl <HORDE_URL> --hordekey <api-key> \
-  --hordeworkername <worker-name> --hordemodelname <model-name> \
-  --hordemaxctx 4096 --hordegenlen 512
+  --hordekey <api-key> --hordeworkername <worker-name> \
+  --hordemodelname <model-name> --hordemaxctx 4096 --hordegenlen 512
 ```
 
 `--jinja` formats the conversation with the model's Jinja chat template, including tool calls. Add `--mmproj
 <projector.gguf>` for a vision model.
 
-Verification: the log prints `Embedded Horde Worker '<worker-name>' is started.`, and the chat model list shows the
-declaration:
+Verification: the log prints `Worker <n> - Embedded Horde Worker '<worker-name>' is started.`, and the worker's
+details show the declaration:
 
 ```bash
-curl -s "<HORDE_URL>/api/v2/status/models?type=text&chat=true" \
-  | jq '.[] | select(.name == "koboldcpp/<model-name>") | .chat'
+curl -s "https://aihorde.net/api/v2/workers/name/<worker-name>" | jq '{accepts_chat_jobs, accepts_prompt_jobs, chat}'
 ```
 
-returns `workers` of at least 1, `max_context_length` 4096, `max_length` 512, and `features`
-`["json_object", "json_schema", "presence_penalty", "seed", "tools"]`, with `vision` added when a projector is loaded.
+```json
+{
+  "accepts_chat_jobs": true,
+  "accepts_prompt_jobs": true,
+  "chat": {
+    "model_id": "koboldcpp/<model-name>",
+    "features": ["json_object", "json_schema", "presence_penalty", "prompt_overflow_refused", "reasoning_effort", "seed", "tools"],
+    "limits": {"max_context_length": 4096, "max_length": 512, "tools_max_temperature": 1.0},
+    "image_transports": ["messages_url"]
+  }
+}
+```
+
+With a projector loaded, `features` adds `vision` and `image_transports` adds `base64`.
 
 The embedded worker does not pop while koboldcpp's local API served a request in the last 20 seconds, so a local
 client in use delays Horde jobs.
 
-Reversal: stop koboldcpp, or restart it without `--hordechat` to serve text jobs only. A worker counts as online for
-300 seconds after its last pop, so the declaration leaves the model list within that time.
+Reversal: stop koboldcpp. A worker counts as online for 300 seconds after its last pop, so the declaration leaves the
+chat model list within that time.
 
 ### Check bodies against the server's proof
 

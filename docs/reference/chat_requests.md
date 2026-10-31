@@ -847,7 +847,8 @@ a completion without visible text is logged with its completion limit (see [Metr
 Before the compare-and-set, `verify_chat_reply` checks the reply against the request's stored `chat_extras` (the
 client's values, not the narrowed copy the worker received) under its `chat_conformance`. It is the third layer of
 ADR 0036, after eligibility and dispatch narrowing, and does not trust any worker declaration. A refused submit leaves the
-generation pending, the koboldcpp worker faults the job on any `400` return code, and the request faults after
+generation pending, the koboldcpp worker faults the job with `reply_refused` after `ChatSubmitInvalid`,
+`ChatSubmitNonconformant` or `ChatModelMismatch`, and the request faults after
 `FAULTED_GENERATIONS_LIMIT` faulted jobs, so the checks cover only what the payload proves and what OpenAI never
 returns.
 

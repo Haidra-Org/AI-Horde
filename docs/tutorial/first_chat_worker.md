@@ -17,8 +17,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [chat](../topics.md#chat), [workers](../topics.md#workers)
 <!-- END GENERATED: topics -->
 
-In this tutorial you run koboldcpp as a chat worker on a horde, watch the horde list its model as a chat model, send
-it one chat request and one tool request with curl, and read the structured replies the worker submitted. Each step
+In this tutorial you run koboldcpp as a chat worker on the AI Horde, watch the horde list its model as a chat model,
+send it one chat request and one tool request with curl, and read the structured replies the worker submitted. Each step
 ends with the output that shows it worked.
 
 The procedure behind each step, with every option, is [Serve chat jobs from a text worker](../how-to/serve_chat_jobs.md).
@@ -27,44 +27,41 @@ To send chat requests through the OpenAI-compatible front instead of the native 
 
 ## What you need
 
-- A koboldcpp build with the Horde chat flags. `koboldcpp --help` lists `--hordechat` under "Horde Worker Commands".
+- koboldcpp 1.124 or later. Its embedded Horde worker serves chat jobs beside text jobs, and pops from
+  `https://aihorde.net`, so this tutorial runs there.
 - An instruction-tuned GGUF model whose file carries a chat template. A small one (a few billion parameters) is
   enough.
-- A horde to work against, written `<HORDE_URL>` below: `https://aihorde.net`, or a local horde such as
-  `http://127.0.0.1:7001`. Use the root without `/api`.
-- A registered API key on that horde, written `<api-key>`. The worker needs one, and the same key can send the
-  requests.
+- A registered AI Horde API key, written `<api-key>`. The worker needs one, and the same key can send the requests.
 - `curl` and `jq`.
 
 Set the values once in your shell:
 
 ```bash
-export HORDE_URL=<HORDE_URL>
+export HORDE_URL=https://aihorde.net
 export HORDE_API_KEY=<api-key>
-export MODEL_NAME=koboldcpp/tutorial-chat
+export MODEL_NAME=koboldcpp/<model-name>
 ```
 
-koboldcpp prefixes the model name it registers with `koboldcpp/`, so `MODEL_NAME` is the name below with that
-prefix. Choose a name without a colon: the OpenAI-compatible front reserves the colon and does not route to a model
-whose name contains one.
+koboldcpp prefixes the model name it registers with `koboldcpp/`, so `MODEL_NAME` is `<model-name>` with that prefix.
+Choose a `<model-name>` that no other worker serves, so the requests below reach your worker. Leave out the colon: the
+OpenAI-compatible front reserves it and does not route to a model whose name contains one.
 
 ## 1. Start koboldcpp as a chat worker
 
 ```bash
 koboldcpp --model <model.gguf> --contextsize 4096 --jinja \
-  --hordechat --hordeurl "$HORDE_URL" --hordekey "$HORDE_API_KEY" \
-  --hordeworkername <worker-name> --hordemodelname tutorial-chat \
-  --hordemaxctx 4096 --hordegenlen 512
+  --hordekey "$HORDE_API_KEY" --hordeworkername <worker-name> \
+  --hordemodelname <model-name> --hordemaxctx 4096 --hordegenlen 512
 ```
 
-`--hordechat` makes the embedded worker accept chat jobs. `--jinja` formats each conversation with the model's Jinja
-chat template, including tool calls. `--hordemaxctx` and `--hordegenlen` set the largest context and reply the worker
-accepts.
+`--hordekey` and `--hordeworkername` start the embedded worker, which accepts chat jobs and text jobs. `--jinja` formats
+each conversation with the model's Jinja chat template, including tool calls. `--hordemaxctx` and `--hordegenlen` set
+the largest context and reply the worker accepts.
 
 Once the model has loaded, the log shows:
 
 ```text
-Embedded Horde Worker '<worker-name>' is started.
+Worker <n> - Embedded Horde Worker '<worker-name>' is started.
 ```
 
 Leave koboldcpp running, and do not use its local web interface during the tutorial: the embedded worker pauses
@@ -86,14 +83,22 @@ The model list refreshes every few seconds; repeat the command until it prints:
   "workers": 1,
   "max_context_length": 4096,
   "max_length": 512,
-  "features": ["json_object", "json_schema", "presence_penalty", "seed", "tools"],
+  "features": ["json_object", "json_schema", "presence_penalty", "prompt_overflow_refused", "reasoning_effort", "seed", "tools"],
   "created": 1760000000
 }
 ```
 
-`created` differs. The worker declared what it serves: up to 4096 tokens of context, up to 512 tokens of reply, and
-the optional features `seed`, `presence_penalty`, `tools`, `json_object` and `json_schema`. A request that needs a
-feature the worker did not declare waits for another worker.
+`created` differs. The worker declared what it serves: up to 4096 tokens of context, up to 512 tokens of reply, the
+optional features `seed`, `presence_penalty`, `tools`, `json_object`, `json_schema` and `reasoning_effort`, and the
+guarantee `prompt_overflow_refused`, a promise to fault a conversation that does not fit instead of trimming it. A
+request that needs a feature or guarantee the worker did not declare waits for another worker.
+
+The model list merges every worker serving the model. The worker's details hold this worker's declaration alone,
+including `limits.tools_max_temperature`, which the model list does not show:
+
+```bash
+curl -s "$HORDE_URL/api/v2/workers/name/<worker-name>" | jq .chat
+```
 
 ## 3. Send a chat request
 
@@ -125,7 +130,7 @@ The horde answers `202` with a body that carries the request id and the request'
 Within a few seconds the koboldcpp log shows the job arriving and the reply going back:
 
 ```text
-Job <job-id> received from <HORDE_URL> for 64 tokens and <context> max context. Starting generation...
+Job <job-id> received from https://aihorde.net for 64 tokens and <context> max context. Starting generation...
 Worker <n> - Submitted <job-id> and earned <kudos> kudos
 ```
 
@@ -188,12 +193,16 @@ TOOL_REQUEST_ID=$(curl -s "$HORDE_URL/api/v2/generate/chat/async" \
       }
     }],
     \"tool_choice\": \"required\",
-    \"max_tokens\": 128
+    \"max_tokens\": 128,
+    \"horde\": {\"conformance\": \"best_effort\"}
   }" | jq -r .id)
 ```
 
-The request needs the `tools` feature, which this worker declared in step 2, so it reaches the same worker. Read the
-status as before:
+The request needs the `tools` feature, which this worker declared in step 2. A request is `strict` by default, and a
+strict `tool_choice: "required"` also needs the guarantee `tool_choice_enforced`, which koboldcpp does not declare.
+`best_effort` drops the guarantees, so the request reaches your worker. The horde then does not check that the reply
+calls a tool, and a model that answers in text instead returns `content` and `finish_reason` `stop`. Read the status
+as before:
 
 ```bash
 curl -s "$HORDE_URL/api/v2/generate/chat/status/$TOOL_REQUEST_ID" -H "apikey: $HORDE_API_KEY" \
