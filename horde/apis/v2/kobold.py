@@ -314,11 +314,14 @@ class TextAsyncGenerate(GenerateTemplate):
                     database.discard_cached_worker_availability(self.wp)
                     self.creation_availability = None
                 else:
+                    # The quote is computed on the row before it is deleted, and only on this path: the refusal
+                    # states the quoted cost beside the reservation so the two figures are not mistaken for one.
+                    quoted_kudos = self.quote_kudos()
                     self.wp.delete()
                     raise e.KudosUpfront(
                         required_kudos,
                         self.username,
-                        message=self.get_kudos_upfront_message(tokens, required_kudos),
+                        message=self.get_kudos_upfront_message(tokens, required_kudos, quoted_kudos),
                     )
 
         if self.sharedkey:
@@ -370,26 +373,30 @@ class TextAsyncGenerate(GenerateTemplate):
             things_per_second=availability.tokens_per_second,
         )
 
-    def get_kudos_upfront_message(self, free_tokens: int, required_kudos: float) -> str:
+    def get_kudos_upfront_message(self, free_tokens: int, required_kudos: float, quoted_kudos: float) -> str:
         """Return the ``KudosUpfront`` message for a request whose requester cannot cover its kudos hold.
+
+        The reservation is a flat rate on the requested length and the quote is the dry-run cost of the same
+        request, so the two differ for most requests; the message states both so neither is read as the other.
 
         Args:
             free_tokens: The most tokens the request could ask for without holding kudos upfront.
             required_kudos: The kudos the request holds upfront.
+            quoted_kudos: The kudos a dry run of the same request quotes.
 
         Returns:
-            The message, stating the free allowance.
+            The message, stating the free allowance, the reservation and the quoted cost.
         """
+        cost = f"This request needs {required_kudos} kudos held upfront; its quoted cost is {quoted_kudos} kudos."
         if not self.wp.slow_workers:
             return (
                 "A request that does not allow slow workers needs the client to already have the required kudos. "
                 f"With slow workers allowed, about {free_tokens} tokens would currently be served without it. "
-                f"This request requires {required_kudos} kudos to fulfil."
+                f"{cost}"
             )
         return (
             f"The workers eligible for this request currently serve up to {free_tokens} tokens without kudos held "
-            "upfront. For more, the client needs to already have the required kudos. "
-            f"This request requires {required_kudos} kudos to fulfil."
+            f"upfront. For more, the client needs to already have the required kudos. {cost}"
         )
 
     def get_size_too_big_message(self):

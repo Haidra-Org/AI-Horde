@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta
@@ -1129,6 +1130,12 @@ def test_an_anonymous_chat_request_above_the_ceiling_is_refused_stating_the_allo
     refusal = response.get_json()
     assert refusal["rc"] == "KudosUpfront"
     assert f"up to {Config.text_free_output_ceiling} tokens" in refusal["message"]
+    # The reservation and the dry-run quote are different figures for the same request, and the refusal states both.
+    figures = re.search(r"needs ([\d.]+) kudos held upfront; its quoted cost is ([\d.]+) kudos", refusal["message"])
+    assert figures is not None, refusal["message"]
+    reservation, quote = figures.groups()
+    assert float(reservation) > 0
+    assert float(quote) > 0
 
 
 def test_a_quote_cached_for_a_funded_requester_does_not_answer_an_anonymous_text_dry_run_above_the_allowance(

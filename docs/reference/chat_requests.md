@@ -644,7 +644,9 @@ defaults never apply to a chat job.
 ### Job lease
 
 The pop response's top-level `ttl` is the job's completion lease in seconds, the deadline after which the
-stale-generation thread aborts the job and a late submit returns `400 AbortedGen` stating it. For text and chat jobs
+stale-generation thread aborts the job and a late submit returns `400 AbortedGen` stating it. The thread runs every
+60 seconds, so the abort lands between the deadline and the deadline plus one pass, and a submit inside that range
+is still accepted. The renewed deadline and the caps below are ranges of the same width. For text and chat jobs
 alike `TextProcessingGeneration.set_job_ttl` grants a flat 150 seconds (`TEXT_JOB_LEASE_SECONDS`) whatever the
 request's `max_length`, so a worker that pops a job and never submits holds it for that long at most.
 

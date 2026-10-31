@@ -70,6 +70,14 @@ status route falls back to the horde-wide figures, and the allowance takes its f
   availability cache refreshes.
 - Image status estimates are unchanged.
 
+### Limitations
+
+The estimate counts queued work only. With every eligible thread busy and nothing queued it does not report a wait, so it
+understates the wait by up to one job per thread. The measured speed it divides by is the lease-time speed (the
+speed that admitted the running jobs), which biases the estimate the other way when a worker slows under load. The
+shadow records of the speed gate (ADR 0041) and the `horde.text.queue_wait_seconds` histogram, which measures the
+wait a request had from creation to assignment, give the data for revisiting both.
+
 ## Pros and Cons of the Options
 
 ### Horde-wide queue, threads and average speed

@@ -62,8 +62,11 @@ its completed jobs record a measured speed. The same rule
 is applied in the pop query and in the eligibility check that the status route and ADR 0040 use, so a worker that
 cannot be offered a job is not counted as capacity for it either.
 
-A job past its lease is aborted as stale and restarted. The worker's submit is then refused with `AbortedGen`, whose
-message states the lease the job had, and the abort counts toward the worker's maintenance threshold.
+A job past its lease is aborted as stale and restarted at the next pass of the stale-generation thread, which runs
+every 60 s, so a submit up to 60 s past the deadline is still accepted. The same holds for a renewed deadline and for
+both caps: each is a range from the deadline to the deadline plus one cleanup pass. The worker's submit after the
+abort is refused with `AbortedGen`, whose message states the lease the job had, and the abort counts toward the
+worker's maintenance threshold.
 
 Three counters in `horde/metrics.py` expose the rule: `horde.text.lease_renewals` (granted or at cap, by worker
 trust), `horde.text.stale_aborts` (by worker trust) and `horde.pop.lease_capacity_limited` (pops by a worker whose
