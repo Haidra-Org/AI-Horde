@@ -104,6 +104,7 @@ from horde.oai.mapping import (
 from horde.oai.metrics import CancelOutcome, FrontMetrics, RelayOutcome, get_front_meter
 from horde.oai.schema import (
     CHAT_REQUEST_CONFLICT_CODE,
+    DEFAULT_NO_OP_PARAMETERS,
     PARAMETER_CONTEXT_KEY,
     UNSUPPORTED_PARAMETER_CODE,
     UNSUPPORTED_PARAMETER_ERROR_TYPE,
@@ -233,6 +234,35 @@ text."""
 WORKER_FAULT_RC: str = "ChatWorkerFault"
 """The return code the Horde stores with a faulted request's reason when a worker reported why it faulted a job,
 rather than the Horde refusing its reply."""
+
+OTHER_PARAMETER_LABEL: str = "other"
+"""The ``horde.parameter`` label of an ``UnsupportedChatParameter`` refusal whose parameter none of the known parameter
+sets list, so a client-chosen key does not become a label value."""
+
+UNDEFINED_OPENAI_PARAMETERS: tuple[str, ...] = (
+    "audio",
+    "function_call",
+    "functions",
+    "logit_bias",
+    "modalities",
+    "prediction",
+    "prompt_cache_key",
+    "safety_identifier",
+    "verbosity",
+    "web_search_options",
+)
+"""The OpenAI chat completions request body keys the front's request schema and default no-op table do not define,
+taken from ``CompletionCreateParams`` in ``openai/types/chat/completion_create_params.py`` of the openai package
+pinned in uv.lock. A closed vocabulary: a key OpenAI adds later records as ``other`` until it is listed here."""
+
+KNOWN_PARAMETER_LABELS: frozenset[str] = (
+    frozenset(ChatCompletionRequest.model_fields) | frozenset(DEFAULT_NO_OP_PARAMETERS) | frozenset(UNDEFINED_OPENAI_PARAMETERS)
+)
+"""The top-level request keys recorded as themselves in ``horde.parameter``: the request schema's fields, the keys
+accepted only at their default, and the OpenAI request keys the front does not define."""
+
+REQUEST_PATH_SEPARATOR_PATTERN: re.Pattern[str] = re.compile(r"[.\[]")
+"""The characters that end the top-level key of a request path, such as ``messages[0].role`` or ``horde.priority``."""
 
 FRONT_FULL_CODE: str = "FrontAtCapacity"
 """The error code of a request refused because the process or the request's source holds its maximum of requests."""
@@ -998,6 +1028,19 @@ def _format_location(location: tuple[int | str, ...], request_body: object) -> s
             request_path += f".{location_part}" if request_path else location_part
             body_at_path = body_at_path.get(location_part)
     return request_path
+
+
+def _refused_parameter_label(request_path: str | None) -> str:
+    """Return the ``horde.parameter`` label of an ``UnsupportedChatParameter`` refusal at ``request_path``.
+
+    The label is the path's top-level key when ``KNOWN_PARAMETER_LABELS`` lists it, such as ``messages`` for
+    ``messages[0].content[1].type=input_audio`` or ``horde`` for ``horde.priority``, and ``other`` for any other key
+    or no path, which keeps the label bounded.
+    """
+    if not request_path:
+        return OTHER_PARAMETER_LABEL
+    top_level_key = REQUEST_PATH_SEPARATOR_PATTERN.split(request_path, maxsplit=1)[0]
+    return top_level_key if top_level_key in KNOWN_PARAMETER_LABELS else OTHER_PARAMETER_LABEL
 
 
 def _validation_error(error: ValidationError, request_body: object) -> ChatFrontError:
@@ -2161,7 +2204,11 @@ async def _chat_completions(request: Request) -> Response:
         return Response(status_code=CLIENT_CLOSED_REQUEST_STATUS)
     except ChatFrontError as error:
         inflight_slot.release()
-        front_metrics.record_refusal(status_code=error.status_code, code=error.code)
+        front_metrics.record_refusal(
+            status_code=error.status_code,
+            code=error.code,
+            parameter=_refused_parameter_label(error.param) if error.code == UNSUPPORTED_PARAMETER_CODE else None,
+        )
         return error.to_response()
     except BaseException:
         inflight_slot.release()

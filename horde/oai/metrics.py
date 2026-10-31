@@ -152,6 +152,7 @@ class MetricAttribute(StrEnum):
     EXISTING_CLAIM = "horde.existing_claim"
     RELAYED = "horde.relayed"
     REASON = "horde.reason"
+    PARAMETER = "horde.parameter"
 
 
 class NativeCallType(StrEnum):
@@ -370,9 +371,23 @@ class FrontMetrics:
         """Record a chat request that took an in-flight slot."""
         self._admitted.add(1, {MetricAttribute.STREAMED: streamed})
 
-    def record_refusal(self, *, status_code: int, code: str | None) -> None:
-        """Record a chat request refused before it took an in-flight slot."""
-        self._refused.add(1, {MetricAttribute.STATUS_CODE: int(status_code), MetricAttribute.CODE: code or ""})
+    def record_refusal(self, *, status_code: int, code: str | None, parameter: str | None = None) -> None:
+        """Record a chat request refused before it took an in-flight slot.
+
+        Args:
+            status_code: The HTTP status sent.
+            code: The error code.
+            parameter: The bounded label of the refused parameter of an ``UnsupportedChatParameter`` refusal; None
+                for every other refusal.
+        """
+        self._refused.add(
+            1,
+            {
+                MetricAttribute.STATUS_CODE: int(status_code),
+                MetricAttribute.CODE: code or "",
+                MetricAttribute.PARAMETER: parameter or "",
+            },
+        )
 
     def record_error(self, *, status_code: int, code: str | None, streamed: bool, reason: str | None) -> None:
         """Record an admitted chat request answered with an error status before any header was sent.

@@ -173,6 +173,31 @@ async def test_front_at_capacity_records_the_refusal(start_front: StartFront) ->
     assert front.metric_total(ERRORS_NAME) == 0
 
 
+async def test_an_unsupported_parameter_refusal_records_a_bounded_parameter_label(start_front: StartFront) -> None:
+    """A parameter the request schema, the default no-op table or the undefined OpenAI keys list is recorded by its
+    key, any other key as ``other``, and other refusal codes record an empty label."""
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"max_inflight": 1})) as front:
+        known_refused = await front.client.post("/v1/chat/completions", json=build_chat_body(store=True))
+        undefined_refused = await front.client.post("/v1/chat/completions", json=build_chat_body(logit_bias={"50256": -100}))
+        unknown_refused = await front.client.post("/v1/chat/completions", json=build_chat_body(client_chosen_key_1234=1))
+        first_request = asyncio.create_task(front.client.post("/v1/chat/completions", json=build_chat_body()))
+        await wait_for_call(lambda: front.horde.status_route.call_count)
+        capacity_refused = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        await front.horde.finish_later(0)
+        await first_request
+
+    assert known_refused.status_code == 400
+    assert undefined_refused.status_code == 400
+    assert unknown_refused.status_code == 400
+    assert capacity_refused.status_code == 503
+    assert front.metric_total(REFUSED_NAME, horde_code="UnsupportedChatParameter", horde_parameter="store") == 1
+    assert front.metric_total(REFUSED_NAME, horde_code="UnsupportedChatParameter", horde_parameter="logit_bias") == 1
+    assert front.metric_total(REFUSED_NAME, horde_code="UnsupportedChatParameter", horde_parameter="other") == 1
+    assert front.metric_total(REFUSED_NAME, horde_code="FrontAtCapacity", horde_parameter="") == 1
+    refused_parameter_labels = {point.attributes["horde.parameter"] for point in metric_points(front.metric_reader, REFUSED_NAME)}
+    assert refused_parameter_labels == {"store", "logit_bias", "other", ""}
+
+
 async def test_lost_submit_records_outcome_unknown_and_unreachable_recoveries(start_front: StartFront) -> None:
     settings = FAST_TEST_SETTINGS.model_copy(update={"submit_recovery_attempts": 2})
     async with start_front(settings) as front:
