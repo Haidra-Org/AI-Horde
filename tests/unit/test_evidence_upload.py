@@ -498,7 +498,11 @@ class TestEvidenceStoreCalls:
 def _real_store(object_store_ready: None) -> Iterator[None]:
     """Use the S3-compatible evidence bucket the test runtime provisions."""
     if r2.evidence_client is None:
-        pytest.fail(f"The object-storage runtime set no {r2.EVIDENCE_ACCOUNT_ENV} and {r2.EVIDENCE_BUCKET_ENV}")
+        pytest.fail(
+            "The object-storage runtime did not set all of "
+            f"{r2.EVIDENCE_ACCOUNT_ENV}, {r2.EVIDENCE_BUCKET_ENV}, {r2.EVIDENCE_ACCESS_KEY_ID_ENV} and "
+            f"{r2.EVIDENCE_SECRET_ACCESS_KEY_ENV}",
+        )
     yield
 
 
