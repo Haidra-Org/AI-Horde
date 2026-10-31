@@ -1,3 +1,7 @@
+-- SPDX-FileCopyrightText: 2026 Tazlin <tazlin.on.github@gmail.com>
+--
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+
 -- Appends one progress delta under a chat generation's lease, atomically.
 -- KEYS[1]: the lease hash of the generation; KEYS[2]: the request's progress stream.
 -- ARGV[1]: generation id; ARGV[2]: seq; ARGV[3]: content; ARGV[4]: the most entries one generation may append;

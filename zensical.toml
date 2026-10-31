@@ -44,7 +44,6 @@ nav = [
         { "Outbound requests" = "reference/outbound_requests.md" },
         { "Chat requests" = "reference/chat_requests.md" },
         { "Chat front" = "reference/chat_front.md" },
-        { "Outbound requests" = "reference/outbound_requests.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },
