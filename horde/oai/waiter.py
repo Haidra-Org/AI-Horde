@@ -556,6 +556,10 @@ class DeltaEntry(BaseModel):
     ended: bool = False
     """Whether the entry marks that the generation faulted and does not post more deltas."""
 
+    appended_at: float | None = None
+    """The Unix time in seconds at which the entry was appended. The relay uses it to pace later deltas. The reader sets
+    it from the stream id, or from the read time when the id does not hold a time. None on an entry built elsewhere."""
+
 
 class DeltaSubscription:
     """Receive the delta stream entries of one request from the reader."""
@@ -698,7 +702,10 @@ class DeltaStreamReader:
                     except ValidationError as error:
                         logger.warning(f"Ignoring a malformed delta of chat request {request_id}: {error}")
                         continue
-                    subscription.deliver(entry)
+                    # The read time and Redis-generated ids use the same Unix clock. The gaps between the entries of
+                    # one stream are therefore comparable, whichever source each time came from.
+                    appended_at = _stream_entry_appended_at(subscription.last_entry_id)
+                    subscription.deliver(entry.model_copy(update={"appended_at": read_at if appended_at is None else appended_at}))
             span.set_attribute(DELTA_READ_ENTRY_COUNT_ATTRIBUTE, entry_count)
             span.set_attribute(DELTA_READ_BYTE_COUNT_ATTRIBUTE, byte_count)
             if oldest_appended_at is not None:

@@ -3,34 +3,68 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """Behavior of relaying a worker's content deltas to a streamed request: which requests relay, how the delta stream
-is read, the chunk order, the reconciliation with the final reply and the errors after a delta was sent."""
+is read, the chunk order, the pacing of each post's text, the reconciliation with the final reply and the errors after
+a delta was sent."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Coroutine
+import time
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Sequence
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import fakeredis
 import httpx
 import pytest
 import redis.exceptions
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from sse_starlette import ServerSentEvent
 
 from horde.oai import waiter
-from horde.oai.app import STREAM_DIVERGED_CODE, _create_stream_redis_client
+from horde.oai.app import (
+    STREAM_DIVERGED_CODE,
+    AcceptedDelta,
+    DeltaPacer,
+    DeltaRelay,
+    DeltaText,
+    PacedPostTracker,
+    RequestTrace,
+    _create_stream_redis_client,
+    _is_visible_character_boundary,
+    _relay_deltas,
+    _split_evenly,
+)
+from horde.oai.horde_client import HordeChatStatus
 from horde.oai.mapping import build_system_fingerprint, relays_deltas
-from horde.oai.metrics import FIRST_CONTENT_NAME, RELAY_OUTCOMES_NAME, RELAYED_NAME
+from horde.oai.metrics import (
+    FIRST_CONTENT_NAME,
+    METER_NAME,
+    PACING_FLUSHES_NAME,
+    PACING_LAG_NAME,
+    PIECES_PER_POST_NAME,
+    POST_GAP_NAME,
+    RELAY_OUTCOMES_NAME,
+    RELAYED_NAME,
+    FrontMetrics,
+    histogram_views,
+)
 from horde.oai.schema import ChatCompletionRequest
-from horde.oai.waiter import DELTA_STREAM_KEY_PREFIX, DeltaEntry, DeltaStreamReader
+from horde.oai.waiter import DELTA_STREAM_KEY_PREFIX, DeltaEntry, DeltaStreamReader, DeltaSubscription
 from tests.unit.oai.conftest import (
+    FAST_TEST_SETTINGS,
     GENERATED_TEXT,
     MODEL_NAME,
+    REQUEST_ID,
+    UNRECORDED_METRICS,
     RunningFront,
     StartFront,
     build_chat_body,
     done_status,
+    metric_points,
+    metric_total,
     waiting_status,
 )
 from tests.unit.oai.test_chat_front import COMPLETION_ID, data_payloads, parse_sse_events
@@ -147,16 +181,17 @@ async def test_stream_is_forwarded_only_for_a_request_whose_deltas_are_relayed(
 
 
 async def test_reader_queues_each_registered_requests_entries_in_stream_order() -> None:
+    """Each queued entry has the append time held in its stream id."""
     redis_client = fakeredis.FakeAsyncRedis()
     reader = DeltaStreamReader(redis_client)
     try:
         with reader.register("request-a") as first, reader.register("request-b") as second:
             assert first is not None
             assert second is not None
-            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-a", {"gen": "g1", "seq": "1", "content": "Hi"})
-            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-a", {"seq": "2", "content": "no generation"})
-            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-a", {"gen": "g1", "ended": "1"})
-            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-b", {"gen": "g2", "seq": "1", "content": "Yo"})
+            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-a", {"gen": "g1", "seq": "1", "content": "Hi"}, id="1000001000-0")
+            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-a", {"seq": "2", "content": "no generation"}, id="1000001500-0")
+            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-a", {"gen": "g1", "ended": "1"}, id="1000002250-0")
+            await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-b", {"gen": "g2", "seq": "1", "content": "Yo"}, id="1000003000-0")
             await redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}request-c", {"gen": "g3", "seq": "1", "content": "No"})
 
             await reader.read_once(redis_client)
@@ -168,10 +203,10 @@ async def test_reader_queues_each_registered_requests_entries_in_stream_order() 
         await redis_client.close()
 
     assert first_entries == [
-        DeltaEntry.model_validate({"gen": "g1", "seq": 1, "content": "Hi"}),
-        DeltaEntry.model_validate({"gen": "g1", "ended": True}),
+        DeltaEntry.model_validate({"gen": "g1", "seq": 1, "content": "Hi", "appended_at": 1_000_001.0}),
+        DeltaEntry.model_validate({"gen": "g1", "ended": True, "appended_at": 1_000_002.25}),
     ]
-    assert second_entries == [DeltaEntry.model_validate({"gen": "g2", "seq": 1, "content": "Yo"})]
+    assert second_entries == [DeltaEntry.model_validate({"gen": "g2", "seq": 1, "content": "Yo", "appended_at": 1_000_003.0})]
     assert entries_after_second_read == []
 
 
@@ -895,3 +930,362 @@ async def test_stream_replaced_with_lower_ids_before_any_delta_was_sent_delivers
     assert relayed == 0
     assert relay_outcomes == 0
     assert cancels == 0
+
+
+PACED_TEXT: str = "0123456789abcdefghijklmnopqrstuvwxyzABCD"
+"""A post's text long enough that pacing splits it into many pieces."""
+
+PACING_TEST_SETTINGS = FAST_TEST_SETTINGS.model_copy(
+    update={
+        "delta_pacing_max_window_seconds": 2.0,
+        "delta_pacing_max_chunks_per_second": 20,
+    },
+)
+"""The fast test settings with the default pacing settings."""
+
+PACED_POST_GAP_MILLISECONDS: int = 1500
+"""The gap in append time between the two posts written by a front-level test, so the second post is paced over 1.5 s."""
+
+
+def accepted(content: str, appended_at: float | None, reasoning_content: str = "") -> AcceptedDelta:
+    """Create an accepted delta of ``content`` appended at ``appended_at``."""
+    return AcceptedDelta(content=content, reasoning_content=reasoning_content, appended_at=appended_at)
+
+
+def drain_schedule(pacer: DeltaPacer) -> list[tuple[float, DeltaText]]:
+    """Return each pending piece with its due time, taking each piece at exactly that time."""
+    schedule: list[tuple[float, DeltaText]] = []
+    while (due_at := pacer.next_due_at) is not None:
+        schedule.extend((due_at, piece) for piece in pacer.take_due(due_at))
+    return schedule
+
+
+def piece_contents(pieces: Sequence[DeltaText]) -> list[str]:
+    """Return the content of each piece."""
+    return [piece.content for piece in pieces]
+
+
+async def test_the_first_post_is_due_whole_when_it_arrives() -> None:
+    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=20)
+
+    pacer.add([accepted("Hello ", 100.0)], now=5.0)
+
+    assert pacer.interval_seconds is None
+    assert piece_contents(pacer.take_due(5.0)) == ["Hello "]
+    assert pacer.next_due_at is None
+
+
+async def test_a_later_post_is_spread_evenly_over_the_interval_since_the_previous_post() -> None:
+    """A 1 s gap at 20 chunks a second splits a 40 character post into 20 pieces of 2, 50 ms apart."""
+    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=20)
+    pacer.add([accepted("Hello ", 100.0)], now=0.0)
+    pacer.take_due(0.0)
+
+    pacer.add([accepted(PACED_TEXT, 101.0)], now=10.0)
+    schedule = drain_schedule(pacer)
+
+    assert pacer.interval_seconds == pytest.approx(1.0)
+    assert [due_at for due_at, _piece in schedule] == pytest.approx([10.0 + index * 0.05 for index in range(20)])
+    assert [len(piece.content) for _due_at, piece in schedule] == [2] * 20
+    assert "".join(piece.content for _due_at, piece in schedule) == PACED_TEXT
+
+
+@pytest.mark.parametrize(
+    ("max_chunks_per_second", "content", "expected_piece_lengths"),
+    [
+        (4, PACED_TEXT, [10, 10, 10, 10]),
+        (20, "abc", [1, 1, 1]),
+    ],
+)
+async def test_the_piece_count_is_capped_by_the_chunk_rate_and_the_text_length(
+    max_chunks_per_second: int,
+    content: str,
+    expected_piece_lengths: list[int],
+) -> None:
+    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=max_chunks_per_second)
+    pacer.add([accepted("Hello ", 100.0), accepted(content, 101.0)], now=0.0)
+
+    schedule = drain_schedule(pacer)
+
+    assert [len(piece.content) for _due_at, piece in schedule] == [6, *expected_piece_lengths]
+    assert schedule[-1][0] < 1.0
+
+
+async def test_a_post_arriving_mid_drain_merges_with_the_pending_text_and_spreads_over_the_next_window() -> None:
+    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=10)
+    pacer.add([accepted("Hi", 100.0), accepted("0123456789", 101.0)], now=0.0)
+    sent_before_arrival = piece_contents(pacer.take_due(0.45))
+
+    pacer.add([accepted("abcdefghij", 102.0)], now=0.5)
+    schedule = drain_schedule(pacer)
+
+    assert sent_before_arrival == ["Hi", "0", "1", "2", "3", "4"]
+    assert schedule[0][0] == pytest.approx(0.5)
+    assert schedule[-1][0] < 0.5 + 1.0
+    assert len(schedule) == 10
+    assert "".join(piece.content for _due_at, piece in schedule) == "56789abcdefghij"
+
+
+async def test_the_interval_estimate_follows_the_cadence_within_its_bounds() -> None:
+    """A slower post widens the window halfway. A stalled worker's gap is capped at the maximum window. A gap below the
+    floor, such as one from a stream recreated with lower ids, is raised to the floor."""
+    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=20)
+    pacer.add([accepted("a", 100.0), accepted("b", 101.0)], now=0.0)
+    interval_after_one_gap = pacer.interval_seconds
+    pacer.add([accepted("c", 102.5)], now=0.0)
+    interval_after_slower_post = pacer.interval_seconds
+
+    stalled_pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=20)
+    stalled_pacer.add([accepted("a", 100.0), accepted("b", 160.0)], now=0.0)
+    recreated_pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=20)
+    recreated_pacer.add([accepted("a", 100.0), accepted("b", 0.001)], now=0.0)
+
+    assert interval_after_one_gap == pytest.approx(1.0)
+    assert interval_after_slower_post == pytest.approx(1.25)
+    assert stalled_pacer.interval_seconds == pytest.approx(2.0)
+    assert recreated_pacer.interval_seconds == pytest.approx(0.05)
+
+
+async def test_a_batch_without_new_text_leaves_the_pending_pieces_due_as_scheduled() -> None:
+    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=10)
+    pacer.add([accepted("Hi", 100.0), accepted("0123456789", 101.0)], now=0.0)
+    pacer.take_due(0.0)
+
+    pacer.add([], now=0.5)
+    schedule = drain_schedule(pacer)
+
+    assert [due_at for due_at, _piece in schedule] == pytest.approx([index * 0.1 for index in range(1, 10)])
+    assert "".join(piece.content for _due_at, piece in schedule) == "123456789"
+
+
+async def test_posts_without_an_append_time_are_kept_whole_in_order_behind_pending_pieces() -> None:
+    """Without two append times there is no interval estimate, so each post is due whole. Posts not yet taken stay
+    scheduled in stream order."""
+    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=20)
+
+    pacer.add([accepted("Hello ", None)], now=0.0)
+    pacer.add([accepted("from ", None)], now=1.0)
+    pacer.add([accepted("the horde.", 101.0)], now=2.0)
+    schedule = drain_schedule(pacer)
+
+    assert [(due_at, piece.content) for due_at, piece in schedule] == [(0.0, "Hello "), (1.0, "from "), (2.0, "the horde.")]
+
+
+async def test_the_post_tracker_counts_the_pieces_of_each_post_and_finishes_it_with_its_last_text() -> None:
+    post_tracker = PacedPostTracker()
+    post_tracker.add([accepted("abc", 100.0), accepted("de", 101.0, reasoning_content="r")])
+
+    first_sent = post_tracker.record_sent(DeltaText(content="ab", reasoning_content="r"))
+    second_sent = post_tracker.record_sent(DeltaText(content="cd"))
+    pending_after_second = post_tracker.pending_post_count
+    third_sent = post_tracker.record_sent(DeltaText(content="e"))
+
+    assert first_sent == []
+    assert [(post.appended_at, post.piece_count) for post in second_sent] == [(100.0, 2)]
+    assert pending_after_second == 1
+    assert [(post.appended_at, post.piece_count) for post in third_sent] == [(101.0, 3)]
+    assert post_tracker.pending_post_count == 0
+
+
+async def test_a_maximum_window_of_zero_sends_each_post_whole_when_it_arrives() -> None:
+    pacer = DeltaPacer(max_window_seconds=0, max_chunks_per_second=20)
+
+    pacer.add([accepted("Hello ", 100.0), accepted(PACED_TEXT, 101.0)], now=3.0)
+    pacer.add([accepted("more", 102.0)], now=4.0)
+    schedule = drain_schedule(pacer)
+
+    assert pacer.interval_seconds is None
+    assert [(due_at, piece.content) for due_at, piece in schedule] == [(3.0, "Hello "), (3.0, PACED_TEXT), (4.0, "more")]
+
+
+async def test_reasoning_is_paced_with_the_text() -> None:
+    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=3)
+    pacer.add([accepted("Hello ", 100.0), accepted("abcdef", 101.0, reasoning_content="thinking")], now=0.0)
+
+    schedule = drain_schedule(pacer)
+    paced_pieces = [piece for _due_at, piece in schedule][1:]
+
+    assert piece_contents(paced_pieces) == ["ab", "cd", "ef"]
+    assert [piece.reasoning_content for piece in paced_pieces] == ["th", "ink", "ing"]
+
+
+@pytest.mark.parametrize(
+    ("text", "allowed_cuts"),
+    [
+        pytest.param("abc", [1, 2], id="plain ASCII"),
+        pytest.param("e\u0301te\u0301", [2, 3], id="accent"),
+        pytest.param("\U0001f468\u200d\U0001f469\u200d\U0001f467!", [5], id="family ZWJ emoji"),
+        pytest.param("\U0001f1fa\U0001f1f8\U0001f1ec\U0001f1e7", [2], id="flag pair"),
+        pytest.param("\U0001f44d\U0001f3fdx", [2], id="skin-tone emoji"),
+        pytest.param("1\ufe0f\u20e3x", [3], id="keycap"),
+        pytest.param("\u0915\u093f\u0915", [2], id="Devanagari vowel sign"),
+        pytest.param("\u2764\ufe0fx", [2], id="variation selector"),
+    ],
+)
+async def test_a_cut_is_allowed_only_between_visible_characters(text: str, allowed_cuts: list[int]) -> None:
+    cuts = [index for index in range(1, len(text)) if _is_visible_character_boundary(text, index)]
+
+    assert cuts == allowed_cuts
+
+
+async def test_pieces_are_cut_at_nearby_whitespace() -> None:
+    assert _split_evenly("alpha beta gamma delta", 4) == ["alpha ", "beta ", "gamma ", "delta"]
+
+
+async def test_pieces_without_whitespace_do_not_cut_inside_a_visible_character() -> None:
+    accented_text = "e\u0301" * 6
+
+    pieces = _split_evenly(accented_text, 4)
+
+    assert "".join(pieces) == accented_text
+    assert [len(piece) for piece in pieces] == [4, 2, 4, 2]
+
+
+def build_relay() -> DeltaRelay:
+    """Create a relay of a stream that has not sent anything."""
+    return DeltaRelay(completion_id=COMPLETION_ID, created=0, model=MODEL_NAME, include_usage=False)
+
+
+def delta_entry(seq: int, content: str, appended_at: float) -> DeltaEntry:
+    """Create a delta of the test generation."""
+    return DeltaEntry.model_validate({"gen": GENERATION_ID, "seq": seq, "content": content, "appended_at": appended_at})
+
+
+def event_contents(relay_events: Sequence[ServerSentEvent]) -> list[str]:
+    """Return the content of each content chunk among ``relay_events``."""
+    deltas = [json.loads(str(relay_event.data))["choices"][0]["delta"] for relay_event in relay_events]
+    return [delta["content"] for delta in deltas if "content" in delta]
+
+
+RELAY_WALL_CLOCK_TIME: float = 102.5
+"""The Unix time read by the relay generator under test when it sends a piece. It is 2.5 s after the first post's append
+time."""
+
+
+def recording_metrics(metric_reader: InMemoryMetricReader) -> FrontMetrics:
+    """Create front instruments whose points ``metric_reader`` collects."""
+    meter_provider = MeterProvider(metric_readers=[metric_reader], views=histogram_views())
+    return FrontMetrics(meter_provider.get_meter(METER_NAME))
+
+
+def histogram_counts_and_sums(metric_reader: InMemoryMetricReader, metric_name: str) -> tuple[float, float]:
+    """Return the summed count and the summed value of the points of the histogram ``metric_name``."""
+    points = metric_points(metric_reader, metric_name)
+    return sum(point.value for point in points), sum(point.histogram_sum or 0 for point in points)
+
+
+def start_relaying(
+    relay: DeltaRelay,
+    finished: asyncio.Event,
+    front_metrics: FrontMetrics = UNRECORDED_METRICS,
+) -> tuple[AsyncGenerator[ServerSentEvent, None], asyncio.Task[HordeChatStatus]]:
+    """Return a relay generator and its wait task.
+
+    The generator's subscription holds a first post and a 40 character post appended 1 s later. The wait ends when
+    ``finished`` is set. The generator's Unix clock reads ``RELAY_WALL_CLOCK_TIME``.
+    """
+    subscription = DeltaSubscription(REQUEST_ID)
+    subscription.deliver(delta_entry(1, "Hello ", 100.0))
+    subscription.deliver(delta_entry(2, PACED_TEXT, 101.0))
+
+    async def wait_until_finished() -> HordeChatStatus:
+        await finished.wait()
+        return cast(HordeChatStatus, None)
+
+    wait_task = asyncio.create_task(wait_until_finished())
+    request_trace = cast(RequestTrace, SimpleNamespace(record_first_content=lambda *, relayed: None))
+    relay_events = _relay_deltas(
+        relay,
+        subscription,
+        wait_task,
+        request_trace,
+        front_metrics,
+        DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=20),
+        wall_clock=lambda: RELAY_WALL_CLOCK_TIME,
+    )
+    return cast(AsyncGenerator[ServerSentEvent, None], relay_events), wait_task
+
+
+async def test_pending_pieces_are_sent_at_once_when_the_wait_ends() -> None:
+    """The first post arrives whole and at once. After the wait ends, the rest of the paced text follows without
+    waiting for its window."""
+    relay = build_relay()
+    finished = asyncio.Event()
+    metric_reader = InMemoryMetricReader()
+    relay_events, wait_task = start_relaying(relay, finished, recording_metrics(metric_reader))
+    yielded_events: list[ServerSentEvent] = []
+    started_at = time.monotonic()
+    finished_at: float | None = None
+    async for relay_event in relay_events:
+        yielded_events.append(relay_event)
+        if finished_at is None and len(event_contents(yielded_events)) == 3:
+            finished.set()
+            finished_at = time.monotonic()
+    ended_at = time.monotonic()
+    await wait_task
+
+    contents = event_contents(yielded_events)
+    assert json.loads(str(yielded_events[0].data))["choices"][0]["delta"] == {"role": "assistant"}
+    assert contents[0] == "Hello "
+    assert len(contents) == 21
+    assert "".join(contents) == relay.relayed_content == f"Hello {PACED_TEXT}"
+    assert finished_at is not None
+    assert finished_at - started_at < 0.5
+    assert ended_at - finished_at < 0.5
+    assert histogram_counts_and_sums(metric_reader, POST_GAP_NAME) == pytest.approx((1, 1.0))
+    assert histogram_counts_and_sums(metric_reader, PIECES_PER_POST_NAME) == (2, 21)
+    assert histogram_counts_and_sums(metric_reader, PACING_LAG_NAME) == pytest.approx((2, 2.5 + 1.5))
+    assert metric_total(metric_reader, PACING_FLUSHES_NAME, horde_reason="finished") == 1
+    assert metric_total(metric_reader, PACING_FLUSHES_NAME) == 1
+
+
+async def test_relayed_content_is_the_text_yielded_when_the_client_stops_mid_drain() -> None:
+    relay = build_relay()
+    finished = asyncio.Event()
+    metric_reader = InMemoryMetricReader()
+    relay_events, wait_task = start_relaying(relay, finished, recording_metrics(metric_reader))
+    yielded_events: list[ServerSentEvent] = []
+    async for relay_event in relay_events:
+        yielded_events.append(relay_event)
+        if len(event_contents(yielded_events)) == 4:
+            break
+    await relay_events.aclose()
+    wait_task.cancel()
+
+    assert "".join(event_contents(yielded_events)) == relay.relayed_content == f"Hello {PACED_TEXT[:6]}"
+    assert histogram_counts_and_sums(metric_reader, PIECES_PER_POST_NAME) == (1, 1)
+    assert metric_total(metric_reader, PACING_FLUSHES_NAME, horde_reason="disconnected") == 1
+    assert metric_total(metric_reader, PACING_FLUSHES_NAME) == 1
+
+
+async def test_a_paced_stream_sends_the_rest_at_the_finish_and_reconciles_equal(start_front: StartFront) -> None:
+    """The second post, 1.5 s after the first by its stream id, is paced one character per piece. The finish arrives
+    mid-window. The pending pieces precede the finish chunk, so the final reply does not add a content chunk."""
+    async with start_front(PACING_TEST_SETTINGS, with_deltas=True) as front:
+
+        async def generate() -> None:
+            await asyncio.sleep(FIRST_DELTA_DELAY_SECONDS)
+            first_appended_milliseconds = int(time.time() * 1000)
+            await front.horde.append_entry_with_id(
+                f"{first_appended_milliseconds}-0", {"gen": GENERATION_ID, "seq": "1", "content": "Hello "}
+            )
+            await asyncio.sleep(RELAY_SETTLE_SECONDS)
+            await front.horde.append_entry_with_id(
+                f"{first_appended_milliseconds + PACED_POST_GAP_MILLISECONDS}-0",
+                {"gen": GENERATION_ID, "seq": "2", "content": "from the horde."},
+            )
+            await asyncio.sleep(RELAY_SETTLE_SECONDS)
+            await finish(front)
+
+        body = await stream_while(front, generate)
+        equal_outcomes = front.metric_total(RELAY_OUTCOMES_NAME, horde_outcome="equal")
+
+    chunks, last_payload = stream_chunks(body)
+    assert last_payload == "[DONE]"
+    assert chunk_deltas(chunks) == [
+        {"role": "assistant"},
+        {"content": "Hello "},
+        *({"content": character} for character in "from the horde."),
+        {},
+    ]
+    assert equal_outcomes == 1

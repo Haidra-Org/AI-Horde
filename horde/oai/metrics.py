@@ -42,6 +42,7 @@ __all__ = [
     "NativeCallOutcome",
     "NativeCallType",
     "NoEligibleWorkerStage",
+    "PacingFlushReason",
     "RelayOutcome",
     "get_front_meter",
     "histogram_views",
@@ -132,12 +133,55 @@ RELAYED_NAME: str = "horde.oai.stream.relayed"
 RELAY_OUTCOMES_NAME: str = "horde.oai.stream.relay_outcomes"
 """Counter: how relayed streams ended, by outcome."""
 
+POST_GAP_NAME: str = "horde.oai.stream.post_gap"
+"""Histogram: seconds between the append times of consecutive accepted worker progress posts in a relayed stream."""
+
+PIECES_PER_POST_NAME: str = "horde.oai.stream.pieces_per_post"
+"""Histogram: the number of sent pieces with part of one accepted worker progress post."""
+
+PACING_LAG_NAME: str = "horde.oai.stream.pacing_lag"
+"""Histogram: seconds from a post's append time to the send of the last piece with its text."""
+
+PACING_FLUSHES_NAME: str = "horde.oai.stream.pacing_flushes"
+"""Counter: accepted posts whose pending pieces were sent at once or dropped when the relay ended, by reason."""
+
+BUCKETS_POST_GAP_SECONDS: tuple[float, ...] = (
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    1.5,
+    2.0,
+    3.0,
+    5.0,
+    10.0,
+)
+"""Post gap and pacing lag bucket boundaries in seconds. The buckets are dense around one second, which is the post
+interval of a koboldcpp worker. They reach past the 2 s maximum pacing window, so a stalled worker is visible."""
+
+BUCKETS_PIECES_PER_POST: tuple[int, ...] = (
+    1,
+    2,
+    3,
+    5,
+    10,
+    20,
+    40,
+    80,
+)
+"""Pieces per post bucket boundaries. They range from a post sent whole to a post spread over merged windows. One
+window holds at most 40 pieces at the default settings."""
+
 HISTOGRAM_BUCKETS: Mapping[str, tuple[float, ...]] = {
     BODY_BYTES_NAME: BUCKETS_BODY_BYTES,
     NATIVE_CALL_DURATION_NAME: BUCKETS_SECONDS,
     QUEUE_WAIT_NAME: BUCKETS_REQUEST_LIFECYCLE_SECONDS,
     FIRST_CONTENT_NAME: BUCKETS_REQUEST_LIFECYCLE_SECONDS,
     REQUEST_DURATION_NAME: BUCKETS_REQUEST_LIFECYCLE_SECONDS,
+    POST_GAP_NAME: BUCKETS_POST_GAP_SECONDS,
+    PIECES_PER_POST_NAME: BUCKETS_PIECES_PER_POST,
+    PACING_LAG_NAME: BUCKETS_POST_GAP_SECONDS,
 }
 """The bucket boundaries of each front histogram; native calls take seconds, waits take minutes."""
 
@@ -225,6 +269,17 @@ class RelayOutcome(StrEnum):
     GAP = "gap"
     """A delta of the relayed generation arrived out of sequence; the stream ended with an error event and the request
     was cancelled."""
+
+
+class PacingFlushReason(StrEnum):
+    """Why a relayed stream stopped pacing with posts still pending."""
+
+    FINISHED = "finished"
+    """The request finished. The pending pieces were sent at once, before the final reply."""
+    BROKEN = "broken"
+    """The relay broke. The pending pieces were sent at once, before the error event."""
+    DISCONNECTED = "disconnected"
+    """The stream stopped, for example because the client disconnected. The pending pieces were dropped."""
 
 
 class InflightCounts(Protocol):
@@ -354,6 +409,26 @@ class FrontMetrics:
             RELAY_OUTCOMES_NAME,
             unit="1",
             description="How streams that relayed content deltas ended, by outcome",
+        )
+        self._post_gap = meter.create_histogram(
+            POST_GAP_NAME,
+            unit="s",
+            description="Seconds between the append times of consecutive worker progress posts in a relayed stream",
+        )
+        self._pieces_per_post = meter.create_histogram(
+            PIECES_PER_POST_NAME,
+            unit="1",
+            description="Number of sent pieces with part of one worker progress post",
+        )
+        self._pacing_lag = meter.create_histogram(
+            PACING_LAG_NAME,
+            unit="s",
+            description="Seconds from a post's append time until its last piece is sent",
+        )
+        self._pacing_flushes = meter.create_counter(
+            PACING_FLUSHES_NAME,
+            unit="1",
+            description="Posts whose pending pieces were sent at once or dropped when the relay ended, by reason",
         )
 
     def observe_inflight(self, inflight_counts: InflightCounts) -> None:
@@ -586,3 +661,26 @@ class FrontMetrics:
     def record_relay_outcome(self, outcome: RelayOutcome) -> None:
         """Record how a stream that relayed content deltas ended."""
         self._relay_outcomes.add(1, {MetricAttribute.OUTCOME: str(outcome)})
+
+    def record_post_gap(self, gap_seconds: float) -> None:
+        """Record the gap between the append times of two consecutive accepted posts.
+
+        A negative gap, from a stream recreated with lower ids, is recorded as 0.
+        """
+        self._post_gap.record(max(0.0, gap_seconds))
+
+    def record_paced_post(self, *, piece_count: int, lag_seconds: float | None) -> None:
+        """Record an accepted post after all of its text was sent.
+
+        Args:
+            piece_count: The number of sent pieces with part of the post.
+            lag_seconds: The time from the post's append time until its last piece was sent. None when the post does
+                not have an append time. A negative lag, from clock skew between Redis and the front, is recorded as 0.
+        """
+        self._pieces_per_post.record(piece_count)
+        if lag_seconds is not None:
+            self._pacing_lag.record(max(0.0, lag_seconds))
+
+    def record_pacing_flush(self, *, reason: PacingFlushReason, post_count: int) -> None:
+        """Record ``post_count`` accepted posts still pending when the relay stopped pacing."""
+        self._pacing_flushes.add(post_count, {MetricAttribute.REASON: str(reason)})

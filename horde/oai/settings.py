@@ -164,6 +164,22 @@ class FrontSettings(BaseSettings):
     heartbeat_seconds: float = Field(default=5.0, gt=0)
     """The keepalive comment interval of a streamed response; well under the listener's inactivity timeouts."""
 
+    delta_pacing_max_window_seconds: float = Field(default=2.0, ge=0)
+    """The longest window over which a relayed stream spreads the text of one worker progress post.
+
+    0 sends each post as one chunk when it arrives. The window is the estimated interval between the worker's posts,
+    so the client sees an even flow of text. Pacing adds up to one window of latency. A koboldcpp worker posts about
+    once a second, and 2 s covers the jitter in that interval. When a worker stalls, the window does not grow past this
+    limit, so the text is not held back longer.
+    """
+
+    delta_pacing_max_chunks_per_second: int = Field(default=20, gt=0)
+    """The maximum number of content chunks a paced stream sends per second of its window.
+
+    At 20 chunks a second, the text reads as continuous. The limit also bounds the number of events one stream adds per
+    post. Each event is a JSON chunk of a few hundred bytes.
+    """
+
     fallback_poll_seconds: float = Field(default=15.0, gt=0)
     """The base status poll interval when no signal arrives; it stretches to half the Horde's ``wait_time``, at most 60."""
 

@@ -63,6 +63,8 @@ directory is read too. A variable that is set but invalid stops the start with a
 | `HORDE_OAI_SHUTDOWN_DRAIN_SECONDS` | `30` | How long uvicorn waits for open requests on a clean stop before cancelling their handlers. |
 | `HORDE_OAI_SHUTDOWN_CANCEL_SECONDS` | `15` | Process-wide bound for cancelling every request still open at stop. |
 | `HORDE_OAI_HEARTBEAT_SECONDS` | `5` | Interval of the keepalive comment on a streamed response. |
+| `HORDE_OAI_DELTA_PACING_MAX_WINDOW_SECONDS` | `2` | Longest window over which a relayed stream spreads the text of one worker progress post. The window is the estimated interval between the worker's posts, up to this length. `0` sends each post as one chunk when it arrives. |
+| `HORDE_OAI_DELTA_PACING_MAX_CHUNKS_PER_SECOND` | `20` | Maximum number of content chunks a paced stream sends per second of its window. |
 | `HORDE_OAI_FALLBACK_POLL_SECONDS` | `15` | Base status poll interval when no signal arrives; it stretches to half the horde's `wait_time`, at most 60 seconds, and is shortened at random by up to a fifth. |
 | `HORDE_OAI_SIGNAL_RECHECK_SECONDS` | `0.5` | Delay of the one extra status read after a terminal signal whose outcome the first read did not show. |
 | `HORDE_OAI_FAIL_FAST_GRACE_SECONDS` | `20` | How long the horde may report no eligible worker, with nothing processing, before the request is cancelled and answered 503. |
@@ -164,7 +166,8 @@ on most requests means signals are not arriving.
 Add `"stream": true` (and optionally `"stream_options": {"include_usage": true}`) to receive server-sent events
 instead: `: horde queue_position=7 wait_time=42` comments while the request waits, then a role chunk, content
 chunks, a finish chunk carrying `x_horde`, the usage chunk with `choices: []` when asked for, and
-`data: [DONE]`. A plain request gets its content as the worker posts progress, one chunk per post; a request with
+`data: [DONE]`. A plain request gets its content as the worker posts progress. The text of each post is spread over the
+estimated interval until the next post. A request with
 tools or structured output gets the whole text in one chunk. The response carries `Cache-Control: no-cache`,
 `X-Accel-Buffering: no` and `x-should-retry: false`.
 

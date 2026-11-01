@@ -29,12 +29,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import json
 import math
 import re
 import time
+import unicodedata
 import uuid
-from collections.abc import AsyncIterator, Coroutine, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterator, Mapping, Sequence
 from enum import StrEnum
 from http import HTTPStatus
 from types import MappingProxyType
@@ -102,7 +104,14 @@ from horde.oai.mapping import (
     build_system_fingerprint,
     relays_deltas,
 )
-from horde.oai.metrics import CancelOutcome, FrontMetrics, NoEligibleWorkerStage, RelayOutcome, get_front_meter
+from horde.oai.metrics import (
+    CancelOutcome,
+    FrontMetrics,
+    NoEligibleWorkerStage,
+    PacingFlushReason,
+    RelayOutcome,
+    get_front_meter,
+)
 from horde.oai.schema import (
     CHAT_REQUEST_CONFLICT_CODE,
     DEFAULT_NO_OP_PARAMETERS,
@@ -143,9 +152,12 @@ from horde.oai.waiter import (
 )
 
 __all__ = [
+    "AcceptedDelta",
     "CancelState",
     "ChatFrontError",
+    "DeltaPacer",
     "DeltaRelay",
+    "DeltaText",
     "FrontState",
     "InflightLimiter",
     "InflightSlot",
@@ -231,6 +243,42 @@ STREAM_DIVERGED_CODE: str = "ChatStreamDiverged"
 """The error code of a relayed stream that cannot finish with the text it already sent: the generation it relayed
 was replaced or ended, a delta of it arrived out of sequence, or the final reply does not start with the relayed
 text."""
+
+DELTA_PACING_MIN_WINDOW_SECONDS: float = 0.05
+"""The shortest window over which a paced stream spreads a post. When posts arrive faster than this, finer pieces do
+not make a visible difference. Each piece costs one event loop wake-up."""
+
+DELTA_PACING_SMOOTHING: float = 0.5
+"""The weight of the newest gap between a generation's posts in the estimate of the post interval. With this weight,
+the estimate adjusts to a changed interval within a few posts. One late post moves the estimate only halfway."""
+
+MARK_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "Mn",
+        "Mc",
+        "Me",
+    },
+)
+"""The Unicode mark categories. A mark attaches to the character before it, so a paced piece does not start with one.
+Some marks, such as a Devanagari vowel sign or the keycap mark, have a combining class of 0, so the category check is
+needed as well."""
+
+VARIATION_SELECTOR_CODE_POINTS: tuple[range, ...] = (
+    range(0xFE00, 0xFE10),
+    range(0xE0100, 0xE01F0),
+)
+"""The variation selectors. A variation selector chooses the presentation of the character before it, so a paced piece
+does not start with one."""
+
+ZERO_WIDTH_JOINER: str = "‍"
+"""The joiner of emoji sequences, such as a family. A paced piece does not start or end with it."""
+
+SKIN_TONE_MODIFIER_CODE_POINTS: range = range(0x1F3FB, 0x1F400)
+"""The emoji skin-tone modifiers. A modifier applies to the emoji before it, so a paced piece does not start with one."""
+
+REGIONAL_INDICATOR_CODE_POINTS: range = range(0x1F1E6, 0x1F200)
+"""The regional indicator symbols. Two of them form one flag, so a cut between paced pieces does not fall inside a
+pair."""
 
 WORKER_FAULT_RC: str = "ChatWorkerFault"
 """The return code the Horde stores with a faulted request's reason when a worker reported why it faulted a job,
@@ -2438,6 +2486,289 @@ async def _wait_for_completion(
     return JSONResponse(content=completion.model_dump(mode="json"))
 
 
+class DeltaText(BaseModel):
+    """Represents the text in one send, with a content part and a reasoning part. Either part may be empty."""
+
+    model_config = ConfigDict(frozen=True)
+
+    content: str = ""
+    """The text to send."""
+
+    reasoning_content: str = ""
+    """The reasoning to send. Empty when there is no reasoning or the client did not request it."""
+
+
+class AcceptedDelta(DeltaText):
+    """Represents a delta accepted by the relay for the client, with the append time of the worker's post."""
+
+    appended_at: float | None = None
+    """The Unix time in seconds at which the delta's stream entry was appended. None when the entry has no time."""
+
+
+class PacedPiece(DeltaText):
+    """Represents a piece of a paced stream's pending text, with its due time."""
+
+    due_at: float
+    """The time on the pacer's clock at which the piece is to be sent."""
+
+
+class DeltaPacer:
+    """Spread the text of one relayed generation's posts evenly over the interval between them.
+
+    The first post is due whole when it arrives, so the first content is not delayed. Each gap between the append
+    times of two posts updates an exponential moving average of the generation's post interval. The average is kept
+    between [`DELTA_PACING_MIN_WINDOW_SECONDS`][horde.oai.app.DELTA_PACING_MIN_WINDOW_SECONDS] and the maximum window.
+    Once an interval estimate exists, the text of a new post is joined to the text still pending. The whole pending
+    text is then spread again over one estimated interval, starting at the post's arrival. That window holds at most
+    ``max_chunks_per_second`` pieces per second. Pending text therefore lags by about one window at most. When posts
+    arrive faster, the estimate shrinks and the pending text is spread over a shorter window. When posts arrive more
+    slowly, the window widens. A batch without new text leaves the schedule unchanged.
+
+    Pieces are substrings of the content and the reasoning, cut near even offsets. A cut is at whitespace when
+    whitespace is nearby. A cut is never inside a visible character. A cut inside a word is acceptable, since token
+    streams also split words. Reasoning is paced with the text, and each piece has its share of both.
+
+    A maximum window of 0 disables pacing. Every post is then one piece, due when it arrives.
+
+    The pacer does not read a clock. Callers pass the current time from one monotonic clock. The interval is measured
+    from the append times in the posts.
+    """
+
+    def __init__(self, *, max_window_seconds: float, max_chunks_per_second: int) -> None:
+        """Create the pacer of a stream that has not received a post.
+
+        Args:
+            max_window_seconds: The longest window over which the text of one post is spread. 0 disables pacing.
+            max_chunks_per_second: The maximum number of pieces per second of a window.
+        """
+        self.interval_seconds: float | None = None
+        """The estimated interval between the generation's posts. None until two posts with append times arrive."""
+        self._max_window_seconds = max_window_seconds
+        self._max_chunks_per_second = max_chunks_per_second
+        self._last_appended_at: float | None = None
+        self._pieces: list[PacedPiece] = []
+
+    @property
+    def enabled(self) -> bool:
+        """Return whether the pacer spreads posts. A disabled pacer sends each post whole when it arrives."""
+        return self._max_window_seconds > 0
+
+    @property
+    def next_due_at(self) -> float | None:
+        """Return the due time of the earliest pending piece, or None when the schedule is empty."""
+        return self._pieces[0].due_at if self._pieces else None
+
+    def add(self, accepted_deltas: Sequence[AcceptedDelta], *, now: float) -> None:
+        """Mutate the pacer by scheduling ``accepted_deltas``, which arrived at ``now``, after the pending pieces.
+
+        Args:
+            accepted_deltas: The deltas accepted by the relay, in stream order.
+            now: The current time on the caller's clock.
+        """
+        immediate_pieces: list[PacedPiece] = []
+        spread_deltas: list[AcceptedDelta] = []
+        for accepted_delta in accepted_deltas:
+            if self.enabled:
+                self._observe(accepted_delta.appended_at)
+            if not self.enabled or self.interval_seconds is None:
+                immediate_pieces.append(self._piece_due_at(accepted_delta, now))
+                continue
+            spread_deltas.append(accepted_delta)
+        # Pieces already scheduled keep their due times unless new text is spread. Text sent whole is scheduled after
+        # them, so pending text is not dropped or reordered.
+        self._pieces += immediate_pieces
+        if not spread_deltas or self.interval_seconds is None:
+            return
+        merged_pieces: list[DeltaText] = []
+        if not immediate_pieces:
+            # The pending pieces are merged with the new text, and all of it is spread over the next window.
+            merged_pieces = list(self._pieces)
+            self._pieces = []
+        self._spread(
+            content="".join(text.content for text in [*merged_pieces, *spread_deltas]),
+            reasoning_content="".join(text.reasoning_content for text in [*merged_pieces, *spread_deltas]),
+            window_seconds=self.interval_seconds,
+            now=now,
+        )
+
+    def take_due(self, now: float) -> list[DeltaText]:
+        """Return the pieces due by ``now``, oldest first, and drop them from the schedule."""
+        due_count = 0
+        while due_count < len(self._pieces) and self._pieces[due_count].due_at <= now:
+            due_count += 1
+        due_pieces: list[DeltaText] = list(self._pieces[:due_count])
+        del self._pieces[:due_count]
+        return due_pieces
+
+    def take_all(self) -> list[DeltaText]:
+        """Return every pending piece, oldest first, and empty the schedule. Used when a stream sends its rest at once."""
+        pending_pieces: list[DeltaText] = list(self._pieces)
+        self._pieces = []
+        return pending_pieces
+
+    @staticmethod
+    def _piece_due_at(accepted_delta: AcceptedDelta, now: float) -> PacedPiece:
+        """Create a piece that sends ``accepted_delta`` whole at ``now``."""
+        return PacedPiece(content=accepted_delta.content, reasoning_content=accepted_delta.reasoning_content, due_at=now)
+
+    def _observe(self, appended_at: float | None) -> None:
+        """Mutate the interval estimate with the gap between the previous post and a post appended at ``appended_at``."""
+        if appended_at is None:
+            return
+        previous_appended_at = self._last_appended_at
+        self._last_appended_at = appended_at
+        if previous_appended_at is None:
+            return
+        # A stream recreated with lower ids gives a negative gap. The floor raises it to the minimum window.
+        gap_seconds = min(max(appended_at - previous_appended_at, DELTA_PACING_MIN_WINDOW_SECONDS), self._max_window_seconds)
+        if self.interval_seconds is None:
+            self.interval_seconds = gap_seconds
+            return
+        self.interval_seconds += DELTA_PACING_SMOOTHING * (gap_seconds - self.interval_seconds)
+
+    def _spread(self, *, content: str, reasoning_content: str, window_seconds: float, now: float) -> None:
+        """Mutate the schedule by splitting the pending text into even pieces across ``window_seconds`` from ``now``.
+
+        The first piece is due at ``now``, so a merge does not delay text that was already due.
+        """
+        rate_piece_limit = max(1, math.floor(self._max_chunks_per_second * window_seconds))
+        piece_count = max(1, min(rate_piece_limit, max(len(content), len(reasoning_content))))
+        content_pieces = _split_evenly(content, piece_count)
+        reasoning_pieces = _split_evenly(reasoning_content, piece_count)
+        piece_spacing_seconds = window_seconds / piece_count
+        # The new pieces go after any pieces still in the schedule, such as a first post read in the same batch.
+        self._pieces += [
+            PacedPiece(
+                content=content_piece,
+                reasoning_content=reasoning_piece,
+                due_at=now + piece_index * piece_spacing_seconds,
+            )
+            for piece_index, (content_piece, reasoning_piece) in enumerate(zip(content_pieces, reasoning_pieces, strict=True))
+        ]
+
+
+def _split_evenly(text: str, piece_count: int) -> list[str]:
+    """Return ``text`` split into ``piece_count`` consecutive pieces of nearly equal length.
+
+    Some pieces are empty when the text is shorter than ``piece_count`` or has too few places to cut. Each cut is at
+    the whitespace boundary nearest its even offset, within half a piece of it. Without such a boundary, the cut is at
+    the first index at or after the offset that does not split a visible character
+    ([`_is_visible_character_boundary`][horde.oai.app._is_visible_character_boundary]).
+    """
+    text_length = len(text)
+    search_radius = text_length // (2 * piece_count)
+    boundaries = [0]
+    for piece_index in range(1, piece_count):
+        target = max(text_length * piece_index // piece_count, boundaries[-1])
+        boundaries.append(_split_point(text, target=target, lower_bound=boundaries[-1], search_radius=search_radius))
+    boundaries.append(text_length)
+    return [text[start:end] for start, end in itertools.pairwise(boundaries)]
+
+
+def _split_point(text: str, *, target: int, lower_bound: int, search_radius: int) -> int:
+    """Return the cut index in ``text`` for the even offset ``target``, never before ``lower_bound``."""
+    text_length = len(text)
+    for offset in range(search_radius + 1):
+        for index in (target - offset, target + offset):
+            follows_whitespace = lower_bound < index < text_length and text[index - 1].isspace()
+            if follows_whitespace and _is_visible_character_boundary(text, index):
+                return index
+    index = target
+    while index < text_length and not _is_visible_character_boundary(text, index):
+        index += 1
+    return index
+
+
+def _is_visible_character_boundary(text: str, index: int) -> bool:
+    """Return whether cutting ``text`` before ``index`` keeps every visible character in one piece.
+
+    The client renders each paced piece before the next arrives, so a cut inside a character shows a stray mark or a
+    broken emoji for one pacing step. A cut is not allowed before a mark (a combining mark, a spacing vowel sign, an
+    enclosing keycap), a variation selector, a zero-width joiner or an emoji skin-tone modifier. A cut is also not
+    allowed after a zero-width joiner, or between the two regional indicators of a flag. These rules cover the common
+    cases in chat text without a grapheme segmentation library.
+    """
+    if index <= 0 or index >= len(text):
+        return True
+    character = text[index]
+    previous_character = text[index - 1]
+    code_point = ord(character)
+    if unicodedata.combining(character) != 0 or unicodedata.category(character) in MARK_CATEGORIES:
+        return False
+    if any(code_point in code_points for code_points in VARIATION_SELECTOR_CODE_POINTS):
+        return False
+    if ZERO_WIDTH_JOINER in (character, previous_character):
+        return False
+    if code_point in SKIN_TONE_MODIFIER_CODE_POINTS:
+        return False
+    if code_point not in REGIONAL_INDICATOR_CODE_POINTS:
+        return True
+    # Regional indicators form pairs from the start of a run. A cut after an odd number of them falls inside a flag.
+    preceding_indicator_count = 0
+    while preceding_indicator_count < index and ord(text[index - 1 - preceding_indicator_count]) in REGIONAL_INDICATOR_CODE_POINTS:
+        preceding_indicator_count += 1
+    return preceding_indicator_count % 2 == 0
+
+
+class PacedPost:
+    """Represents an accepted post whose text is being sent by a paced stream."""
+
+    def __init__(self, accepted_delta: AcceptedDelta) -> None:
+        """Create the record of a post with no text sent yet.
+
+        Args:
+            accepted_delta: The post's accepted delta.
+        """
+        self.appended_at: float | None = accepted_delta.appended_at
+        """The Unix time in seconds at which the post was appended. None when its entry has no time."""
+        self.content_left: int = len(accepted_delta.content)
+        """How many characters of the post's content are not sent yet."""
+        self.reasoning_left: int = len(accepted_delta.reasoning_content)
+        """How many characters of the post's reasoning are not sent yet."""
+        self.piece_count: int = 0
+        """How many sent pieces had part of the post."""
+
+
+class PacedPostTracker:
+    """Track the accepted posts whose text is in each sent piece.
+
+    The caller uses the tracker to record each post's piece count and the send of its last text. Pieces are
+    substrings of the posts' text in order, so the sent lengths are counted off the pending posts, oldest first. The
+    content and the reasoning are cut at separate offsets, so they are counted separately. A post is sent when both
+    its content and its reasoning are sent. The tracker does not read a clock.
+    """
+
+    def __init__(self) -> None:
+        """Create the tracker of a stream with no accepted post."""
+        self._pending_posts: list[PacedPost] = []
+
+    @property
+    def pending_post_count(self) -> int:
+        """Return how many accepted posts still have text to send."""
+        return len(self._pending_posts)
+
+    def add(self, accepted_deltas: Sequence[AcceptedDelta]) -> None:
+        """Mutate the tracker by appending ``accepted_deltas``, in stream order, to the pending posts."""
+        self._pending_posts += [PacedPost(accepted_delta) for accepted_delta in accepted_deltas]
+
+    def record_sent(self, delta_text: DeltaText) -> list[PacedPost]:
+        """Mutate the tracker by counting ``delta_text`` off the pending posts, and return the posts it completes."""
+        content_left_to_count = len(delta_text.content)
+        reasoning_left_to_count = len(delta_text.reasoning_content)
+        for pending_post in self._pending_posts:
+            content_counted = min(content_left_to_count, pending_post.content_left)
+            reasoning_counted = min(reasoning_left_to_count, pending_post.reasoning_left)
+            pending_post.content_left -= content_counted
+            pending_post.reasoning_left -= reasoning_counted
+            content_left_to_count -= content_counted
+            reasoning_left_to_count -= reasoning_counted
+            if content_counted or reasoning_counted:
+                pending_post.piece_count += 1
+        sent_posts = [post for post in self._pending_posts if not post.content_left and not post.reasoning_left]
+        self._pending_posts = [post for post in self._pending_posts if post.content_left or post.reasoning_left]
+        return sent_posts
+
+
 class DeltaRelay:
     """Relay one streamed request's content deltas and reconcile the relayed text with its final reply.
 
@@ -2479,18 +2810,19 @@ class DeltaRelay:
         self._include_usage = include_usage
         self._include_reasoning = include_reasoning
         self._exposed = False
+        self._role_sent = False
         self._next_seq = 1
         self._relayed_parts: list[str] = []
         self._relayed_reasoning_parts: list[str] = []
 
     @property
     def exposed(self) -> bool:
-        """Return whether a delta was sent to the client."""
+        """Return whether the relay accepted a delta for the client."""
         return self._exposed
 
     @property
     def relayed_content(self) -> str:
-        """Return the text sent to the client as deltas."""
+        """Return the text sent to the client as deltas. Text accepted but still pending in a pacer is not included."""
         return "".join(self._relayed_parts)
 
     @property
@@ -2504,15 +2836,17 @@ class DeltaRelay:
         self.system_fingerprint = None
         self._next_seq = 1
 
-    def take(self, entries: Sequence[DeltaEntry]) -> list[ServerSentEvent]:
-        """Return the events relaying ``entries``, read together in stream order, and set ``broken`` when one breaks
-        the relay; entries after the breaking one are dropped.
+    def take(self, entries: Sequence[DeltaEntry]) -> list[AcceptedDelta]:
+        """Return the deltas of ``entries`` to send to the client, and set ``broken`` when one breaks the relay.
+
+        The entries were read together, in stream order. Entries after the one that breaks the relay are dropped.
 
         Before exposure, a generation whose ended marker is among ``entries`` is not exposed, so a reader that fell
-        behind does not show a client the start of an attempt it already knows failed.
+        behind does not show a client the start of an attempt already known to have failed. A delta with nothing to
+        send, such as one with only reasoning the client did not request, advances the sequence and is not returned.
         """
         ended_generations = {entry.generation_id for entry in entries if entry.ended}
-        events: list[ServerSentEvent] = []
+        accepted_deltas: list[AcceptedDelta] = []
         for entry in entries:
             if not entry.ended and entry.content is None and entry.reasoning_content is None:
                 continue
@@ -2542,22 +2876,45 @@ class DeltaRelay:
             self._next_seq += 1
             if not content and not reasoning_content:
                 continue
-            events.extend(
-                build_delta_events(
-                    completion_id=self._completion_id,
-                    created=self._created,
-                    model=self._served_model,
+            accepted_deltas.append(
+                AcceptedDelta(
                     content=content,
-                    first=not self._exposed,
-                    include_usage=self._include_usage,
-                    system_fingerprint=self.system_fingerprint,
                     reasoning_content=reasoning_content,
+                    appended_at=entry.appended_at,
                 ),
             )
             self._exposed = True
-            self._relayed_parts.append(content)
-            self._relayed_reasoning_parts.append(reasoning_content)
-        return events
+        return accepted_deltas
+
+    def send(self, delta_text: DeltaText) -> Iterator[ServerSentEvent]:
+        """Yield, in order, the events that send ``delta_text``, an accepted delta or a paced piece of one.
+
+        Each part is added to the relayed text just before the event with that part is yielded. The stream's first
+        events start with the role chunk. The reasoning chunk precedes the content chunk. When a consumer stops before
+        an event, the text of that event is not added, so ``relayed_content`` holds only the text sent to the client.
+        """
+        delta_parts = (
+            DeltaText(reasoning_content=delta_text.reasoning_content),
+            DeltaText(content=delta_text.content),
+        )
+        for delta_part in delta_parts:
+            if not delta_part.content and not delta_part.reasoning_content:
+                continue
+            events = build_delta_events(
+                completion_id=self._completion_id,
+                created=self._created,
+                model=self._served_model,
+                content=delta_part.content,
+                first=not self._role_sent,
+                include_usage=self._include_usage,
+                system_fingerprint=self.system_fingerprint,
+                reasoning_content=delta_part.reasoning_content,
+            )
+            self._role_sent = True
+            yield from events[:-1]
+            self._relayed_parts.append(delta_part.content)
+            self._relayed_reasoning_parts.append(delta_part.reasoning_content)
+            yield events[-1]
 
     def align_fingerprint(self, completion: ChatCompletionResponse) -> ChatCompletionResponse:
         """Return ``completion`` carrying the relayed chunks' ``system_fingerprint``, so one stream carries one value.
@@ -2593,29 +2950,81 @@ async def _relay_deltas(
     wait_task: asyncio.Task[HordeChatStatus],
     request_trace: RequestTrace,
     front_metrics: FrontMetrics,
+    pacer: DeltaPacer,
+    clock: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], float] = time.time,
 ) -> AsyncIterator[ServerSentEvent]:
-    """Yield the events relaying the request's deltas until ``wait_task`` ends or the relay breaks.
+    """Yield the events relaying the request's deltas, paced by ``pacer``, until ``wait_task`` ends or the relay breaks.
 
-    Entries still queued when ``wait_task`` ends are left; the final reply's reconciliation sends what they held.
+    The pieces still pending at that point are yielded at once, so the final reply's reconciliation counts every
+    accepted delta as sent. When a consumer stops iterating, the pending pieces are dropped, and
+    ``relay.relayed_content`` holds only the yielded text. Entries still in the subscription's queue when ``wait_task``
+    ends are not relayed. The final reply's reconciliation sends their text.
+
+    The generator records the gap between accepted posts, the piece count and lag of each sent post, and the posts
+    pending when pacing stops. These metrics allow the pacing window to be compared with the workers' post interval.
+
+    Args:
+        relay: The relay that accepts the entries and builds their events.
+        delta_subscription: The request's delta stream subscription.
+        wait_task: The wait for the request's final status.
+        request_trace: The request's trace, which records the first relayed content.
+        front_metrics: The front's instruments, which count the relayed request and record the pacing.
+        pacer: The pacer that schedules the accepted deltas.
+        clock: The monotonic clock used for the pacer's due times.
+        wall_clock: The Unix clock used to measure a post's lag. It is the clock of the append time in the stream id.
     """
     get_task: asyncio.Task[DeltaEntry] | None = None
+    post_tracker = PacedPostTracker()
+    previous_appended_at: float | None = None
+    pacing_stopped = False
+
+    def record_sent(delta_text: DeltaText) -> None:
+        sent_at = wall_clock()
+        for sent_post in post_tracker.record_sent(delta_text):
+            lag_seconds = None if sent_post.appended_at is None else sent_at - sent_post.appended_at
+            front_metrics.record_paced_post(piece_count=sent_post.piece_count, lag_seconds=lag_seconds)
+
     try:
         while not wait_task.done() and relay.broken is None:
             if get_task is None:
                 get_task = asyncio.create_task(delta_subscription.get())
-            await asyncio.wait({wait_task, get_task}, return_when=asyncio.FIRST_COMPLETED)
-            if not get_task.done():
-                continue
-            entries = [get_task.result(), *delta_subscription.take_queued()]
-            get_task = None
-            was_exposed = relay.exposed
-            relay_events = relay.take(entries)
-            if relay.exposed and not was_exposed:
-                request_trace.record_first_content(relayed=True)
-                front_metrics.record_relayed()
-            for relay_event in relay_events:
+            next_due_at = pacer.next_due_at
+            timeout_seconds = None if next_due_at is None else max(0.0, next_due_at - clock())
+            await asyncio.wait({wait_task, get_task}, timeout=timeout_seconds, return_when=asyncio.FIRST_COMPLETED)
+            if get_task.done():
+                entries = [get_task.result(), *delta_subscription.take_queued()]
+                get_task = None
+                was_exposed = relay.exposed
+                accepted_deltas = relay.take(entries)
+                for accepted_delta in accepted_deltas:
+                    if accepted_delta.appended_at is None:
+                        continue
+                    if previous_appended_at is not None:
+                        front_metrics.record_post_gap(accepted_delta.appended_at - previous_appended_at)
+                    previous_appended_at = accepted_delta.appended_at
+                post_tracker.add(accepted_deltas)
+                pacer.add(accepted_deltas, now=clock())
+                if relay.exposed and not was_exposed:
+                    request_trace.record_first_content(relayed=True)
+                    front_metrics.record_relayed()
+            for due_piece in pacer.take_due(clock()):
+                for relay_event in relay.send(due_piece):
+                    yield relay_event
+                record_sent(due_piece)
+        pacing_stopped = True
+        if post_tracker.pending_post_count > 0:
+            front_metrics.record_pacing_flush(
+                reason=PacingFlushReason.FINISHED if relay.broken is None else PacingFlushReason.BROKEN,
+                post_count=post_tracker.pending_post_count,
+            )
+        for pending_piece in pacer.take_all():
+            for relay_event in relay.send(pending_piece):
                 yield relay_event
+            record_sent(pending_piece)
     finally:
+        if not pacing_stopped and post_tracker.pending_post_count > 0:
+            front_metrics.record_pacing_flush(reason=PacingFlushReason.DISCONNECTED, post_count=post_tracker.pending_post_count)
         if get_task is not None and not get_task.done():
             get_task.cancel()
 
@@ -2664,8 +3073,9 @@ async def _stream_completion(
     the client disconnects before the event generator first runs, sse-starlette never starts it, so the response's
     background task cancels the request and releases the slot instead.
 
-    A request [`relays_deltas`][horde.oai.mapping.relays_deltas] selects sends the worker's content deltas as they
-    arrive through a [`DeltaRelay`][horde.oai.app.DeltaRelay]; once one is sent, the final reply only finishes the
+    A request selected by [`relays_deltas`][horde.oai.mapping.relays_deltas] sends the worker's content deltas through a
+    [`DeltaRelay`][horde.oai.app.DeltaRelay]. A [`DeltaPacer`][horde.oai.app.DeltaPacer] spreads them over the worker's
+    post interval. Once a delta is sent, the final reply only finishes the
     stream when it starts with the relayed text, and otherwise the stream ends with an error event.
     """
     front_state = _front_state(request)
@@ -2731,6 +3141,10 @@ async def _stream_completion(
                         wait_task,
                         request_trace,
                         front_state.front_metrics,
+                        DeltaPacer(
+                            max_window_seconds=settings.delta_pacing_max_window_seconds,
+                            max_chunks_per_second=settings.delta_pacing_max_chunks_per_second,
+                        ),
                     ):
                         yield relay_event
                     if relay.broken is not None:

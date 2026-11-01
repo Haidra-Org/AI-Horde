@@ -404,8 +404,10 @@ the lowest kudos priority, and per-source caps on the front, which aggregate use
 ### Streaming
 
 A streamed request without tools whose `response_format` is absent or `text` gets its content as the worker posts
-progress, one chunk per post, about one a second. The batches are kept in a retained Redis stream per request, cheap
-and lost on failover
+progress, about one post a second. The front spreads each post's text evenly over the estimated interval until the
+next post, so the client sees a steady flow of text. Without pacing, each post would arrive as one lump. Pacing adds
+up to about one post interval of latency. More frequent worker posts would cost the Horde more progress writes. The
+batches are kept in a retained Redis stream per request. The stream is cheap, and it is lost on failover
 ([ADR 0024](../decisions/0024-stream-chat-deltas-through-a-retained-redis-stream.md)). Postgres progress rows were the
 alternative, durable and paid for in primary database writes on the connection pool pops and submits share
 ([ADR 0025](../decisions/0025-stream-chat-deltas-through-postgres-progress-rows.md)).

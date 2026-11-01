@@ -183,7 +183,26 @@ the stream. A delta then sends a chunk with `delta.reasoning_content` when it ca
 first delta's entry carries and the `system_fingerprint` of that entry's `worker` and `model` (the request's model, or
 its first listed model, when the entry omits it). Without `horde.include_reasoning` the reasoning is dropped, and a delta carrying only
 reasoning advances the sequence without sending anything, so the text after a reasoning block is still relayed.
-Keepalive comments continue between deltas. Reasoning is not part of the reconciliation below; the final reply sends
+Keepalive comments continue between deltas.
+
+The first exposed delta is sent whole when it arrives. The text and reasoning of each later delta are paced. They are
+split into pieces, and the pieces are sent evenly over a window. The window is the estimated interval between the
+generation's posts. The estimate is an exponential moving average of the gaps between the posts' stream id times,
+with a weight of 0.5 on the newest gap. It is kept between 0.05 seconds and
+`HORDE_OAI_DELTA_PACING_MAX_WINDOW_SECONDS`. A window holds at most `HORDE_OAI_DELTA_PACING_MAX_CHUNKS_PER_SECOND`
+pieces per second, and the piece count does not exceed the character count.
+
+Each cut is at whitespace within half a piece of an even offset. Without such whitespace, the cut is at the next offset
+that does not split a visible character. A cut does not separate a character from a following Unicode mark (such as
+an accent, vowel sign or keycap), variation selector or skin-tone modifier. A cut does not split a zero-width joiner
+sequence or a flag.
+
+A delta that arrives while pieces are pending is merged with them. The merged text is spread over a new window that
+starts at the delta's arrival, so pacing adds at most about one window of latency. When the request finishes or the
+relay breaks, the pending pieces are sent at once, before the final reply's reconciliation. When the client
+disconnects, the pending pieces are dropped. A maximum window of 0 sends each delta as it arrives.
+
+Reasoning is not part of the reconciliation below. The final reply sends
 the part of its reasoning the deltas did not cover, before the rest of the text, when it starts with the relayed
 reasoning, and does not send it otherwise. After exposure:
 
@@ -219,7 +238,7 @@ returns 502 `ChatRequestNoGeneration`. The front does not return a completion wi
 | `system_fingerprint` | Hash of the serving worker id and model | The backend configuration |
 | Streamed tool calls | Each call whole in one chunk | Arguments in fragments |
 | First streamed chunk | `delta` holds only `role` | `delta` also holds `content` |
-| Delta granularity | One chunk per worker progress post, about one a second, for plain text requests only; others whole | One chunk per token or few tokens |
+| Delta granularity | For plain text requests, each worker progress post (about one a second) is paced over the interval until the next post, in up to 20 chunks a second. Other requests get the whole text at once. | One chunk per token or few tokens |
 | `json_object` without "json" in the messages | Served, unless `horde.openai_guards` is set | Refused |
 | Reasoning text | Hidden; `horde.include_reasoning` returns it as `message.reasoning_content` and `delta.reasoning_content` | Not returned; `usage.completion_tokens_details.reasoning_tokens` only |
 
@@ -363,6 +382,10 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | `horde.oai.completions.empty` | counter | `model` | Delivered completions whose generation does not hold visible text, the case `x_horde.notice` reports. |
 | `horde.oai.stream.relayed` | counter | none | Streamed requests that sent at least one relayed delta. |
 | `horde.oai.stream.relay_outcomes` | counter | `outcome` | How relayed streams ended: `equal`, `prefix`, `mismatch`, `replaced_attempt`, `ended` or `gap`; see [Relayed deltas](#relayed-deltas). |
+| `horde.oai.stream.post_gap` | histogram, seconds | none | Gap between the stream id append times of consecutive accepted worker progress posts in a relayed stream. The pacing window is estimated from these gaps. A negative gap, from a stream recreated with lower ids, is recorded as 0. |
+| `horde.oai.stream.pieces_per_post` | histogram | none | Number of sent pieces with part of one accepted post. A post sent whole counts 1. A paced post, or a post merged into the next window, counts more. |
+| `horde.oai.stream.pacing_lag` | histogram, seconds | none | Time from a post's stream id append time to the send of the last piece with its text. It is measured on the front's Unix clock, so clock skew between Redis and the front shifts it. It includes the reader's read delay. A negative lag is recorded as 0. |
+| `horde.oai.stream.pacing_flushes` | counter | `reason` | Accepted posts with text still pending when pacing stopped: `finished` (sent at once before the final reply), `broken` (sent at once before the error event) or `disconnected` (dropped). |
 | `horde.oai.cancels` | counter | `outcome` | Cancels sent to the horde: `acknowledged`, `failed`, `timed_out` when the HTTP call took longer than `HORDE_OAI_CANCEL_TIMEOUT_SECONDS`, `not_started` when no cancel slot became free within that time and the cancel was not sent, or `already_gone` when the horde answered 404 because the request no longer exists. A cancel that ended `failed`, `timed_out` or `not_started` is sent again every `HORDE_OAI_CANCEL_RETRY_SECONDS` and once more by the shutdown drain, each attempt counted; a request is dropped from the retries 20 minutes after its submit (`horde.oai.app.HORDE_CHAT_REQUEST_EXPIRY_SECONDS`), and at most `horde.oai.app.MAX_FAILED_CANCELS` answered requests are held, oldest dropped first. |
 
 The front does not measure settlement lag between delivery and the native terminal state, since it does not observe
@@ -370,7 +393,8 @@ the horde's settlement.
 
 Bucket boundaries: native call latency uses the horde's `BUCKETS_SECONDS`; queue wait, first content and request
 duration use `BUCKETS_REQUEST_LIFECYCLE_SECONDS` (both in `horde/metrics.py`); body size uses
-`horde.oai.metrics.BUCKETS_BODY_BYTES`.
+`horde.oai.metrics.BUCKETS_BODY_BYTES`. Post gap and pacing lag use `horde.oai.metrics.BUCKETS_POST_GAP_SECONDS` (0.1
+to 10 seconds), and pieces per post uses `horde.oai.metrics.BUCKETS_PIECES_PER_POST` (1 to 80).
 
 ## Refused parameter log line
 

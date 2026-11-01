@@ -46,6 +46,8 @@ def test_defaults_match_the_documented_values() -> None:
     assert settings.cancel_timeout_seconds == 10
     assert settings.cancel_retry_seconds == 30
     assert settings.heartbeat_seconds == 5
+    assert settings.delta_pacing_max_window_seconds == 2
+    assert settings.delta_pacing_max_chunks_per_second == 20
     assert settings.fallback_poll_seconds == 15
     assert settings.fail_fast_grace_seconds == 20
     assert settings.submit_recovery_attempts == 2

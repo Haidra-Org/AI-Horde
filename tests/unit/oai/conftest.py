@@ -75,8 +75,10 @@ FAST_TEST_SETTINGS: FrontSettings = FrontSettings(
     fallback_poll_seconds=10.0,
     signal_recheck_seconds=0.1,
     fail_fast_grace_seconds=5.0,
+    delta_pacing_max_window_seconds=0,
 )
-"""Settings with a fallback poll long enough that a test finishing quickly proves another wake-up path."""
+"""Settings with a fallback poll long enough that a test that finishes quickly proves another wake-up path. Delta
+pacing is off, so a relayed stream sends one content chunk per delta. The pacing tests turn it on."""
 
 UNRECORDED_METRICS: FrontMetrics = FrontMetrics(NoOpMeter(METER_NAME))
 """Instruments that record nothing, for tests building a client or watcher without a front."""
