@@ -41,6 +41,7 @@ __all__ = [
     "MetricAttribute",
     "NativeCallOutcome",
     "NativeCallType",
+    "NoEligibleWorkerStage",
     "RelayOutcome",
     "get_front_meter",
     "histogram_views",
@@ -112,7 +113,12 @@ CLIENT_RETRY_HINTS_NAME: str = "horde.oai.client_retry_hints"
 """Counter: chat requests carrying ``x-stainless-retry-count`` above zero."""
 
 COMPLETIONS_NAME: str = "horde.oai.completions"
-"""Counter: completions delivered, by model and whether the usage was estimated."""
+"""Counter: completions delivered, by model, whether the usage was estimated, the first choice's finish reason, and
+whether the Horde lowered the request's ``max_tokens`` to the largest one declared by a worker."""
+
+GRACE_RESCUES_NAME: str = "horde.oai.fail_fast.rescues"
+"""Counter: waits in which one status read showed no eligible worker, and a later read within the fail-fast grace
+showed an eligible worker or the request processing."""
 
 EMPTY_RETURNS_NAME: str = "horde.oai.completions.empty"
 """Counter: completions holding a generation without visible text, by model."""
@@ -153,6 +159,9 @@ class MetricAttribute(StrEnum):
     RELAYED = "horde.relayed"
     REASON = "horde.reason"
     PARAMETER = "horde.parameter"
+    STAGE = "horde.stage"
+    FINISH_REASON = "horde.finish_reason"
+    MAX_LENGTH_LOWERED = "horde.max_length_lowered"
 
 
 class NativeCallType(StrEnum):
@@ -176,6 +185,15 @@ class NativeCallOutcome(StrEnum):
     """No root accepted the connection, or the connection failed after the call was sent."""
     ABANDONED = "abandoned"
     """The caller stopped waiting, such as at the end of the request's budget."""
+
+
+class NoEligibleWorkerStage(StrEnum):
+    """The point at which the front found that a ``no_eligible_worker`` request cannot be served by any online worker."""
+
+    SUBMIT = "submit"
+    """The Horde refused the request at creation, such as for a model without an online chat worker."""
+    GRACE = "grace"
+    """For the whole fail-fast grace, the status reads showed no eligible worker and nothing processing."""
 
 
 class CancelOutcome(StrEnum):
@@ -322,6 +340,11 @@ class FrontMetrics:
             description="Completions holding a generation without visible text, by model",
         )
         self._cancels = meter.create_counter(CANCELS_NAME, unit="1", description="Cancels sent to the Horde by outcome")
+        self._grace_rescues = meter.create_counter(
+            GRACE_RESCUES_NAME,
+            unit="1",
+            description="Waits in which a status read showed no eligible worker and a later read within the fail-fast grace showed one",
+        )
         self._relayed = meter.create_counter(
             RELAYED_NAME,
             unit="1",
@@ -389,7 +412,15 @@ class FrontMetrics:
             },
         )
 
-    def record_error(self, *, status_code: int, code: str | None, streamed: bool, reason: str | None) -> None:
+    def record_error(
+        self,
+        *,
+        status_code: int,
+        code: str | None,
+        streamed: bool,
+        reason: str | None,
+        stage: NoEligibleWorkerStage | None = None,
+    ) -> None:
         """Record an admitted chat request answered with an error status before any header was sent.
 
         Args:
@@ -397,6 +428,8 @@ class FrontMetrics:
             code: The error code.
             streamed: Whether the request is streamed.
             reason: Which rule refused a ``queue_unavailable`` request; None for every other error.
+            stage: The stage at which a ``no_eligible_worker`` request was found unservable. None for every other
+                error.
         """
         self._errors.add(
             1,
@@ -405,12 +438,25 @@ class FrontMetrics:
                 MetricAttribute.CODE: code or "",
                 MetricAttribute.STREAMED: streamed,
                 MetricAttribute.REASON: reason or "",
+                MetricAttribute.STAGE: str(stage) if stage is not None else "",
             },
         )
 
-    def record_stream_failure(self, *, code: str | None) -> None:
-        """Record a streamed request that ended in an error event after its 200 headers."""
-        self._stream_failures.add(1, {MetricAttribute.CODE: code or ""})
+    def record_stream_failure(self, *, code: str | None, stage: NoEligibleWorkerStage | None = None) -> None:
+        """Record a streamed request that ended in an error event after its 200 headers.
+
+        Args:
+            code: The error code.
+            stage: The stage at which a ``no_eligible_worker`` request was found unservable. None for every other
+                error.
+        """
+        self._stream_failures.add(
+            1,
+            {
+                MetricAttribute.CODE: code or "",
+                MetricAttribute.STAGE: str(stage) if stage is not None else "",
+            },
+        )
 
     def record_body_bytes(self, body_bytes: int) -> None:
         """Record the size of a chat request body received whole."""
@@ -492,11 +538,42 @@ class FrontMetrics:
         """Record a chat request carrying ``x-stainless-retry-count`` above zero."""
         self._client_retry_hints.add(1)
 
-    def record_completion(self, *, model: str, estimated_usage: bool, has_empty_return: bool) -> None:
-        """Record a delivered completion and, when one of its generations holds no visible text, an empty return."""
-        self._completions.add(1, {MetricAttribute.MODEL: model, MetricAttribute.ESTIMATED_USAGE: estimated_usage})
+    def record_completion(
+        self,
+        *,
+        model: str,
+        estimated_usage: bool,
+        has_empty_return: bool,
+        finish_reason: str = "",
+        max_length_lowered: bool = False,
+    ) -> None:
+        """Record a delivered completion and, when one of its generations holds no visible text, an empty return.
+
+        Args:
+            model: The served model.
+            estimated_usage: Whether a usage count was estimated.
+            has_empty_return: Whether a generation holds no visible text.
+            finish_reason: The finish reason of the first choice. The response schema limits it to the closed
+                OpenAI vocabulary.
+            max_length_lowered: Whether the Horde lowered ``max_tokens`` to the largest value declared by an online
+                worker. A ``length`` finish on such a request may come from the lowered limit.
+        """
+        self._completions.add(
+            1,
+            {
+                MetricAttribute.MODEL: model,
+                MetricAttribute.ESTIMATED_USAGE: estimated_usage,
+                MetricAttribute.FINISH_REASON: finish_reason,
+                MetricAttribute.MAX_LENGTH_LOWERED: max_length_lowered,
+            },
+        )
         if has_empty_return:
             self._empty_returns.add(1, {MetricAttribute.MODEL: model})
+
+    def record_grace_rescue(self) -> None:
+        """Record a wait whose status showed an eligible worker or processing within the fail-fast grace, after a
+        read that showed neither."""
+        self._grace_rescues.add(1)
 
     def record_cancel(self, outcome: CancelOutcome) -> None:
         """Record how a cancel sent to the Horde ended."""

@@ -85,12 +85,18 @@ request, the front answers by the cause (`horde/oai/app.py`, `horde/oai/waiter.p
 | Cause                                                                                           | Answer                                                                 |
 | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | The online workers serving the model all lack a declaration the request needs, or all apply a `tools_max_temperature` it exceeds | 404 `no_worker_supports_features` at the status read that reports it; the answer does not carry `Retry-After` |
-| The request exceeds the `max_length` or `max_context_length` every online worker serving the model declares | 400 `no_worker_supports_limit`, with `param` set to the token limit or context length key |
+| The request exceeds every online worker's `max_context_length` for the model, or its `max_length` exceeds every `max_length` declared by the workers online after submission | 400 `no_worker_supports_limit`, with `param` set to the token limit or context length key |
+| The model is not served by any online chat worker at submission | 503 `no_eligible_worker` with `Retry-After`. The Horde refuses the request before sizing |
 | No worker is eligible, nothing is processing, the status does not report a declaration gap, and the fail-fast grace has passed | 503 `no_eligible_worker` with `Retry-After` |
 
 A declaration gap does not close when a worker restarts, so the 404 is returned at once and does not carry a retry hint.
-A size limit gap is a property of what the request asks for at the time, so it is answered as an invalid request.
-The grace before the 503 (20 seconds by default) covers a worker restart or a model load.
+The context limit comes from the request itself, so the request is refused as invalid.
+`max_tokens` is an upper bound in the OpenAI API. A value above every online worker's declared completion length is
+lowered at submission to the largest declared value. The change is reported in `context_adjustments`, and the request
+is not refused.
+A request for a model that is not served by any online chat worker is refused at submission. A worker counts as
+online for 300 seconds after its last check-in, so a restarting worker still counts as serving the model.
+The grace before the 503 (20 seconds by default) covers workers that go offline after submission.
 
 ### Consequences
 

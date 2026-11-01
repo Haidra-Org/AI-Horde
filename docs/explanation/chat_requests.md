@@ -267,8 +267,11 @@ A key or value the service does not implement is refused with `400 UnsupportedCh
 the key ([ADR 0029](../decisions/0029-route-unsupported-parameters-by-declared-support-refusing-by-default.md)). A
 field at its documented default counts as omitted, so stock clients that send defaults unprompted still work, and the
 front drops a short, fixed list of default no-ops. Capability fields (`tools`, `response_format`, image parts) are never
-dropped, since they change the answer. A supported value that no online worker can serve is a different case: the
-request is accepted and waits, and the front answers 503 when the native status reports `is_possible` false.
+dropped, since they change the answer. A value that is supported but cannot be served by any online worker is a
+different case. A request for a model that is not served by any online chat worker is refused at once with 503
+`no_eligible_worker`. A `max_tokens` above every serving worker's declared length is lowered to the largest declared
+length. Any other request is accepted and waits, and the front returns 503 when the native status reports
+`is_possible` false after the front's grace.
 
 Where OpenAI refuses a request shape, the horde refuses it too, with OpenAI's message and `param`: a `tool_choice` or
 `parallel_tool_calls` without tools, a tool history whose calls are not answered right after the assistant message
@@ -466,7 +469,9 @@ price of a resolver and revision store, invisible to model pickers, and lost by 
 - **Stream order.** A stream's chunks arrive in the order above, and an error after the headers arrives as one error
   event followed by `[DONE]`.
 - **Failure behaviour.** A worker that cannot serve a job faults it and the job goes to another worker. A request that
-  no worker can serve is cancelled and answered 503 `no_eligible_worker`; one that faults is answered 502. Once the
+  cannot be served by any worker gets a 503 `no_eligible_worker`. The response comes at once when the model is
+  not served by any online worker. Otherwise it comes after the front's grace, and the request is also cancelled. A
+  request that faults gets a 502. Once the
   horde may hold a request, every error carries `x-should-retry: false`, so SDKs do not retry into a second charged
   job. Under `horde.availability_mode: "fail_fast"` a 503 `queue_unavailable` is a refusal about the online pool at
   the first status read, and the same request may be served once workers come online.

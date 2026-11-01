@@ -170,11 +170,12 @@ Verification: the follow-up request returns 200 and a reply with text that uses 
 
 ## Keep max_tokens within what is served
 
-A chat request goes only to a worker whose declared output length is at least the request's `max_tokens`. When no
-online worker for the model declares enough, the request waits for the front's grace period, is cancelled, and ends
-with `no_eligible_worker`: 503 before a stream starts, or an in-stream error event once it has.
+A chat request goes only to a worker whose declared output length is at least the request's `max_tokens`. When the
+model's online workers do not declare enough, the Horde lowers `max_tokens` to the largest declared value. The
+change is reported in `x_horde.context_adjustments` as a `worker_max_length` entry. A reply can then end with
+`finish_reason` `length` before it reaches the `max_tokens` sent by the client.
 
-Read the chosen model's card from `GET ${OAI_BASE_URL}/models` and clamp:
+To tell the user before sending, read the chosen model's card from `GET ${OAI_BASE_URL}/models` and clamp:
 
 ```javascript
 const card = models.data.find((entry) => entry.id === selectedModel);
@@ -185,7 +186,8 @@ if (maxTokens < userMaxTokens) notify(`This model's workers serve at most ${serv
 
 `max_completion_tokens` is the largest any of the model's workers declares, so a value at the maximum can still wait
 for the one worker that serves it. A model absent from the list does not have a worker online. Lite's default output
-length is 768 tokens, so on a model whose workers declare 512, every request from an unadjusted Lite is ineligible.
+length is 768 tokens. On a model whose workers declare 512, every request from an unadjusted Lite is lowered to
+512. The user does not see why unless the frontend reads `x_horde.context_adjustments`.
 
 When the user selects images or tools, also check `architecture.input_modalities` for `image` and
 `supported_parameters` for `tools`, and tell the user before sending a request no worker can serve.

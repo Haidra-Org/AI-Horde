@@ -58,6 +58,35 @@ def _empty_text_queue(app) -> Iterator[None]:
         db.session.commit()
 
 
+@pytest.fixture(autouse=True)
+def _chat_model_served(app, client, request_headers: dict[str, str]) -> Iterator[None]:
+    """Keep a chat worker for the chat model online while each test runs.
+
+    A chat request for a model without an online chat worker is refused at submission. The worker pops once, before
+    the test submits anything. It does not declare vision or text jobs, and it is taken offline afterwards, so it does
+    not take any request a test submits.
+    """
+    from horde.classes.kobold.worker import TextWorker
+    from horde.flask import db
+
+    presence_worker = FakeChatWorker(
+        client=client,
+        headers=request_headers,
+        # One name for every test, since each owner may onboard only a limited number of workers.
+        name="CICD Chat Model Presence",
+        models=[CHAT_MODEL],
+        pop_options={"prompt_jobs": False},
+    )
+    presence_worker.pop()
+    yield
+    with app.app_context():
+        db.session.query(TextWorker).filter_by(name=presence_worker.name).update(
+            {TextWorker.last_check_in: datetime.utcnow() - timedelta(hours=1)},
+            synchronize_session=False,
+        )
+        db.session.commit()
+
+
 def _worker(client, headers: dict[str, str], **pop_options: Any) -> FakeChatWorker:
     return FakeChatWorker(
         client=client,

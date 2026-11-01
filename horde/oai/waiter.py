@@ -906,11 +906,17 @@ class ChatRequestWatcher:
     def _check_fail_fast(self, status: HordeChatStatus) -> None:
         """Mutate the fail-fast clock from ``status`` and raise once the grace has passed.
 
+        A grace rescue is counted when a read shows an eligible worker or the request processing after an earlier
+        read showed neither. Without the grace, the front would have refused that request. Compared with the
+        ``no_eligible_worker`` errors at the ``grace`` stage, the count shows how many refusals the grace prevents.
+
         Raises:
             DeclarationGapError: No eligible worker, nothing processing, and the status reports a declaration gap.
             NoEligibleWorkerError: No eligible worker and nothing processing for at least the grace.
         """
         if status.is_possible or status.processing > 0:
+            if self._impossible_since is not None:
+                self._front_metrics.record_grace_rescue()
             self._impossible_since = None
             return
         if status.impossible_reason is not None:

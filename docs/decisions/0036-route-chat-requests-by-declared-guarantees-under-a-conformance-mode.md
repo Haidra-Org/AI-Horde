@@ -79,8 +79,10 @@ receives at most one call from any worker.
 When the online chat workers serving the model all lack a declaration the request needs, or all apply a
 `tools_max_temperature` it exceeds, the chat status reports the gap as `impossible_reason`, and the chat front refuses
 the request with 404 `no_worker_supports_features` at the status read that reports it. A request over the
-`max_length` or `max_context_length` that every online worker serving the model declares is refused with 400
-`no_worker_supports_limit`.
+`max_context_length` declared by every online worker serving the model is refused with 400
+`no_worker_supports_limit`. A `max_length` over every online worker's declaration is lowered at submission to the
+largest declared value. The change is reported in `context_adjustments`. The 400 applies to `max_length` only when
+the workers change after submission.
 
 Before dispatch the server narrows the job where the contract allows (`build_worker_chat_extras`): tool definitions
 are not forwarded under `tool_choice: none`, and a `tool_choice` that specifies a function forwards only that

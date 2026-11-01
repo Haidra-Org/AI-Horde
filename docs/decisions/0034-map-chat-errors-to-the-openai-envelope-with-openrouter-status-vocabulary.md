@@ -48,7 +48,7 @@ A refusal from the native route keeps its status and return code. The statuses a
 
 | Status | Cases and `code`                                                                                                   |
 | ------ | ------------------------------------------------------------------------------------------------------------------ |
-| 400    | Invalid or unsupported input (`BadRequest`, `UnsupportedChatParameter`, `ChatRequestConflict`); a request over the size limits every online worker declares (`no_worker_supports_limit`); a kudos estimate over `horde.max_kudos` (`max_kudos_exceeded`) |
+| 400    | Invalid or unsupported input (`BadRequest`, `UnsupportedChatParameter`, `ChatRequestConflict`); a request over every online worker's context limit, or over every completion length declared by the workers online after submission (`no_worker_supports_limit`); a kudos estimate over `horde.max_kudos` (`max_kudos_exceeded`) |
 | 401    | An `Authorization` header that is not `Bearer <key>` (`InvalidAuthorizationHeader`); a native authentication refusal |
 | 403    | Moderation and other native refusals; a requester who cannot cover the kudos hold (`KudosUpfront`)                |
 | 404    | An unknown model (`model_not_found`); a declaration gap among the online workers (`no_worker_supports_features`)   |
@@ -56,7 +56,7 @@ A refusal from the native route keeps its status and return code. The statuses a
 | 413    | A body over the byte ceiling (`RequestTooLarge`)                                                                   |
 | 429    | A rate limit; the native return code, or `rate_limit_exceeded` when the native answer does not carry one           |
 | 502    | A faulted request (`ChatRequestFaulted`), a request done without a generation (`ChatRequestNoGeneration`), a relayed stream that cannot finish consistently (`ChatStreamDiverged`), a Horde that did not answer (`HordeUnavailable`) |
-| 503    | No eligible worker after the fail-fast grace (`no_eligible_worker`); a `fail_fast` request refused at its first status read (`queue_unavailable`); a full front process or source (`FrontAtCapacity`); native `ChatAdmissionDisabled` and `ChatImageStorageUnavailable` |
+| 503    | A model without an online chat worker at submission, or a request without an eligible worker after the fail-fast grace (`no_eligible_worker`); a `fail_fast` request refused at its first status read (`queue_unavailable`); a full front process or source (`FrontAtCapacity`); native `ChatAdmissionDisabled` and `ChatImageStorageUnavailable` |
 
 Insufficient kudos is the native 403 `KudosUpfront`, passed through with its status like every native refusal. Its
 message states the free output allowance the request exceeded.

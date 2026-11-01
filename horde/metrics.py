@@ -807,6 +807,14 @@ text_context_fit = logfire.metric_counter(
     unit="1",
     description="Text requests sized against their prompt, split by context_fit mode and outcome",
 )
+chat_max_length_lowered = logfire.metric_counter(
+    "horde.chat.max_length_lowered",
+    unit="1",
+    description=(
+        "Chat requests whose max_tokens was lowered to the largest max_length declared by the online chat workers "
+        "serving the models, split by the requested length bucket, the declared length bucket and dry run"
+    ),
+)
 
 # --- API refusals -------------------------------------------------------------
 api_rejections = logfire.metric_counter(

@@ -65,8 +65,14 @@ def chat_events() -> Iterator[Any]:
 
 @pytest.fixture
 def chat_worker(client, request_headers: dict[str, str]) -> FakeChatWorker:
-    """A worker serving the chat model, declaring the koboldcpp feature set."""
-    return FakeChatWorker(client=client, headers=request_headers, name=WORKER_NAME, models=[CHAT_MODEL])
+    """A worker serving the chat model, declaring the koboldcpp feature set.
+
+    It pops once before the test runs, so it is online when the test submits. A chat request for a model without an
+    online chat worker is refused at submission.
+    """
+    worker = FakeChatWorker(client=client, headers=request_headers, name=WORKER_NAME, models=[CHAT_MODEL])
+    worker.pop()
+    return worker
 
 
 def _received_events(subscription: Any) -> list[tuple[str, dict[str, Any]]]:
@@ -1300,20 +1306,200 @@ def test_a_model_only_an_online_chat_worker_serves_is_accepted(client, request_h
     _cancel(client, request_headers, "chat", response.get_json()["id"])
 
 
-def test_a_model_only_the_reference_lists_is_accepted_and_reported_as_not_possible(client, request_headers: dict[str, str]) -> None:
+def _unserved_reference_model() -> str:
+    """Return a model listed by the text reference and not served by any chat worker in these tests."""
     from horde.model_reference import model_reference
 
-    unserved_model = next(
+    return next(
         model_name for model_name in sorted(model_reference.text_model_names) if model_name != CHAT_MODEL and "::" not in model_name
     )
 
-    response = _post_chat(client, request_headers, _chat_body(unserved_model))
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["submit", "dry_run"])
+def test_a_model_only_the_reference_lists_is_refused_at_once_with_no_row_and_no_tax(
+    app,
+    client,
+    make_api_user,
+    dry_run: bool,
+) -> None:
+    """A known model without an online chat worker is refused because no worker is serving it. The refusal comes
+    before any row exists or any kudos is charged. A dry run is refused the same way."""
+    requester = make_api_user()
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
+    unserved_model = _unserved_reference_model()
+
+    response = _post_chat(client, headers, _chat_body(unserved_model, dry_run=dry_run))
+
+    assert response.status_code == 403, response.get_data(as_text=True)
+    assert response.get_json() == {
+        "message": f"No worker is currently serving the model '{unserved_model}'.",
+        "rc": "NoEligibleWorker",
+    }
+    assert _count_chat_requests(app, requester.id) == 0
+    assert _count_generation_debits(app, requester.id) == 0
+
+
+@pytest.mark.parametrize("context_fit", ["reject", "grow", "truncate_oldest"])
+def test_a_prompt_too_long_for_the_requested_context_is_refused_as_unserved_and_not_as_too_long(
+    client,
+    request_headers: dict[str, str],
+    context_fit: str,
+) -> None:
+    """Without an online chat worker for the model, the refusal states under every context fit that the model is not
+    served. It does not state that the prompt does not fit a context the request cannot grow."""
+    chat_body = _chat_body(_unserved_reference_model(), context_fit=context_fit)
+    chat_body["messages"] = [{"role": "user", "content": "word " * 1700}]
+
+    response = _post_chat(client, request_headers, chat_body)
+
+    assert response.status_code == 403, response.get_data(as_text=True)
+    assert response.get_json()["rc"] == "NoEligibleWorker"
+
+
+def test_a_request_listing_models_none_of_which_is_served_is_refused_stating_every_model(
+    client,
+    request_headers: dict[str, str],
+) -> None:
+    from horde.model_reference import model_reference
+
+    unserved_models = [
+        model_name for model_name in sorted(model_reference.text_model_names) if model_name != CHAT_MODEL and "::" not in model_name
+    ][:2]
+
+    response = _post_chat(client, request_headers, _listing_body(unserved_models))
+
+    assert response.status_code == 403, response.get_data(as_text=True)
+    assert response.get_json() == {
+        "message": f"No worker is currently serving any of the models '{unserved_models[0]}', '{unserved_models[1]}'.",
+        "rc": "NoEligibleWorker",
+    }
+
+
+def test_a_text_request_for_a_model_no_worker_serves_still_queues(client, request_headers: dict[str, str]) -> None:
+    """The legacy text route queues a request until a worker comes online."""
+    text_body = {
+        "prompt": "word " * 1700,
+        "params": {"max_length": 64, "max_context_length": 4096},
+        "models": [f"koboldcpp/unserved-{uuid.uuid4().hex[:8]}"],
+    }
+
+    response = client.post("/api/v2/generate/text/async", json=text_body, headers=request_headers)
 
     assert response.status_code == 202, response.get_data(as_text=True)
-    request_id = response.get_json()["id"]
+    _cancel(client, request_headers, "text", response.get_json()["id"])
+
+
+@pytest.fixture
+def short_output_worker(app, client, request_headers: dict[str, str]) -> Iterator[FakeChatWorker]:
+    """The only online chat worker for a model that is not listed by the text reference.
+
+    It declares a 300 token output limit. It is taken offline afterwards, so its model is unserved in every other test.
+    """
+    worker = FakeChatWorker(
+        client=client,
+        headers=request_headers,
+        name=f"CICD Short Reply Scribe {uuid.uuid4().hex[:8]}",
+        models=[f"custom/short-reply-{uuid.uuid4().hex[:8]}"],
+        # Chat-only, so its pops take only chat requests for its model and never a queued text request.
+        pop_options={"chat_max_length": 300, "prompt_jobs": False},
+    )
+    worker.pop()
+    yield worker
+    _take_worker_offline(app, worker.name)
+
+
+@pytest.fixture
+def max_length_lowered_counter(monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+    """Replace the counter of lowered chat completion lengths with a recorder."""
+    from horde import metrics
+
+    recorder = _CounterRecorder()
+    monkeypatch.setattr(metrics, "chat_max_length_lowered", recorder)
+    return recorder
+
+
+def test_a_max_tokens_above_every_worker_limit_is_lowered_to_the_largest_and_reported(
+    client,
+    request_headers: dict[str, str],
+    short_output_worker: FakeChatWorker,
+    max_length_lowered_counter: _CounterRecorder,
+) -> None:
+    """The request is served with the largest completion length declared by an online chat worker for the model.
+    The worker receives that length and the status reports the change. The counter records both length buckets."""
+    request_id = _submit_chat_request(client, request_headers, model=short_output_worker.models[0], max_tokens=4096)
+
     status = _chat_status(client, request_headers, request_id)
+    assert status["context_adjustments"] == [{"from": 4096, "to": 300, "reason": "worker_max_length"}]
+    assert status["is_possible"] is True
+    assert max_length_lowered_counter.increments == [
+        (1, {"horde.requested_bucket": "2049-4096", "horde.declared_bucket": "<=512", "horde.dry_run": "false"}),
+    ]
+    job = short_output_worker.pop()
+    assert job["id"] is not None
+    assert job["payload"]["max_length"] == 300
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_max_tokens_within_the_largest_worker_limit_is_left_unchanged(
+    client,
+    request_headers: dict[str, str],
+    short_output_worker: FakeChatWorker,
+    max_length_lowered_counter: _CounterRecorder,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, model=short_output_worker.models[0], max_tokens=300)
+
+    assert _chat_status(client, request_headers, request_id)["context_adjustments"] is None
+    assert max_length_lowered_counter.increments == []
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_lowered_max_tokens_is_reported_before_a_grown_context(
+    client,
+    request_headers: dict[str, str],
+    short_output_worker: FakeChatWorker,
+) -> None:
+    """The context is sized after the completion length is lowered. The status reports both changes in that order."""
+    long_messages = [{"role": "user", "content": "word " * 1700}]
+
+    request_id = _submit_chat_request(
+        client,
+        request_headers,
+        model=short_output_worker.models[0],
+        messages=long_messages,
+        max_tokens=4096,
+        horde={"context_fit": "grow"},
+    )
+
+    worker_max_length_adjustment, grow_adjustment = _chat_status(client, request_headers, request_id)["context_adjustments"]
+    assert worker_max_length_adjustment == {"from": 4096, "to": 300, "reason": "worker_max_length"}
+    assert grow_adjustment["reason"] == "grow"
+    assert grow_adjustment["from"] == 2048
+    assert 2048 < grow_adjustment["to"] <= 8192
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_context_above_every_worker_limit_is_still_refused_as_a_declaration_gap(
+    client,
+    request_headers: dict[str, str],
+    short_output_worker: FakeChatWorker,
+) -> None:
+    """Only the completion length is lowered. A context above every worker's declaration stays a gap."""
+    request_id = _submit_chat_request(
+        client,
+        request_headers,
+        model=short_output_worker.models[0],
+        max_tokens=64,
+        horde={"max_context_length": 16384},
+    )
+
+    status = _chat_status(client, request_headers, request_id)
+    assert status["context_adjustments"] is None
     assert status["is_possible"] is False
-    assert status["impossible_reason"] is None
+    assert status["impossible_reason"] == {
+        "kind": "declaration_gap",
+        "missing_declarations": [],
+        "exceeded_limits": ["max_context_length"],
+    }
     _cancel(client, request_headers, "chat", request_id)
 
 

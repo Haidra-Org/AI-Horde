@@ -22,6 +22,7 @@ from horde.chat_contract import (
     MAX_CHAT_TOOL_CALL_COUNT,
     MAX_CHAT_TOOL_CALL_ID_LENGTH,
     ChatAvailabilityMode,
+    ChatContextAdjustmentReason,
     ChatContextFit,
     ChatHordeOptions,
 )
@@ -1451,23 +1452,24 @@ class TextModels(v2.Models):
                 "from": fields.Integer(
                     description=(
                         "For 'grow', the context length the request asked for, or the default. For "
-                        "'truncate_oldest', the estimated token count of the submitted messages."
+                        "'truncate_oldest', the estimated token count of the submitted messages. For "
+                        "'worker_max_length', the requested max_tokens, or the default."
                     ),
                 ),
                 "to": fields.Integer(
                     description=(
                         "For 'grow', the context length the request runs under. For 'truncate_oldest', the "
-                        "estimated token count of the kept messages."
+                        "estimated token count of the kept messages. For 'worker_max_length', the lowered "
+                        "max_tokens the request runs under."
                     ),
                 ),
                 "reason": fields.String(
-                    enum=[
-                        ChatContextFit.GROW.value,
-                        ChatContextFit.TRUNCATE_OLDEST.value,
-                    ],
+                    enum=[adjustment_reason.value for adjustment_reason in ChatContextAdjustmentReason],
                     description=(
                         "Why it changed: 'grow' when the context was grown to fit the messages, 'truncate_oldest' "
-                        "when the oldest turns were dropped so the messages fit."
+                        "when the oldest turns were dropped so the messages fit, 'worker_max_length' when max_tokens "
+                        "was lowered to the largest max_length declared by the online chat workers serving the "
+                        "models."
                     ),
                 ),
                 "dropped_messages": fields.Integer(
@@ -1505,7 +1507,7 @@ class TextModels(v2.Models):
                 "generations": fields.List(fields.Nested(self.response_model_chat_generation_result)),
                 "context_adjustments": fields.List(
                     fields.Nested(self.response_model_chat_context_adjustment, skip_none=True),
-                    description="How the horde changed the request's context length; null when it did not.",
+                    description="How the horde changed the request's max_tokens or context length. Null when it did not change them.",
                 ),
                 "impossible_reason": fields.Nested(
                     self.response_model_chat_impossible_reason,

@@ -15,6 +15,7 @@ import httpx
 import pytest
 from loguru import logger
 
+from horde.oai.app import REFUSED_PARAMETER_LOG_LENGTH
 from horde.oai.metrics import (
     ADMITTED_NAME,
     CANCELS_NAME,
@@ -22,6 +23,7 @@ from horde.oai.metrics import (
     EMPTY_RETURNS_NAME,
     ERRORS_NAME,
     FIRST_CONTENT_NAME,
+    GRACE_RESCUES_NAME,
     INFLIGHT_NAME,
     INFLIGHT_SOURCE_MAX_NAME,
     INFLIGHT_SOURCES_NAME,
@@ -196,6 +198,123 @@ async def test_an_unsupported_parameter_refusal_records_a_bounded_parameter_labe
     assert front.metric_total(REFUSED_NAME, horde_code="FrontAtCapacity", horde_parameter="") == 1
     refused_parameter_labels = {point.attributes["horde.parameter"] for point in metric_points(front.metric_reader, REFUSED_NAME)}
     assert refused_parameter_labels == {"store", "logit_bias", "other", ""}
+
+
+async def test_a_refused_common_sampler_key_records_its_own_label_and_an_arbitrary_key_records_other(
+    start_front: StartFront,
+) -> None:
+    """A non-OpenAI sampler key commonly sent by OpenAI-compatible clients is refused and recorded under its own
+    label. A key outside every listed vocabulary is recorded as ``other``."""
+    async with start_front() as front:
+        sampler_refused = await front.client.post("/v1/chat/completions", json=build_chat_body(top_k=40))
+        rep_pen_refused = await front.client.post("/v1/chat/completions", json=build_chat_body(rep_pen=1.1))
+        arbitrary_refused = await front.client.post("/v1/chat/completions", json=build_chat_body(client_chosen_key_5678=1))
+
+    assert sampler_refused.status_code == 400
+    assert rep_pen_refused.status_code == 400
+    assert arbitrary_refused.status_code == 400
+    assert front.metric_total(REFUSED_NAME, horde_code="UnsupportedChatParameter", horde_parameter="top_k") == 1
+    assert front.metric_total(REFUSED_NAME, horde_code="UnsupportedChatParameter", horde_parameter="rep_pen") == 1
+    assert front.metric_total(REFUSED_NAME, horde_code="UnsupportedChatParameter", horde_parameter="other") == 1
+
+
+async def test_a_refused_parameter_is_logged_with_its_path_cut_to_a_fixed_length(
+    start_front: StartFront,
+    captured_logs: CapturedLogs,
+) -> None:
+    """The log shows each key that the metric labels ``other``, cut so a client-chosen key cannot make the line long."""
+    long_key = "x" * (REFUSED_PARAMETER_LOG_LENGTH * 2)
+    async with start_front() as front:
+        await front.client.post("/v1/chat/completions", json=build_chat_body(top_k=40))
+        await front.client.post("/v1/chat/completions", json={**build_chat_body(), long_key: 1})
+
+    refusal_messages = [record["message"] for record in captured_logs.records if "Refused unsupported chat parameter" in record["message"]]
+    assert refusal_messages == [
+        "Refused unsupported chat parameter: path='top_k' label=top_k",
+        f"Refused unsupported chat parameter: path='{'x' * REFUSED_PARAMETER_LOG_LENGTH}' label=other",
+    ]
+
+
+async def test_a_no_worker_refusal_at_submit_records_the_submit_stage(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.submit_route.respond(
+            403,
+            json={"message": "No worker is currently serving the model 'test-model'.", "rc": "NoEligibleWorker"},
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 503
+    assert front.metric_total(ERRORS_NAME, horde_code="no_eligible_worker", horde_stage="submit") == 1
+    assert front.metric_total(ERRORS_NAME, horde_code="no_eligible_worker", horde_stage="grace") == 0
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_a_no_worker_refusal_after_the_grace_records_the_grace_stage(start_front: StartFront, stream: bool) -> None:
+    """A wait ended by the grace is counted at the ``grace`` stage, as an error before the headers or a stream failure
+    after them."""
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 0.2})) as front:
+        front.horde.status_payload = waiting_status(is_possible=False)
+        await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream))
+
+    failure_name = STREAM_FAILURES_NAME if stream else ERRORS_NAME
+    assert front.metric_total(failure_name, horde_code="no_eligible_worker", horde_stage="grace") == 1
+    assert front.metric_total(GRACE_RESCUES_NAME) == 0
+
+
+async def test_a_worker_found_eligible_inside_the_grace_records_a_rescue(start_front: StartFront) -> None:
+    """A read without an eligible worker, followed within the grace by a read with one, counts as one rescue."""
+    rescue_settings = FAST_TEST_SETTINGS.model_copy(update={"fail_fast_grace_seconds": 5.0, "fallback_poll_seconds": 0.05})
+    async with start_front(rescue_settings, with_redis=False) as front:
+        front.horde.next_status_payloads = [
+            waiting_status(is_possible=False, wait_time=0),
+            waiting_status(is_possible=True, wait_time=0),
+        ]
+        finisher = asyncio.create_task(front.horde.finish_later(0.4, signal=False))
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+        await finisher
+
+    assert response.status_code == 200
+    assert front.metric_total(GRACE_RESCUES_NAME) == 1
+
+
+async def test_a_request_never_without_an_eligible_worker_records_no_rescue(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 200
+    assert front.metric_total(GRACE_RESCUES_NAME) == 0
+
+
+@pytest.mark.parametrize(
+    ("context_adjustments", "max_length_lowered"),
+    [
+        ([{"from": 4096, "to": 2048, "reason": "worker_max_length"}], True),
+        ([{"from": 2048, "to": 4096, "reason": "grow"}], False),
+        (None, False),
+    ],
+    ids=["lowered", "grown_only", "unchanged"],
+)
+async def test_a_completion_records_its_finish_reason_and_whether_max_tokens_was_lowered(
+    start_front: StartFront,
+    context_adjustments: list[dict[str, object]] | None,
+    max_length_lowered: bool,
+) -> None:
+    """The counter records the finish reason beside whether ``max_tokens`` was lowered. A ``length`` finish on a
+    lowered request may come from the lowered limit."""
+    async with start_front() as front:
+        front.horde.status_payload = {**done_status(finish_reason="length"), "context_adjustments": context_adjustments}
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 200
+    assert (
+        front.metric_total(
+            COMPLETIONS_NAME,
+            horde_finish_reason="length",
+            horde_max_length_lowered=max_length_lowered,
+        )
+        == 1
+    )
 
 
 async def test_lost_submit_records_outcome_unknown_and_unreachable_recoveries(start_front: StartFront) -> None:

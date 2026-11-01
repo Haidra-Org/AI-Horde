@@ -681,17 +681,41 @@ async def test_a_submit_refused_without_a_gap_is_503_no_eligible_worker_without_
         response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream))
 
     assert front.horde.cancel_route.call_count == 0
-    assert SHOULD_RETRY not in response.headers
+    assert response.headers[SHOULD_RETRY] == "false"
     assert response.status_code == 503
     assert response.headers["retry-after"] == "30"
     assert response.json() == {
         "error": {
-            "message": "No online worker can serve this request at the moment. Retry later.",
+            "message": "No online worker can serve this request. Retry later.",
             "type": "api_error",
             "param": None,
             "code": "no_eligible_worker",
             "metadata": {"retry_after": 30},
         },
+    }
+
+
+async def test_a_submit_refused_because_no_worker_serves_the_model_is_503_stating_it(start_front: StartFront) -> None:
+    """The Horde refuses a model without an online chat worker at creation. The 503 keeps the Horde's statement of
+    the cause and the retry hint, and the front does not wait on a request."""
+    async with start_front() as front:
+        front.horde.submit_route.respond(
+            403,
+            json={"message": "No worker is currently serving the model 'test-model'.", "rc": "NoEligibleWorker"},
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert front.horde.status_route.call_count == 0
+    assert front.horde.cancel_route.call_count == 0
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "30"
+    assert response.headers[SHOULD_RETRY] == "false"
+    assert response.json()["error"] == {
+        "message": "No worker is currently serving the model 'test-model'. Retry later.",
+        "type": "api_error",
+        "param": None,
+        "code": "no_eligible_worker",
+        "metadata": {"retry_after": 30},
     }
 
 

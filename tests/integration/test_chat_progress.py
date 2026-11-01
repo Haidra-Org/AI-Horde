@@ -72,8 +72,14 @@ def lua_redis(progress_redis: fakeredis.FakeStrictRedis) -> fakeredis.FakeStrict
 
 @pytest.fixture
 def chat_worker(client: FlaskClient, request_headers: dict[str, str]) -> FakeChatWorker:
-    """A worker serving the chat model, owned by the requesting user."""
-    return FakeChatWorker(client=client, headers=request_headers, name=WORKER_NAME, models=[CHAT_MODEL])
+    """A worker serving the chat model, owned by the requesting user.
+
+    It pops once before the test runs, so it is online when the test submits. A chat request for a model without an
+    online chat worker is refused at submission.
+    """
+    worker = FakeChatWorker(client=client, headers=request_headers, name=WORKER_NAME, models=[CHAT_MODEL])
+    worker.pop()
+    return worker
 
 
 def _submit_chat_request(client: FlaskClient, request_headers: dict[str, str], **overrides: Any) -> str:

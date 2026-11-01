@@ -126,9 +126,11 @@ An unserved role (such as `function`) or content part type (such as `input_audio
 is null only when the worker returned tool calls without text; `tool_calls` is written only when the worker returned
 calls, each `{"id", "type": "function", "function": {"name", "arguments"}}` as the worker sent it. `finish_reason` is
 `stop`, `length`, `content_filter` or `tool_calls`. `x_horde.notice` marks a reply with neither visible text nor tool
-calls. `x_horde.context_adjustments` is the native status's list, passed through unchanged: a `grow` entry when the
-context grew and a `truncate_oldest` entry with `dropped_messages` when the oldest turns were dropped (see
-[Context adjustments](chat_requests.md#context-adjustments)); it is left out when the Horde changed neither. `reasoning_content`, the model's reasoning as DeepSeek and OpenRouter return it, is written only when the
+calls. `x_horde.context_adjustments` is the native status's list, passed through unchanged. It holds a
+`worker_max_length` entry when `max_tokens` was lowered to the largest value declared by an online worker. It holds a
+`grow` entry when the context grew, and a `truncate_oldest` entry with `dropped_messages` when the oldest turns were
+dropped (see [Context adjustments](chat_requests.md#context-adjustments)). It is left out when the Horde did not make
+any of these changes. `reasoning_content`, the model's reasoning as DeepSeek and OpenRouter return it, is written only when the
 request sets `horde.include_reasoning` and the worker submitted reasoning; it is never part of `content`.
 `usage.completion_tokens_details.reasoning_tokens`, OpenAI's shape, is the reasoning count the worker reported,
 written whether or not the reasoning is returned and left out when no worker reported one. Like the other reported
@@ -223,7 +225,13 @@ returns 502 `ChatRequestNoGeneration`. The front does not return a completion wi
 
 ## No eligible worker
 
-While the native status reports `is_possible` false with nothing processing, the front waits `fail_fast_grace_seconds`
+The Horde refuses a request at submit when its models are not served by any online chat worker (see
+[Known models](chat_requests.md#known-models)). The front then returns 503 `no_eligible_worker` with
+`Retry-After: 30` at once. The message is the Horde's, such as "No worker is currently serving the model
+'<model>'. Retry later.". The front does not wait for the grace.
+
+The native status of a submitted request can report `is_possible` false with nothing processing. This happens when
+the workers serving the model go offline or become busy with other work. The front then waits `fail_fast_grace_seconds`
 for a worker to appear, then cancels the request and returns 503 `no_eligible_worker` with `Retry-After: 30`. When
 the status carries an `impossible_reason` of kind `declaration_gap` (see
 [Impossible reason](chat_requests.md#impossible-reason)), it cancels at once and returns 404
@@ -231,8 +239,10 @@ the status carries an `impossible_reason` of kind `declaration_gap` (see
 a `Retry-After`. The message lists the missing declarations or the exceeded limit, and adds that guarantees are not
 required under `best_effort` when a guarantee is missing.
 
-A gap of only `max_length` or `max_context_length` in `exceeded_limits` is a request over the size limits every
-online worker serving the request's models declares. The front returns 400 `invalid_request_error` with code
+A gap of only `max_length` or `max_context_length` in `exceeded_limits` is a request over every online worker's
+size limits for the request's models. At submit the Horde lowers a `max_tokens` above the largest
+declared `max_length` (see [Context adjustments](chat_requests.md#context-adjustments)). A `max_length` gap therefore
+arises only when the workers' declarations change after the submit. The front returns 400 `invalid_request_error` with code
 `no_worker_supports_limit` instead, with `param` `max_tokens`, or `horde.max_context_length` when only the context
 length is exceeded, and without a `Retry-After`. Each exceeded limit reads "No worker eligible for this request currently
 declares a completion limit that high; the largest any online worker for the model declares now is 1024 tokens." (or
@@ -242,12 +252,14 @@ when the model list does not hold an entry for any requested model, the sentence
 limit name in its place. Volunteer workers come and go, so the message describes the online workers at the time and
 leaves retrying to the client. Any other gap, including a size limit beside another cause, keeps the 404.
 
-The Horde can also refuse the submit with 403 `NoEligibleWorker`, when the request would be refused for kudos while
+The Horde also refuses the submit with 403 `NoEligibleWorker` when the request would be refused for kudos while
 no online worker can serve it (see [Free output allowance](chat_requests.md#free-output-allowance)). The front
 answers it as above: the body's `impossible_reason` gives 404 `no_worker_supports_features` or 400
-`no_worker_supports_limit`, and a body without one gives 503 `no_eligible_worker` with `Retry-After: 30`. The Horde
-did not create a request, so these answers carry no `request_id`, do not state that the request was cancelled and
-do not set `x-should-retry: false`. The refusal comes before any stream header, so a streaming request gets the same
+`no_worker_supports_limit`, and a body without one gives 503 `no_eligible_worker` with `Retry-After: 30` and the
+Horde's message. The Horde did not create a request, so these responses do not include a `request_id` and do not
+state that the request was cancelled. The 404 and 400 do not set `x-should-retry: false`. Every `no_eligible_worker`
+sets it, since an SDK retries within seconds and the online workers are most likely the same by then. The refusal
+comes before any stream header, so a streaming request gets the same
 JSON error.
 
 A request with `horde.availability_mode: "fail_fast"` is also decided at its first successful status read, with
@@ -331,9 +343,10 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | Name | Type | Attributes | Meaning |
 | --- | --- | --- | --- |
 | `horde.oai.requests.admitted` | counter | `streamed` | Chat requests that took an in-flight slot. |
-| `horde.oai.requests.refused` | counter | `status_code`, `code`, `parameter` | Chat requests refused before an in-flight slot: body size (413), body read timeout (408 `RequestBodyTimeout`), validation (400, 404), authorization (401), `FrontAtCapacity` (503). For `UnsupportedChatParameter`, `parameter` is the top-level request key of the refused path (`store`, `messages` for a refused role or content part, `horde` for a refused horde option) when the request schema, the default no-op table or the OpenAI chat completions request keys the front does not define (`logit_bias`, `functions` and the others in `UNDEFINED_OPENAI_PARAMETERS`) list it, and `other` for any other key, so a client-chosen key does not become a label value. It is empty for every other code. |
-| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed`, `reason` | Admitted requests answered with an error status before any header: horde refusals at submit (429 `rate_limit_exceeded` when the horde's 429 does not carry an `rc`), 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 400 `no_worker_supports_limit`, 503 `no_eligible_worker`, 503 `queue_unavailable`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. `reason` is `no_eligible_threads` or `wait_exceeds_budget` for `queue_unavailable` and empty for every other code. |
-| `horde.oai.stream.failures` | counter | `code` | Streamed requests whose 200 headers were sent and which ended in an SSE error event. |
+| `horde.oai.requests.refused` | counter | `status_code`, `code`, `parameter` | Chat requests refused before an in-flight slot: body size (413), body read timeout (408 `RequestBodyTimeout`), validation (400, 404), authorization (401), `FrontAtCapacity` (503). For `UnsupportedChatParameter`, `parameter` is the top-level request key of the refused path (`store`, `messages` for a refused role or content part, `horde` for a refused horde option) when the request schema, the default no-op table or the OpenAI chat completions request keys the front does not define (`logit_bias`, `functions` and the others in `UNDEFINED_OPENAI_PARAMETERS`) or the common non-OpenAI sampler keys in `COMMON_NON_OPENAI_SAMPLER_PARAMETERS` (`top_k`, `min_p`, `rep_pen` and the others) list it. It is `other` for any other key, so a client-chosen key does not become a label value. It is empty for every other code. Each such refusal also logs its path (see [Refused parameter log line](#refused-parameter-log-line)), and the log shows the keys counted as `other`. |
+| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed`, `reason`, `stage` | Admitted requests that got an error status before any header: horde refusals at submit (429 `rate_limit_exceeded` when the horde's 429 does not include an `rc`), 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 400 `no_worker_supports_limit`, 503 `no_eligible_worker`, 503 `queue_unavailable`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. `reason` is `no_eligible_threads` or `wait_exceeds_budget` for `queue_unavailable` and empty for every other code. `stage` is `submit` for a `no_eligible_worker` refused by the Horde at creation, such as for a model without an online chat worker. It is `grace` for a `no_eligible_worker` returned when the fail-fast grace ended, and empty for every other code. |
+| `horde.oai.stream.failures` | counter | `code`, `stage` | Streamed requests whose 200 headers were sent and which ended in an SSE error event. `stage` is as for `horde.oai.requests.errors`. |
+| `horde.oai.fail_fast.rescues` | counter | none | Waits in which one status read showed no eligible worker and nothing processing, and a later read within `fail_fast_grace_seconds` showed an eligible worker or the request processing. Compared with the `no_eligible_worker` count at the `grace` stage, it shows how many requests the grace kept from a refusal. |
 | `horde.oai.inflight` | observable gauge | none | Requests holding an in-flight slot. |
 | `horde.oai.inflight.sources` | observable gauge | none | Distinct client addresses holding at least one slot. |
 | `horde.oai.inflight.source_max` | observable gauge | none | The most slots one client address holds; compare with `HORDE_OAI_MAX_INFLIGHT_PER_SOURCE`. |
@@ -346,7 +359,7 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | `horde.oai.submit.outcome_unknown` | counter | none | Requests answered with `submit_outcome: "unknown"`. |
 | `horde.oai.submit.recoveries` | counter | `existing_claim` | Lost submits recovered by re-sending; `existing_claim` true is a claim match (horde answered 200). |
 | `horde.oai.client_retry_hints` | counter | none | Chat requests carrying `x-stainless-retry-count` above zero. |
-| `horde.oai.completions` | counter | `model`, `estimated_usage` | Delivered completions; `estimated_usage` true when a count was estimated because the worker did not report it. |
+| `horde.oai.completions` | counter | `model`, `estimated_usage`, `finish_reason`, `max_length_lowered` | Delivered completions; `estimated_usage` true when a count was estimated because the worker did not report it. `finish_reason` is the finish reason of the first choice (`stop`, `length`, `content_filter` or `tool_calls`). `max_length_lowered` is true when `x_horde.context_adjustments` holds a `worker_max_length` entry. Such a completion with `finish_reason` `length` may have been cut short by the lowered limit. |
 | `horde.oai.completions.empty` | counter | `model` | Delivered completions whose generation does not hold visible text, the case `x_horde.notice` reports. |
 | `horde.oai.stream.relayed` | counter | none | Streamed requests that sent at least one relayed delta. |
 | `horde.oai.stream.relay_outcomes` | counter | `outcome` | How relayed streams ended: `equal`, `prefix`, `mismatch`, `replaced_attempt`, `ended` or `gap`; see [Relayed deltas](#relayed-deltas). |
@@ -358,6 +371,20 @@ the horde's settlement.
 Bucket boundaries: native call latency uses the horde's `BUCKETS_SECONDS`; queue wait, first content and request
 duration use `BUCKETS_REQUEST_LIFECYCLE_SECONDS` (both in `horde/metrics.py`); body size uses
 `horde.oai.metrics.BUCKETS_BODY_BYTES`.
+
+## Refused parameter log line
+
+The front logs one Loguru `INFO` record for each `UnsupportedChatParameter` refusal:
+
+```text
+Refused unsupported chat parameter: path=<repr of the request path> label=<horde.parameter label>
+```
+
+The path is the refused request path, such as `'top_k'` or `'messages[0].content[1].type'`. It is cut to
+`REFUSED_PARAMETER_LOG_LENGTH` (64) characters and written in Python `repr` form, so a client-chosen key cannot make the
+line long or split it. `label` is the `horde.parameter` value of the refusal counter. The lines with `label=other`
+show the keys counted as `other`. They show whether `COMMON_NON_OPENAI_SAMPLER_PARAMETERS` covers the keys that
+clients send.
 
 ## Finished-request log line
 

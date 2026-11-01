@@ -62,6 +62,7 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_TOTAL_BYTES,
     NO_ELIGIBLE_WORKER_RC,
     ChatAvailabilityMode,
+    ChatContextAdjustmentReason,
     ChatImpossibleReason,
     ChatRequestRefusal,
     KudosCapExcess,
@@ -101,7 +102,7 @@ from horde.oai.mapping import (
     build_system_fingerprint,
     relays_deltas,
 )
-from horde.oai.metrics import CancelOutcome, FrontMetrics, RelayOutcome, get_front_meter
+from horde.oai.metrics import CancelOutcome, FrontMetrics, NoEligibleWorkerStage, RelayOutcome, get_front_meter
 from horde.oai.schema import (
     CHAT_REQUEST_CONFLICT_CODE,
     DEFAULT_NO_OP_PARAMETERS,
@@ -255,11 +256,47 @@ UNDEFINED_OPENAI_PARAMETERS: tuple[str, ...] = (
 taken from ``CompletionCreateParams`` in ``openai/types/chat/completion_create_params.py`` of the openai package
 pinned in uv.lock. A closed vocabulary: a key OpenAI adds later records as ``other`` until it is listed here."""
 
+COMMON_NON_OPENAI_SAMPLER_PARAMETERS: tuple[str, ...] = (
+    "banned_tokens",
+    "dynatemp_range",
+    "grammar",
+    "max_context_length",
+    "min_p",
+    "min_tokens",
+    "mirostat",
+    "mirostat_eta",
+    "mirostat_tau",
+    "rep_pen",
+    "rep_pen_range",
+    "repetition_penalty",
+    "sampler_order",
+    "smoothing_factor",
+    "tfs",
+    "top_a",
+    "top_k",
+    "truncation_length",
+    "typical_p",
+)
+"""Top-level sampler keys sent beside the OpenAI keys by OpenAI-compatible clients such as SillyTavern, KoboldAI Lite,
+text-generation-webui and llama.cpp or koboldcpp clients. The tuple is a label vocabulary only. ``horde.parameter``
+records which of these keys was in a refused request. A request with one of them is refused like any other key outside
+the request schema, under the top-level strictness of ADR 0029. The vocabulary is closed, and any other key records as
+``other``. The list is a starting set to check against production. Each refusal also logs its request path
+(``_log_refused_parameter``), so the logs show the keys behind the ``other`` count. A frequent one can be added here."""
+
+REFUSED_PARAMETER_LOG_LENGTH: int = 64
+"""The number of characters of a refused parameter's request path kept in the refusal log line. Every OpenAI and
+common sampler key is far shorter. The limit only keeps a client-chosen key from making the line arbitrarily long."""
+
 KNOWN_PARAMETER_LABELS: frozenset[str] = (
-    frozenset(ChatCompletionRequest.model_fields) | frozenset(DEFAULT_NO_OP_PARAMETERS) | frozenset(UNDEFINED_OPENAI_PARAMETERS)
+    frozenset(ChatCompletionRequest.model_fields)
+    | frozenset(DEFAULT_NO_OP_PARAMETERS)
+    | frozenset(UNDEFINED_OPENAI_PARAMETERS)
+    | frozenset(COMMON_NON_OPENAI_SAMPLER_PARAMETERS)
 )
 """The top-level request keys recorded as themselves in ``horde.parameter``: the request schema's fields, the keys
-accepted only at their default, and the OpenAI request keys the front does not define."""
+accepted only at their default, the OpenAI request keys the front does not define, and the common non-OpenAI sampler
+keys."""
 
 REQUEST_PATH_SEPARATOR_PATTERN: re.Pattern[str] = re.compile(r"[.\[]")
 """The characters that end the top-level key of a request path, such as ``messages[0].role`` or ``horde.priority``."""
@@ -405,6 +442,7 @@ class ChatFrontError(Exception):
         headers: Mapping[str, str] | None = None,
         job_may_exist: bool = False,
         queue_refusal: QueueRefusalFacts | None = None,
+        no_eligible_worker_stage: NoEligibleWorkerStage | None = None,
     ) -> None:
         """Create the error.
 
@@ -417,6 +455,8 @@ class ChatFrontError(Exception):
             headers: Extra response headers, such as ``Retry-After``.
             job_may_exist: Whether the Horde holds, or may hold, a request for this call; adds ``x-should-retry: false``.
             queue_refusal: The pool facts of a ``queue_unavailable`` refusal, for the metric and log; not sent.
+            no_eligible_worker_stage: The stage at which a ``no_eligible_worker`` request was found unservable.
+                It is recorded in the metrics and not sent.
         """
         super().__init__(message)
         self.status_code: int = status_code
@@ -435,6 +475,8 @@ class ChatFrontError(Exception):
         """Whether a retry could create a second charged job."""
         self.queue_refusal: QueueRefusalFacts | None = queue_refusal
         """The pool facts of a ``queue_unavailable`` refusal."""
+        self.no_eligible_worker_stage: NoEligibleWorkerStage | None = no_eligible_worker_stage
+        """The stage at which a ``no_eligible_worker`` request was found unservable."""
 
     def to_response(self) -> JSONResponse:
         """Create the JSON error response, with ``x-should-retry: false`` when a job may exist."""
@@ -835,7 +877,7 @@ def _horde_error(
     field as ``param``. A 429 without an ``rc`` is reported as ``rate_limit_exceeded``, keeping the Horde's message and
     ``Retry-After``. A refusal over the client's kudos cap is reported as ``max_kudos_exceeded``. A ``NoEligibleWorker``
     refusal is reported as the declaration gap or size limit gap its body holds, as for a wait that ends on that gap,
-    and as ``no_eligible_worker`` when the body holds none.
+    and as ``no_eligible_worker`` when the body holds none. A refusal at creation keeps the Horde's message.
 
     Args:
         error: The Horde error.
@@ -849,7 +891,11 @@ def _horde_error(
         return _kudos_cap_error(error, request_id=request_id, job_may_exist=job_may_exist)
     if error.return_code == NO_ELIGIBLE_WORKER_RC:
         if error.impossible_reason is None:
-            return _no_eligible_worker_error(request_id=request_id, job_may_exist=job_may_exist)
+            return _no_eligible_worker_error(
+                request_id=request_id,
+                job_may_exist=job_may_exist,
+                horde_message=error.message if request_id is None else None,
+            )
         return _gap_error(
             error.impossible_reason,
             request_id=request_id,
@@ -1028,6 +1074,25 @@ def _format_location(location: tuple[int | str, ...], request_body: object) -> s
             request_path += f".{location_part}" if request_path else location_part
             body_at_path = body_at_path.get(location_part)
     return request_path
+
+
+def _log_refused_parameter(request_path: str | None, *, label: str) -> None:
+    """Log the request path of an ``UnsupportedChatParameter`` refusal and the metric's label.
+
+    The path is client-chosen, so it stays out of the metric labels. The log line shows the keys counted under the
+    ``other`` label. It is cut to ``REFUSED_PARAMETER_LOG_LENGTH`` characters and logged in ``repr`` form, so a long or
+    multi-line key cannot flood or split the line.
+    """
+    logged_path = (request_path or "")[:REFUSED_PARAMETER_LOG_LENGTH]
+    logger.info(f"Refused unsupported chat parameter: path={logged_path!r} label={label}")
+
+
+def _max_length_was_lowered(context_adjustments: Sequence[object] | None) -> bool:
+    """Return whether the Horde's ``context_adjustments`` hold a ``worker_max_length`` entry."""
+    return any(
+        isinstance(adjustment, Mapping) and adjustment.get("reason") == ChatContextAdjustmentReason.WORKER_MAX_LENGTH.value
+        for adjustment in context_adjustments or ()
+    )
 
 
 def _refused_parameter_label(request_path: str | None) -> str:
@@ -1631,6 +1696,8 @@ class RequestTrace:
             model=completion.model,
             estimated_usage=completion.x_horde.estimated_usage,
             has_empty_return=completion.x_horde.notice is not None,
+            finish_reason=str(completion.choices[0].finish_reason) if completion.choices else "",
+            max_length_lowered=_max_length_was_lowered(completion.x_horde.context_adjustments),
         )
         for generation in status.generations:
             if generation.queue_wait_seconds is not None:
@@ -1646,6 +1713,7 @@ class RequestTrace:
             code=error.code,
             streamed=self.streamed,
             reason=error.queue_refusal.reason if error.queue_refusal is not None else None,
+            stage=error.no_eligible_worker_stage,
         )
         if error.metadata.submit_outcome == SubmitOutcome.UNKNOWN:
             self._front_metrics.record_submit_outcome_unknown()
@@ -1654,7 +1722,7 @@ class RequestTrace:
 
     def error_events(self, error: ChatFrontError, *, watcher: ChatRequestWatcher | None) -> list[ServerSentEvent]:
         """Return the error events sent after a stream's 200 headers, recording the failure and the request's end."""
-        self._front_metrics.record_stream_failure(code=error.code)
+        self._front_metrics.record_stream_failure(code=error.code, stage=error.no_eligible_worker_stage)
         self.finish(status_code=HTTPStatus.OK, code=error.code or "", watcher=watcher, front_error=error)
         return error.to_events()
 
@@ -1897,23 +1965,40 @@ def _wait_error(
     return _horde_error(error, request_id=request_id, job_may_exist=True)
 
 
-def _no_eligible_worker_error(*, request_id: str | None, job_may_exist: bool) -> ChatFrontError:
+def _no_eligible_worker_error(
+    *,
+    request_id: str | None,
+    job_may_exist: bool,
+    horde_message: str | None = None,
+) -> ChatFrontError:
     """Create the 503 for a request no online worker can serve, without a declaration gap to state.
 
     Args:
         request_id: The Horde request id, which the front cancelled; None when the Horde refused the request at
             creation and holds no request.
         job_may_exist: Whether the Horde holds, or may hold, a request for this call.
+        horde_message: The Horde's message for a refusal at creation. It states the cause, such as a model without
+            a serving worker. None for a wait that ended without a worker.
+
+    The response always includes ``x-should-retry: false``, even when the Horde holds no request. An SDK retries a 503
+    within seconds, and the online workers are most likely unchanged by then. The retry would only delay the response.
     """
-    message = "No online worker can serve this request at the moment"
-    message += "; it was cancelled. Retry later." if request_id is not None else ". Retry later."
+    if horde_message:
+        message = f"{horde_message.rstrip()} Retry later."
+    else:
+        message = "No online worker can serve this request at the moment"
+        message += "; it was cancelled. Retry later." if request_id is not None else ". Retry later."
     return ChatFrontError(
         status_code=HTTPStatus.SERVICE_UNAVAILABLE,
         message=message,
         code=NO_ELIGIBLE_WORKER_CODE,
         metadata=ErrorMetadata(request_id=request_id, retry_after=NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS),
-        headers={RETRY_AFTER_HEADER: str(NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS)},
+        headers={
+            RETRY_AFTER_HEADER: str(NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS),
+            SHOULD_RETRY_HEADER: SHOULD_NOT_RETRY,
+        },
         job_may_exist=job_may_exist,
+        no_eligible_worker_stage=NoEligibleWorkerStage.SUBMIT if request_id is None else NoEligibleWorkerStage.GRACE,
     )
 
 
@@ -2204,10 +2289,14 @@ async def _chat_completions(request: Request) -> Response:
         return Response(status_code=CLIENT_CLOSED_REQUEST_STATUS)
     except ChatFrontError as error:
         inflight_slot.release()
+        refused_parameter_label = None
+        if error.code == UNSUPPORTED_PARAMETER_CODE:
+            refused_parameter_label = _refused_parameter_label(error.param)
+            _log_refused_parameter(error.param, label=refused_parameter_label)
         front_metrics.record_refusal(
             status_code=error.status_code,
             code=error.code,
-            parameter=_refused_parameter_label(error.param) if error.code == UNSUPPORTED_PARAMETER_CODE else None,
+            parameter=refused_parameter_label,
         )
         return error.to_response()
     except BaseException:

@@ -37,6 +37,7 @@ from horde.chat_contract import (
     MAX_CHAT_BODY_BYTES,
     MAX_CHAT_IMAGE_TOTAL_BYTES,
     MAX_CHAT_IMAGE_TOTAL_BYTES_UNTRUSTED,
+    ChatContextAdjustmentReason,
     ChatContextFit,
     KudosCapExcess,
     refuse_json_constant,
@@ -173,6 +174,9 @@ class TextAsyncGenerate(GenerateTemplate):
     creation_availability: database.RequestWorkerAvailability | None = None
     """The eligible worker capacity measured when the request was created, which sets its free output allowance and
     answers the worker check after activation; None until measured and after a downgrade changes the request."""
+    worker_limits: database.TextWorkerLimits | None = None
+    """The count and largest limits of the online workers serving the request's models. ``get_worker_limits`` reads
+    them once per submission. None until read."""
     decorators = [
         limiter.limit(
             limit_value=lim.get_request_90min_limit_per_ip,
@@ -682,12 +686,27 @@ class TextAsyncGenerate(GenerateTemplate):
 
         return context_growth_upper_bound(
             policy=self.style_parameter_policy,
-            highest_worker_max_context_length=database.get_highest_text_worker_max_context_length(
-                self.models,
-                accepts_chat_jobs=self.requires_chat_workers,
-            ),
+            highest_worker_max_context_length=self.get_worker_limits().max_context_length,
             requested_max_context_length=requested_max_context_length,
         )
+
+    def get_worker_limits(self) -> database.TextWorkerLimits:
+        """Return the count and largest limits of the online workers serving the request's models.
+
+        The worker table is queried on the first call only, so every check in one submission uses the same
+        statement. A text request reads the limits only when its prompt does not fit the requested context.
+
+        Returns:
+            The limits from
+                [`get_highest_text_worker_limits`][horde.database.functions.get_highest_text_worker_limits]. For a
+                chat request, only chat workers count.
+        """
+        if self.worker_limits is None:
+            self.worker_limits = database.get_highest_text_worker_limits(
+                self.models,
+                accepts_chat_jobs=self.requires_chat_workers,
+            )
+        return self.worker_limits
 
 
 def add_impossible_reason(wp_status: dict[str, object], worker_availability: database.RequestWorkerAvailability) -> None:
@@ -985,7 +1004,8 @@ class ClaimedOperation(Exception):
 class ChatAsyncGenerate(TextAsyncGenerate):
     requires_chat_workers = True
     context_adjustments = None
-    """The changes context fitting made to the request's context length, as stored for the chat status, or None."""
+    """The changes made by the horde to the request's completion length and context, as stored for the chat status,
+    or None."""
     chat_images: tuple[bytes, ...] = ()
     """The request's images, validated and encoded as the JPEG to store, in message order. Empty for a dry run,
     which neither fetches nor stores them."""
@@ -1055,6 +1075,7 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         - `UnknownChatModel` (404): a model that the text model reference does not list and that no online chat
           worker serves; for an entry of `models`, the message starts with its quoted path, such as `'models[1]'`,
           and the whole request is refused.
+        - `NoEligibleWorker` (403): a known model, or every entry of `models`, without an online chat worker.
         - `OperationKeyConflict` (400): `horde.operation_key` reused with a changed request.
         - `ChatKudosCapExceeded` (400): a kudos estimate at current pricing over `horde.max_kudos`; the message states
           the estimate and the cap.
@@ -1065,8 +1086,10 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         with the same request returns the first request's id and kudos with status 200 and does not queue a new
         request.
 
-        The request is queued with text requests and served by the text workers that accept chat jobs. The
-        response is the request's UUID; poll `/generate/chat/status` for the result.
+        The request is queued with text requests and served by the text workers that accept chat jobs. A
+        `max_tokens` above the largest `max_length` declared by the online chat workers serving the models is lowered
+        to that value. The status reports the change in `context_adjustments`. The response is the request's UUID.
+        Poll `/generate/chat/status` for the result.
         """
         self.chat_request = parse_chat_request(read_chat_request_body())
         self.operation_claim = self.get_operation_claim()
@@ -1197,6 +1220,10 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         grow, and only after the refusals every other route gives first. A chat request carries no style, so the
         style steps only report that none applied.
 
+        After the model check, a request is refused when its models are not served by any online chat worker. A
+        completion length above the largest one declared by the serving workers is then lowered to that value.
+        Sizing and the kudos estimate use the lowered length.
+
         Moderation screens the full submitted messages, and its rewrite is mirrored onto them before sizing, so
         ``truncate_oldest`` trims the rewritten messages and the row stores what the worker receives.
         """
@@ -1204,7 +1231,9 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         self.apikey = self.args.apikey
         GenerateTemplate.validate(self)
         self.ensure_model_known()
+        self.ensure_model_served()
         self.mirror_prompt_rewrites_onto_messages()
+        self.clamp_max_length_to_workers()
         self.apply_context_fit()
         self.decide_style_surcharge()
         self.report_style_application()
@@ -1336,8 +1365,8 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         """Refuse a model this horde does not know before any request row exists or any kudos is charged.
 
         A model is known when the text model reference lists it or an online worker serves chat jobs with it. A
-        known model that no online worker can serve is still accepted and waits, as a text request does. Every entry
-        of ``models`` has to be known: dropping an unknown entry would serve a request other than the one sent.
+        known model without an online chat worker is refused next, by ``ensure_model_served``. Every entry of
+        ``models`` has to be known: dropping an unknown entry would serve a request other than the one sent.
 
         Raises:
             horde.exceptions.UnknownChatModel: The model, or the first entry of ``models``, unknown to both.
@@ -1349,6 +1378,58 @@ class ChatAsyncGenerate(TextAsyncGenerate):
                 continue
             request_path = f"models[{model_index}]" if listed_models is not None else None
             raise e.UnknownChatModel(model_name, request_path=request_path)
+
+    def ensure_model_served(self) -> None:
+        """Refuse a request for models without an online chat worker, before any sizing or request row.
+
+        A text request for such a model queues until a worker comes online. A chat client waits for its response
+        within one call. Without a serving worker, sizing would refuse a long prompt as one that cannot grow. The
+        request is therefore refused at once, stating that no worker is serving the model, and the client can retry
+        later. A dry run is refused the same way.
+
+        Raises:
+            horde.exceptions.NoEligibleWorker: The request's models are not served by any online chat worker.
+        """
+        if self.get_worker_limits().worker_count > 0:
+            return
+        model_names = build_model_names(self.chat_request)
+        if len(model_names) == 1:
+            model_wording = f"the model '{model_names[0]}'"
+        else:
+            model_wording = "any of the models " + ", ".join(f"'{model_name}'" for model_name in model_names)
+        raise e.NoEligibleWorker(None, message=f"No worker is currently serving {model_wording}.")
+
+    def clamp_max_length_to_workers(self) -> None:
+        """Lower the completion length to the largest one declared by the online chat workers serving the models.
+
+        ``max_tokens`` is an upper bound in the OpenAI API, and clients commonly default it above the declared worker
+        limits. A request above the largest declared length is served with that length. Without the change it would
+        have no eligible worker. The change is recorded for the chat status as a ``worker_max_length`` adjustment and counted
+        in ``horde.chat.max_length_lowered``. A context above every worker's declaration is not lowered, so it stays a
+        declaration gap.
+        """
+        largest_declared_max_length = self.get_worker_limits().max_length
+        requested_max_length = self.params.get(MAX_LENGTH_PARAMETER, DEFAULT_MAX_LENGTH)
+        if largest_declared_max_length is None or requested_max_length <= largest_declared_max_length:
+            return
+        # Copied before writing, since self.params may still be the parsed request body.
+        self.params = dict(self.params)
+        self.params[MAX_LENGTH_PARAMETER] = largest_declared_max_length
+        metrics.chat_max_length_lowered.add(
+            1,
+            {
+                "horde.requested_bucket": metrics.TEXT_LENGTH_BUCKETS.label(requested_max_length),
+                "horde.declared_bucket": metrics.TEXT_LENGTH_BUCKETS.label(largest_declared_max_length),
+                "horde.dry_run": str(bool(self.args.dry_run)).lower(),
+            },
+        )
+        self.context_adjustments = [
+            {
+                "from": requested_max_length,
+                "to": largest_declared_max_length,
+                "reason": ChatContextAdjustmentReason.WORKER_MAX_LENGTH.value,
+            },
+        ]
 
     def estimate_request_prompt_tokens(self) -> int:
         """Return the estimated token count of the flattened messages, with each image part counted as a worker
@@ -1362,7 +1443,7 @@ class ChatAsyncGenerate(TextAsyncGenerate):
 
     def apply_context_fit(self) -> None:
         """Size the request's context as a text request's, trim its history under ``truncate_oldest``, and record
-        each change for the chat status."""
+        each change for the chat status after any recorded completion length change."""
         requested_max_context_length = self.params.get(MAX_CONTEXT_LENGTH_PARAMETER, DEFAULT_MAX_CONTEXT_LENGTH)
         truncation = None
         if self.chat_request.horde.context_fit is ChatContextFit.TRUNCATE_OLDEST:
@@ -1370,14 +1451,14 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         else:
             super().apply_context_fit()
         fitted_max_context_length = self.params.get(MAX_CONTEXT_LENGTH_PARAMETER, DEFAULT_MAX_CONTEXT_LENGTH)
-        context_adjustments = []
+        context_adjustments = list(self.context_adjustments or ())
         # A request that does not fit under reject is refused instead, so only growth and truncation are recorded.
         if fitted_max_context_length != requested_max_context_length:
             context_adjustments.append(
                 {
                     "from": requested_max_context_length,
                     "to": fitted_max_context_length,
-                    "reason": ChatContextFit.GROW.value,
+                    "reason": ChatContextAdjustmentReason.GROW.value,
                 },
             )
         if truncation is not None:
@@ -1385,7 +1466,7 @@ class ChatAsyncGenerate(TextAsyncGenerate):
                 {
                     "from": truncation.estimated_prompt_tokens_before,
                     "to": truncation.estimated_prompt_tokens_after,
-                    "reason": ChatContextFit.TRUNCATE_OLDEST.value,
+                    "reason": ChatContextAdjustmentReason.TRUNCATE_OLDEST.value,
                     "dropped_messages": truncation.dropped_message_count,
                 },
             )
@@ -1601,7 +1682,8 @@ class ChatAsyncStatus(TextAsyncStatus):
         (null when it did not report them), the charge basis, and how long the request queued before the generation
         was assigned to a worker.
 
-        `context_adjustments` lists the changes the horde made to the request's context length. When the workers'
+        `context_adjustments` lists the changes made by the horde to the request's completion length and context
+        length. When the workers'
         declarations are the reason no worker can take the request, `impossible_reason` lists the declarations they
         lack and the limits the request exceeds. Once the request faults, `fault_reason` and `fault_rc` hold the
         message and return code of the last refused reply or worker fault.

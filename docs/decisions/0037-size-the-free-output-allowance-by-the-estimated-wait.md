@@ -58,7 +58,9 @@ take, divided by the combined measured speed of those workers. It is the same fi
 The allowance is measured once, when the request is created, from the workers eligible at the requested `max_length`.
 A request over the allowance is refused with `KudosUpfront` and a message stating the allowance in tokens. On the
 native text route a client that set `allow_downgrade` gets the request lowered to the allowance instead, with slow
-workers allowed. A chat request is never downgraded, since an OpenAI client cannot see that its `max_tokens` changed.
+workers allowed. A chat request is never downgraded to the allowance. The only change made to the `max_tokens` of a
+chat request is a lowering to the largest completion length declared by an online worker. The client sees that
+change in `context_adjustments`.
 A dry run over the allowance is refused the same way, so a quote never describes a request that would be refused.
 A request that disallows slow workers always holds its kudos, whatever the allowance.
 

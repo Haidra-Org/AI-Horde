@@ -627,9 +627,45 @@ def test_availability_and_context_growth_leave_out_a_chat_only_worker_for_text_r
     text_request.max_context_length = 512
 
     assert functions.get_worker_availability_for_request(text_request).worker_count == 0
-    assert functions.get_highest_text_worker_max_context_length([CHAT_MODEL]) is None
+    assert functions.get_highest_text_worker_limits([CHAT_MODEL]) == functions.TextWorkerLimits(
+        worker_count=0,
+        max_context_length=None,
+        max_length=None,
+    )
     assert functions.get_worker_availability_for_request(_make_chat_request(user)).worker_count == 1
-    assert functions.get_highest_text_worker_max_context_length([CHAT_MODEL], accepts_chat_jobs=True) == 8192
+    assert functions.get_highest_text_worker_limits([CHAT_MODEL], accepts_chat_jobs=True) == functions.TextWorkerLimits(
+        worker_count=1,
+        max_context_length=8192,
+        max_length=1024,
+    )
+
+
+def test_the_worker_limits_are_the_largest_chat_declarations_of_the_online_workers_serving_the_models(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """Context and completion length are each the largest value declared by an online chat worker serving the
+    models. The two maxima can come from different workers. An offline worker, or one serving another model, does not
+    count."""
+    user = make_user()
+    _make_chat_worker(user, chat_max_context_length=8192, chat_max_length=512)
+    _make_chat_worker(user, chat_max_context_length=4096, chat_max_length=2048)
+    offline_worker = _make_chat_worker(user, chat_max_context_length=32768, chat_max_length=8192)
+    offline_worker.last_check_in = datetime.utcnow() - timedelta(hours=1)
+    _make_chat_worker(user, chat_model_id="another/model", chat_max_context_length=65536, chat_max_length=16384)
+    db.session.commit()
+
+    assert functions.get_highest_text_worker_limits([CHAT_MODEL], accepts_chat_jobs=True) == functions.TextWorkerLimits(
+        worker_count=2,
+        max_context_length=8192,
+        max_length=2048,
+    )
+    assert functions.get_highest_text_worker_limits(["unserved/model"], accepts_chat_jobs=True) == functions.TextWorkerLimits(
+        worker_count=0,
+        max_context_length=None,
+        max_length=None,
+    )
 
 
 def test_the_pop_query_gives_a_chat_only_worker_only_chat_requests(

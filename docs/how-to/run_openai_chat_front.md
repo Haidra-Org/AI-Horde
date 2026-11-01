@@ -193,8 +193,8 @@ does not run the command, so a test run does not silently provision separate dat
 Verification: every test passes: the model list includes the worker's chat model and leaves out a model no online
 worker serves; a completion and a streamed completion
 return the worker's reply, `finish_reason` `stop` and the worker's token counts; `logit_bias` is a `BadRequestError`
-whose `param` is `logit_bias`; a model without an online worker is a 503 `no_eligible_worker` the SDK does not
-retry; and an image sent as a data URL reaches the worker, which declares `vision` and the `url` image transport, as
+whose `param` is `logit_bias`; a model without an online worker returns 503 `no_eligible_worker` at once; and an
+image sent as a data URL reaches the worker, which declares `vision` and the `url` image transport, as
 a signed `http(s)` URL.
 
 Reversal: the run creates and drops its database schema; the test stack stays up for later runs unless

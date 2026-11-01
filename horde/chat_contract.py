@@ -74,6 +74,7 @@ __all__ = [
     "UNSUPPORTED_CHAT_PARAMETER_ERROR_TYPE",
     "UNSUPPORTED_CHAT_PARAMETER_RC",
     "ChatAvailabilityMode",
+    "ChatContextAdjustmentReason",
     "ChatContextFit",
     "ChatFunctionCall",
     "ChatFunctionDefinition",
@@ -206,6 +207,22 @@ class ChatContextFit(StrEnum):
     """Grow as ``grow`` does, then drop whole turns from the oldest forward until the messages fit. Every system and
     developer message is kept, as are the latest user message and everything after it; a request that still does not
     fit is refused as under ``reject``."""
+
+
+class ChatContextAdjustmentReason(StrEnum):
+    """The reason in a ``context_adjustments`` entry for a change the horde made to a chat request's size."""
+
+    GROW = ChatContextFit.GROW.value
+    """The context was grown to fit the messages. ``from`` and ``to`` are context lengths."""
+
+    TRUNCATE_OLDEST = ChatContextFit.TRUNCATE_OLDEST.value
+    """The oldest turns were dropped so the messages fit. ``from`` and ``to`` are the estimated token counts of the
+    submitted and the kept messages."""
+
+    WORKER_MAX_LENGTH = "worker_max_length"
+    """The completion length was lowered to the largest ``chat_max_length`` declared by the online chat workers
+    serving the requested models. ``from`` and ``to`` are completion lengths. ``max_tokens`` is an upper bound in the
+    OpenAI API, so a request above the largest declared length is served with that length and is not refused."""
 
 
 class ChatAvailabilityMode(StrEnum):

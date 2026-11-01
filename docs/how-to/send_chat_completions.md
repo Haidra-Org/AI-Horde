@@ -84,7 +84,8 @@ curl -s "$OAI_BASE_URL/models" | jq '.data[] | {id, context_length, max: .top_pr
 
 The fields are the maxima and union across the model's workers, and they are availability hints: a request at the
 largest `max_tokens` fits only the workers that declare it, and the workers online can change before the request is
-picked up. A request that no online worker can serve ends with 503 `no_eligible_worker`, or at once with 404
+picked up. A request for a model without an online worker ends at once with 503 `no_eligible_worker`. A request
+that cannot be served by the online workers ends with 503 `no_eligible_worker` after the front's grace, or at once with 404
 `no_worker_supports_features` when the model's online workers lack a declaration it needs (see
 [Errors and retries](#errors-and-retries)).
 
@@ -113,7 +114,7 @@ Verification: the printed `model` is one of the listed ids.
 | Keys | Handling |
 | --- | --- |
 | `model` or `models`, `messages` | Required: exactly one of `model` and `models` (see [Accept any of several models](#accept-any-of-several-models)); `messages` holds at least one message. |
-| `max_tokens`, `max_completion_tokens` | 16 to 16384 (see [Deliberate deviations](#deliberate-deviations)); equal when both are sent. Default 512 when neither is. Above the free output allowance, by default between 512 and 4096 depending on the load on the workers that can serve the request (see [Free output allowance](../reference/chat_requests.md#free-output-allowance)), the key needs the request's kudos available, or the request is refused with 403 `KudosUpfront`. |
+| `max_tokens`, `max_completion_tokens` | 16 to 16384 (see [Deliberate deviations](#deliberate-deviations)); equal when both are sent. Default 512 when neither is. A value above the largest length declared by an online worker for the model is lowered to that length and reported in `x_horde.context_adjustments`. Above the free output allowance, by default between 512 and 4096 depending on the load on the workers that can serve the request (see [Free output allowance](../reference/chat_requests.md#free-output-allowance)), the key needs the request's kudos available, or the request is refused with 403 `KudosUpfront`. |
 | `temperature`, `top_p`, `stop` | Forwarded; `temperature` ranges 0 to 2, `top_p` 0 to 1, and `stop` is a string or up to four strings. |
 | `seed`, `frequency_penalty`, `presence_penalty` | Forwarded; a worker has to declare the feature for `seed` (any value) or a non-zero penalty. Penalties range -2 to 2. |
 | `reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high` or `xhigh`, forwarded unchanged with no default; a worker has to declare the `reasoning_effort` feature for any value, `none` included. `none` disables thinking; how much reasoning the other values allow is the worker's mapping. Any other value is 400 `BadRequest` with `param` `reasoning_effort`. |
@@ -210,8 +211,8 @@ narrow the eligible workers, so a combination no online worker satisfies ends wi
 With the Python SDK, send the object as `extra_body={"horde": {...}}`; other clients add it to the JSON body.
 
 Verification: `x_horde.worker_id` of the response is one of the `only` ids, and `x_horde.context_adjustments` lists
-`{"from", "to", "reason": "grow"}` when the context grew and a `truncate_oldest` entry when the oldest turns were
-dropped, null otherwise.
+a `worker_max_length` entry when `max_tokens` was lowered, `{"from", "to", "reason": "grow"}` when the context grew
+and a `truncate_oldest` entry when the oldest turns were dropped, null otherwise.
 
 A long conversation can be sent whole. Under the default `truncate_oldest`, the Horde drops what does not fit:
 
@@ -410,7 +411,7 @@ The front's own codes:
 | 502 | `HordeUnavailable` | | No Horde root accepted the connection; the request was not submitted. |
 | 502 | `HordeUnavailable` | `false` | The submit was sent and no answer came; `metadata.submit_outcome` is `"unknown"`. |
 | 503 | `FrontAtCapacity` | | The front or your address holds its maximum of open requests. `Retry-After: 5`. |
-| 503 | `no_eligible_worker` | `false` | No online worker could serve the request for the front's grace period; it is cancelled. `Retry-After: 30`. |
+| 503 | `no_eligible_worker` | `false` | The model is not served by any online worker, so the submit is refused and no request is created. Or the request could not be served by any online worker during the front's grace period, and it is cancelled. `Retry-After: 30`. |
 | 503 | `queue_unavailable` | `false` | Under `horde.availability_mode: "fail_fast"`, the first status read showed zero eligible worker threads, or an estimated wait over the time left in the budget; it is cancelled. A request just submitted can read no queue position at first, so the front reads again for up to 2 s until one shows the queue. `Retry-After` is the estimated wait, or 30 with zero threads. `param` is `horde.availability_mode`. |
 
 A request that faulted after the Horde refused its workers' replies reports the last refusal:
@@ -449,8 +450,8 @@ Retry rules:
   header and do not retry. A retry is a new request and can create a second charged job, since the front does not
   deduplicate client requests.
 - `no_eligible_worker` means the request as sent does not have a worker online: check the model card for the model's
-  workers, `supported_parameters` and `max_completion_tokens`, and change the request or wait for workers; the same
-  request fails the same way.
+  workers and `supported_parameters`, and change the request or wait for workers. The same request fails the same
+  way until a worker comes online.
 - `queue_unavailable` states the pool at the first status read: eligible worker threads, the estimated wait and the
   budget left. Retry after `Retry-After`, or send `availability_mode: "wait"` to queue for the budget.
 - `no_worker_supports_features` lists what is missing. Drop or change the feature, lower the temperature, or send
@@ -459,7 +460,7 @@ Retry rules:
 - A stream always carries `x-should-retry: false`.
 
 Verification: a request for a model the Horde knows but no worker serves returns 503 with `"code":
-"no_eligible_worker"` and `x-should-retry: false` after the grace period:
+"no_eligible_worker"` at once. The message states that the model is not served by any worker:
 
 ```bash
 curl -s -i "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API_KEY" -H "Content-Type: application/json" \
@@ -477,15 +478,18 @@ curl -s -i "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API
 | Tools, tool choice and response format | 256 KiB of compact JSON together; 128 tools; schemas nested at most 10 levels | 400 `UnsupportedChatParameter` |
 | Tool calls replayed in one assistant message | 128 | 400 |
 | `max_tokens` | 16 to 16384 | 400 `UnsupportedChatParameter` |
-| `max_tokens` against workers | At most a worker's declared length; the card's `max_completion_tokens` is the largest | 400 `no_worker_supports_limit` on `max_tokens`, at once |
+| `max_tokens` against workers | At most a worker's declared length; the card's `max_completion_tokens` is the largest | Not refused. It is lowered to the largest declared length and reported as a `worker_max_length` context adjustment |
 | Non-streamed and streamed wait | 300 and 600 seconds by default; the deployment sets them | 408 `ChatRequestTimeout`, or an in-stream error |
 
-`max_tokens` is the limit clients most often exceed: a client default above every online worker's declared length
-makes the request ineligible. Omitting `max_tokens` sends 512, which is also ineligible on a model whose workers all
-declare less, so send an explicit value at or below the card's `max_completion_tokens`.
+`max_tokens` is the limit clients most often exceed. It is an upper bound in the OpenAI API. A client default above
+every online worker's declared length is lowered to the largest length declared by an online worker for the model.
+The same applies to the 512 sent when `max_tokens` is omitted. `x_horde.context_adjustments` then holds
+`{"from": <requested>, "to": <declared>, "reason": "worker_max_length"}`. A reply that needs more tokens ends with
+`finish_reason` `length`. When the workers change their declarations after the submit, the request can still end
+with 400 `no_worker_supports_limit` and `param` `max_tokens`.
 
-Verification: a request at the card's `max_completion_tokens` is served; one above it ends with 400
-`no_worker_supports_limit` and `param` `max_tokens`.
+Verification: a request above the card's `max_completion_tokens` is served, and its `x_horde.context_adjustments`
+holds a `worker_max_length` entry whose `to` is the card's value.
 
 ## Deliberate deviations
 

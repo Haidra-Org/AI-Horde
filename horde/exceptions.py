@@ -571,23 +571,33 @@ class KudosUpfront(wze.Forbidden):
 
 
 class NoEligibleWorker(wze.Forbidden):
-    """A request the kudos rules would refuse while no online worker can serve it.
+    """A request refused at submission because it cannot be served by any online worker.
 
-    Kudos do not help such a request until a worker that can serve it comes online, so it is refused with the
-    declaration gap, when there is one, in place of ``KudosUpfront``. The status stays 403, as for ``KudosUpfront``.
+    When the kudos rules would refuse such a request, it is refused with this error in place of ``KudosUpfront``,
+    with the declaration gap when there is one. Kudos do not help the request until a worker that can serve it comes
+    online. A chat request for a model without an online chat worker is refused with this error before any sizing.
+    The status stays 403, as for ``KudosUpfront``.
     """
 
     body_fields: dict[str, object]
     """Fields added to the error body beside ``message`` and ``rc``: ``impossible_reason`` in the shape the status
     route reports it, when there is a declaration gap."""
 
-    def __init__(self, impossible_reason: ChatImpossibleReason | None, rc: str = NO_ELIGIBLE_WORKER_RC) -> None:
+    def __init__(
+        self,
+        impossible_reason: ChatImpossibleReason | None,
+        rc: str = NO_ELIGIBLE_WORKER_RC,
+        *,
+        message: str | None = None,
+    ) -> None:
         """Create the refusal.
 
         Args:
             impossible_reason: The missing declarations and exceeded limits that leave no worker eligible; None when
                 the cause is not a declaration gap, such as no online worker serving the model.
             rc: The return code.
+            message: The message to send for a cause that ``impossible_reason`` does not describe. It replaces
+                the message built from ``impossible_reason``.
         """
         causes: list[str] = []
         if impossible_reason is not None and impossible_reason.missing_declarations:
@@ -600,6 +610,8 @@ class NoEligibleWorker(wze.Forbidden):
             )
         self.specific = "No online worker can serve this request"
         self.specific += f": {'; '.join(causes)}." if causes else "."
+        if message is not None:
+            self.specific = message
         self.log = None
         self.rc = rc
         self.body_fields = {}

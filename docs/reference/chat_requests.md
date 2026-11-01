@@ -110,10 +110,13 @@ The route handles a submission in this order:
    still returns `200` with the existing request, since it does not create anything.
 5. The checks every generate route shares run: maintenance mode, authentication, the concurrency limit,
    countermeasures and moderation.
-6. The model is checked (see [Known models](#known-models)).
-7. The context is sized (`context_fit`) and the params are validated, then the request is created and activated as a
+6. The model is checked (see [Known models](#known-models)). An unknown model returns `404`. A known model without
+   an online chat worker returns `403 NoEligibleWorker`.
+7. A `max_tokens` above the largest `max_length` declared by the online chat workers serving the models is lowered to
+   that value (see [Context adjustments](#context-adjustments)).
+8. The context is sized (`context_fit`) and the params are validated, then the request is created and activated as a
    text request is. A text request sizes its context before step 5; a chat request sizes it after the model check,
-   so an unknown model returns `404` even when its messages exceed the context. Moderation's rewrite is mirrored onto the
+   so an unknown or unserved model gets that refusal even when its messages exceed the context. Moderation's rewrite is mirrored onto the
    messages before sizing, so `truncate_oldest` trims the screened and rewritten messages. The `apikey` and `Client-Agent` headers are
 read as on text requests. The text submit response does not carry `is_possible`, and the chat one does not either:
 when no online worker can serve the request it carries the usual warning `message`, and the status route reports
@@ -125,8 +128,18 @@ A model is known when the text model reference lists it (`model_reference.is_kno
 one that checked in within the last 300 seconds, declared `chat_jobs` with it as its `model_id`. The reference is in
 memory; the worker table is queried only for a model the reference does not list. A model unknown to both returns
 `404 UnknownChatModel` after authentication and the concurrency limit, before context sizing, any request row and the
-horde tax, dry runs included. A known model that
-no online worker can serve is accepted, waits, and reports `is_possible` false, as a text request does.
+horde tax, dry runs included.
+
+A known model without an online chat worker returns `403 NoEligibleWorker` at the same point. The refusal comes
+before context sizing, any request row and the horde tax, dry runs included. The message describes availability at
+the time of the request: "No worker is currently serving the model '<model>'.". A request with `models` that lists
+only unserved models gets "No worker is currently serving any of the models '<a>', '<b>'.". The body does not
+include `impossible_reason`. The check uses the same statement as the context growth bound, once per submission.
+That statement is `get_highest_text_worker_limits` in `horde/database/functions.py`. It reads the count of online
+chat workers serving any requested model and their largest chat context and `max_length`. A chat client waits for
+the response within one call. Without a serving worker the context cannot grow, so the request would otherwise end in a
+different refusal. A long prompt would be refused as `PromptExceedsContext`, and a short one would wait for the
+front's grace. A text request for such a model is accepted and waits.
 
 Every entry of `models` has to be known. The first unknown entry refuses the whole request with
 `404 UnknownChatModel`, whose message starts with the entry's quoted path, such as `'models[1]'`; an unknown entry is
@@ -191,7 +204,7 @@ returns `429`.
 | `model`                                  | The model the request accepts. A request sends exactly one of `model` and `models` |
 | `models`                                 | The models the request accepts, 1 to `MAX_CHAT_MODEL_COUNT` (5), each non-empty and listed once: the text request's `models`. Whichever of them an online worker runs serves the request, chosen at pop as for a text request, and the generation's `model` on the status route is the one that served it |
 | `messages`                               | Required, at least one. Roles `system`, `developer`, `user`, `assistant`, `tool`; see [Tools](#tools) for the tool keys |
-| `max_tokens`, `max_completion_tokens`    | `max_length`, 16 to 16384, default `512`. Both may be sent only with equal values; above the [free output allowance](#free-output-allowance) the kudos are held upfront |
+| `max_tokens`, `max_completion_tokens`    | `max_length`, 16 to 16384, default `512`. Both may be sent only with equal values. A value above the largest `max_length` declared by the online chat workers serving the models is lowered to that value (see [Context adjustments](#context-adjustments)). Above the [free output allowance](#free-output-allowance) the kudos are held upfront |
 | `temperature`, `top_p`                   | The text params with the same keys                                                |
 | `frequency_penalty`, `presence_penalty`  | -2 to 2; forwarded to the worker, which has to declare the feature for a non-zero value |
 | `seed`                                   | Forwarded to the worker, which has to declare the `seed` feature                 |
@@ -458,7 +471,20 @@ UUID, neither `model` nor `models`, a `models` that is empty, holds an empty ent
 
 When sizing under `grow` or `truncate_oldest` raises the context length to fit the messages, the request stores the change and the status
 route returns it as `context_adjustments`: `[{"from": 2048, "to": 4096, "reason": "grow"}]`, where `from` is the
-requested `max_context_length` or the default. It is `null` when sizing did not change the context. The list is
+requested `max_context_length` or the default. It is `null` when the horde did not change the context or
+`max_length`. The reasons are the values of `ChatContextAdjustmentReason` in `horde/chat_contract.py`.
+
+The horde lowers a `max_length` before sizing when it is above the largest `chat_limits.max_length` declared by the
+online chat workers serving the request's models. It is lowered to that largest value. Sizing, the free output
+allowance and the kudos estimate then use the lowered length. The change is recorded first:
+`{"from": 4096, "to": 2048, "reason": "worker_max_length"}`, where `from` is the requested `max_tokens` or the
+default. OpenAI's `max_tokens` is an upper bound, and clients commonly default it above the declared worker limits.
+The request is therefore served with the lower limit and is not refused. A dry run is lowered the same way. A
+`max_context_length` above every worker's declaration is not lowered and stays a declaration gap (see
+[Impossible reason](#impossible-reason)). The `horde.chat.max_length_lowered` counter records each lowered request.
+Its attributes are `horde.requested_bucket` and `horde.declared_bucket`, both in the `TEXT_LENGTH_BUCKETS` labels,
+and `horde.dry_run`. The front's `horde.oai.completions` counter records the `finish_reason` of a delivered
+completion and whether its request was lowered (see [Metrics](chat_front.md#metrics)). The list is
 stored in a separate nullable JSONB column: the requested length is not kept anywhere else once growth overwrites
 it, so the adjustment cannot be recomputed at status time.
 
@@ -591,7 +617,10 @@ applies the rest and repeats them for worker availability:
    applies both.
 4. The usual restrictions hold: `only` and `ignore`, trusted, validated, slow workers.
 
-A request no online worker can serve is accepted and waits, with `is_possible` false on the status route. A worker
+A request for models without an online chat worker is refused at submission (see [Known models](#known-models)).
+Some requests are accepted and wait with `is_possible` false on the status route. This applies to a request that a
+serving worker cannot take. It also applies when the request's workers go offline or change their declaration after
+the submit. A worker
 that predates chat never sees a chat request, and a text request goes to a chat worker under its text limits.
 
 ### Impossible reason
@@ -609,7 +638,9 @@ creation still apply them in SQL.
 
 `missing_declarations` lists the values the request needs that a refused worker does not declare, with
 `image_transports` for a worker that declares `vision` without an image transport. `exceeded_limits` lists the
-limits the request exceeds, such as `max_length` or `tools_max_temperature`. The field is `null` otherwise, including when no online
+limits the request exceeds, such as `max_length` or `tools_max_temperature`. The submit lowers `max_length` to the
+largest declared value, so a `max_length` gap arises only when the workers' declarations change after the submit.
+The field is `null` otherwise, including when no online
 worker serves the model or one is refused for any other reason, since those can change while the request waits.
 It is computed from the refusal reasons the availability pass already collects, only when that pass finds no
 eligible worker, and is cached with the availability for 60 seconds. Workers come and go, so the reason describes the

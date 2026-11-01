@@ -298,42 +298,74 @@ def get_active_workers(worker_type=None):
     return active_workers
 
 
-def get_highest_text_worker_max_context_length(
+@dataclass(frozen=True)
+class TextWorkerLimits:
+    """Represents the count and largest advertised limits of the online text workers serving a request's models."""
+
+    worker_count: int
+    """How many online workers serve the models. 0 when the models are not served by any online worker."""
+    max_context_length: int | None
+    """The largest advertised context, or None when the serving workers do not advertise one."""
+    max_length: int | None
+    """The largest advertised completion length, or None when the serving workers do not advertise one."""
+
+
+def get_highest_text_worker_limits(
     model_names: list[str] | None = None,
     *,
     accepts_chat_jobs: bool = False,
-) -> int | None:
-    """Return the largest ``max_context_length`` an online text worker advertises.
+) -> TextWorkerLimits:
+    """Return the count of online text workers serving the models and their largest advertised limits, in one
+    statement.
 
     Online means the window ``get_active_workers()`` uses: a worker that has checked in recently. A
-    request grown past this would have no worker able to serve it and would wait until it expires.
+    request grown past the context, or with a completion length above the largest one, could not be served by any
+    worker and would wait until it expires.
 
     Args:
         model_names: The models the request accepts. When empty or omitted, every online text worker
             that accepts text jobs counts.
-        accepts_chat_jobs: When true, the largest chat context of the workers that serve one of the models
-            with chat jobs, since no other worker can serve a chat request and chat jobs run under the chat
-            limits.
+        accepts_chat_jobs: When true, the chat limits of the workers that serve one of the models with chat jobs
+            count. Only those workers can serve a chat request, and chat jobs run under the chat limits.
 
     Returns:
-        The largest advertised context, or None when no online text worker serves those models.
+        The count and the maxima. With two online chat workers serving ``m`` that declare 8192/2048 and 4096/1024
+        as ``chat_max_context_length``/``chat_max_length``, ``accepts_chat_jobs=True`` for ``["m"]`` returns
+        ``TextWorkerLimits(worker_count=2, max_context_length=8192, max_length=2048)``. Without an online worker
+        it returns a count of 0 and both maxima None.
     """
     cutoff = datetime.utcnow() - timedelta(seconds=300)
     if accepts_chat_jobs:
-        chat_query = db.session.query(func.max(TextWorker.chat_max_context_length)).filter(
+        # MAX skips NULL declarations, so the maxima are None both for a serving worker without declared limits
+        # and for models without a serving worker. The count separates the two cases.
+        query = db.session.query(
+            func.count(TextWorker.id),
+            func.max(TextWorker.chat_max_context_length),
+            func.max(TextWorker.chat_max_length),
+        ).filter(
             TextWorker.last_check_in > cutoff,
             TextWorker.accepts_chat_jobs.is_(True),
         )
         if model_names:
-            chat_query = chat_query.filter(TextWorker.chat_model_id.in_(model_names))
-        return chat_query.scalar()
-    query = db.session.query(func.max(TextWorker.max_context_length)).filter(
-        TextWorker.last_check_in > cutoff,
-        TextWorker.accepts_prompt_jobs.is_(True),
+            # A chat worker serves exactly one model, its chat_model_id.
+            query = query.filter(TextWorker.chat_model_id.in_(model_names))
+    else:
+        query = db.session.query(
+            func.count(TextWorker.id),
+            func.max(TextWorker.max_context_length),
+            func.max(TextWorker.max_length),
+        ).filter(
+            TextWorker.last_check_in > cutoff,
+            TextWorker.accepts_prompt_jobs.is_(True),
+        )
+        if model_names:
+            query = query.filter(TextWorker.models.any(WorkerModel.model.in_(model_names)))
+    worker_count, max_context_length, max_length = query.one()
+    return TextWorkerLimits(
+        worker_count=worker_count,
+        max_context_length=max_context_length,
+        max_length=max_length,
     )
-    if model_names:
-        query = query.filter(TextWorker.models.any(WorkerModel.model.in_(model_names)))
-    return query.scalar()
 
 
 def get_active_workers_for_details() -> list[WorkerTemplate]:
