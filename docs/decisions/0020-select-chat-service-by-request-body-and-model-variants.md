@@ -52,7 +52,7 @@ defines it for both the front and the native route, and an unknown key is refuse
 - `openai_guards`: turns on the request refusals OpenAI applies and the Horde relaxes.
 - `availability_mode`: wait for a worker, or refuse at once when the online pool cannot serve the request.
 - `max_kudos`: the most the request may cost at creation.
-- `include_reasoning`: return the model's reasoning beside the reply.
+- `include_reasoning`: return the model's reasoning beside the reply, on by default.
 - `dry_run` and `operation_key`: native callers only. The front refuses both in a public body and supplies the
   operation key itself ([ADR 0026](0026-classify-client-retries-and-recover-submits-by-operation-key.md)).
 

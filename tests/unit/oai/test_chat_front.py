@@ -688,22 +688,21 @@ REASONING_TEXT: str = "The user wants a greeting."
 """The reasoning a worker submitted beside the reply."""
 
 
-@pytest.mark.parametrize("include_reasoning", [True, False])
-async def test_reasoning_is_returned_on_the_message_only_when_the_client_asks_for_it(
+@pytest.mark.parametrize("include_reasoning", [True, False, None])
+async def test_reasoning_is_returned_on_the_message_unless_the_client_turns_it_off(
     start_front: StartFront,
-    include_reasoning: bool,
+    include_reasoning: bool | None,
 ) -> None:
-    """OpenAI's chat API does not return reasoning, so the front hides it unless ``horde.include_reasoning`` is set."""
+    """Reasoning is returned by default, including to a client that does not send a ``horde`` block, and
+    ``horde.include_reasoning: false`` hides it."""
+    chat_body = build_chat_body() if include_reasoning is None else build_chat_body(horde={"include_reasoning": include_reasoning})
     async with start_front() as front:
         front.horde.status_payload = done_status(reasoning_content=REASONING_TEXT)
-        response = await front.client.post(
-            "/v1/chat/completions",
-            json=build_chat_body(horde={"include_reasoning": include_reasoning}),
-        )
+        response = await front.client.post("/v1/chat/completions", json=chat_body)
 
     assert response.status_code == 200
     expected_message: dict[str, object] = {"role": "assistant", "content": GENERATED_TEXT}
-    if include_reasoning:
+    if include_reasoning is not False:
         expected_message["reasoning_content"] = REASONING_TEXT
     assert response.json()["choices"][0]["message"] == expected_message
 

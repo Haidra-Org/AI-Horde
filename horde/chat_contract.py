@@ -288,11 +288,12 @@ class ChatHordeOptions(BaseModel):
     charge is the output estimate, so the check is conservative. It acts only at creation, so it is not stored and the
     operation fingerprint leaves it out."""
 
-    include_reasoning: StrictBool = False
+    include_reasoning: StrictBool = True
     """Return the model's reasoning as ``reasoning_content`` beside the reply. OpenAI's chat API does not return
-    reasoning text, so the OpenAI front hides it unless asked for. It changes what the front delivers and leaves the
-    work unchanged, so it is not stored and the operation fingerprint leaves it out; the native status shows the
-    reasoning a worker submitted regardless."""
+    reasoning text, but clients that read the DeepSeek ``reasoning_content`` field render it live, and the OpenAI SDK
+    keeps the unknown field in ``model_extra``. Without it a client sees nothing during a long reasoning phase. False
+    hides it. It changes what the front delivers and leaves the work unchanged, so it is not stored and the operation
+    fingerprint leaves it out. The native status shows the reasoning a worker submitted regardless."""
 
     dry_run: StrictBool = False
     """Return the kudos cost without queueing; native callers only."""

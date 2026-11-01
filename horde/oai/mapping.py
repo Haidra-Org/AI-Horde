@@ -404,9 +404,9 @@ def build_completion(
 
     Returns:
         One choice per generation, in the Horde's order; ``model``, ``system_fingerprint`` and the ``x_horde`` worker
-        details are the first generation's. A message carries ``reasoning_content`` only under
-        ``horde.include_reasoning``. ``usage.completion_tokens_details.reasoning_tokens`` is the sum of the reasoning
-        counts the workers reported, present when any reported one, whether or not the reasoning is returned.
+        details are the first generation's. A message has ``reasoning_content`` unless
+        ``horde.include_reasoning`` is false. ``usage.completion_tokens_details.reasoning_tokens`` is the sum of the
+        reasoning counts the workers reported, present when any reported one, whether or not the reasoning is returned.
 
     Raises:
         CompletionWithoutGenerationError: ``status`` has no finished generation. A completion built from it would be a
@@ -420,7 +420,7 @@ def build_completion(
     prompt_tokens: int | None = None
     reasoning_tokens: int | None = None
     has_empty_return = False
-    include_reasoning = chat_request.horde is not None and chat_request.horde.include_reasoning
+    include_reasoning = chat_request.horde is None or chat_request.horde.include_reasoning
     for generation_index, generation in enumerate(status.generations):
         generated_text = generation_content(generation)
         tool_calls = generation_tool_calls(generation)

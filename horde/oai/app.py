@@ -2629,21 +2629,36 @@ class DeltaPacer:
     def _spread(self, *, content: str, reasoning_content: str, window_seconds: float, now: float) -> None:
         """Mutate the schedule by splitting the pending text into even pieces across ``window_seconds`` from ``now``.
 
-        The first piece is due at ``now``, so a merge does not delay text that was already due.
+        The first piece is due at ``now``, so a merge does not delay text that was already due. Every reasoning piece is
+        scheduled before the first content piece, so a client that renders chunks in arrival order shows all of a post's
+        reasoning before the reply text in the same post. The piece budget is divided between the two fields by length,
+        with at least one piece for each field that has text.
         """
         rate_piece_limit = max(1, math.floor(self._max_chunks_per_second * window_seconds))
-        piece_count = max(1, min(rate_piece_limit, max(len(content), len(reasoning_content))))
-        content_pieces = _split_evenly(content, piece_count)
-        reasoning_pieces = _split_evenly(reasoning_content, piece_count)
-        piece_spacing_seconds = window_seconds / piece_count
+        total_length = len(content) + len(reasoning_content)
+        piece_count = max(1, min(rate_piece_limit, total_length))
+        reasoning_piece_count = 0
+        if reasoning_content:
+            reasoning_piece_count = max(1, round(piece_count * len(reasoning_content) / total_length))
+            if content:
+                reasoning_piece_count = min(reasoning_piece_count, piece_count - 1) if piece_count > 1 else 1
+        content_piece_count = max(1, piece_count - reasoning_piece_count) if content else 0
+        piece_texts: list[DeltaText] = []
+        if reasoning_piece_count:
+            piece_texts += [DeltaText(reasoning_content=piece) for piece in _split_evenly(reasoning_content, reasoning_piece_count)]
+        if content_piece_count:
+            piece_texts += [DeltaText(content=piece) for piece in _split_evenly(content, content_piece_count)]
+        if not piece_texts:
+            piece_texts = [DeltaText()]
+        piece_spacing_seconds = window_seconds / len(piece_texts)
         # The new pieces go after any pieces still in the schedule, such as a first post read in the same batch.
         self._pieces += [
             PacedPiece(
-                content=content_piece,
-                reasoning_content=reasoning_piece,
+                content=piece_text.content,
+                reasoning_content=piece_text.reasoning_content,
                 due_at=now + piece_index * piece_spacing_seconds,
             )
-            for piece_index, (content_piece, reasoning_piece) in enumerate(zip(content_pieces, reasoning_pieces, strict=True))
+            for piece_index, piece_text in enumerate(piece_texts)
         ]
 
 
@@ -2778,8 +2793,8 @@ class DeltaRelay:
     never spliced into a choice the client already holds part of (ADR 0024). Before exposure such entries unpin the
     generation, and the next generation's first delta can pin it again, or the request is delivered whole.
 
-    A delta's reasoning is relayed only when the client asked for it with ``horde.include_reasoning``; otherwise it is
-    dropped, and a delta carrying only reasoning advances the sequence without sending anything. Reasoning is never
+    A delta's reasoning is relayed unless the client turned it off with ``horde.include_reasoning: false``. When off it
+    is dropped, and a delta carrying only reasoning advances the sequence without sending anything. Reasoning is never
     part of the reconciliation with the final reply.
     """
 
@@ -2792,7 +2807,7 @@ class DeltaRelay:
             model: The model the client asked for, the first listed for ``models``, which the relayed chunks carry and
                 the fingerprint uses when the pinned generation's first delta omits the model that serves it.
             include_usage: Whether the client asked for usage, which writes a null ``usage`` in every chunk.
-            include_reasoning: Whether the client asked for reasoning with ``horde.include_reasoning``.
+            include_reasoning: Whether reasoning is relayed, from ``horde.include_reasoning`` (true when absent).
         """
         self.generation_id: str | None = None
         """The generation whose deltas are relayed; None before its first delta."""
@@ -3132,7 +3147,7 @@ async def _stream_completion(
                         created=int(submitted_at),
                         model=chat_request.requested_models()[0],
                         include_usage=include_usage,
-                        include_reasoning=chat_request.horde is not None and chat_request.horde.include_reasoning,
+                        include_reasoning=chat_request.horde is None or chat_request.horde.include_reasoning,
                     )
                     wait_task = asyncio.create_task(watcher.wait_until_finished())
                     async for relay_event in _relay_deltas(

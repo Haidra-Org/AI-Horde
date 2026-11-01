@@ -130,8 +130,8 @@ calls. `x_horde.context_adjustments` is the native status's list, passed through
 `worker_max_length` entry when `max_tokens` was lowered to the largest value declared by an online worker. It holds a
 `grow` entry when the context grew, and a `truncate_oldest` entry with `dropped_messages` when the oldest turns were
 dropped (see [Context adjustments](chat_requests.md#context-adjustments)). It is left out when the Horde did not make
-any of these changes. `reasoning_content`, the model's reasoning as DeepSeek and OpenRouter return it, is written only when the
-request sets `horde.include_reasoning` and the worker submitted reasoning; it is never part of `content`.
+any of these changes. `reasoning_content`, the model's reasoning as DeepSeek and OpenRouter return it, is written when the
+worker submitted reasoning, unless the request sets `horde.include_reasoning` to false. It is never part of `content`.
 `usage.completion_tokens_details.reasoning_tokens`, OpenAI's shape, is the reasoning count the worker reported,
 written whether or not the reasoning is returned and left out when no worker reported one. Like the other reported
 counts it is informational: the Horde charges and rewards on the reply it measures. The response `model` is the first
@@ -147,8 +147,8 @@ A stream's headers go out once the first status read has passed the checks in
 events:
 
 1. `delta: {"role": "assistant"}`.
-2. A reasoning chunk with the whole `delta.reasoning_content`, when the message carries it (only under
-   `horde.include_reasoning`).
+2. A reasoning chunk with the whole `delta.reasoning_content`, when the message has it (left out when
+   `horde.include_reasoning` is false).
 3. A content chunk with the whole `delta.content`, when the reply has text.
 4. A tool-call chunk with `delta.tool_calls`, when the reply has calls, each call whole with its 0-based `index`,
    `id`, `type` and `function`. It does not carry content, because some clients read tool calls only from such chunks.
@@ -178,10 +178,10 @@ the request is delivered whole when the front has not sent anything, and otherwi
 stream through the reconciliation below.
 
 The first delta with `seq` 1 pins its `gen`, and the first delta that sends anything sends the role chunk and exposes
-the stream. A delta then sends a chunk with `delta.reasoning_content` when it carries reasoning and the request sets
-`horde.include_reasoning`, and a chunk with `delta.content` when it carries text; each chunk carries the `model` the
+the stream. A delta then sends a chunk with `delta.reasoning_content` when it has reasoning, unless the request sets
+`horde.include_reasoning` to false, and a chunk with `delta.content` when it carries text; each chunk carries the `model` the
 first delta's entry carries and the `system_fingerprint` of that entry's `worker` and `model` (the request's model, or
-its first listed model, when the entry omits it). Without `horde.include_reasoning` the reasoning is dropped, and a delta carrying only
+its first listed model, when the entry omits it). With `horde.include_reasoning` set to false the reasoning is dropped, and a delta carrying only
 reasoning advances the sequence without sending anything, so the text after a reasoning block is still relayed.
 Keepalive comments continue between deltas.
 
@@ -190,7 +190,9 @@ split into pieces, and the pieces are sent evenly over a window. The window is t
 generation's posts. The estimate is an exponential moving average of the gaps between the posts' stream id times,
 with a weight of 0.5 on the newest gap. It is kept between 0.05 seconds and
 `HORDE_OAI_DELTA_PACING_MAX_WINDOW_SECONDS`. A window holds at most `HORDE_OAI_DELTA_PACING_MAX_CHUNKS_PER_SECOND`
-pieces per second, and the piece count does not exceed the character count.
+pieces per second, and the piece count does not exceed the character count. Within one delta, every reasoning piece
+is sent before the first content piece. The piece count is divided between reasoning and content by length, with at
+least one piece for each field that has text.
 
 Each cut is at whitespace within half a piece of an even offset. Without such whitespace, the cut is at the next offset
 that does not split a visible character. A cut does not separate a character from a following Unicode mark (such as
@@ -240,7 +242,7 @@ returns 502 `ChatRequestNoGeneration`. The front does not return a completion wi
 | First streamed chunk | `delta` holds only `role` | `delta` also holds `content` |
 | Delta granularity | For plain text requests, each worker progress post (about one a second) is paced over the interval until the next post, in up to 20 chunks a second. Other requests get the whole text at once. | One chunk per token or few tokens |
 | `json_object` without "json" in the messages | Served, unless `horde.openai_guards` is set | Refused |
-| Reasoning text | Hidden; `horde.include_reasoning` returns it as `message.reasoning_content` and `delta.reasoning_content` | Not returned; `usage.completion_tokens_details.reasoning_tokens` only |
+| Reasoning text | Returned as `message.reasoning_content` and `delta.reasoning_content`, which the OpenAI SDK keeps in `model_extra`; `horde.include_reasoning: false` hides it | Not returned; `usage.completion_tokens_details.reasoning_tokens` only |
 
 ## No eligible worker
 

@@ -201,7 +201,7 @@ The `horde` object carries the Horde options OpenAI does not have a key for:
 | `context_fit` | `truncate_oldest` | `truncate_oldest` grows the context as `grow` does, then drops whole turns from the oldest forward until the messages fit, keeping every system and developer message and the latest user message with what follows it. `grow` raises the context to fit the messages, up to the largest chat context an online worker for the model declares, and refuses messages that do not fit at that bound. `reject` refuses messages that do not fit the context. |
 | `conformance` | `strict` | `strict` sends the request only to workers that follow every part of the OpenAI contract it relies on. `best_effort` also accepts workers that may deviate; see [Conformance](#conformance). |
 | `openai_guards` | `false` | `true` turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format whose messages never mention "json" is 400 `ChatRequestConflict`. |
-| `include_reasoning` | `false` | `true` returns the model's reasoning as `reasoning_content`; see [Reasoning](#reasoning). |
+| `include_reasoning` | `true` | `false` hides the model's reasoning, which is otherwise returned as `reasoning_content`; see [Reasoning](#reasoning). |
 | `max_kudos` | none | A positive integer cap on the request's kudos estimate. A request whose estimate at current pricing exceeds it is refused with 400 `max_kudos_exceeded` before it is queued, so it is not charged; `metadata.kudos_estimate` and `metadata.max_kudos` hold both values. The estimate assumes the full `max_tokens` is generated, while the charge is for the output estimate, so the check is conservative. |
 | `availability_mode` | `wait` | `wait` queues the request for the front's budget. `fail_fast` refuses it at once with 503 `queue_unavailable` and a `Retry-After` when the online pool has zero eligible worker threads, or when the Horde's estimated wait exceeds the budget; see [Errors and retries](#errors-and-retries). |
 
@@ -228,21 +228,22 @@ for adjustment in completion.x_horde["context_adjustments"] or []:
 
 ## Reasoning
 
-A reasoning model, such as Qwen3, thinks before it answers. The front hides that reasoning by default, as OpenAI's
-chat API does, and the answer in `content` never includes it. To receive it, send:
+A reasoning model, such as Qwen3, thinks before it answers. The answer in `content` never includes that reasoning.
+When the worker submitted reasoning, the assistant message has it in `reasoning_content` beside `content`, as
+DeepSeek and OpenRouter return it. A stream sends it as `delta.reasoning_content` chunks before the content of the
+same worker post, so a client that reads the field shows progress during a long reasoning phase. The OpenAI SDK
+keeps the field in `model_extra`, streamed and whole. To hide the reasoning, as OpenAI's chat API does, send:
 
 ```json
-{"horde": {"include_reasoning": true}}
+{"horde": {"include_reasoning": false}}
 ```
 
-The assistant message then carries `reasoning_content` beside `content`, as DeepSeek and OpenRouter return it, when
-the worker submitted reasoning. A stream sends it as `delta.reasoning_content` chunks before the content. Whether or
-not you ask for it, `usage.completion_tokens_details.reasoning_tokens` reports how many of the completion tokens
-were reasoning when the worker counted them. The option does not change the work, its cost or the operation the
-request is for.
+Either way, `usage.completion_tokens_details.reasoning_tokens` reports how many of the completion tokens were
+reasoning when the worker counted them. The option does not change the work, its cost or the operation the request
+is for.
 
-Verification: a request to a reasoning model with `include_reasoning: true` returns `choices[0].message.reasoning_content`;
-the same request without it returns a message without a `reasoning_content` key.
+Verification: a request to a reasoning model returns `choices[0].message.reasoning_content`; the same request with
+`include_reasoning: false` returns a message without a `reasoning_content` key.
 
 ## Images
 
@@ -351,8 +352,8 @@ With `"stream": true` the response is server-sent events in this order:
 1. Keepalive comment lines while the request waits, such as `: horde queue_position=7 wait_time=42`, at an interval
    the deployment sets (5 seconds by default).
 2. A role chunk, `delta: {"role": "assistant"}`.
-3. A reasoning chunk with the whole `delta.reasoning_content`, when you sent `horde.include_reasoning` and the model
-   reasoned.
+3. A reasoning chunk with the whole `delta.reasoning_content`, when the model reasoned, unless you sent
+   `horde.include_reasoning: false`.
 4. A content chunk with the whole `delta.content`, when the reply has text.
 5. A tool-call chunk with `delta.tool_calls`, when the reply has calls: every call whole, each with its 0-based
    `index`, `id`, `type` and `function`, and no content in the same chunk.
@@ -361,8 +362,8 @@ With `"stream": true` the response is server-sent events in this order:
 8. `data: [DONE]`.
 
 A request without `tools` and with no `response_format` other than `text` gets its content live when the worker
-supports it: after the role chunk, one content chunk per batch the worker posts, about one a second, with reasoning
-chunks before them under `horde.include_reasoning`, then only the text those chunks did not cover before the finish
+supports it: after the role chunk, one content chunk per batch the worker posts, about one a second, with a batch's reasoning
+chunks before its content unless `horde.include_reasoning` is false, then only the text those chunks did not cover before the finish
 chunk. Otherwise, as with tools or structured output, the worker generates the whole reply before the Horde reports
 it, and content arrives in one chunk. Every chunk carries the same `id`; the finish and usage chunks carry the served
 `model`, and every chunk carries the same `system_fingerprint`. An SDK that accumulates tool-call deltas by `index`
@@ -510,7 +511,8 @@ The front differs from OpenAI on purpose in these points:
 - Live content arrives in batches of about a second, and only for requests without tools or structured output.
 - A `json_object` request whose messages never mention JSON is served, where OpenAI refuses it, unless
   `horde.openai_guards` is set.
-- Reasoning text is returned as `reasoning_content` under `horde.include_reasoning`, where OpenAI never returns it.
+- Reasoning text is returned as `reasoning_content`, where OpenAI never returns it. The OpenAI SDK keeps the field in
+  `model_extra`, and `horde.include_reasoning: false` hides it.
 
 ## Reversal
 

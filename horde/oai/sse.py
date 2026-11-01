@@ -5,8 +5,8 @@
 """Render a streamed chat answer as server-sent events.
 
 A buffered stream sends keepalive comments while the request waits (``: horde queue_position=7 wait_time=42``), then
-the finished completion as a role chunk, a reasoning chunk when the message carries ``reasoning_content`` (only under
-``horde.include_reasoning``), a content chunk when the reply has text, a tool-call chunk when it has calls,
+the finished completion as a role chunk, a reasoning chunk when the message carries ``reasoning_content`` (omitted when
+``horde.include_reasoning`` is false), a content chunk when the reply has text, a tool-call chunk when it has calls,
 a finish chunk carrying ``x_horde``, the usage chunk when the client asked for it, and ``[DONE]``. A relayed stream
 sends the role chunk and, per delta, a reasoning chunk when it relays reasoning and a content chunk when the delta
 has text, while the worker generates ([`build_delta_events`][horde.oai.sse.build_delta_events]); its finished

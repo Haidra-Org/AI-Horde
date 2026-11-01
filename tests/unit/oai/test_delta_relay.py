@@ -612,7 +612,7 @@ async def test_reasoning_deltas_are_relayed_before_the_text_when_the_client_asks
     assert equal_outcomes == 1
 
 
-async def test_reasoning_deltas_are_dropped_and_the_text_still_relayed_when_the_client_did_not_ask(start_front: StartFront) -> None:
+async def test_reasoning_deltas_are_dropped_and_the_text_still_relayed_when_the_client_turns_reasoning_off(start_front: StartFront) -> None:
     """A delta carrying only reasoning advances the sequence without sending anything, so the text that follows it is
     relayed as the stream's first delta."""
     async with start_front(with_deltas=True) as front:
@@ -624,7 +624,7 @@ async def test_reasoning_deltas_are_dropped_and_the_text_still_relayed_when_the_
             await asyncio.sleep(RELAY_SETTLE_SECONDS)
             await finish(front, reasoning_content=REASONING_TEXT)
 
-        body = await stream_while(front, generate)
+        body = await stream_while(front, generate, horde={"include_reasoning": False})
         relayed = front.metric_total(RELAYED_NAME)
         prefix_outcomes = front.metric_total(RELAY_OUTCOMES_NAME, horde_outcome="prefix")
 
@@ -709,7 +709,7 @@ async def test_stream_lost_before_any_delta_was_sent_delivers_the_request_whole(
             await asyncio.sleep(RELAY_SETTLE_SECONDS)
             await finish(front)
 
-        body = await stream_while(front, generate)
+        body = await stream_while(front, generate, horde={"include_reasoning": False})
         relayed = front.metric_total(RELAYED_NAME)
         relay_outcomes = front.metric_total(RELAY_OUTCOMES_NAME)
         cancels = front.horde.cancels_received
@@ -919,7 +919,7 @@ async def test_stream_replaced_with_lower_ids_before_any_delta_was_sent_delivers
             await asyncio.sleep(RELAY_SETTLE_SECONDS)
             await finish(front)
 
-        body = await stream_while(front, generate)
+        body = await stream_while(front, generate, horde={"include_reasoning": False})
         relayed = front.metric_total(RELAYED_NAME)
         relay_outcomes = front.metric_total(RELAY_OUTCOMES_NAME)
         cancels = front.horde.cancels_received
@@ -1098,15 +1098,23 @@ async def test_a_maximum_window_of_zero_sends_each_post_whole_when_it_arrives() 
     assert [(due_at, piece.content) for due_at, piece in schedule] == [(3.0, "Hello "), (3.0, PACED_TEXT), (4.0, "more")]
 
 
-async def test_reasoning_is_paced_with_the_text() -> None:
-    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=3)
+async def test_a_post_with_reasoning_and_text_paces_all_the_reasoning_before_the_text() -> None:
+    """A client that renders in arrival order shows the end of the reasoning, then the start of the reply, without
+    alternating between them. The piece budget is divided between the two by length."""
+    pacer = DeltaPacer(max_window_seconds=2.0, max_chunks_per_second=6)
     pacer.add([accepted("Hello ", 100.0), accepted("abcdef", 101.0, reasoning_content="thinking")], now=0.0)
 
     schedule = drain_schedule(pacer)
     paced_pieces = [piece for _due_at, piece in schedule][1:]
 
-    assert piece_contents(paced_pieces) == ["ab", "cd", "ef"]
-    assert [piece.reasoning_content for piece in paced_pieces] == ["th", "ink", "ing"]
+    assert [(piece.reasoning_content, piece.content) for piece in paced_pieces] == [
+        ("th", ""),
+        ("ink", ""),
+        ("ing", ""),
+        ("", "ab"),
+        ("", "cd"),
+        ("", "ef"),
+    ]
 
 
 @pytest.mark.parametrize(

@@ -323,10 +323,11 @@ cost less
 
 A reasoning model writes its thinking before the answer. The worker submits it in `reasoning_content`, separate
 from `content`, so a client that does not expect reasoning receives a clean answer, and a block cut
-off by `max_tokens` cannot become the reply. The front hides it unless the request sets `horde.include_reasoning`;
-the native status shows it either way. It is not priced: the charge and reward are computed on the content and tool
-calls, and the worker's `reasoning_tokens` count is shown and never charged, as with every other reported count
-([Reasoning](../reference/chat_requests.md#reasoning)).
+off by `max_tokens` cannot become the reply. The front returns it as `reasoning_content`, so a client that reads that
+field shows progress during a long reasoning phase. A request that sets `horde.include_reasoning` to false does not
+receive it. The native status shows it either way. It is not priced: the charge and reward are computed on the content
+and tool calls, and the worker's `reasoning_tokens` count is shown and never charged, as with every other reported
+count ([Reasoning](../reference/chat_requests.md#reasoning)).
 
 ### Admission against the online pool
 
