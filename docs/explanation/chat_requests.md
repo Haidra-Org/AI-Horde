@@ -331,6 +331,15 @@ completion tokens, so its characters are counted with the content and tool calls
 is the worker's speed sample. The worker's `reasoning_tokens` count is shown and never charged, as with every other
 reported count ([Reasoning](../reference/chat_requests.md#reasoning)).
 
+Reasoning and the answer share `max_tokens`, and the OpenAI API has no way to resume reasoning. A reply cut off while
+thinking cannot be continued, and in a follow-up request the earlier reasoning is a previous turn. The thinking and the
+answer therefore have to fit in one request. koboldcpp gives an absent `reasoning_effort` an unlimited thinking budget,
+so a small `max_tokens` could be spent on reasoning alone. For that reason a worker that declares the feature receives
+`medium`, OpenAI's default, when the client omits the value
+([ADR 0033](../decisions/0033-fill-openai-sampling-defaults-and-map-the-developer-role.md)). On koboldcpp that caps the
+thinking at about half of `max_tokens`. The default lowers the chance of an empty reply and does not guarantee an
+answer.
+
 ### Admission against the online pool
 
 Workers are volunteers, and the models online change minute to minute. By default a request waits for a worker for

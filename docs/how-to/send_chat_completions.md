@@ -114,10 +114,10 @@ Verification: the printed `model` is one of the listed ids.
 | Keys | Handling |
 | --- | --- |
 | `model` or `models`, `messages` | Required: exactly one of `model` and `models` (see [Accept any of several models](#accept-any-of-several-models)); `messages` holds at least one message. |
-| `max_tokens`, `max_completion_tokens` | 16 to 16384 (see [Deliberate deviations](#deliberate-deviations)); equal when both are sent. Default 512 when neither is. A value above the largest length declared by an online worker for the model is lowered to that length and reported in `x_horde.context_adjustments`. Above the free output allowance, by default between 512 and 4096 depending on the load on the workers that can serve the request (see [Free output allowance](../reference/chat_requests.md#free-output-allowance)), the key needs the request's kudos available, or the request is refused with 403 `KudosUpfront`. |
+| `max_tokens`, `max_completion_tokens` | 16 to 16384 (see [Deliberate deviations](#deliberate-deviations)); equal when both are sent. Default 512 when neither is. The reasoning is generated within this limit, together with the answer (see [Reasoning budget](#reasoning-budget)). A value above the largest length declared by an online worker for the model is lowered to that length and reported in `x_horde.context_adjustments`. Above the free output allowance, by default between 512 and 4096 depending on the load on the workers that can serve the request (see [Free output allowance](../reference/chat_requests.md#free-output-allowance)), the key needs the request's kudos available, or the request is refused with 403 `KudosUpfront`. |
 | `temperature`, `top_p`, `stop` | Forwarded; `temperature` ranges 0 to 2, `top_p` 0 to 1, and `stop` is a string or up to four strings. |
 | `seed`, `frequency_penalty`, `presence_penalty` | Forwarded; a worker has to declare the feature for `seed` (any value) or a non-zero penalty. Penalties range -2 to 2. |
-| `reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high` or `xhigh`, forwarded unchanged with no default; a worker has to declare the `reasoning_effort` feature for any value, `none` included. `none` disables thinking; how much reasoning the other values allow is the worker's mapping. Any other value is 400 `BadRequest` with `param` `reasoning_effort`. |
+| `reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high` or `xhigh`, forwarded unchanged; a worker has to declare the `reasoning_effort` feature for any value, `none` included. When you leave it out, any chat worker may serve the request, and a worker that declares the feature receives `medium`, OpenAI's default, which koboldcpp applies as a thinking budget of about half of `max_tokens`. `none` disables thinking; how much reasoning the other values allow is the worker's mapping. Any other value is 400 `BadRequest` with `param` `reasoning_effort`. |
 | `n` | Only `1`. |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Forwarded unchanged to a worker that declares the feature; see [Tools](#tools-and-tool_choice) and [Structured output](#structured-output). |
 | `stream`, `stream_options` | Applied by the front; `stream_options` needs `"stream": true`. |
@@ -244,6 +244,22 @@ is for.
 
 Verification: a request to a reasoning model returns `choices[0].message.reasoning_content`; the same request with
 `include_reasoning: false` returns a message without a `reasoning_content` key.
+
+### Reasoning budget
+
+The model generates its reasoning within `max_tokens`, together with the answer, and the reasoning is charged like the
+answer. Set `max_tokens` large enough for both.
+
+When you leave out `reasoning_effort`, a worker that declares the feature receives `medium`. On koboldcpp that is a
+thinking budget of about half of `max_tokens`. When the reasoning reaches it, the thinking is closed and the answer
+follows. A worker that does not declare the feature receives no value, and the model reasons without a cap. An
+omitted `max_tokens` defaults to 512 in both cases.
+
+A reply with `finish_reason` `length`, an empty `content` and reasoning in `reasoning_content` ran out of tokens while
+thinking.
+It cannot be continued, because the OpenAI API has no way to resume reasoning. Reasoning sent back inside an assistant
+message becomes a previous turn, and `reasoning_content` on a request message is dropped. Send a fresh request with a
+larger `max_tokens` or a lower `reasoning_effort`. `none` disables thinking.
 
 ## Images
 

@@ -508,6 +508,34 @@ def test_a_reasoning_effort_waits_for_a_worker_that_declares_it_and_reaches_the_
     _cancel(client, request_headers, "chat", request_id)
 
 
+def test_an_omitted_reasoning_effort_reaches_a_declaring_worker_as_medium(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """``medium`` is OpenAI's default."""
+    request_id = _submit_chat_request(client, request_headers)
+
+    with_feature = chat_worker.pop(chat_features=["reasoning_effort"])
+    assert with_feature["id"] is not None, with_feature
+    assert with_feature["payload"]["reasoning_effort"] == "medium"
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_an_omitted_reasoning_effort_reaches_a_worker_without_the_feature_without_the_key(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+) -> None:
+    """An omitted value does not restrict routing, so a worker that does not declare the feature serves the request."""
+    request_id = _submit_chat_request(client, request_headers)
+
+    without_feature = chat_worker.pop()
+    assert without_feature["id"] is not None, without_feature
+    assert "reasoning_effort" not in without_feature["payload"]
+    _cancel(client, request_headers, "chat", request_id)
+
+
 def _age_worker_into_the_check_in_debounce(app, worker_name: str) -> None:
     """Make every following pop within 30 seconds a debounced check-in, as for a long-running worker."""
     from horde.classes.kobold.worker import TextWorker

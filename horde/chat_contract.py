@@ -41,7 +41,12 @@ from horde_sdk.generation_parameters.text.chat_limits import (
     MAX_CHAT_SCHEMA_NESTING,
     chat_schema_exceeds_nesting,
 )
-from horde_sdk.generation_parameters.text.chat_policy import DEFAULT_CHAT_CONFORMANCE, ChatConformance, ChatServiceGapKind
+from horde_sdk.generation_parameters.text.chat_policy import (
+    DEFAULT_CHAT_CONFORMANCE,
+    ChatConformance,
+    ChatReasoningEffort,
+    ChatServiceGapKind,
+)
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationInfo, field_validator
 from pydantic_core import PydanticCustomError
 
@@ -52,6 +57,7 @@ __all__ = [
     "CHAT_REQUEST_CONFLICT_ERROR_TYPE",
     "CHAT_REQUEST_CONFLICT_RC",
     "DEFAULT_CHAT_MAX_TOKENS",
+    "DEFAULT_CHAT_REASONING_EFFORT",
     "INTERNAL_HORDE_OPTION_KEYS",
     "MAX_CHAT_BODY_BYTES",
     "MAX_CHAT_IMAGE_BYTES",
@@ -154,6 +160,12 @@ of that."""
 DEFAULT_CHAT_MAX_TOKENS: int = 512
 """``max_length`` for a chat request that sets neither token limit. OpenAI clients usually omit it, and the text
 default of 80 tokens is too short for a chat reply."""
+
+DEFAULT_CHAT_REASONING_EFFORT: ChatReasoningEffort = ChatReasoningEffort.MEDIUM
+"""The ``reasoning_effort`` a worker that declares the ``reasoning_effort`` feature receives when the client did not
+send one. It is OpenAI's default. koboldcpp gives an absent value an unlimited thinking budget, so a small
+``max_tokens`` would be spent on reasoning alone and the reply would be empty. The default is added to the job
+payload only: it does not restrict which workers serve the request, and the stored request does not change."""
 
 CHAT_REQUEST_CONFLICT_ERROR_TYPE: str = "chat_request_conflict"
 """The pydantic error type raised for two keys whose values contradict each other.

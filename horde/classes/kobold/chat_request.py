@@ -49,7 +49,7 @@ import gzip
 import hashlib
 import itertools
 import json
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from typing import Annotated, Any, Literal, NamedTuple, NoReturn
 
 from horde_sdk.generation_parameters.text.chat_limits import (
@@ -96,6 +96,7 @@ from horde.chat_contract import (
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
     CHAT_REQUEST_CONFLICT_RC,
     DEFAULT_CHAT_MAX_TOKENS,
+    DEFAULT_CHAT_REASONING_EFFORT,
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_IMAGE_TOTAL_BYTES,
@@ -158,6 +159,7 @@ __all__ = [
     "ChatMessagesOffload",
     "ChatRole",
     "ChatSubmittedMessage",
+    "apply_worker_chat_defaults",
     "build_chat_extras",
     "build_chat_image_key",
     "build_chat_job_payload",
@@ -545,8 +547,11 @@ class ChatCompletionRequest(BaseModel):
     """A sampling seed, passed to the worker. Only workers that declare ``seed`` serve a request that sets it."""
 
     reasoning_effort: ChatReasoningEffort | None = None
-    """How much the model reasons before answering, one of OpenAI's values, passed to the worker unchanged and without
-    a default. Only workers that declare ``reasoning_effort`` serve a request that sets it, ``none`` included."""
+    """How much the model reasons before answering, one of OpenAI's values, passed to the worker unchanged. Only
+    workers that declare ``reasoning_effort`` serve a request that sets it, ``none`` included. When it is unset, a
+    worker that declares the feature receives
+    [`DEFAULT_CHAT_REASONING_EFFORT`][horde.chat_contract.DEFAULT_CHAT_REASONING_EFFORT] (``medium``, OpenAI's
+    default), and any chat worker may serve the request."""
 
     stop: StrictStr | list[StrictStr] | None = None
     """One stop sequence or a list of them."""
@@ -2190,7 +2195,9 @@ def build_chat_job_payload(params: Mapping[str, Any], *, max_length: int, max_co
     the SDK's ``CHAT_SAMPLING_DEFAULTS`` is present, with its
     default where the client left it unset; ``stop_sequence``, ``seed`` and ``reasoning_effort`` only when the client
     sent them. There is
-    no prompt.
+    no prompt. The payload is built once per request. A ``reasoning_effort`` the client did not send is added per
+    job, for a worker that declares the feature, by
+    [`apply_worker_chat_defaults`][horde.classes.kobold.chat_request.apply_worker_chat_defaults].
 
     Args:
         params: The request's stored text params.
@@ -2210,3 +2217,22 @@ def build_chat_job_payload(params: Mapping[str, Any], *, max_length: int, max_co
     chat_payload[MAX_CONTEXT_LENGTH_PARAMETER] = max_context_length
     chat_payload["n"] = SUPPORTED_CHAT_CHOICE_COUNT
     return chat_payload
+
+
+def apply_worker_chat_defaults(chat_payload: dict[str, Any], worker_chat_features: Collection[str] | None) -> None:
+    """Add the defaults that depend on the popping worker's declaration to a chat job's payload.
+
+    A worker that declares ``reasoning_effort`` receives
+    [`DEFAULT_CHAT_REASONING_EFFORT`][horde.chat_contract.DEFAULT_CHAT_REASONING_EFFORT] when the client did not send
+    a value. The default is applied to one job's copy of the payload, so the stored request, its required features
+    and its kudos estimate are the same as for a request without it. A worker that does not declare the feature
+    receives the payload unchanged.
+
+    Args:
+        chat_payload: One job's copy of the payload, from
+            [`build_chat_job_payload`][horde.classes.kobold.chat_request.build_chat_job_payload]. Changed in place.
+        worker_chat_features: The worker's stored ``chat_features``.
+    """
+    worker_chat_features = worker_chat_features or ()
+    if ChatFeature.REASONING_EFFORT.value in worker_chat_features and chat_payload.get("reasoning_effort") is None:
+        chat_payload["reasoning_effort"] = DEFAULT_CHAT_REASONING_EFFORT.value

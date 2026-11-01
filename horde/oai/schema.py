@@ -758,7 +758,9 @@ class ChatCompletionRequest(BaseModel):
     """The sampling seed."""
 
     reasoning_effort: ChatReasoningEffort | None = None
-    """How much the model reasons before answering, forwarded unchanged; needs a worker that declares it."""
+    """How much the model reasons before answering, forwarded unchanged. A value needs a worker that declares the
+    feature. When it is omitted, a declaring worker receives ``medium``, and ``max_tokens`` has to cover the reasoning
+    and the answer, since a reply cut off while thinking cannot be continued."""
 
     n: StrictInt | None = None
     """How many choices to generate; only 1 is served."""

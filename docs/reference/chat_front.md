@@ -66,7 +66,7 @@ unknown keys, as OpenAI does: an unknown key inside `stream_options` or `respons
 
 | Keys | Handling |
 | --- | --- |
-| `model`, `models`, `messages`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `reasoning_effort`, `n`, `horde` | Validated and forwarded; null counts as omitted. `reasoning_effort` is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. |
+| `model`, `models`, `messages`, `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `reasoning_effort`, `n`, `horde` | Validated and forwarded; null counts as omitted. `reasoning_effort` is one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. `max_tokens` covers the reasoning and the answer together. |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format` | Validated against the `horde/chat_contract.py` shapes and forwarded verbatim; a `json_schema` response format is forwarded with its `schema` key and needs one. Dropped at their default: empty or null `tools`, `{"type": "text"}`; a null `tool_choice` or `parallel_tool_calls` is not forwarded. |
 | `stream`, `stream_options`, `user`, `metadata` | Applied or accepted by the front and not forwarded, except `stream: true` on a request whose deltas are relayed (see [Relayed deltas](#relayed-deltas)). |
 | `logprobs`, `top_logprobs`, `store`, `service_tier` | Dropped at their default (`false`, `0`, `false`, `auto` or `default`); any other value is 400. |

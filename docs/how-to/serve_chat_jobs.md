@@ -173,8 +173,11 @@ A chat job's payload differs from a text payload in these ways:
 - `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `rep_pen`, `top_k` and `min_p` are always present,
   with OpenAI's defaults where the client left them out. Apply them as sent and ignore the backend's local defaults,
   so one request means the same thing on every worker.
-- `stop_sequence`, `seed` and `reasoning_effort` are present only when the client sent them. `reasoning_effort` is the
-  client's value unchanged; the horde applies no default, so a job without it leaves reasoning to the backend.
+- `stop_sequence` and `seed` are present only when the client sent them.
+- `reasoning_effort` is present when you declare the `reasoning_effort` feature. It is the client's value unchanged,
+  or `medium`, OpenAI's default, when the client did not send one. A worker that does not declare the feature does not
+  receive the key. The client's `max_length` covers the reasoning and the answer. When the limit cuts off the thinking,
+  submit the reasoning as `reasoning_content` and leave `content` empty.
 - `max_length` and `max_context_length` are validated budgets within the worker's `chat_limits`. Generate at most
   `max_length` tokens and render within `max_context_length`.
 - `tools`, `tool_choice`, `parallel_tool_calls` and `response_format` are present only when the request applies them

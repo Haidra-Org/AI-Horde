@@ -23,6 +23,7 @@ from horde.classes.kobold.chat_request import (
     CHAT_IMAGE_DATA_URL_PREFIX,
     MAX_CHAT_FAULT_REASON_LENGTH,
     MAX_CHAT_REFUSAL_RC_LENGTH,
+    apply_worker_chat_defaults,
     build_chat_job_payload,
     build_chat_messages_key,
     build_chat_request_traits,
@@ -354,12 +355,15 @@ class TextWaitingPrompt(WaitingPrompt):
             [`CHAT_MESSAGES_URL_SECONDS`][horde.classes.kobold.waiting_prompt.CHAT_MESSAGES_URL_SECONDS]; and the
             ``tools``, ``tool_choice``, ``parallel_tool_calls`` and ``response_format`` the request stored, narrowed by
             [`build_worker_chat_extras`][horde.classes.kobold.chat_request.build_worker_chat_extras]; the response
-            carries ``chat: true``. A text job's response is unchanged.
+            carries ``chat: true``. A text job's response is unchanged. The defaults that depend on the worker's chat
+            declaration are added by
+            [`apply_worker_chat_defaults`][horde.classes.kobold.chat_request.apply_worker_chat_defaults].
         """
         if not self.is_chat:
             return super().get_pop_payload(procgen_list, payload)
 
         chat_payload = dict(payload)
+        apply_worker_chat_defaults(chat_payload, procgen_list[0].worker.chat_features)
         if procgen_list[0].image_transport == ChatImageTransport.MESSAGES_URL:
             # Signing is local, so no store request is made while the pop response is built.
             chat_payload["messages_url"] = generate_chat_image_download_url(

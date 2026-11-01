@@ -204,11 +204,11 @@ returns `429`.
 | `model`                                  | The model the request accepts. A request sends exactly one of `model` and `models` |
 | `models`                                 | The models the request accepts, 1 to `MAX_CHAT_MODEL_COUNT` (5), each non-empty and listed once: the text request's `models`. Whichever of them an online worker runs serves the request, chosen at pop as for a text request, and the generation's `model` on the status route is the one that served it |
 | `messages`                               | Required, at least one. Roles `system`, `developer`, `user`, `assistant`, `tool`; see [Tools](#tools) for the tool keys |
-| `max_tokens`, `max_completion_tokens`    | `max_length`, 16 to 16384, default `512`. Both may be sent only with equal values. A value above the largest `max_length` declared by the online chat workers serving the models is lowered to that value (see [Context adjustments](#context-adjustments)). Above the [free output allowance](#free-output-allowance) the kudos are held upfront |
+| `max_tokens`, `max_completion_tokens`    | `max_length`, 16 to 16384, default `512`. Both may be sent only with equal values. A value above the largest `max_length` declared by the online chat workers serving the models is lowered to that value (see [Context adjustments](#context-adjustments)). Above the [free output allowance](#free-output-allowance) the kudos are held upfront. The reasoning is generated within this limit, together with the answer (see [Reasoning](#reasoning)) |
 | `temperature`, `top_p`                   | The text params with the same keys                                                |
 | `frequency_penalty`, `presence_penalty`  | -2 to 2; forwarded to the worker, which has to declare the feature for a non-zero value |
 | `seed`                                   | Forwarded to the worker, which has to declare the `seed` feature                 |
-| `reasoning_effort`                       | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` (`ChatReasoningEffort`); stored and forwarded to the worker unchanged, with no default. The worker has to declare the `reasoning_effort` feature, for `none` as for any other value. Any other value or type returns `400` |
+| `reasoning_effort`                       | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` (`ChatReasoningEffort`); stored and forwarded to the worker unchanged. The worker has to declare the `reasoning_effort` feature, for `none` as for any other value. When it is unset the request does not need the feature, and a worker that declares it receives `medium`, OpenAI's default (`DEFAULT_CHAT_REASONING_EFFORT`). On koboldcpp `medium` is a thinking budget of about half of `max_length`. A worker that does not declare the feature receives no value, and the model reasons without a cap. The stored params do not change. Any other value or type returns `400` |
 | `stop`                                   | `stop_sequence`; a single string becomes a one-element list                      |
 | `n`                                      | Only `1`                                                                         |
 | `stream`                                 | `true` stores the stream hint; see [Streaming progress](#streaming-progress)     |
@@ -663,7 +663,8 @@ A text job's pop response does not carry a `chat` key. A chat job's response has
 | `messages_url`                                                         | Only for a generation assigned the `messages_url` transport: a signed URL, valid for 120 seconds, to the array as in [Messages offload](#messages-offload) |
 | `tools`, `tool_choice`, `parallel_tool_calls`, `response_format`       | Each only when stored in `chat_extras`, narrowed as below     |
 | `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `rep_pen`, `top_k`, `min_p` | Always present; the client's value or `1.0`, `1.0`, `0`, `0`, `1.0`, `0`, `0` |
-| `stop_sequence`, `seed`, `reasoning_effort`                            | Only when the client sent them                                |
+| `stop_sequence`, `seed`                                                | Only when the client sent them                                |
+| `reasoning_effort`                                                     | Only for a worker that declares the `reasoning_effort` feature: the client's value, or `medium` when the client did not send one |
 | `max_length`, `max_context_length`                                     | The validated budgets                                         |
 | `n`                                                                    | `1`                                                           |
 
@@ -794,6 +795,12 @@ sample (`chat_reply_characters`), capped at the requested `max_length`. Its UTF-
 stored as reasoning; a longer one returns `400 ChatSubmitInvalid`. `reasoning_tokens` is stored in a separate column and shown on
 the status. Like the other reported counts it never changes the charge or reward, since the Horde pays only for the
 output it measures.
+
+The reasoning is generated within `max_length`, together with the answer. A reply with `finish_reason` `length`, an
+empty `content` and reasoning in `reasoning_content` ran out of tokens while thinking, and it cannot be continued. The OpenAI API
+has no way to resume reasoning. Reasoning sent back inside an assistant message is a prior turn, and
+`reasoning_content` on a request message is dropped. Send a fresh request with a larger `max_tokens` or a lower
+`reasoning_effort` (`none` disables thinking).
 
 ### Reply verification
 

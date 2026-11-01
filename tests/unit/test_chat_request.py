@@ -60,6 +60,7 @@ from horde.classes.kobold.chat_request import (
     DEFAULT_CHAT_MAX_TOKENS,
     UNSUPPORTED_CHAT_PARAMETER_RC,
     ChatSubmittedMessage,
+    apply_worker_chat_defaults,
     build_chat_extras,
     build_chat_image_key,
     build_chat_job_payload,
@@ -634,7 +635,7 @@ OTHER_TOOL: dict[str, Any] = {
 
 
 class TestReasoningEffort:
-    """``reasoning_effort`` is OpenAI's value set, stored and forwarded unchanged, with no default."""
+    """``reasoning_effort`` is OpenAI's value set, stored and forwarded unchanged. An unset value is not stored."""
 
     @pytest.mark.parametrize("reasoning_effort", [effort.value for effort in ChatReasoningEffort])
     def test_each_openai_value_is_stored_unchanged(self, reasoning_effort: str) -> None:
@@ -892,6 +893,14 @@ class TestRequiredFeatures:
     ) -> None:
         """A backend that ignores the key would reason anyway, so ``none`` needs the feature as any other value does."""
         assert ChatFeature.REASONING_EFFORT in _required_features(_body(reasoning_effort="none"), conformance)
+
+    @pytest.mark.parametrize("conformance", list(ChatConformance))
+    def test_an_omitted_reasoning_effort_does_not_need_the_reasoning_effort_feature(
+        self,
+        conformance: ChatConformance,
+    ) -> None:
+        """The ``medium`` default a declaring worker receives does not restrict which workers serve the request."""
+        assert ChatFeature.REASONING_EFFORT not in _required_features(_body(), conformance)
 
     def test_image_parts_need_the_vision_feature(self) -> None:
         image_part = {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}
@@ -1901,6 +1910,54 @@ class TestChatJobPayload:
         payload = build_chat_job_payload(params, max_length=64, max_context_length=2048)
 
         assert payload["reasoning_effort"] == "xhigh"
+
+
+class TestWorkerChatDefaults:
+    """The per-job defaults that depend on the popping worker's chat declaration."""
+
+    @staticmethod
+    def _payload(**overrides: Any) -> dict[str, Any]:
+        params = build_text_params(parse_chat_request(_body(**overrides)))
+        return build_chat_job_payload(params, max_length=64, max_context_length=2048)
+
+    def test_a_declaring_worker_receives_medium_when_the_client_omitted_reasoning_effort(self) -> None:
+        chat_payload = self._payload()
+
+        apply_worker_chat_defaults(chat_payload, [ChatFeature.REASONING_EFFORT.value])
+
+        assert chat_payload["reasoning_effort"] == "medium"
+
+    @pytest.mark.parametrize("reasoning_effort", [effort.value for effort in ChatReasoningEffort])
+    def test_a_value_the_client_sent_reaches_a_declaring_worker_unchanged(self, reasoning_effort: str) -> None:
+        chat_payload = self._payload(reasoning_effort=reasoning_effort)
+
+        apply_worker_chat_defaults(chat_payload, [ChatFeature.REASONING_EFFORT.value])
+
+        assert chat_payload["reasoning_effort"] == reasoning_effort
+
+    @pytest.mark.parametrize("worker_chat_features", [None, [], [ChatFeature.SEED.value]])
+    def test_a_worker_without_the_declaration_receives_no_reasoning_effort(
+        self,
+        worker_chat_features: list[str] | None,
+    ) -> None:
+        chat_payload = self._payload()
+        unchanged_payload = dict(chat_payload)
+
+        apply_worker_chat_defaults(chat_payload, worker_chat_features)
+
+        assert chat_payload == unchanged_payload
+        assert "reasoning_effort" not in chat_payload
+
+    def test_the_default_is_applied_to_the_job_copy_and_not_to_the_stored_params(self) -> None:
+        params = build_text_params(parse_chat_request(_body()))
+        stored_payload = build_chat_job_payload(params, max_length=64, max_context_length=2048)
+        job_payload = dict(stored_payload)
+
+        apply_worker_chat_defaults(job_payload, [ChatFeature.REASONING_EFFORT.value])
+
+        assert "reasoning_effort" not in params
+        assert "reasoning_effort" not in stored_payload
+        assert job_payload["reasoning_effort"] == "medium"
 
 
 class TestMessages:

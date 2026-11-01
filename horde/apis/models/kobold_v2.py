@@ -481,8 +481,9 @@ class TextModels(v2.Models):
                 "reasoning_effort": fields.String(
                     enum=[reasoning_effort.value for reasoning_effort in ChatReasoningEffort],
                     description=(
-                        "The client's reasoning_effort, unchanged, only when the client sent one. 'none' disables "
-                        "thinking. Only workers that declare the reasoning_effort feature receive it."
+                        "The client's reasoning_effort, unchanged, or 'medium' (OpenAI's default) when the client "
+                        "did not send one. 'none' disables thinking. Only workers that declare the reasoning_effort "
+                        "feature receive it."
                     ),
                 ),
                 "max_length": fields.Integer(description="Number of tokens to generate."),
@@ -1307,9 +1308,10 @@ class TextModels(v2.Models):
                     ),
                 ),
                 "include_reasoning": fields.Boolean(
-                    default=False,
+                    default=True,
                     description=(
-                        "For the OpenAI front: when true, it returns the model's reasoning as reasoning_content. The "
+                        "For the OpenAI front: the model's reasoning is returned as reasoning_content unless this is "
+                        "false. The "
                         "native status shows a submitted reasoning_content either way, and the work does not change."
                     ),
                 ),
@@ -1345,7 +1347,8 @@ class TextModels(v2.Models):
                 "max_tokens": fields.Integer(
                     description=(
                         f"How many tokens to generate, 16 to {MAX_LENGTH_LIMIT}. Defaults to {DEFAULT_CHAT_MAX_TOKENS}. Must equal "
-                        "max_completion_tokens when both are set."
+                        "max_completion_tokens when both are set. The reasoning is generated within this limit, "
+                        "together with the answer."
                     ),
                 ),
                 "max_completion_tokens": fields.Integer(description="How many tokens to generate; the newer name for max_tokens."),
@@ -1357,8 +1360,11 @@ class TextModels(v2.Models):
                     enum=[reasoning_effort.value for reasoning_effort in ChatReasoningEffort],
                     description=(
                         "How much the model reasons before answering; 'none' disables thinking. Forwarded to the "
-                        "worker unchanged, with no default. A request that sets it, 'none' included, only goes to "
-                        "workers that declare the reasoning_effort feature. Any other value is refused."
+                        "worker unchanged. A request that sets it, 'none' included, only goes to workers that "
+                        "declare the reasoning_effort feature. When it is unset, any chat worker may serve the "
+                        "request, and a worker that declares the feature receives 'medium', OpenAI's default. A "
+                        "reply cut off while thinking cannot be continued, so max_tokens has to cover the reasoning "
+                        "and the answer. A value outside the listed ones is refused."
                     ),
                 ),
                 "stop": fields.Raw(description="One stop sequence or an array of them."),

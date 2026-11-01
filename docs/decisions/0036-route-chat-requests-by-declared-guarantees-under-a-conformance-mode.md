@@ -57,8 +57,10 @@ Three declaration kinds are defined once in `horde_sdk.generation_parameters.tex
   applied as sent.
 
 `reasoning_effort` accepts OpenAI's values `none`, `minimal`, `low`, `medium`, `high` and `xhigh`, and is forwarded
-unchanged. The server does not set a default. A request that sets it, `none` included, needs a worker that declares the
-`reasoning_effort` capability, since a backend that ignores the key reasons anyway.
+unchanged. A request that sets it, `none` included, needs a worker that declares the `reasoning_effort` capability,
+since a backend that ignores the key reasons anyway. A request that omits it does not need the capability. A worker
+that declares the capability receives `medium`, OpenAI's default, as [ADR
+0033](0033-fill-openai-sampling-defaults-and-map-the-developer-role.md) describes.
 
 Each request carries a conformance mode, `horde.conformance`, which is `strict` by default. The server derives the
 request's requirements once at submit (`required_chat_features` in `horde/classes/kobold/chat_request.py`), stores
