@@ -64,7 +64,6 @@ from horde.chat_contract import (
     MAX_CHAT_IMAGE_TOTAL_BYTES,
     NO_ELIGIBLE_WORKER_RC,
     ChatAvailabilityMode,
-    ChatContextAdjustmentReason,
     ChatImpossibleReason,
     ChatRequestRefusal,
     KudosCapExcess,
@@ -102,6 +101,7 @@ from horde.oai.mapping import (
     build_model_card,
     build_native_chat_body,
     build_system_fingerprint,
+    lowered_max_length,
     relays_deltas,
 )
 from horde.oai.metrics import (
@@ -1137,10 +1137,7 @@ def _log_refused_parameter(request_path: str | None, *, label: str) -> None:
 
 def _max_length_was_lowered(context_adjustments: Sequence[object] | None) -> bool:
     """Return whether the Horde's ``context_adjustments`` hold a ``worker_max_length`` entry."""
-    return any(
-        isinstance(adjustment, Mapping) and adjustment.get("reason") == ChatContextAdjustmentReason.WORKER_MAX_LENGTH.value
-        for adjustment in context_adjustments or ()
-    )
+    return lowered_max_length(context_adjustments) is not None
 
 
 def _refused_parameter_label(request_path: str | None) -> str:

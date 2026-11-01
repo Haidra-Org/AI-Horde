@@ -1015,11 +1015,13 @@ class CompletionTokensDetails(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     reasoning_tokens: int
-    """How many of the generated tokens were reasoning, as the worker reported them."""
+    """How many of the generated tokens were reasoning, as the worker reported them or as estimated from the reasoning
+    characters."""
 
 
 class ChatCompletionUsage(BaseModel):
-    """Represents the token counts of a completion; ``completion_tokens_details`` only when a worker reported them."""
+    """Represents the token counts of a completion; ``completion_tokens_details`` only when a reply has reasoning or a reported
+    reasoning count."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -1033,8 +1035,8 @@ class ChatCompletionUsage(BaseModel):
     """The sum of the prompt and completion tokens."""
 
     completion_tokens_details: CompletionTokensDetails | None = None
-    """The reasoning tokens among the completion tokens, when the worker reported them. Informational: the Horde
-    charges and rewards on the reply it measures."""
+    """The reasoning tokens among the completion tokens, when a worker reported them or submitted reasoning.
+    Informational: the Horde charges and rewards on the reply it measures."""
 
     @model_serializer(mode="wrap")
     def serialize_without_absent_details(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:

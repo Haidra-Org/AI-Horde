@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 import uuid
+from typing import Any
 
 import pytest
 
+from horde.chat_contract import DEFAULT_CHAT_MAX_TOKENS
 from horde.consts import ANONYMOUS_API_KEY
-from horde.oai.mapping import build_system_fingerprint
+from horde.oai.mapping import CHARACTERS_PER_ESTIMATED_TOKEN, build_system_fingerprint
 from tests.unit.oai.conftest import (
     CHARGE_BASIS,
     FAST_TEST_SETTINGS,
@@ -755,9 +758,110 @@ async def test_reported_reasoning_tokens_appear_in_the_usage_details_whether_or_
     }
 
 
-async def test_usage_omits_completion_details_when_the_worker_did_not_report_reasoning_tokens(start_front: StartFront) -> None:
+@pytest.mark.parametrize("include_reasoning", [True, False])
+async def test_reasoning_tokens_are_estimated_from_the_reasoning_when_the_worker_did_not_report_them(
+    start_front: StartFront,
+    include_reasoning: bool,
+) -> None:
+    """Without a reported count, the reasoning tokens are estimated from the reasoning characters as the other
+    unreported counts are, and the usage is marked as estimated."""
     async with start_front() as front:
-        front.horde.status_payload = done_status(reasoning_content=REASONING_TEXT)
+        front.horde.status_payload = done_status(reasoning_content=REASONING_TEXT, completion_tokens=40)
+        response = await front.client.post(
+            "/v1/chat/completions",
+            json=build_chat_body(horde={"include_reasoning": include_reasoning}),
+        )
+
+    expected_reasoning_tokens = math.ceil(len(REASONING_TEXT) / CHARACTERS_PER_ESTIMATED_TOKEN)
+    assert response.json()["usage"]["completion_tokens_details"] == {"reasoning_tokens": expected_reasoning_tokens}
+    assert response.json()["x_horde"]["estimated_usage"] is True
+
+
+@pytest.mark.parametrize("content", ["", GENERATED_TEXT])
+async def test_an_estimated_completion_count_includes_the_estimated_reasoning_count(
+    start_front: StartFront,
+    content: str,
+) -> None:
+    """Without reported counts, the estimated completion tokens include the reasoning, so they are at least the
+    estimated reasoning tokens, and equal to them when the reply is the reasoning alone."""
+    async with start_front() as front:
+        front.horde.status_payload = done_status(content=content, reasoning_content=REASONING_TEXT, completion_tokens=None)
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    usage = response.json()["usage"]
+    reasoning_tokens = usage["completion_tokens_details"]["reasoning_tokens"]
+    if content:
+        assert usage["completion_tokens"] > reasoning_tokens
+    else:
+        assert usage["completion_tokens"] == reasoning_tokens
+
+
+def _chat_body_with_token_limits(**token_limits: int) -> dict[str, Any]:
+    """Return a chat request body that sets only the given token limits."""
+    chat_body = build_chat_body()
+    del chat_body["max_tokens"]
+    chat_body.update(token_limits)
+    return chat_body
+
+
+@pytest.mark.parametrize(
+    ("chat_body", "context_adjustments", "expected_limit"),
+    [
+        (_chat_body_with_token_limits(max_tokens=40), None, 40),
+        (_chat_body_with_token_limits(max_completion_tokens=40), None, 40),
+        (_chat_body_with_token_limits(), None, DEFAULT_CHAT_MAX_TOKENS),
+        (
+            _chat_body_with_token_limits(max_tokens=64),
+            [{"from": 64, "to": 32, "reason": "worker_max_length"}],
+            32,
+        ),
+    ],
+    ids=["max-tokens", "max-completion-tokens", "native-default", "lowered-worker-max-length"],
+)
+async def test_estimated_completion_and_reasoning_counts_are_capped_at_the_effective_completion_limit(
+    start_front: StartFront,
+    chat_body: dict[str, Any],
+    context_adjustments: list[dict[str, Any]] | None,
+    expected_limit: int,
+) -> None:
+    """A reasoning-only reply whose estimate exceeds the limit the request ran under reports the limit as both its
+    completion and reasoning count."""
+    long_reasoning = "x" * (expected_limit * CHARACTERS_PER_ESTIMATED_TOKEN * 2)
+    async with start_front() as front:
+        front.horde.status_payload = done_status(content="", reasoning_content=long_reasoning, completion_tokens=None)
+        front.horde.status_payload["context_adjustments"] = context_adjustments
+        response = await front.client.post("/v1/chat/completions", json=chat_body)
+
+    usage = response.json()["usage"]
+    assert usage["completion_tokens"] == expected_limit
+    assert usage["completion_tokens_details"] == {"reasoning_tokens": expected_limit}
+    assert response.json()["x_horde"]["estimated_usage"] is True
+
+
+async def test_estimated_counts_below_the_effective_completion_limit_are_not_capped(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status(content="", reasoning_content=REASONING_TEXT, completion_tokens=None)
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    expected_tokens = math.ceil(len(REASONING_TEXT) / CHARACTERS_PER_ESTIMATED_TOKEN)
+    usage = response.json()["usage"]
+    assert usage["completion_tokens"] == expected_tokens
+    assert usage["completion_tokens_details"] == {"reasoning_tokens": expected_tokens}
+
+
+async def test_reported_counts_over_the_effective_completion_limit_are_used_as_reported(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status(reasoning_content=REASONING_TEXT, completion_tokens=100, reasoning_tokens=90)
+        response = await front.client.post("/v1/chat/completions", json=_chat_body_with_token_limits(max_tokens=40))
+
+    usage = response.json()["usage"]
+    assert usage["completion_tokens"] == 100
+    assert usage["completion_tokens_details"] == {"reasoning_tokens": 90}
+
+
+async def test_usage_omits_completion_details_when_the_reply_has_no_reasoning(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
         response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"include_reasoning": True}))
 
     assert "completion_tokens_details" not in response.json()["usage"]

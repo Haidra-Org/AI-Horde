@@ -132,9 +132,16 @@ calls. `x_horde.context_adjustments` is the native status's list, passed through
 dropped (see [Context adjustments](chat_requests.md#context-adjustments)). It is left out when the Horde did not make
 any of these changes. `reasoning_content`, the model's reasoning as DeepSeek and OpenRouter return it, is written when the
 worker submitted reasoning, unless the request sets `horde.include_reasoning` to false. It is never part of `content`.
-`usage.completion_tokens_details.reasoning_tokens`, OpenAI's shape, is the reasoning count the worker reported,
-written whether or not the reasoning is returned and left out when no worker reported one. Like the other reported
-counts it is informational: the Horde charges and rewards on the reply it measures. The response `model` is the first
+`usage.completion_tokens_details.reasoning_tokens`, OpenAI's shape, is the reasoning count the worker reported or,
+when the worker did not report one, an estimate from the reasoning characters made like the other estimated counts,
+which sets `x_horde.estimated_usage`. It is written whether or not the reasoning is returned, and left out when the
+reply has no reasoning and no worker reported a count. An estimated `usage.completion_tokens` counts the reasoning
+with the reply text and tool calls, so it includes the reasoning tokens as OpenAI's does. Each generation's estimated
+completion and reasoning counts are capped at the request's effective completion limit: the lowered value of a
+`worker_max_length` entry, else `max_completion_tokens`, else `max_tokens`, else the native default of 512
+(`DEFAULT_CHAT_MAX_TOKENS`, `effective_completion_limit` in `horde/oai/mapping.py`). A reported count is used as
+reported. The counts are informational: the Horde charges and rewards on the reply it measures, and the reasoning
+characters are part of that reply. The response `model` is the first
 generation's model, the one that served the request, which under `models` is whichever listed model a worker ran; the
 request's `model`, or its first listed model, stands in only when the generation does not carry a model. `system_fingerprint` is `fp_` and
 the first 10 hex characters of the SHA-256 of the first generation's worker
@@ -242,7 +249,7 @@ returns 502 `ChatRequestNoGeneration`. The front does not return a completion wi
 | First streamed chunk | `delta` holds only `role` | `delta` also holds `content` |
 | Delta granularity | For plain text requests, each worker progress post (about one a second) is paced over the interval until the next post, in up to 20 chunks a second. Other requests get the whole text at once. | One chunk per token or few tokens |
 | `json_object` without "json" in the messages | Served, unless `horde.openai_guards` is set | Refused |
-| Reasoning text | Returned as `message.reasoning_content` and `delta.reasoning_content`, which the OpenAI SDK keeps in `model_extra`; `horde.include_reasoning: false` hides it | Not returned; `usage.completion_tokens_details.reasoning_tokens` only |
+| Reasoning text | Returned as `message.reasoning_content` and `delta.reasoning_content`, which the OpenAI SDK keeps in `model_extra`; `horde.include_reasoning: false` hides it. `usage.completion_tokens_details.reasoning_tokens` is the worker's count or an estimate from the reasoning characters | Not returned; `usage.completion_tokens_details.reasoning_tokens` only |
 
 ## No eligible worker
 

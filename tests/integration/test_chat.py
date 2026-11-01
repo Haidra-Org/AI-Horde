@@ -3033,50 +3033,59 @@ def test_a_request_on_its_third_attempt_is_not_done_while_the_job_is_processing(
     _cancel(client, request_headers, "chat", request_id)
 
 
-def test_reasoning_is_stored_and_shown_beside_the_reply_and_neither_it_nor_its_count_is_charged(
+def test_reasoning_is_stored_beside_the_reply_and_its_characters_are_charged_rewarded_and_sampled_as_content(
     app,
     client,
     request_headers: dict[str, str],
     chat_worker: FakeChatWorker,
 ) -> None:
-    """The Horde charges and rewards on the reply it measures, so a reply with reasoning earns what the same reply
-    without it earns."""
+    """The Horde charges, rewards and samples the worker's speed on the characters it measures, reasoning included,
+    so a reply with reasoning earns and samples what a plain reply of the same total length does. The reported
+    ``reasoning_tokens`` count is stored and shown without being charged."""
+    from horde.classes.base.stats import FulfillmentPerformance
     from horde.classes.kobold.processing_generation import TextProcessingGeneration
     from horde.flask import db
 
-    reasoning_request_id = _submit_chat_request(client, request_headers, max_tokens=400)
-    reasoning_pop = chat_worker.pop()
-    reasoning_submit = chat_worker.submit(
-        build_chat_submit_body(
-            generation_id=reasoning_pop["id"],
-            content="Blue.",
-            model_id=CHAT_MODEL,
-            completion_tokens=300,
-            reasoning_content="The user asked for a colour. " * 40,
-            reasoning_tokens=297,
-        ),
-    )
-    assert reasoning_submit.status_code == 200, reasoning_submit.get_data(as_text=True)
+    reasoning_content = "The user asked for a colour. " * 40
 
-    _submit_chat_request(client, request_headers, max_tokens=400)
-    plain_pop = chat_worker.pop()
-    plain_submit = chat_worker.submit(build_chat_submit_body(generation_id=plain_pop["id"], content="Blue.", model_id=CHAT_MODEL))
-    assert plain_submit.status_code == 200, plain_submit.get_data(as_text=True)
+    def submit_reply(**submit_fields: Any) -> tuple[str, str, float, float]:
+        """Submit a reply to a new request of 400 tokens, so the cap does not apply, and return the request id, the
+        generation id, the reward and the things count of the speed sample recorded by the submit."""
+        request_id = _submit_chat_request(client, request_headers, max_tokens=400)
+        pop_result = chat_worker.pop()
+        response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL, **submit_fields))
+        assert response.status_code == 200, response.get_data(as_text=True)
+        with app.app_context():
+            sampled_things = db.session.query(FulfillmentPerformance.things).order_by(FulfillmentPerformance.id.desc()).limit(1).scalar()
+        return request_id, pop_result["id"], response.get_json()["reward"], sampled_things
+
+    reasoning_request_id, reasoning_generation_id, reasoning_reward, reasoning_sample = submit_reply(
+        content="Blue.",
+        completion_tokens=300,
+        reasoning_content=reasoning_content,
+        reasoning_tokens=297,
+    )
+    _, _, same_length_reward, same_length_sample = submit_reply(content="Blue." + "x" * len(reasoning_content))
+    _, _, plain_reward, plain_sample = submit_reply(content="Blue.")
 
     [generation] = _chat_status(client, request_headers, reasoning_request_id)["generations"]
     assert generation["text"] == "Blue."
     assert generation["message"] == {
         "role": "assistant",
         "content": "Blue.",
-        "reasoning_content": "The user asked for a colour. " * 40,
+        "reasoning_content": reasoning_content,
     }
     assert generation["completion_tokens"] == 300
     assert generation["reasoning_tokens"] == 297
     with app.app_context():
-        stored = db.session.get(TextProcessingGeneration, uuid.UUID(reasoning_pop["id"]))
+        stored = db.session.get(TextProcessingGeneration, uuid.UUID(reasoning_generation_id))
         assert stored.generation == "Blue."
         assert stored.reasoning_tokens == 297
-    assert reasoning_submit.get_json()["reward"] == plain_submit.get_json()["reward"]
+    assert reasoning_reward == same_length_reward
+    assert reasoning_reward > plain_reward
+    # 1165 characters over 4, rounded up; the plain reply's 5 characters get the 20 token floor.
+    assert reasoning_sample == same_length_sample == 292
+    assert plain_sample == 20
 
 
 def test_a_submit_with_reasoning_over_the_text_cap_is_refused_as_invalid(

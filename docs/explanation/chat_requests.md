@@ -298,8 +298,8 @@ as a deliberate change.
 
 ### Pricing by the text output estimate
 
-A chat generation is charged and rewarded through the text formula, on the characters of the reply (content plus
-each tool call's name and arguments) divided by four, floored at 20 tokens and capped at the requested `max_length`
+A chat generation is charged and rewarded through the text formula, on the characters of the reply (content, reasoning,
+and each tool call's name and arguments) divided by four, floored at 20 tokens and capped at the requested `max_length`
 ([ADR 0027](../decisions/0027-price-chat-generations-by-the-text-output-estimate.md),
 [Pricing](../reference/chat_requests.md#pricing)). A short reply to a large `max_tokens` is charged for the short
 reply. The basis is computed in one function and stored on every generation as `charge_basis: output_estimate`.
@@ -325,9 +325,11 @@ A reasoning model writes its thinking before the answer. The worker submits it i
 from `content`, so a client that does not expect reasoning receives a clean answer, and a block cut
 off by `max_tokens` cannot become the reply. The front returns it as `reasoning_content`, so a client that reads that
 field shows progress during a long reasoning phase. A request that sets `horde.include_reasoning` to false does not
-receive it. The native status shows it either way. It is not priced: the charge and reward are computed on the content
-and tool calls, and the worker's `reasoning_tokens` count is shown and never charged, as with every other reported
-count ([Reasoning](../reference/chat_requests.md#reasoning)).
+receive it. The native status shows it either way. Reasoning is output the worker generated, and OpenAI bills it as
+completion tokens, so its characters are counted with the content and tool calls, capped at the requested
+`max_length`. A reply whose whole budget went to reasoning is charged and rewarded for that budget, and the same count
+is the worker's speed sample. The worker's `reasoning_tokens` count is shown and never charged, as with every other
+reported count ([Reasoning](../reference/chat_requests.md#reasoning)).
 
 ### Admission against the online pool
 

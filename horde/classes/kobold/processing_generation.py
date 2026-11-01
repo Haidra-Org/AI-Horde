@@ -6,7 +6,9 @@ import enum
 import math
 import os
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.sql import expression
 
@@ -675,19 +677,25 @@ class TextProcessingGeneration(ProcessingGeneration):
             db.session.commit()
         return kudos
 
-    def get_things_count(self, generation=None):
+    def get_things_count(self, generation: str | None = None, message: Mapping[str, Any] | None = None) -> int:
         """Return the output estimate the generation is charged on: its characters divided by 4, rounded up, at least
         20 and at most the requested ``max_length``.
 
         Args:
             generation: Text to estimate in place of the stored generation.
+            message: A chat reply to estimate in place of the stored generation, before the reply is stored.
 
         Returns:
-            The estimate. A stored chat reply is counted by
-            [`chat_reply_characters`][horde.classes.kobold.chat_request.chat_reply_characters], so tool calls are
-            charged as output. A cancelled streamed generation is counted by the posted characters it was settled on.
+            The estimate. A chat reply is counted by
+            [`chat_reply_characters`][horde.classes.kobold.chat_request.chat_reply_characters], so tool calls and
+            reasoning are charged as output, and a reply whose budget went to reasoning is charged up to the requested
+            ``max_length``. A chat submit passes its reply as ``message`` for the worker's speed sample, so the speed
+            sample and the charge are the same count. A cancelled streamed generation is counted by the posted
+            characters it was settled on.
         """
-        if generation is not None:
+        if message is not None:
+            character_count = chat_reply_characters(message)
+        elif generation is not None:
             character_count = len(generation)
         elif self.message is not None:
             character_count = chat_reply_characters(self.message)

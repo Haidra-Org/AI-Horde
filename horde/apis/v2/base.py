@@ -1417,7 +1417,7 @@ class JobSubmitTemplate(Resource):
     def set_generation(self):
         """Set to its own function to it can be overwritten depending on the class"""
         record_fulfilment_t0 = time.monotonic()
-        things_per_sec = stats.record_fulfilment(self.procgen, self.procgen.get_things_count(self.args["generation"]))
+        things_per_sec = stats.record_fulfilment(self.procgen, self.get_submitted_things_count())
         submit_record_fulfilment_stat_duration.record(time.monotonic() - record_fulfilment_t0, {"horde.gentype": self.gentype})
         gen_metadata = getattr(self.args, "gen_metadata", None)
         kwargs: dict[str, object] = {
@@ -1438,6 +1438,15 @@ class JobSubmitTemplate(Resource):
             dict: Extra log attributes; none by default.
         """
         return {}
+
+    def get_submitted_things_count(self) -> int:
+        """Return the things count of the submitted generation, which is the worker's speed sample.
+
+        Returns:
+            int: The generation's count of the submitted ``generation``.
+        """
+        things_count: int = self.procgen.get_things_count(self.args["generation"])
+        return things_count
 
     def get_submission_details(self):
         """Return what a gentype's submission carries beyond the shared fields, passed on to ``set_generation``.

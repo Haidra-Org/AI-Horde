@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import base64
+import functools
 import gzip
 import json
+import math
 import uuid
 from io import BytesIO
 from types import SimpleNamespace
@@ -92,7 +94,7 @@ from horde.classes.kobold.chat_request import (
     truncate_oldest_messages,
     verify_chat_reply,
 )
-from horde.classes.kobold.processing_generation import is_empty_submission
+from horde.classes.kobold.processing_generation import TextProcessingGeneration, is_empty_submission
 from horde.classes.kobold.request_fit import estimate_prompt_tokens
 from horde.exceptions import KNOWN_RC
 from horde.image import MAX_CHAT_IMAGE_SIDE, load_chat_image
@@ -1516,12 +1518,39 @@ class TestSubmittedReply:
         with pytest.raises(ValidationError):
             ChatSubmittedMessage.model_validate({"role": "assistant", "content": None, "reasoning_content": "Thinking."})
 
-    def test_reasoning_is_not_charged(self) -> None:
+    def test_reasoning_is_charged_with_the_content(self) -> None:
         reply = build_stored_reply(
             ChatSubmittedMessage.model_validate({"role": "assistant", "content": "four", "reasoning_content": "x" * 400})
         )
 
-        assert chat_reply_characters(reply) == 4
+        assert chat_reply_characters(reply) == 404
+
+    def test_a_reply_whose_budget_went_to_reasoning_is_charged_on_the_reasoning_up_to_the_requested_length(self) -> None:
+        """A reply with empty content and long reasoning is charged on the reasoning characters over 4, capped at the
+        requested ``max_length``, so it is not charged the 20 token floor."""
+        reply = build_stored_reply(
+            ChatSubmittedMessage.model_validate({"role": "assistant", "content": "", "reasoning_content": "x" * 1200})
+        )
+
+        assert _things_count(reply, max_length=512) == 300
+        assert _things_count(reply, max_length=256) == 256
+
+    @pytest.mark.parametrize("max_length", [400, 256])
+    def test_a_chat_submit_speed_sample_is_the_charged_count_with_the_reasoning(self, max_length: int) -> None:
+        """The submitted ``generation`` of a chat job holds the content alone, and the speed sample still counts the
+        reasoning, capped at the requested ``max_length`` as the charge is."""
+        reply = build_stored_reply(
+            ChatSubmittedMessage.model_validate({"role": "assistant", "content": "Blue.", "reasoning_content": "x" * 1160})
+        )
+
+        speed_sample = _submitted_things_count(chat_message=reply, generation="Blue.", max_length=max_length)
+
+        assert speed_sample == _things_count(reply, max_length=max_length)
+        assert speed_sample == min(math.ceil(1165 / 4), max_length)
+
+    def test_a_text_submit_speed_sample_is_the_count_of_the_submitted_generation(self) -> None:
+        assert _submitted_things_count(chat_message=None, generation="x" * 400, max_length=512) == 100
+        assert _submitted_things_count(chat_message=None, generation="short", max_length=512) == 20
 
     def test_the_charged_characters_include_each_tool_call_name_and_arguments(self) -> None:
         reply = {"role": "assistant", "content": "Checking.", "tool_calls": [LOOKUP_CALL, LOOKUP_CALL]}
@@ -1554,6 +1583,37 @@ def _schema_format(schema: dict[str, Any], *, strict: bool | None = True) -> dic
     if strict is not None:
         json_schema["strict"] = strict
     return {"type": "json_schema", "json_schema": json_schema}
+
+
+def _things_count(stored_reply: dict[str, Any], *, max_length: int) -> int:
+    """Return the output estimate a generation with ``stored_reply`` is charged on, for a request of ``max_length``."""
+    generation = SimpleNamespace(
+        message=stored_reply,
+        generation=None,
+        settled_character_count=None,
+        wp=SimpleNamespace(things=max_length),
+    )
+    things_count: int = TextProcessingGeneration.get_things_count(generation)  # type: ignore[arg-type,no-untyped-call]
+    return things_count
+
+
+def _submitted_things_count(*, chat_message: dict[str, Any] | None, generation: str, max_length: int) -> int:
+    """Return the speed sample count of a text submit resource holding ``chat_message`` and ``generation``, for a
+    request of ``max_length`` whose reply is not stored yet."""
+    from horde.apis.v2.kobold import TextJobSubmit
+
+    procgen = SimpleNamespace(
+        message=None,
+        generation=None,
+        settled_character_count=None,
+        wp=SimpleNamespace(things=max_length),
+    )
+    procgen.get_things_count = functools.partial(TextProcessingGeneration.get_things_count, procgen)  # type: ignore[arg-type]
+    submit = TextJobSubmit.__new__(TextJobSubmit)
+    submit.procgen = procgen
+    submit.args = {"generation": generation}
+    submit.chat_message = chat_message
+    return submit.get_submitted_things_count()
 
 
 def _call(name: str = "lookup_weather", call_id: str = "call_abc") -> dict[str, Any]:

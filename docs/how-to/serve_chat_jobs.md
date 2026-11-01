@@ -307,7 +307,8 @@ Send `message`, `finish_reason` and `model_id` in place of `generation`
   the answer. Send it in this field. Do not put it inside `content`: split a closed block off the reply, and when
   generation stops at `max_length` inside a block that never closed, submit that text as `reasoning_content` with
   an empty `content` and `finish_reason` `length`. Leave the field out when the model produced no reasoning. It is
-  stored and shown beside the reply, is not charged, and may take up to 1 MiB of UTF-8.
+  stored and shown beside the reply, counted with the content in the charge and the reward, and may take up to
+  1 MiB of UTF-8.
 - `finish_reason` is one of `stop`, `length`, `content_filter` and `tool_calls`. Map the backend's reason onto them:
   `length` when generation reached `max_length`, `tool_calls` when the reply carries calls, `content_filter` when the
   backend withheld or cut the reply on a content rule, and `stop` otherwise. `tool_calls` needs a non-empty

@@ -51,6 +51,7 @@ __all__ = [
     "CHAT_KUDOS_CAP_EXCEEDED_RC",
     "CHAT_REQUEST_CONFLICT_ERROR_TYPE",
     "CHAT_REQUEST_CONFLICT_RC",
+    "DEFAULT_CHAT_MAX_TOKENS",
     "INTERNAL_HORDE_OPTION_KEYS",
     "MAX_CHAT_BODY_BYTES",
     "MAX_CHAT_IMAGE_BYTES",
@@ -149,6 +150,10 @@ A request at every cap carries [`MAX_CHAT_IMAGE_TOTAL_BYTES`][horde.chat_contrac
 of images as data URLs, which base64 grows by 4/3 to about 33.3 MiB, plus the SDK's ``MAX_CHAT_TEXT_BYTES`` (1 MiB)
 of text: about 34.3 MiB. 36 MiB leaves about 1.7 MiB for JSON structure, escaping and the data URL prefixes on top
 of that."""
+
+DEFAULT_CHAT_MAX_TOKENS: int = 512
+"""``max_length`` for a chat request that sets neither token limit. OpenAI clients usually omit it, and the text
+default of 80 tokens is too short for a chat reply."""
 
 CHAT_REQUEST_CONFLICT_ERROR_TYPE: str = "chat_request_conflict"
 """The pydantic error type raised for two keys whose values contradict each other.

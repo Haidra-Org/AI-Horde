@@ -7,7 +7,7 @@ import json
 import math
 import os
 from datetime import datetime
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import logfire
 import redis
@@ -1839,6 +1839,8 @@ class TextJobSubmit(JobSubmitTemplate):
     dropped_tool_call_count = 0
     """The tool calls verification dropped from a chat reply under ``parallel_tool_calls: false``, for the submit
     log; zero for every other submit."""
+    chat_message: dict[str, Any] | None = None
+    """A chat job's verified reply as it is stored; None for a text job and a faulted chat submit."""
 
     @api.expect(parsers.job_submit_parser, models.input_model_job_submit, validate=True)
     @api.marshal_with(models.response_model_job_submit, code=200, description="Generation Submitted")
@@ -2020,6 +2022,20 @@ class TextJobSubmit(JobSubmitTemplate):
         # message and generation identical in the atomic claim, using the text submission's replacement policy.
         self.chat_message = build_stored_reply(chat_message)
         self.args["generation"] = self.chat_message["content"] or ""
+
+    def get_submitted_things_count(self) -> int:
+        """Return a chat reply's things count from its content, tool calls and reasoning, the same count as the charge.
+
+        The ``generation`` of a chat job holds the content alone, so a reply's reasoning would otherwise be missing
+        from the worker's speed sample.
+
+        Returns:
+            int: The generation's count of the verified reply for a chat job, or of the ``generation`` otherwise.
+        """
+        if self.chat_message is None:
+            return super().get_submitted_things_count()
+        things_count: int = self.procgen.get_things_count(message=self.chat_message)
+        return things_count
 
     def get_submission_log_details(self) -> dict[str, object]:
         """Return how many tool calls verification dropped from a chat reply, when it dropped any.

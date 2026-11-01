@@ -17,13 +17,19 @@ import hashlib
 import json
 import math
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from typing import cast
 
 from horde_sdk.generation_parameters.text.chat_policy import ChatFeature, ChatGuarantee
 
-from horde.chat_contract import ChatTextResponseFormat, ChatTool, ChatToolCall
+from horde.chat_contract import (
+    DEFAULT_CHAT_MAX_TOKENS,
+    ChatContextAdjustmentReason,
+    ChatTextResponseFormat,
+    ChatTool,
+    ChatToolCall,
+)
 from horde.oai.horde_client import HordeActiveModel, HordeChatGeneration, HordeChatStatus
 from horde.oai.schema import (
     ChatCompletionChoice,
@@ -58,11 +64,13 @@ __all__ = [
     "build_error_envelope",
     "build_model_card",
     "build_native_chat_body",
+    "effective_completion_limit",
     "estimate_tokens",
     "flatten_messages",
     "generation_content",
     "generation_reasoning",
     "generation_tool_calls",
+    "lowered_max_length",
     "relays_deltas",
 ]
 
@@ -355,6 +363,46 @@ def estimate_tokens(text: str) -> int:
     return math.ceil(len(text) / CHARACTERS_PER_ESTIMATED_TOKEN)
 
 
+def lowered_max_length(context_adjustments: Sequence[object] | None) -> int | None:
+    """Return the lowered ``max_tokens`` of the Horde's ``worker_max_length`` adjustment.
+
+    Args:
+        context_adjustments: The ``context_adjustments`` of the Horde's chat status.
+
+    Returns:
+        The ``to`` value of the ``worker_max_length`` entry, or None when the Horde did not lower the limit.
+    """
+    for adjustment in context_adjustments or ():
+        if not isinstance(adjustment, Mapping) or adjustment.get("reason") != ChatContextAdjustmentReason.WORKER_MAX_LENGTH.value:
+            continue
+        lowered_limit = adjustment.get("to")
+        if isinstance(lowered_limit, int):
+            return lowered_limit
+    return None
+
+
+def effective_completion_limit(chat_request: ChatCompletionRequest, context_adjustments: Sequence[object] | None) -> int:
+    """Return the completion limit the request ran under.
+
+    Args:
+        chat_request: The client's request.
+        context_adjustments: The ``context_adjustments`` of the Horde's chat status.
+
+    Returns:
+        The lowered limit from [`lowered_max_length`][horde.oai.mapping.lowered_max_length] when the Horde lowered
+        it, else ``max_completion_tokens``, else ``max_tokens``, else
+        [`DEFAULT_CHAT_MAX_TOKENS`][horde.chat_contract.DEFAULT_CHAT_MAX_TOKENS], the default of the native route.
+    """
+    lowered_limit = lowered_max_length(context_adjustments)
+    if lowered_limit is not None:
+        return lowered_limit
+    if chat_request.max_completion_tokens is not None:
+        return chat_request.max_completion_tokens
+    if chat_request.max_tokens is not None:
+        return chat_request.max_tokens
+    return DEFAULT_CHAT_MAX_TOKENS
+
+
 def generation_content(generation: HordeChatGeneration) -> str | None:
     """Return a generation's reply text: the message content when present, else the plain ``text`` field.
 
@@ -405,8 +453,14 @@ def build_completion(
     Returns:
         One choice per generation, in the Horde's order; ``model``, ``system_fingerprint`` and the ``x_horde`` worker
         details are the first generation's. A message has ``reasoning_content`` unless
-        ``horde.include_reasoning`` is false. ``usage.completion_tokens_details.reasoning_tokens`` is the sum of the
-        reasoning counts the workers reported, present when any reported one, whether or not the reasoning is returned.
+        ``horde.include_reasoning`` is false. ``usage.completion_tokens_details.reasoning_tokens`` is the sum of each
+        generation's reasoning count, as its worker reported it or, when the worker did not report it, as estimated
+        from the reasoning characters. It is present when any generation has a count, whether or not the reasoning is
+        returned. An estimated ``usage.completion_tokens`` counts the reasoning with the reply text and tool calls, so
+        it includes the reasoning tokens as OpenAI's does. Each generation's estimated completion and reasoning
+        counts are capped at the [`effective_completion_limit`][horde.oai.mapping.effective_completion_limit],
+        since the worker could not generate more than that, and an estimated reasoning count is at most the
+        generation's completion count. A reported count is used as reported.
 
     Raises:
         CompletionWithoutGenerationError: ``status`` has no finished generation. A completion built from it would be a
@@ -421,6 +475,9 @@ def build_completion(
     reasoning_tokens: int | None = None
     has_empty_return = False
     include_reasoning = chat_request.horde is None or chat_request.horde.include_reasoning
+    # The characters-per-token estimate overcounts dense text, so a reply that used its whole budget would report
+    # more tokens than the limit allowed.
+    completion_limit = effective_completion_limit(chat_request, status.context_adjustments)
     for generation_index, generation in enumerate(status.generations):
         generated_text = generation_content(generation)
         tool_calls = generation_tool_calls(generation)
@@ -439,15 +496,27 @@ def build_completion(
                 native_finish_reason=generation.native_finish_reason,
             ),
         )
+        generated_reasoning = generation_reasoning(generation)
         if generation.completion_tokens is None:
-            completion_tokens += estimate_tokens(_generated_output_text(generated_text, tool_calls))
+            generation_completion_tokens = min(
+                estimate_tokens(_generated_output_text(generated_text, tool_calls, generated_reasoning)),
+                completion_limit,
+            )
             estimated_usage = True
         else:
-            completion_tokens += generation.completion_tokens
+            generation_completion_tokens = generation.completion_tokens
+        completion_tokens += generation_completion_tokens
         if prompt_tokens is None and generation.prompt_tokens is not None:
             prompt_tokens = generation.prompt_tokens
         if generation.reasoning_tokens is not None:
             reasoning_tokens = (reasoning_tokens or 0) + generation.reasoning_tokens
+        elif generated_reasoning:
+            reasoning_tokens = (reasoning_tokens or 0) + min(
+                estimate_tokens(generated_reasoning),
+                completion_limit,
+                generation_completion_tokens,
+            )
+            estimated_usage = True
     if prompt_tokens is None:
         prompt_tokens = estimate_tokens(
             flatten_messages(chat_request.messages, tools=chat_request.tools),
@@ -481,12 +550,26 @@ def build_completion(
     )
 
 
-def _generated_output_text(generated_text: str | None, tool_calls: Sequence[ChatToolCall] | None) -> str:
-    """Return the text the completion token estimate counts: the reply text and the compact JSON of its tool calls."""
+def _generated_output_text(
+    generated_text: str | None,
+    tool_calls: Sequence[ChatToolCall] | None,
+    generated_reasoning: str | None,
+) -> str:
+    """Return the text the completion token estimate counts: the reasoning, the reply text and the compact JSON of its
+    tool calls.
+
+    OpenAI counts reasoning tokens among the completion tokens, so the estimate includes the reasoning. A reply with
+    reasoning and no other output is the reasoning alone, so its completion estimate equals its reasoning estimate.
+    """
     output_parts = [generated_text or ""]
     if tool_calls:
         output_parts.append(_compact_json([tool_call.model_dump(mode="json") for tool_call in tool_calls]))
-    return "\n".join(output_parts)
+    output_text = "\n".join(output_parts)
+    if not generated_reasoning:
+        return output_text
+    if not output_text:
+        return generated_reasoning
+    return f"{generated_reasoning}\n{output_text}"
 
 
 def _finish_reason(reported_finish_reason: str | None) -> FinishReason:

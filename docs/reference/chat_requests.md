@@ -787,8 +787,9 @@ the reply carries tool calls, which are a complete reply.
 A reasoning model, such as Qwen3, emits a `<think>` block before the answer. The worker submits it as
 `message.reasoning_content` and never inside `content`, an unclosed block cut off at `max_length` included. The Horde
 stores it in `message` beside `content`, with NUL replaced, only when it was submitted, and the status shows it there.
-It is not the reply: `generation` holds the content alone, the charge and reward are computed on the content and tool
-calls (`chat_reply_characters`), and the conformance rules do not read it. Its UTF-8 length is capped at the SDK's
+It is not the reply: `generation` holds the content alone, and the conformance rules do not read it. It is model
+output, so its characters are counted with the content and tool calls in the charge, the reward and the worker's speed
+sample (`chat_reply_characters`), capped at the requested `max_length`. Its UTF-8 length is capped at the SDK's
 `MAX_CHAT_TEXT_BYTES` (1 MiB), the most message text a request may carry, since the kudos cost does not bound what is
 stored as reasoning; a longer one returns `400 ChatSubmitInvalid`. `reasoning_tokens` is stored in a separate column and shown on
 the status. Like the other reported counts it never changes the charge or reward, since the Horde pays only for the
@@ -908,8 +909,11 @@ horde stored is not counted, and the worker's fault after it is counted once, wi
 ### Pricing
 
 A chat generation is charged and rewarded exactly as a text generation with the same reply, through the text kudos
-formula, and stores `charge_basis` `output_estimate`. The reply's characters are the content plus each tool call's
-function name and arguments (`chat_reply_characters`, read by `TextProcessingGeneration.get_things_count`). The
+formula, and stores `charge_basis` `output_estimate`. The reply's characters are the content, the reasoning, and each tool
+call's function name and arguments (`chat_reply_characters`, read by `TextProcessingGeneration.get_things_count`). The
+same count is the worker's speed sample: the submit passes the verified message to `get_things_count` before it is
+stored (`TextJobSubmit.get_submitted_things_count`), since `generation` holds the content alone. A reply whose budget
+went to reasoning is not recorded as a slow one. The
 formula's token count is those characters divided by 4, rounded up, at least 20 and at most the requested `max_length`, so a short reply to a large `max_tokens` is not
 charged the full request. Reported token counts are stored and shown on the status route and never change the charge.
 The basis is computed in one place, `TextProcessingGeneration.get_charge_basis`. The status route returns, per

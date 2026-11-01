@@ -95,6 +95,7 @@ from horde.chat_contract import (
     CHAT_IMAGE_PROMPT_TOKENS,
     CHAT_REQUEST_CONFLICT_ERROR_TYPE,
     CHAT_REQUEST_CONFLICT_RC,
+    DEFAULT_CHAT_MAX_TOKENS,
     MAX_CHAT_IMAGE_BYTES,
     MAX_CHAT_IMAGE_COUNT,
     MAX_CHAT_IMAGE_TOTAL_BYTES,
@@ -217,10 +218,6 @@ MAX_CHAT_FAULT_REASON_LENGTH = 1000
 """The width of the column holding the message of the last refused reply to a chat request. A refusal message is one
 sentence, and a schema mismatch adds only the schema name, a keyword and a JSON path, so only a deeply nested path
 reaches this width; a longer message is stored cut to it."""
-
-DEFAULT_CHAT_MAX_TOKENS = 512
-"""``max_length`` for a chat request that sets neither token limit. OpenAI clients usually omit it, and the text
-default of 80 tokens is too short for a chat reply."""
 
 CHAT_STREAM_PROGRESS_KEY = "stream_progress"
 """The stored extras key, and the job payload key, of the stream hint: ``true`` when the client streams the reply,
@@ -1680,18 +1677,22 @@ def build_stored_reply(message: ChatSubmittedMessage) -> dict[str, Any]:
 def chat_reply_characters(message: Mapping[str, Any]) -> int:
     """Return the characters a submitted chat reply is charged on.
 
-    The text formula prices a reply by its characters. A tool call is output the model generated as well, so its
-    function name and arguments count with the content.
+    The text formula prices a reply by its characters. Tool calls and reasoning are output the model generated as
+    well, so a tool call's function name and arguments and the reasoning count with the content. OpenAI bills
+    reasoning as completion tokens in the same way.
 
     Args:
         message: The stored assistant message a worker submitted.
 
     Returns:
-        The length of the content, plus the length of each tool call's function name and arguments.
+        The length of the content, plus the length of each tool call's function name and arguments, plus the length
+        of the reasoning.
     """
     content = message.get("content") or ""
+    reasoning = message.get("reasoning_content") or ""
     tool_calls = message.get("tool_calls") or ()
-    return len(content) + sum(len(tool_call["function"]["name"]) + len(tool_call["function"]["arguments"]) for tool_call in tool_calls)
+    tool_call_characters = sum(len(tool_call["function"]["name"]) + len(tool_call["function"]["arguments"]) for tool_call in tool_calls)
+    return len(content) + tool_call_characters + len(reasoning)
 
 
 def rewrite_message_texts(
