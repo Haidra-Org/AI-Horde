@@ -466,6 +466,19 @@ against both built image variants. This checks the default dependency image and
 the telemetry-profiling image under identical load, including native Pyroscope
 span correlation in the telemetry variant.
 
+`stress-smoke-job` and the Docker publish run add the
+[chat contract mix](#chat-contract-mix): three chat workers, two native clients
+and three front clients. Before the Locust run, each starts the chat front
+(`python -m horde.oai`) on port 7002 with `HORDE_OAI_REDIS_URL` set to the test
+stack's Redis. The smoke job runs it from source and the Docker publish run
+starts a second container from the built image. The chat workers pop under
+generated names from the bootstrapped worker keys, so the jobs do not configure
+`--chat-mix-worker-names`. `--users` is the earlier 24 plus the 8 chat users,
+since the chat counts are pinned and taken from `--users`. The chat coverage
+gate fails the run when a persona never comes online or no front scenario
+completes, and `check_smoke_results.py` gates on chat contract violations and
+environment conditions. The job uploads the front's log beside the server's.
+
 A fourth job, `stress-kudos-ledger-job`, does not fit this checker pattern: it
 starts a second `--quorum` server and gates inside the harnesses themselves. See
 the CI regression job note under Kudos ledger operational verification above.
@@ -477,7 +490,8 @@ behaviour, and a throttled run could reach zero violations without ever reaching
 the interleavings the gate is meant to protect. It passes `--stats` to the
 checker for the same reason, so a run that drove no requests fails instead of
 reporting a vacuous pass. The classic smoke job leaves the limiter in force,
-since the suite counts 429s as successes and the gate is crash-class only.
+since the suite counts 429s as successes and the gate fails only on crash-class
+failures, chat contract violations and chat environment conditions.
 
 The hot-user convoy and queue-pressure scenarios are not in CI. Their verdicts
 come from `analyze_hot_user_convoy.py` and `analyze_queue_pressure.py`, which are

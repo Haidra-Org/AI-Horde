@@ -144,33 +144,62 @@ jobs:
       - name: Assert native profiling and span correlation initialized
         run: grep -F "Pyroscope span profiles (baseline 10.00%)" server.log
 
+      - name: Start OpenAI chat front
+        # The chat mix's front clients need the front (python -m horde.oai), a
+        # separate process that calls the Horde over HTTP and reads chat signals
+        # from the test stack's Redis. See docs/how-to/run_openai_chat_front.md.
+        run: |
+          HORDE_OAI_HORDE_URLS=http://127.0.0.1:7001/api \
+          HORDE_OAI_PORT=7002 \
+          HORDE_OAI_REDIS_URL="redis://${REDIS_IP}:${REDIS_PORT}/7" \
+            uv run python -m horde.oai > front.log 2>&1 &
+          echo "$!" > front.pid
+
+          timeout=60
+          until curl -sf http://localhost:7002/healthz > /dev/null 2>&1; do
+            timeout=$((timeout - 2))
+            if [[ "$timeout" -le 0 ]]; then
+              echo "Chat front failed to start within timeout"
+              cat front.log
+              exit 1
+            fi
+            sleep 2
+          done
+
       - name: Run Locust smoke
+        # The chat mix users are pinned counts taken from --users, so --users is
+        # the image and text smoke's 24 plus the 8 chat users. Chat workers pop
+        # under generated names from the bootstrapped worker keys.
         run: |
           uv run locust -f tests/stress/locustfile.py \
             --host http://localhost:7001 \
             --headless \
-            --users 24 \
-            --spawn-rate 6 \
+            --users 32 \
+            --spawn-rate 8 \
             --run-time 90s \
             --bootstrap-requestors 4 \
             --bootstrap-workers 8 \
             --legacy-image-workers 1 \
             --extended-image-workers 1 \
             --sampler-feature-requestors 1 \
+            --chat-mix-workers 3 \
+            --chat-mix-native-clients 2 \
+            --chat-mix-front-clients 3 \
+            --chat-mix-front-host http://localhost:7002 \
             --preflight-fail-hard \
             --bootstrap-fail-hard \
             --csv smoke \
             --exit-code-on-error 0 \
             --only-summary
 
-      - name: Gate on crash-class failures
+      - name: Gate on crash-class failures and chat contract violations
         run: uv run python tests/stress/check_smoke_results.py --stats smoke_stats.csv --failures smoke_failures.csv
 
-      - name: Scan server log for tracebacks
+      - name: Scan server logs for tracebacks
         if: always()
         run: |
-          if grep -n "Traceback (most recent call last)" server.log; then
-            echo "::warning::Server log contains a Python traceback during the stress smoke; see the uploaded server.log artifact."
+          if grep -n "Traceback (most recent call last)" server.log front.log; then
+            echo "::warning::A server log contains a Python traceback during the stress smoke; see the uploaded server.log and front.log artifacts."
           fi
 
       - uses: actions/upload-artifact@v4
@@ -179,14 +208,18 @@ jobs:
           name: stress-smoke-artifacts
           path: |
             server.log
+            front.log
             smoke_stats.csv
             smoke_failures.csv
             smoke_stats_history.csv
           if-no-files-found: ignore
 
-      - name: Stop server and local test stack
+      - name: Stop servers and local test stack
         if: always()
         run: |
+          if [[ -f front.pid ]]; then
+            kill "$(cat front.pid)" || true
+          fi
           if [[ -f server.pid ]]; then
             kill "$(cat server.pid)" || true
           fi

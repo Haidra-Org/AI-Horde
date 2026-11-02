@@ -195,26 +195,57 @@ jobs:
           docker logs "ai-horde-validate-${{ matrix.variant }}" 2>&1 |
           grep -F "Pyroscope span profiles (baseline 10.00%)"
 
+      - name: Start OpenAI chat front container
+        # The same image runs the chat front with python -m horde.oai, as the
+        # aihorde_oai service in docker-compose.yaml does. It calls the Horde
+        # container over HTTP and reads chat signals from the test stack's Redis.
+        run: |
+          docker run -d --name "ai-horde-oai-validate-${{ matrix.variant }}" \
+            --network host \
+            -e HORDE_OAI_HORDE_URLS=http://127.0.0.1:7001/api \
+            -e HORDE_OAI_PORT=7002 \
+            -e HORDE_OAI_REDIS_URL="redis://${REDIS_IP}:${REDIS_PORT}/7" \
+            "ai-horde-${{ matrix.variant }}:validate" \
+            python -m horde.oai
+
+          timeout=60
+          until curl -sf http://localhost:7002/healthz > /dev/null 2>&1; do
+            timeout=$((timeout - 2))
+            if [ "$timeout" -le 0 ]; then
+              echo "::error::Chat front container failed to start"
+              docker logs "ai-horde-oai-validate-${{ matrix.variant }}"
+              exit 1
+            fi
+            sleep 2
+          done
+
       - name: Run mixed Locust suite against built image
+        # The chat mix users are pinned counts taken from --users, so --users is
+        # the image and text mix's 24 plus the 8 chat users. Chat workers pop
+        # under generated names from the bootstrapped worker keys.
         run: |
           uv run locust -f tests/stress/locustfile.py \
             --host http://localhost:7001 \
             --headless \
-            --users 24 \
-            --spawn-rate 6 \
+            --users 32 \
+            --spawn-rate 8 \
             --run-time 90s \
             --bootstrap-requestors 4 \
             --bootstrap-workers 8 \
             --legacy-image-workers 1 \
             --extended-image-workers 1 \
             --sampler-feature-requestors 1 \
+            --chat-mix-workers 3 \
+            --chat-mix-native-clients 2 \
+            --chat-mix-front-clients 3 \
+            --chat-mix-front-host http://localhost:7002 \
             --preflight-fail-hard \
             --bootstrap-fail-hard \
             --csv "image-${{ matrix.variant }}" \
             --exit-code-on-error 0 \
             --only-summary
 
-      - name: Gate built image on crash-class failures
+      - name: Gate built image on crash-class failures and chat contract violations
         run: >-
           uv run python tests/stress/check_smoke_results.py
           --stats "image-${{ matrix.variant }}_stats.csv"
@@ -222,9 +253,9 @@ jobs:
 
       - name: Capture built image logs
         if: always()
-        run: >-
-          docker logs "ai-horde-validate-${{ matrix.variant }}"
-          > "image-${{ matrix.variant }}-server.log" 2>&1 || true
+        run: |
+          docker logs "ai-horde-validate-${{ matrix.variant }}" > "image-${{ matrix.variant }}-server.log" 2>&1 || true
+          docker logs "ai-horde-oai-validate-${{ matrix.variant }}" > "image-${{ matrix.variant }}-front.log" 2>&1 || true
 
       - name: Upload built-image Locust artifacts
         uses: actions/upload-artifact@v4
@@ -233,6 +264,7 @@ jobs:
           name: docker-${{ matrix.variant }}-locust-artifacts
           path: |
             image-${{ matrix.variant }}-server.log
+            image-${{ matrix.variant }}-front.log
             image-${{ matrix.variant }}_stats.csv
             image-${{ matrix.variant }}_failures.csv
             image-${{ matrix.variant }}_stats_history.csv
@@ -240,10 +272,13 @@ jobs:
 
       - name: Dump container logs on failure
         if: failure()
-        run: docker logs "ai-horde-validate-${{ matrix.variant }}" 2>&1 || true
+        run: |
+          docker logs "ai-horde-validate-${{ matrix.variant }}" 2>&1 || true
+          docker logs "ai-horde-oai-validate-${{ matrix.variant }}" 2>&1 || true
 
       - name: Stop image and local test stack
         if: always()
         run: |
+          docker rm -f "ai-horde-oai-validate-${{ matrix.variant }}" 2>/dev/null || true
           docker rm -f "ai-horde-validate-${{ matrix.variant }}" 2>/dev/null || true
           docker compose -f tests/docker-compose.yml down
