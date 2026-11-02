@@ -6,9 +6,9 @@
 
 A job is leased a flat base at pop. A chat job's progress post that adds output extends the lease to end the base
 after the post, up to a cap measured from pop that depends on whether the worker's owner is trusted. The pop offers a
-chat job only to a worker whose speed finishes its ``max_length`` inside the base lease after the preparation
-allowance. A legacy text job is assigned whatever its length, and an assignment over the worker's capacity is
-recorded with its outcome.
+chat job first to the workers whose speed finishes its ``max_length`` inside the base lease after the preparation
+allowance, and to a slower worker when no capable chat worker is online. A legacy text job is assigned whatever its
+length, and an assignment over the worker's capacity is recorded with its outcome.
 """
 
 from __future__ import annotations
@@ -22,11 +22,15 @@ from typing import Any
 import fakeredis
 import pytest
 from flask.testing import FlaskClient
+from horde_sdk.generation_parameters.text.chat_policy import ChatFeature
+from sqlalchemy import JSON, Text, create_engine, literal, select
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Session
 
 from horde import chat_progress
 from horde.chat_progress import StreamLease, chat_lease_key, read_stream_lease, write_stream_lease
 from horde.classes.base.settings import HordeSettings
+from horde.classes.base.sql_constructs import TextArrayContainsAll
 from horde.classes.base.user import UserRoleTypes
 from horde.classes.base.worker import WorkerModel
 from horde.classes.kobold import processing_generation as text_processing_generation
@@ -460,10 +464,22 @@ class TestStaleAbortMetric:
         assert recorder.increments == []
 
 
-class TestSpeedGate:
-    """A worker is offered a chat job only when its speed finishes the job's ``max_length`` inside the base lease.
+def _make_capable_chat_worker(user: Any, waiting_prompt: TextWaitingPrompt, **declaration: Any) -> TextWorker:
+    """Create an online chat worker at 50 tokens/s (capacity 6000) for ``waiting_prompt``, with ``declaration`` set
+    on it afterwards."""
+    worker = _make_worker(user, speed=50)
+    _declare_chat(worker, waiting_prompt)
+    for column_name, value in declaration.items():
+        setattr(worker, column_name, value)
+    db.session.commit()
+    return worker
 
-    A legacy text job is offered whatever its length.
+
+class TestSpeedGate:
+    """A chat job goes first to the workers whose speed finishes its ``max_length`` inside the base lease.
+
+    A slower worker is offered it when no capable chat worker for its model is online. A legacy text job is offered
+    whatever its length.
     """
 
     def test_a_measured_worker_is_gated_by_its_own_speed(self) -> None:
@@ -484,12 +500,13 @@ class TestSpeedGate:
         assert get_text_worker_lease_capacity(worker.speed) == UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND * GENERATION_SECONDS
 
     @pytest.mark.parametrize(
-        ("is_chat", "max_length", "offered"),
+        ("is_chat", "max_length", "capable_worker_online", "offered"),
         [
-            (True, 2 * GENERATION_SECONDS, True),
-            (True, 2 * GENERATION_SECONDS + 1, False),
-            (False, 2 * GENERATION_SECONDS, True),
-            (False, 2 * GENERATION_SECONDS + 1, True),
+            (True, 2 * GENERATION_SECONDS, True, True),
+            (True, 2 * GENERATION_SECONDS + 1, True, False),
+            (True, 2 * GENERATION_SECONDS + 1, False, True),
+            (False, 2 * GENERATION_SECONDS, True, True),
+            (False, 2 * GENERATION_SECONDS + 1, True, True),
         ],
     )
     def test_the_pop_and_the_eligibility_check_apply_the_same_gate(
@@ -500,15 +517,18 @@ class TestSpeedGate:
         make_user_role: MakeUserRole,
         is_chat: bool,
         max_length: int,
+        capable_worker_online: bool,
         offered: bool,
     ) -> None:
-        """A worker at 2 tokens/s is refused a chat job a token longer than it finishes in time, and is offered a
-        legacy job of either length."""
+        """A worker at 2 tokens/s is refused a chat job a token longer than it finishes in time while a capable chat
+        worker is online, is offered that job when none is, and is offered a legacy job of either length."""
         user = make_user()
         make_user_role(user, UserRoleTypes.TRUSTED, value=True)
         worker = _make_worker(user, speed=2)
         waiting_prompt = _make_request(user, max_length, is_chat=is_chat)
         _declare_chat(worker, waiting_prompt)
+        if capable_worker_online:
+            _make_capable_chat_worker(user, waiting_prompt)
 
         popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
         eligibility = worker.can_generate(waiting_prompt)
@@ -516,7 +536,102 @@ class TestSpeedGate:
         assert [wp.id for wp in popped] == ([waiting_prompt.id] if offered else [])
         assert eligibility == ([True, None] if offered else [False, "lease_speed"])
 
-    def test_a_measured_slow_worker_is_refused_a_chat_request_over_its_capacity_and_assigned_a_legacy_one(
+    @pytest.mark.parametrize(
+        "capable_worker_state",
+        [
+            {"last_check_in": datetime.utcnow() - timedelta(minutes=10)},
+            {"maintenance": True},
+            {"paused": True},
+            {"accepts_chat_jobs": False},
+            {"chat_max_length": 256},
+            {"chat_max_context_length": 1024},
+            {"chat_model_id": "another_model"},
+        ],
+        ids=[
+            "offline",
+            "maintenance",
+            "paused",
+            "no_chat_jobs",
+            "chat_max_length_below_the_request",
+            "chat_max_context_length_below_the_request",
+            "another_chat_model",
+        ],
+    )
+    def test_a_faster_worker_that_cannot_take_the_chat_request_does_not_hold_it_back(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        capable_worker_state: dict[str, Any],
+    ) -> None:
+        """A chat request for 512 tokens reaches a worker at 2 tokens/s (capacity 240) when the only faster worker is
+        offline, unavailable, or declares chat limits or a chat model that do not admit the request."""
+        user = make_user()
+        worker = _make_worker(user, speed=2)
+        waiting_prompt = _make_request(user, 512, is_chat=True)
+        _declare_chat(worker, waiting_prompt)
+        _make_capable_chat_worker(user, waiting_prompt, **capable_worker_state)
+
+        popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
+
+        assert [wp.id for wp in popped] == [waiting_prompt.id]
+        assert worker.can_generate(waiting_prompt) == [True, None]
+
+    @pytest.mark.parametrize(
+        ("faster_worker_features", "slow_worker_offered"),
+        [
+            ([ChatFeature.SEED.value], True),
+            ([ChatFeature.SEED.value, ChatFeature.TOOLS.value], False),
+        ],
+        ids=["faster_worker_lacks_tools", "faster_worker_declares_tools"],
+    )
+    def test_a_faster_worker_counts_as_capable_only_when_it_declares_every_required_feature(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        faster_worker_features: list[str],
+        slow_worker_offered: bool,
+    ) -> None:
+        """A 512-token chat request that requires ``tools`` reaches a worker at 2 tokens/s (capacity 240) with
+        ``tools`` when the only faster worker does not declare ``tools``, and is left to the faster worker when it
+        does."""
+        user = make_user()
+        worker = _make_worker(user, speed=2)
+        waiting_prompt = _make_request(user, 512, is_chat=True)
+        waiting_prompt.chat_required_features = [ChatFeature.TOOLS.value]
+        db.session.commit()
+        _declare_chat(worker, waiting_prompt)
+        _make_capable_chat_worker(user, waiting_prompt, chat_features=faster_worker_features)
+
+        popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
+
+        assert [wp.id for wp in popped] == ([waiting_prompt.id] if slow_worker_offered else [])
+        assert worker.can_generate(waiting_prompt) == ([True, None] if slow_worker_offered else [False, "lease_speed"])
+
+    def test_an_unmeasured_worker_counts_as_capable_at_the_assumed_speed(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+    ) -> None:
+        """A chat worker without a recorded speed is taken at 10 tokens/s (capacity 1200), so it holds a 1200-token
+        chat request back from a slower worker and does not hold back a 1201-token one."""
+        user = make_user()
+        slow_worker = _make_worker(user, speed=2)
+        within_request = _make_request(user, 1200, is_chat=True)
+        over_request = _make_request(user, 1201, is_chat=True)
+        _declare_chat(slow_worker, within_request)
+        unmeasured_worker = _make_worker(user)
+        _declare_chat(unmeasured_worker, within_request)
+
+        popped = text_functions.get_sorted_text_wp_filtered_to_worker(slow_worker, [MODEL_NAME])
+
+        assert [wp.id for wp in popped] == [over_request.id]
+        assert slow_worker.can_generate(within_request) == [False, "lease_speed"]
+        assert slow_worker.can_generate(over_request) == [True, None]
+
+    def test_a_slow_worker_is_refused_a_chat_request_a_capable_worker_can_take_and_assigned_a_legacy_one(
         self,
         db_session: Session,
         fake_redis: object,
@@ -524,13 +639,14 @@ class TestSpeedGate:
         make_user_role: MakeUserRole,
     ) -> None:
         """Of a chat and a legacy request for 512 tokens, a worker at 2 tokens/s (capacity 240) pops only the legacy
-        one, and the assignment creates its generation."""
+        one while a capable chat worker is online, and the assignment creates its generation."""
         user = make_user()
         make_user_role(user, UserRoleTypes.TRUSTED, value=True)
         worker = _make_worker(user, speed=2)
         chat_request = _make_request(user, 512, is_chat=True)
         legacy_request = _make_request(user, 512)
         _declare_chat(worker, chat_request)
+        _make_capable_chat_worker(user, chat_request)
 
         popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
         legacy_request.start_generation(worker, declared_models=[MODEL_NAME])
@@ -562,7 +678,8 @@ class TestSpeedGate:
 
 
 class TestGateShadow:
-    """A legacy text job assigned over its worker's lease capacity is marked at assignment and counted with its outcome."""
+    """A text or chat job assigned over its worker's lease capacity is marked at assignment and counted with its
+    outcome."""
 
     @pytest.fixture(autouse=True)
     def _settings_row(self, db_session: Session) -> None:
@@ -609,6 +726,41 @@ class TestGateShadow:
                 {
                     "horde.worker_trusted": "false",
                     "horde.size_bucket": "<=512",
+                    "horde.chat": False,
+                },
+            ),
+        ]
+
+    def test_an_over_capacity_chat_assignment_is_marked_and_counted_as_chat(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        assignments: _CounterRecorder,
+        outcomes: _CounterRecorder,
+    ) -> None:
+        """A 512-token chat job assigned to a worker at 2 tokens/s (capacity 240), the only chat worker online, stores
+        the marker, and its assignment and stale abort are counted with ``horde.chat`` true."""
+        generation = _create_generation(make_user, max_length=512, speed=2, is_chat=True)
+
+        generation.fault_and_restart(stale=True)
+
+        db.session.expire_all()
+        stored = db.session.get(TextProcessingGeneration, generation.id)
+        assert stored is not None
+        expected_attributes = {
+            "horde.worker_trusted": "false",
+            "horde.size_bucket": "<=512",
+            "horde.chat": True,
+        }
+        assert stored.over_capacity_at_assignment is True
+        assert assignments.increments == [(1, expected_attributes)]
+        assert outcomes.increments == [
+            (
+                1,
+                {
+                    **expected_attributes,
+                    "horde.outcome": "aborted",
                 },
             ),
         ]
@@ -629,6 +781,7 @@ class TestGateShadow:
         expected_attributes = {
             "horde.worker_trusted": "false",
             "horde.size_bucket": "1025-2048",
+            "horde.chat": False,
         }
         assert outcomes.increments == [
             (
@@ -677,6 +830,7 @@ class TestGateShadow:
                 {
                     "horde.worker_trusted": "false",
                     "horde.size_bucket": "2049-4096",
+                    "horde.chat": False,
                     "horde.outcome": "aborted",
                 },
             ),
@@ -719,3 +873,42 @@ def _post_progress(client: FlaskClient, generation: TextProcessingGeneration, se
         },
         headers={"apikey": WORKER_API_KEY},
     )
+
+
+_FEATURE_CONTAINMENT_CASES = [
+    pytest.param(["seed", "tools"], ["tools"], True, id="holds_the_required_feature"),
+    pytest.param(["seed"], ["tools"], False, id="lacks_the_required_feature"),
+    pytest.param(["tools"], ["seed", "tools"], False, id="lacks_one_of_two"),
+    pytest.param(["seed"], [], True, id="nothing_required"),
+    pytest.param(["seed"], None, True, id="null_required"),
+    pytest.param(None, ["tools"], False, id="null_held"),
+    pytest.param(None, None, True, id="both_null"),
+]
+"""Held and required feature arrays, with whether the held array contains every required feature."""
+
+
+class TestTextArrayContainsAll:
+    """The feature containment of the capable worker test gives the same result on PostgreSQL and SQLite."""
+
+    @pytest.mark.parametrize(("held", "required", "contained"), _FEATURE_CONTAINMENT_CASES)
+    def test_postgres_containment(
+        self,
+        db_session: Session,
+        held: list[str] | None,
+        required: list[str] | None,
+        contained: bool,
+    ) -> None:
+        statement = select(
+            TextArrayContainsAll(literal(held, type_=ARRAY(Text)), literal(required, type_=ARRAY(Text))),
+        )
+
+        assert db_session.scalar(statement) is contained
+
+    @pytest.mark.parametrize(("held", "required", "contained"), _FEATURE_CONTAINMENT_CASES)
+    def test_sqlite_containment(self, held: list[str] | None, required: list[str] | None, contained: bool) -> None:
+        """A JSON ``null``, which a JSON column stores for Python None, holds no feature, as SQL NULL does."""
+        statement = select(TextArrayContainsAll(literal(held, type_=JSON), literal(required, type_=JSON)))
+        engine = create_engine("sqlite://")
+
+        with engine.connect() as connection:
+            assert bool(connection.scalar(statement)) is contained

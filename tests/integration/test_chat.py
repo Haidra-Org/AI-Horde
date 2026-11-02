@@ -1176,6 +1176,68 @@ def _set_worker_speed(app, worker_name: str, *, tokens_per_second: float) -> Non
         db.session.commit()
 
 
+def _serve_custom_chat_model_at_speed(
+    app: Any, client: Any, headers: dict[str, str], *, tokens_per_second: float
+) -> tuple[str, FakeChatWorker]:
+    """Bring a chat worker online for a model of its own, measured at ``tokens_per_second``."""
+    custom_model, custom_worker = _serve_custom_chat_model(client, headers)
+    _set_worker_speed(app, custom_worker.name, tokens_per_second=tokens_per_second)
+    return custom_model, custom_worker
+
+
+def test_a_chat_request_over_the_capacity_of_every_online_worker_is_assigned_to_the_slower_worker(
+    app: Any,
+    client: Any,
+    request_headers: dict[str, str],
+) -> None:
+    """A 512-token chat request whose only online chat worker runs at 2 tokens/s (capacity 240) is possible and is
+    assigned to that worker at its next pop."""
+    custom_model, slow_worker = _serve_custom_chat_model_at_speed(app, client, request_headers, tokens_per_second=2)
+    chat_body = _chat_body(custom_model)
+    chat_body["max_tokens"] = 512
+    response = _post_chat(client, request_headers, chat_body)
+    assert response.status_code == 202, response.get_data(as_text=True)
+    request_id = response.get_json()["id"]
+
+    status = _chat_status(client, request_headers, request_id)
+    pop_result = slow_worker.pop()
+
+    assert status["is_possible"] is True
+    assert pop_result["id"] is not None, pop_result
+    assert pop_result["payload"]["max_length"] == 512
+    _take_worker_offline(app, slow_worker.name)
+
+
+def test_a_chat_request_a_capable_worker_can_take_is_not_assigned_to_a_slower_worker(
+    app: Any,
+    client: Any,
+    request_headers: dict[str, str],
+) -> None:
+    """With a chat worker at 50 tokens/s (capacity 6000) online for the model, a 512-token chat request is not
+    assigned to a worker at 2 tokens/s (capacity 240) and is assigned to the faster worker."""
+    custom_model, slow_worker = _serve_custom_chat_model_at_speed(app, client, request_headers, tokens_per_second=2)
+    fast_worker = FakeChatWorker(
+        client=client,
+        headers=request_headers,
+        name=f"CICD Fast Chat Scribe {uuid.uuid4().hex[:8]}",
+        models=[custom_model],
+    )
+    fast_worker.pop()
+    _set_worker_speed(app, fast_worker.name, tokens_per_second=50)
+    chat_body = _chat_body(custom_model)
+    chat_body["max_tokens"] = 512
+    response = _post_chat(client, request_headers, chat_body)
+    assert response.status_code == 202, response.get_data(as_text=True)
+
+    slow_pop_result = slow_worker.pop()
+    fast_pop_result = fast_worker.pop()
+
+    assert slow_pop_result["id"] is None, slow_pop_result
+    assert fast_pop_result["id"] is not None, fast_pop_result
+    _take_worker_offline(app, slow_worker.name)
+    _take_worker_offline(app, fast_worker.name)
+
+
 def test_a_model_unknown_to_the_reference_and_every_online_chat_worker_is_404_with_no_row_and_no_tax(app, client, make_api_user) -> None:
     from horde.model_reference import model_reference
 

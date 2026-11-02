@@ -57,8 +57,9 @@ the generation row.
 
 The pop offers a chat job to a worker only when the worker's measured speed can produce the job's `max_length` inside
 the base lease after the preparation allowance, that is when `speed × 120 s` is at least `max_length`. ADR 0041
-scopes this gate to chat requests: a legacy text job is offered whatever its length, and an assignment the gate would
-refuse is recorded with its outcome. A worker that has
+scopes this gate: a chat job goes first to workers that pass it and to a slower worker when no capable chat worker is
+online, a legacy text job is offered whatever its length, and an assignment over the worker's capacity is recorded
+with its outcome. A worker that has
 not recorded a speed yet is taken to run at `UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND` (10 tokens per second) until
 its completed jobs record a measured speed. The same rule
 is applied in the pop query and in the eligibility check that the status route and ADR 0040 use, so a worker that
@@ -79,9 +80,9 @@ whose speed caps the chat output it is offered below the length it declares).
 - A worker that stalls loses the job within 150 s whatever it was asked for.
 - A streaming chat worker can finish a reply of any permitted length within its cap: about 11 tokens per second for
   16384 tokens at the trusted cap.
-- A non-streamed chat job keeps the flat 150 s and is finishable because it is offered only to workers fast enough
-  for it. A plain text job keeps the flat 150 s and may be assigned to a slower worker, as ADR 0041 records.
-- A slow worker is offered shorter chat jobs than it declares. The gap is visible in
+- A non-streamed chat job keeps the flat 150 s and is finishable when a worker fast enough for it is online, which
+  ADR 0041 prefers. A plain text job keeps the flat 150 s and may be assigned to a slower worker, as ADR 0041 records.
+- A slow worker is offered shorter chat jobs than it declares while faster workers are online. The gap is visible in
   `horde.pop.lease_capacity_limited`.
 - A new worker is treated as running at 10 tokens per second and so is offered up to 1200 tokens until it records
   its speed; the assumption is replaced after its first completed jobs.
@@ -122,5 +123,5 @@ tells worker authors how progress posts renew it.
 ## More Information
 
 ADR 0013 sets the image job lease. ADR 0024 defines the progress posts that renew this lease. ADR 0040 uses the same
-speed gate when it selects the workers eligible for a request. ADR 0041 enforces the speed gate for chat requests
-only and records the legacy text assignments it would refuse.
+speed gate when it selects the workers eligible for a request. ADR 0041 makes the speed gate a preference for chat
+requests and records the assignments over a worker's capacity.

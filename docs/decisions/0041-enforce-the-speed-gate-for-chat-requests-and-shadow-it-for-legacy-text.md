@@ -44,11 +44,17 @@ The cost is about 123 requests a day with no eligible worker and up to about 1,4
 Jobs are attributed to workers by model, which is exact for single-worker models and approximate otherwise, and the
 capacities come from one reading of speeds that move a little between readings.
 
-Should the gate apply to legacy text requests, and how is its effect on them measured?
+Chat requests meet the same fleet. When the gate refuses a chat request to every worker below its `max_length`, a
+request over the capacity of every online chat worker for its model has no eligible worker. It waits out the chat
+front's grace and gets a 503, while the model's listing shows workers serving it.
+
+Should the gate apply to legacy text requests, how strictly should it apply to chat requests, and how is its effect
+measured?
 
 ## Decision Drivers
 
-- Chat requests need every assignment to be finishable inside the lease a worker that does not stream receives.
+- Chat requests should go to workers that finish them inside the lease a worker that does not stream receives.
+- A chat request for a model served only by slower workers should still be served.
 - Legacy text requests should keep the service they receive in production.
 - The effect the gate would have on legacy text must be measurable from production, so the scope can be revisited
   on evidence.
@@ -58,36 +64,48 @@ Should the gate apply to legacy text requests, and how is its effect on them mea
 
 - Enforce the gate for chat and legacy text requests.
 - Enforce the gate for chat requests and record legacy assignments it would refuse.
+- Prefer capable workers for chat requests and record every over-capacity assignment.
 - Enforce the gate for neither.
 
 ## Decision Outcome
 
-Chosen option: "Enforce the gate for chat requests and record legacy assignments it would refuse".
+Chosen option: "Prefer capable workers for chat requests and record every over-capacity assignment".
 
-`TextWorker.can_generate_with_eligibility_inputs` refuses a chat request over the worker's capacity with
-`lease_speed`, and `text_wp_speed_gate_clause` passes every legacy text request in the pop query. The status route,
-worker availability and the wait estimate of ADR 0040 read the same eligibility check, so slow workers count as
-capacity for legacy requests. `horde.pop.lease_capacity_limited` counts only pops by a worker whose capacity is below
-the chat output it declares.
+A capable worker for a chat request is an online chat worker for one of the request's models, not in maintenance or
+paused, whose declared chat limits admit the request, which declares every chat feature the request requires, and
+whose capacity is at least its `max_length` (`capable_chat_worker_clauses`). `TextWorker.can_generate_with_eligibility_inputs` refuses a chat request over the
+worker's capacity with `lease_speed` while a capable worker is online, and admits it when none is. In the pop query,
+`text_wp_speed_gate_clause` applies the same rule through a correlated `NOT EXISTS` over the capable workers, and
+passes every legacy text request. The feature test is `TextArrayContainsAll`, which compiles to `@>` on PostgreSQL
+and to a `json_each` anti-join on SQLite. The status
+route, worker availability and the wait estimate of ADR 0040 read the same eligibility check. Slow workers count as
+capacity for legacy requests, and for chat requests that no capable worker can take. A chat request over every online
+chat worker's capacity is therefore possible and is not refused as `no_eligible_worker`.
+`horde.pop.lease_capacity_limited` counts only pops by a worker whose capacity is below the chat output it declares.
 
-When a legacy text job is assigned to a worker whose capacity is below its `max_length`, the generation row stores
-`over_capacity_at_assignment`, the counter `horde.text.gate_shadow.assignments` is incremented and an INFO log line
-records the generation, request and worker ids with the `max_length`, capacity and speed. The marker fixes the record
-at assignment, since the worker's measured speed moves between pop and submit. The job's end is counted by
+When a legacy text or chat job is assigned to a worker whose capacity is below its `max_length`, the generation row
+stores `over_capacity_at_assignment`, the counter `horde.text.gate_shadow.assignments` is incremented and an INFO log
+line records the generation, request and worker ids with the `max_length`, capacity and speed. The marker fixes the
+record at assignment, since the worker's measured speed moves between pop and submit. The job's end is counted by
 `horde.text.gate_shadow.outcomes` as `completed` at a stored submit, `faulted` at the submit that faults it, or
-`aborted` when its lease lapses; a completed job's pop to submit time is recorded in
-`horde.text.gate_shadow.service_seconds`. Every record carries `horde.worker_trusted` and `horde.size_bucket`
-(`<=512`, `513-1024`, `1025-2048`, `2049-4096`, `>4096`). A fake generation is not recorded.
+`aborted` when its lease lapses. A completed job's pop to submit time is recorded in
+`horde.text.gate_shadow.service_seconds`. Every record has `horde.worker_trusted`, `horde.size_bucket` (`<=512`,
+`513-1024`, `1025-2048`, `2049-4096`, `>4096`) and `horde.chat`. A fake generation is not recorded.
 
 ### Consequences
 
-- Chat assignments stay finishable inside the base lease.
+- A chat request goes to a worker that finishes it inside the base lease whenever such a worker is online.
+- A chat request over the capacity of every online chat worker for its model is served by a slower worker. A worker
+  that does not stream progress can run past the lease, and the job is then aborted and restarted. The outcome
+  counter with `horde.chat` true measures how often.
 - Legacy text requests reach the slow workers that serve them in production, and none becomes impossible for want of
   a fast enough worker.
-- A legacy job over its worker's capacity can still run past the lease and be aborted and restarted; the outcome
+- A legacy job over its worker's capacity can still run past the lease and be aborted and restarted. The outcome
   counter measures how often.
 - The shadow records describe what enforcement would cost legacy text, by size and worker trust, without a second
   pass over historical data.
+- A faster worker without a feature the request requires does not keep the request from a slower worker that has
+  it, so a tool request reaches a slower worker that declares `tools`.
 
 ## Pros and Cons of the Options
 
@@ -99,10 +117,19 @@ at assignment, since the worker's measured speed moves between pop and submit. T
 
 ### Enforce the gate for chat requests and record legacy assignments it would refuse
 
-- Good, because chat requests get finishable assignments and legacy requests keep their service.
+- Good, because every chat assignment is finishable inside the base lease.
 - Good, because the cost of enforcing it for legacy text is measured continuously.
+- Bad, because a chat request over every online chat worker's capacity has no eligible worker and gets a 503 while
+  its model is listed as served.
+
+### Prefer capable workers for chat requests and record every over-capacity assignment
+
+- Good, because chat requests reach capable workers first and a model served only by slower workers stays servable.
+- Good, because the over-capacity chat assignments and the legacy ones are measured with the same records.
+- Bad, because the pop query evaluates a correlated subquery over the online chat workers for each chat request
+  above the popping worker's capacity.
 - Bad, because the two request families follow different offer rules, which the pop clause and the eligibility check
-  both carry.
+  both apply.
 
 ### Enforce the gate for neither
 
@@ -113,11 +140,18 @@ at assignment, since the worker's measured speed moves between pop and submit. T
 ## Confirmation
 
 `tests/unit/test_text_job_ttl.py` pins the pop clause and the eligibility check agreeing for chat and legacy
-requests, a slow worker refused a chat request and assigned a legacy one, the capacity-limited count reading only the
-chat declaration, and the shadow records: the marker and assignment count, the completed outcome with its service
-time, the faulted outcome counted once, the aborted outcome, and no record for an assignment within capacity.
-`tests/unit/test_text_worker_eligibility.py` pins availability counting a slow worker for a legacy request and not
-for a chat request. `docs/reference/chat_requests.md` records the rule and the counters under "Job lease".
+requests with and without a capable worker online, an offline, unavailable or under-declared faster worker not
+holding a chat request back, a faster worker counting as capable only when it declares every required feature, an
+unmeasured worker counting as capable at the assumed speed, a slow worker refused a
+chat request a capable worker can take and assigned a legacy one, the capacity-limited count reading only the chat
+declaration, and the shadow records: the marker and assignment count for legacy and chat jobs, the completed outcome
+with its service time, the faulted outcome counted once, the aborted outcome, and no record for an assignment within
+capacity, and the feature containment giving the same results on PostgreSQL and SQLite.
+`tests/unit/test_text_worker_eligibility.py` pins availability counting a slow worker for a legacy request,
+not for a chat request a capable worker takes, and for a chat request no online worker has the capacity for.
+`tests/integration/test_chat.py` pins a chat request over the only online worker's capacity being assigned to it, and
+a slower worker not receiving a chat request a capable worker can take. `docs/reference/chat_requests.md` records the
+rule and the counters under "Job lease".
 
 ## More Information
 

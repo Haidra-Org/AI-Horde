@@ -1711,12 +1711,12 @@ async def _cancel_open_requests(front_state: FrontState) -> None:
 class RequestTrace:
     """Time one admitted chat request and record how it ended, once.
 
-    The line logged at the end carries the request id, the submit and wake times, what woke the request, the wait,
+    The line logged at the end holds the request id, the submit and wake times, what woke the request, the wait,
     the status and code, the wake count, whether usage was estimated, how many reads showed the request done without
     a generation, the requested and served models and the ``Retry-After`` sent, for a ``queue_unavailable``
-    refusal the pool facts that decided it, and for a ``fail_fast`` request the wait estimate and eligible worker
-    threads of the status that took its first-read decision. It does not carry the API key, the messages or the
-    client's attribution.
+    refusal the pool facts that decided it, for a ``fail_fast`` request the wait estimate and eligible worker
+    threads of the status that took its first-read decision, and the request's completion limit with its source. It
+    does not hold the API key, the messages or the client's attribution.
     """
 
     def __init__(self, *, front_metrics: FrontMetrics, streamed: bool, received_at: float, chat_request: ChatCompletionRequest) -> None:
@@ -1834,6 +1834,7 @@ class RequestTrace:
             code=error.code,
             streamed=self.streamed,
             reason=error.queue_refusal.reason if error.queue_refusal is not None else None,
+            max_tokens=effective_completion_limit(self.chat_request, self._final_context_adjustments(watcher)),
             stage=error.no_eligible_worker_stage,
         )
         if error.metadata.submit_outcome == SubmitOutcome.UNKNOWN:
@@ -1888,6 +1889,7 @@ class RequestTrace:
             code=code,
         )
         self._record_max_tokens(watcher)
+        context_adjustments = self._final_context_adjustments(watcher)
         woke_at = watcher.woke_at if watcher is not None else None
         if woke_by is None and watcher is not None:
             woke_by = watcher.woke_by
@@ -1920,6 +1922,8 @@ class RequestTrace:
         finished_fields["first_read_eligible_worker_threads"] = (
             first_read_status.eligible_worker_threads if first_read_status is not None else None
         )
+        finished_fields["max_tokens"] = effective_completion_limit(self.chat_request, context_adjustments)
+        finished_fields["max_tokens_source"] = str(_max_tokens_source(self.chat_request, context_adjustments))
         request_label = f"Chat request {self.request_id}" if self.request_id is not None else "Unsubmitted chat request"
         # tests/stress/chat_scale_demo.py parses the leading fields in this order and format, and the horde-chat
         # dashboard's LogQL reads streamed, woke_by and code with greedy matches, so later fields go at the end and no
@@ -1940,9 +1944,21 @@ class RequestTrace:
             )
         message += (
             f" first_read_wait_time={_format_optional(finished_fields['first_read_wait_time'])} "
-            f"first_read_eligible_worker_threads={_format_optional(finished_fields['first_read_eligible_worker_threads'])}"
+            f"first_read_eligible_worker_threads={_format_optional(finished_fields['first_read_eligible_worker_threads'])} "
+            f"max_tokens={finished_fields['max_tokens']} max_tokens_source={finished_fields['max_tokens_source']}"
         )
         logger.bind(**finished_fields).info(message)
+
+    def _final_context_adjustments(self, watcher: ChatRequestWatcher | None) -> Sequence[object] | None:
+        """Return the ``context_adjustments`` of the delivered completion's status, else of the last status read.
+
+        The Horde reports a lowered completion limit only in a status, so the request's limit is read from the latest
+        status available. None when no status was read.
+        """
+        status = self._completion_status
+        if status is None and watcher is not None:
+            status = watcher.latest_status
+        return status.context_adjustments if status is not None else None
 
     def _record_max_tokens(self, watcher: ChatRequestWatcher | None) -> None:
         """Record the request's completion limit and its source, once per request the Horde accepted.
@@ -1954,10 +1970,7 @@ class RequestTrace:
         """
         if self._submitted_monotonic is None:
             return
-        status = self._completion_status
-        if status is None and watcher is not None:
-            status = watcher.latest_status
-        context_adjustments = status.context_adjustments if status is not None else None
+        context_adjustments = self._final_context_adjustments(watcher)
         self._front_metrics.record_max_tokens(
             max_tokens=effective_completion_limit(self.chat_request, context_adjustments),
             source=_max_tokens_source(self.chat_request, context_adjustments),

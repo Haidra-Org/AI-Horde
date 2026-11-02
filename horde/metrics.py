@@ -358,21 +358,21 @@ text_gate_shadow_assignments = logfire.metric_counter(
     "horde.text.gate_shadow.assignments",
     unit="1",
     description=(
-        "Legacy text jobs assigned to a worker whose measured speed does not finish their max_length inside the base "
-        "lease, split by worker trust and size bucket"
+        "Text and chat jobs assigned to a worker whose measured speed does not finish their max_length inside the "
+        "base lease, split by worker trust, size bucket and chat"
     ),
 )
 text_gate_shadow_outcomes = logfire.metric_counter(
     "horde.text.gate_shadow.outcomes",
     unit="1",
     description=(
-        "Outcomes (completed, faulted, aborted) of legacy text jobs assigned over the worker's lease capacity, split by "
-        "worker trust and size bucket"
+        "Outcomes (completed, faulted, aborted) of text and chat jobs assigned over the worker's lease capacity, split "
+        "by worker trust, size bucket and chat"
     ),
 )
 text_gate_shadow_service_seconds = _request_lifecycle_histogram(
     "horde.text.gate_shadow.service_seconds",
-    "Pop to submit time of completed legacy text jobs assigned over the worker's lease capacity",
+    "Pop to submit time of completed text and chat jobs assigned over the worker's lease capacity",
 )
 
 
@@ -691,7 +691,10 @@ pop_skipped = logfire.metric_counter(
 pop_lease_capacity_limited = logfire.metric_counter(
     "horde.pop.lease_capacity_limited",
     unit="1",
-    description="Text pops by a chat worker whose measured speed caps the chat max_length it is offered below its declared one",
+    description=(
+        "Text pops by a chat worker whose lease capacity is below its declared chat max_length, so it is offered a "
+        "longer chat request only when no capable chat worker is online"
+    ),
 )
 
 # --- submit ------------------------------------------------------------------

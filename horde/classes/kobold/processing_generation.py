@@ -88,7 +88,7 @@ class LeaseRenewal(enum.StrEnum):
 
 
 class GateShadowOutcome(enum.StrEnum):
-    """How a legacy text job assigned over its worker's lease capacity ended."""
+    """How a text or chat job assigned over its worker's lease capacity ended."""
 
     COMPLETED = "completed"
     """The worker submitted a generation that was stored."""
@@ -294,10 +294,10 @@ class TextProcessingGeneration(ProcessingGeneration):
         nullable=False,
         server_default=expression.false(),
     )
-    """Whether a legacy text job's ``max_length`` exceeded the worker's lease capacity when it was assigned. The speed
-    gate is enforced for chat requests only, so the outcome of such an assignment is recorded against this marker
-    rather than against the worker's speed at submit, which moves between pop and submit. False on chat and fake
-    generations."""
+    """Whether the job's ``max_length`` exceeded the worker's lease capacity when it was assigned. A legacy text job is
+    assigned whatever its length, and a chat job is assigned over the capacity when no capable chat worker is online.
+    The outcome of such an assignment is recorded against this marker rather than against the worker's speed at
+    submit, which moves between pop and submit. False on fake generations."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         over_capacity = self._assignment_exceeds_lease_capacity(kwargs)
@@ -312,11 +312,11 @@ class TextProcessingGeneration(ProcessingGeneration):
 
     @classmethod
     def _assignment_exceeds_lease_capacity(cls, assignment: dict[str, object]) -> bool:
-        """Return whether an assignment gives a legacy text job to a worker whose speed does not finish it in the base lease.
+        """Return whether an assignment gives a job to a worker whose speed does not finish it in the base lease.
 
-        The speed gate refuses such a job to a chat request only; for a legacy request the assignment proceeds and is
-        marked, so the effect the gate would have is measurable. A fake generation is not a real assignment and is
-        not marked.
+        A legacy text job reaches such a worker whatever its length, and a chat job reaches it when no capable chat
+        worker is online. Either assignment is marked, so how such jobs end is measurable. A fake generation is not a
+        real assignment and is not marked.
 
         Args:
             assignment: The constructor's keyword arguments, which carry the request and worker ids.
@@ -330,7 +330,7 @@ class TextProcessingGeneration(ProcessingGeneration):
         # get() takes them from the identity map.
         waiting_prompt = db.session.get(TextWaitingPrompt, assignment["wp_id"])
         worker = db.session.get(TextWorker, assignment["worker_id"])
-        if waiting_prompt is None or worker is None or waiting_prompt.is_chat:
+        if waiting_prompt is None or worker is None:
             return False
         return waiting_prompt.max_length > get_text_worker_lease_capacity(worker.speed)
 
@@ -351,15 +351,17 @@ class TextProcessingGeneration(ProcessingGeneration):
             },
         )
 
-    def _gate_shadow_attributes(self) -> dict[str, str]:
-        """Return the metric attributes of a gate shadow record: the worker owner's trust and the request's size."""
+    def _gate_shadow_attributes(self) -> dict[str, str | bool]:
+        """Return the metric attributes of a gate shadow record: the worker owner's trust, the request's size and
+        whether it is a chat request."""
         return {
             "horde.worker_trusted": str(bool(self.worker.user.trusted)).lower(),
             "horde.size_bucket": TEXT_LENGTH_BUCKETS.label(self.wp.max_length),
+            "horde.chat": bool(self.wp.is_chat),
         }
 
     def _record_over_capacity_assignment(self) -> None:
-        """Count and log a legacy text job assigned over its worker's lease capacity, once its row has an id.
+        """Count and log a text or chat job assigned over its worker's lease capacity, once its row has an id.
 
         Side Effects:
             Increments ``horde.text.gate_shadow.assignments`` and logs the assignment with its ids.
@@ -367,13 +369,13 @@ class TextProcessingGeneration(ProcessingGeneration):
         lease_capacity = get_text_worker_lease_capacity(self.worker.speed)
         text_gate_shadow_assignments.add(1, self._gate_shadow_attributes())
         logger.info(
-            f"Legacy text generation {self.id} of wp {self.wp_id} assigned over the lease capacity of worker "
-            f"{self.worker_id}: max_length={self.wp.max_length} capacity={lease_capacity} "
+            f"{'Chat' if self.wp.is_chat else 'Legacy text'} generation {self.id} of wp {self.wp_id} assigned over the "
+            f"lease capacity of worker {self.worker_id}: max_length={self.wp.max_length} capacity={lease_capacity} "
             f"speed={get_effective_text_worker_speed(self.worker.speed)}",
         )
 
     def _record_gate_shadow_outcome(self, outcome: GateShadowOutcome) -> None:
-        """Count how a legacy text job assigned over its worker's lease capacity ended; other jobs are not counted.
+        """Count how a text or chat job assigned over its worker's lease capacity ended. Other jobs are not counted.
 
         Args:
             outcome: How the job ended.
@@ -392,8 +394,8 @@ class TextProcessingGeneration(ProcessingGeneration):
         """Persist the base lease, the deadline from pop to submission offered to the worker for this assignment.
 
         The lease does not grow with ``max_length``, since a worker that pops a job and never submits holds it for
-        the whole lease. The pop offers a job only to a worker whose speed finishes its ``max_length`` inside this
-        lease, and a chat job's progress posts extend it up to
+        the whole lease. The pop offers a chat job first to the workers whose speed finishes its ``max_length`` inside
+        this lease, and a chat job's progress posts extend it up to
         [`text_job_lease_cap`][horde.classes.kobold.processing_generation.text_job_lease_cap].
         """
         self.job_ttl = TEXT_JOB_LEASE_SECONDS
@@ -428,7 +430,7 @@ class TextProcessingGeneration(ProcessingGeneration):
     def record_stale_abort(self) -> None:
         """Count this generation's abort for a lapsed lease, split by worker owner trust and by chat or legacy text.
 
-        A legacy text job assigned over its worker's lease capacity is also counted as an aborted gate shadow outcome.
+        A job assigned over its worker's lease capacity is also counted as an aborted gate shadow outcome.
         """
         text_stale_aborts.add(
             1,

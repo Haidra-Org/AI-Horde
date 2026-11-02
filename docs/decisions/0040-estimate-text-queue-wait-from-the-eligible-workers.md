@@ -44,7 +44,8 @@ could take".
 
 The eligible workers for a request are those whose declarations and measured speed pass the eligibility check used
 by the pop: model, chat opt-in, length and context limits, slow-worker and trust settings, and for a chat request
-the speed gate of ADR 0038. ADR 0041 leaves legacy text requests ungated, so slow workers count toward them. Their
+the speed gate of ADR 0038. ADR 0041 leaves legacy text requests ungated, so slow workers count toward them, and
+counts a slow worker for a chat request when no capable chat worker is online. Their
 availability is measured when the request is created and cached for a short time for the status
 polls that follow.
 

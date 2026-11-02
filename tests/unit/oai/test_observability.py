@@ -28,6 +28,7 @@ from horde.oai.metrics import (
     INFLIGHT_SOURCE_MAX_NAME,
     INFLIGHT_SOURCES_NAME,
     MAX_TOKENS_NAME,
+    MAX_TOKENS_OVER_LABEL,
     NATIVE_CALL_DURATION_NAME,
     QUEUE_WAIT_NAME,
     REASONING_SHARE_NAME,
@@ -36,6 +37,7 @@ from horde.oai.metrics import (
     STREAM_FAILURES_NAME,
     SUBMIT_OUTCOME_UNKNOWN_NAME,
     WAKES_NAME,
+    max_tokens_bucket,
 )
 from tests.unit.oai.conftest import (
     CALL_WAIT_SECONDS,
@@ -83,6 +85,8 @@ FINISHED_FIELDS: frozenset[str] = frozenset(
         "retry_after",
         "first_read_wait_time",
         "first_read_eligible_worker_threads",
+        "max_tokens",
+        "max_tokens_source",
     },
 )
 """The structured fields of the finished-request line."""
@@ -262,6 +266,80 @@ async def test_a_no_worker_refusal_at_submit_records_the_submit_stage(start_fron
     assert response.status_code == 503
     assert front.metric_total(ERRORS_NAME, horde_code="no_eligible_worker", horde_stage="submit") == 1
     assert front.metric_total(ERRORS_NAME, horde_code="no_eligible_worker", horde_stage="grace") == 0
+
+
+@pytest.mark.parametrize(
+    ("chat_body_overrides", "expected_bucket"),
+    [
+        ({"max_tokens": 512}, "512"),
+        ({"max_tokens": 600}, "768"),
+        ({"max_tokens": None}, "512"),
+        ({"max_tokens": None, "max_completion_tokens": 16384}, "16384"),
+    ],
+    ids=["on_a_bound", "between_bounds", "default", "largest_limit"],
+)
+async def test_an_error_records_the_completion_limit_bucket(
+    start_front: StartFront,
+    chat_body_overrides: dict[str, Any],
+    expected_bucket: str,
+) -> None:
+    """A refusal is counted with the bucket upper bound of the request's completion limit, so refusals can be read by
+    the limit clients ask for."""
+    chat_body = {key: value for key, value in build_chat_body(**chat_body_overrides).items() if value is not None}
+    async with start_front() as front:
+        front.horde.submit_route.respond(
+            403,
+            json={"message": "No worker is currently serving the model 'test-model'.", "rc": "NoEligibleWorker"},
+        )
+        response = await front.client.post("/v1/chat/completions", json=chat_body)
+
+    assert response.status_code == 503
+    (error_point,) = metric_points(front.metric_reader, ERRORS_NAME)
+    assert error_point.attributes["horde.max_tokens_bucket"] == expected_bucket
+
+
+async def test_an_error_after_a_lowered_limit_records_the_lowered_limit_bucket(start_front: StartFront) -> None:
+    """A request whose limit the Horde lowered from 4096 to 1024 is counted in the ``1024`` bucket when it times out."""
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"nonstream_timeout_seconds": 0.3})) as front:
+        front.horde.status_payload = {
+            **waiting_status(),
+            "context_adjustments": [{"from": 4096, "to": 1024, "reason": "worker_max_length"}],
+        }
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(max_tokens=4096))
+
+    assert response.status_code == 408
+    assert front.metric_total(ERRORS_NAME, horde_code="ChatRequestTimeout", horde_max_tokens_bucket="1024") == 1
+
+
+@pytest.mark.parametrize(
+    ("max_tokens", "expected_bucket"),
+    [
+        (16, "16"),
+        (17, "64"),
+        (16384, "16384"),
+        (16385, MAX_TOKENS_OVER_LABEL),
+    ],
+)
+async def test_the_completion_limit_bucket_is_the_smallest_bound_at_or_above_the_limit(max_tokens: int, expected_bucket: str) -> None:
+    assert max_tokens_bucket(max_tokens) == expected_bucket
+
+
+async def test_the_finished_line_records_a_lowered_completion_limit_and_its_source(
+    start_front: StartFront,
+    captured_logs: CapturedLogs,
+) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = {
+            **done_status(),
+            "context_adjustments": [{"from": 4096, "to": 2048, "reason": "worker_max_length"}],
+        }
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(max_tokens=4096))
+
+    assert response.status_code == 200
+    (finished_record,) = captured_logs.finished_records()
+    assert finished_record["extra"]["max_tokens"] == 2048
+    assert finished_record["extra"]["max_tokens_source"] == "lowered"
+    assert finished_record["message"].endswith(" max_tokens=2048 max_tokens_source=lowered")
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -617,10 +695,12 @@ async def test_finished_line_carries_the_wait_fields_and_no_key_prompt_or_title(
     assert finished_fields["requested_model"] == MODEL_NAME
     assert finished_fields["served_model"] == MODEL_NAME
     assert finished_fields["retry_after"] is None
+    assert finished_fields["max_tokens"] == 64
+    assert finished_fields["max_tokens_source"] == "client"
     assert not QUEUE_REFUSAL_FIELDS & finished_fields.keys()
     assert finished_record["message"].endswith(
         f" requested_model={MODEL_NAME} served_model={MODEL_NAME} retry_after=none "
-        "first_read_wait_time=none first_read_eligible_worker_threads=none",
+        "first_read_wait_time=none first_read_eligible_worker_threads=none max_tokens=64 max_tokens_source=client",
     )
     logged_text = finished_record["message"] + repr(finished_fields)
     for private_text in (API_KEY, CLIENT_TITLE, PROMPT_TEXT):
@@ -679,7 +759,8 @@ async def test_queue_unavailable_records_the_reason_and_logs_the_estimate_and_re
     assert finished_record["message"].endswith(
         f" requested_model={MODEL_NAME} served_model=none retry_after={retry_after} queue_reason={reason} "
         f"wait_time={wait_time} eligible_worker_threads={eligible_worker_threads} "
-        f"first_read_wait_time={wait_time} first_read_eligible_worker_threads={eligible_worker_threads}",
+        f"first_read_wait_time={wait_time} first_read_eligible_worker_threads={eligible_worker_threads} "
+        "max_tokens=64 max_tokens_source=client",
     )
 
 
@@ -719,7 +800,8 @@ async def test_admitted_request_logs_the_first_reads_estimate_only_in_the_fail_f
     assert finished_fields["first_read_eligible_worker_threads"] == logged_eligible_worker_threads
     assert finished_record["message"].endswith(
         f" first_read_wait_time={logged_wait_time if logged_wait_time is not None else 'none'} "
-        f"first_read_eligible_worker_threads={logged_eligible_worker_threads if logged_eligible_worker_threads is not None else 'none'}",
+        f"first_read_eligible_worker_threads={logged_eligible_worker_threads if logged_eligible_worker_threads is not None else 'none'} "
+        "max_tokens=64 max_tokens_source=client",
     )
 
 

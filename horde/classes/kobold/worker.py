@@ -8,21 +8,22 @@ import json
 import math
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATIONS, ChatFeature, ChatLimitField
 from horde_sdk.worker.chat_declaration import IMAGE_PART_TRANSPORTS, ChatImageTransport
-from sqlalchemy import JSON, ScalarSelect
+from sqlalchemy import JSON, ScalarSelect, case
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, relationship
-from sqlalchemy.sql import expression
+from sqlalchemy.sql import ColumnElement, expression
 
 from horde import exceptions as e
 from horde import vars as hv
 from horde.bridge_reference import (
     is_backed_validated,
 )
+from horde.classes.base.sql_constructs import TextArrayContainsAll
 from horde.classes.base.worker import (
     SPEED_BASELINE_THINGS_PER_SEC,
     Worker,
@@ -61,6 +62,9 @@ UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND = 10.0
 and the speed gate offers it only jobs its assumed speed can finish, so the assumption must admit the jobs clients
 commonly send: 10 tokens per second admits 1200 tokens inside the base lease, above the usual 512-token request, and
 the first completed jobs replace it with the measured value."""
+
+CHAT_WORKER_ONLINE_WINDOW = timedelta(seconds=300)
+"""How recently a chat worker must have checked in to count as online. It is the window ``get_active_workers()`` uses."""
 
 
 def bump_text_worker_declaration_generation() -> None:
@@ -130,6 +134,64 @@ def get_text_worker_lease_capacity(worker_speed: float) -> int:
     """
     generation_seconds = TEXT_JOB_LEASE_SECONDS - TEXT_JOB_PREPARATION_SECONDS
     return math.floor(get_effective_text_worker_speed(worker_speed) * generation_seconds)
+
+
+def text_worker_lease_capacity_covers_clause(worker_entity: Any, max_length: Any) -> ColumnElement[bool]:
+    """Return the SQL form of ``get_text_worker_lease_capacity(worker.speed) >= max_length`` for a text worker row.
+
+    Args:
+        worker_entity: The text worker entity or alias whose ``speed`` column is read.
+        max_length: The output length to compare with, a column or a value.
+
+    Returns:
+        The condition that the worker's effective speed produces ``max_length`` tokens inside the base lease after the
+        preparation allowance.
+    """
+    text_divisor = hv.thing_divisors["text"]
+    effective_speed = case(
+        (worker_entity.speed == SPEED_BASELINE_THINGS_PER_SEC * text_divisor, UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND),
+        else_=worker_entity.speed / text_divisor,
+    )
+    # floor(x) >= n holds exactly when x >= n for an integer n, so the SQL form compares the product directly.
+    capacity_covers_length: ColumnElement[bool] = effective_speed * (TEXT_JOB_LEASE_SECONDS - TEXT_JOB_PREPARATION_SECONDS) >= max_length
+    return capacity_covers_length
+
+
+def capable_chat_worker_clauses(
+    worker_entity: Any,
+    *,
+    max_length: Any,
+    max_context_length: Any,
+    required_features: Any,
+) -> list[ColumnElement[bool]]:
+    """Return the clauses met by a chat worker row that can take a chat request of these lengths inside the base lease.
+
+    The worker is online, accepts chat jobs, is not in maintenance or paused, declares chat limits at or above the
+    request's lengths, declares every chat feature the request requires, and has a lease capacity of at least
+    ``max_length``. The caller adds the model condition. A chat request over a worker's capacity is offered to that
+    worker only when no worker meets these clauses for one of the request's models. A faster worker that lacks a
+    required feature cannot serve the request, so it does not keep the request from a slower worker that has it.
+
+    Args:
+        worker_entity: The text worker entity or alias the clauses read.
+        max_length: The request's ``max_length``, a column or a value.
+        max_context_length: The request's ``max_context_length``, a column or a value.
+        required_features: The request's ``chat_required_features``, a column or a value of
+            ``text_array_column_type``.
+
+    Returns:
+        The clauses.
+    """
+    return [
+        worker_entity.last_check_in > datetime.utcnow() - CHAT_WORKER_ONLINE_WINDOW,
+        worker_entity.accepts_chat_jobs.is_(True),
+        worker_entity.maintenance.is_(False),
+        worker_entity.paused.is_(False),
+        worker_entity.chat_max_length >= max_length,
+        worker_entity.chat_max_context_length >= max_context_length,
+        TextArrayContainsAll(worker_entity.chat_features, required_features),
+        text_worker_lease_capacity_covers_clause(worker_entity, max_length),
+    ]
 
 
 class TextWorkerSoftprompts(db.Model):
@@ -389,9 +451,14 @@ class TextWorker(Worker):
         if not waiting_prompt.slow_workers and self.speed < get_minimum_text_worker_speed(model_names):
             return [False, "performance"]
         # A chat job the worker cannot finish inside the base lease would only be renewed by progress posts, which a
-        # worker that never posts does not send; refusing it at offer time keeps every chat assignment finishable.
-        # A legacy text job is assigned whatever its length, and an over-capacity assignment is recorded at pop.
-        if waiting_prompt.is_chat and waiting_prompt.max_length > get_text_worker_lease_capacity(self.speed):
+        # worker that never posts does not send. Such a job is left to a worker that finishes it in time while one is
+        # online, and is offered to this worker otherwise, so a model served only by slow workers stays servable.
+        # A legacy text job is assigned whatever its length. Either over-capacity assignment is recorded at pop.
+        if (
+            waiting_prompt.is_chat
+            and waiting_prompt.max_length > get_text_worker_lease_capacity(self.speed)
+            and waiting_prompt.has_capable_chat_worker()
+        ):
             return [False, "lease_speed"]
         if waiting_prompt.validated_backends and not is_backed_validated(self.bridge_agent):
             return [False, "bridge_version"]

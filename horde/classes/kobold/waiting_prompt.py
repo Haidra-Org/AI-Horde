@@ -11,7 +11,7 @@ from typing import Any
 
 from horde_sdk.generation_parameters.text.chat_policy import DEFAULT_CHAT_CONFORMANCE, ChatConformance
 from horde_sdk.worker.chat_declaration import ChatImageTransport
-from sqlalchemy import Text, cast
+from sqlalchemy import Text, cast, literal
 from sqlalchemy.orm import Mapped, query_expression
 from sqlalchemy.sql import ColumnElement, expression
 
@@ -38,7 +38,7 @@ from horde.classes.kobold.chat_request import (
     select_chat_transport,
 )
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
-from horde.classes.kobold.worker import text_array_column_type
+from horde.classes.kobold.worker import TextWorker, capable_chat_worker_clauses, text_array_column_type
 from horde.config import Config
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
@@ -182,6 +182,11 @@ class TextWaitingPrompt(WaitingPrompt):
     """The ``(operation_key, operation_fingerprint)`` pair activation claims, or None. A plain attribute rather than
     a column, so it survives the rollback a deadlock retry of activation makes and is written again in the retried
     transaction."""
+    capable_chat_worker_lookup = None
+    """The ``max_length`` and ``max_context_length`` of the last query by
+    [`has_capable_chat_worker`][horde.classes.kobold.waiting_prompt.TextWaitingPrompt.has_capable_chat_worker], with
+    its result, or None before the first query. A plain attribute rather than a column, so one eligibility pass over
+    many workers runs one query, and a changed length runs a new one."""
     chat_messages_offloaded = db.Column(db.Boolean, default=False, nullable=False, server_default=expression.false())
     """Whether a chat request's messages, images inlined, were also stored as one object under
     [`build_chat_messages_key`][horde.classes.kobold.chat_request.build_chat_messages_key] at submit, so a worker that
@@ -283,6 +288,35 @@ class TextWaitingPrompt(WaitingPrompt):
         if self.carries_chat_images is not None:
             return bool(self.carries_chat_images)
         return has_image_parts(self.messages or [])
+
+    def has_capable_chat_worker(self) -> bool:
+        """Return whether an online chat worker for one of this request's models finishes it inside the base lease.
+
+        A capable worker meets
+        [`capable_chat_worker_clauses`][horde.classes.kobold.worker.capable_chat_worker_clauses] and serves one of the
+        request's models with chat jobs. The result is kept in
+        [`capable_chat_worker_lookup`][horde.classes.kobold.waiting_prompt.TextWaitingPrompt.capable_chat_worker_lookup]
+        for the lengths it was queried with.
+
+        Returns:
+            True when such a worker is online. A worker whose capacity is below the request's ``max_length`` is then
+            refused the request.
+        """
+        lookup = self.capable_chat_worker_lookup
+        if lookup is not None and lookup[0] == self.max_length and lookup[1] == self.max_context_length:
+            return lookup[2]
+        capable_worker_query = db.session.query(TextWorker.id).filter(
+            *capable_chat_worker_clauses(
+                TextWorker,
+                max_length=self.max_length,
+                max_context_length=self.max_context_length,
+                required_features=literal(list(self.chat_required_features or ()), type_=text_array_column_type),
+            ),
+            TextWorker.chat_model_id.in_(self.get_model_names()),
+        )
+        has_capable_worker = bool(db.session.query(capable_worker_query.exists()).scalar())
+        self.capable_chat_worker_lookup = (self.max_length, self.max_context_length, has_capable_worker)
+        return has_capable_worker
 
     def build_worker_messages(self, generation: TextProcessingGeneration) -> list[dict[str, Any]]:
         """Return the stored messages with each image reference replaced by what the generation's worker receives.

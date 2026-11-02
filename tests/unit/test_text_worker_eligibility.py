@@ -324,16 +324,18 @@ def test_availability_counts_a_chat_worker_by_its_chat_limits(
     assert availability.worker_count == 1
 
 
-def test_availability_counts_a_slow_worker_for_a_legacy_request_over_its_capacity_and_not_for_a_chat_request(
+def test_availability_counts_a_slow_worker_for_a_legacy_request_over_its_capacity_and_not_for_a_chat_request_a_capable_worker_takes(
     db_session: Any,
     fake_redis: Any,
     make_user: Any,
 ) -> None:
     """A worker at 3 tokens/s (capacity 360) counts toward a legacy request for 512 tokens, which the speed gate does
-    not bound, and not toward a chat request for 512 tokens, which the gate refuses it with ``lease_speed``."""
+    not bound. It does not count toward a chat request for 512 tokens while a chat worker at 10 tokens/s (capacity
+    1200) is online, and the gate refuses it with ``lease_speed``."""
     user = make_user()
     _make_text_worker(user, "slow-model", speed=3)
     slow_chat_worker = _make_chat_worker(user, speed=3)
+    _make_chat_worker(user)
     legacy_request = _queue_text_request(user, ["slow-model"], max_length=512)
     legacy_request.slow_workers = True
     db.session.commit()
@@ -343,8 +345,26 @@ def test_availability_counts_a_slow_worker_for_a_legacy_request_over_its_capacit
     chat_availability = functions.get_worker_availability_for_request(chat_request)
 
     assert legacy_availability.worker_count == 1
-    assert chat_availability.worker_count == 0
+    assert chat_availability.worker_count == 1
     assert _chat_eligibility(slow_chat_worker, chat_request) == [False, "lease_speed"]
+
+
+def test_availability_counts_a_slow_chat_worker_when_no_online_chat_worker_has_the_capacity(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """A chat request for 512 tokens whose only online chat worker runs at 3 tokens/s (capacity 360) has that worker
+    eligible, so the request is possible and has no declaration gap."""
+    user = make_user()
+    slow_chat_worker = _make_chat_worker(user, speed=3)
+    chat_request = _make_chat_request(user, {"max_length": 512})
+
+    availability = functions.get_worker_availability_for_request(chat_request)
+
+    assert availability.worker_count == 1
+    assert availability.impossible_reason is None
+    assert _chat_eligibility(slow_chat_worker, chat_request) == [True, None]
 
 
 @pytest.mark.parametrize(

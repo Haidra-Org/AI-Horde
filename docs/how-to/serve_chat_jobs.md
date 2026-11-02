@@ -389,8 +389,9 @@ apikey: <worker owner's key>
   `{"accepted_seq": n, "cancelled": false}` and does not append an entry.
 - The job's lease is the pop's `ttl`, 150 seconds. Each accepted post with new text extends it to end 150 seconds
   after the post, up to 600 seconds from the pop for a trusted worker and 200 for an untrusted one; a retried post
-  does not extend it. A job that does not stream keeps the 150 seconds, and the pop offers only jobs whose
-  `max_length` the worker's measured speed finishes in 120 of them (see the
+  does not extend it. A job that does not stream keeps the 150 seconds. The pop offers a job first to workers whose
+  measured speed finishes its `max_length` in 120 of them, and to a slower worker only when no such worker is online
+  for the model. A slower worker that does not post progress can lose such a job when the lease lapses (see the
   [Job lease](../reference/chat_requests.md#job-lease) reference).
 - `"cancelled": true` in a `200` means the client cancelled the request: stop generating and do not submit. The
   delta in that post was accepted and is not needed again. The job was settled at the cancel on the content

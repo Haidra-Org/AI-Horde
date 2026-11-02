@@ -23,6 +23,7 @@ binds instruments created before ``logfire.configure`` runs once it does.
 
 from __future__ import annotations
 
+import bisect
 from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from typing import Protocol
@@ -34,6 +35,7 @@ from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, V
 from horde.metrics import BUCKETS_REQUEST_LIFECYCLE_SECONDS, BUCKETS_SECONDS
 
 __all__ = [
+    "MAX_TOKENS_OVER_LABEL",
     "METER_NAME",
     "OMITTED_REASONING_EFFORT_LABEL",
     "CancelOutcome",
@@ -49,6 +51,7 @@ __all__ = [
     "RelayOutcome",
     "get_front_meter",
     "histogram_views",
+    "max_tokens_bucket",
 ]
 
 METER_NAME: str = "horde.oai"
@@ -189,6 +192,9 @@ BUCKETS_MAX_TOKENS: tuple[int, ...] = (
 """Completion limit bucket boundaries in tokens. The 512 boundary is the default limit of a request without
 ``max_tokens``, and 16384 is the largest limit the Horde accepts."""
 
+MAX_TOKENS_OVER_LABEL: str = "over"
+"""The ``horde.max_tokens_bucket`` label of a completion limit above the last bound of ``BUCKETS_MAX_TOKENS``."""
+
 BUCKETS_REASONING_SHARE: tuple[float, ...] = (
     0.0,
     0.1,
@@ -256,6 +262,7 @@ class MetricAttribute(StrEnum):
     CONTENT = "horde.content"
     REASONING_EFFORT = "horde.reasoning_effort"
     SOURCE = "horde.source"
+    MAX_TOKENS_BUCKET = "horde.max_tokens_bucket"
 
 
 class CompletionContent(StrEnum):
@@ -377,6 +384,26 @@ class InflightCounts(Protocol):
     def largest_source_inflight(self) -> int:
         """Return the most slots one source holds."""
         ...
+
+
+def max_tokens_bucket(max_tokens: int) -> str:
+    """Return the ``horde.max_tokens_bucket`` label of a completion limit.
+
+    The label is the smallest bound of ``BUCKETS_MAX_TOKENS`` at or above the limit, the upper bound of the limit's
+    bucket in ``horde.oai.request.max_tokens``, or
+    [`MAX_TOKENS_OVER_LABEL`][horde.oai.metrics.MAX_TOKENS_OVER_LABEL] above the last bound. A limit of
+    600 is labelled ``768``, a limit of 512 is labelled ``512``, and a limit of 20000 is labelled ``over``.
+
+    Args:
+        max_tokens: The completion limit, in tokens.
+
+    Returns:
+        The label.
+    """
+    bound_index = bisect.bisect_left(BUCKETS_MAX_TOKENS, max_tokens)
+    if bound_index == len(BUCKETS_MAX_TOKENS):
+        return MAX_TOKENS_OVER_LABEL
+    return str(BUCKETS_MAX_TOKENS[bound_index])
 
 
 def get_front_meter() -> Meter:
@@ -582,15 +609,18 @@ class FrontMetrics:
         code: str | None,
         streamed: bool,
         reason: str | None,
+        max_tokens: int,
         stage: NoEligibleWorkerStage | None = None,
     ) -> None:
-        """Record an admitted chat request answered with an error status before any header was sent.
+        """Record an admitted chat request that got an error status before any header was sent.
 
         Args:
             status_code: The HTTP status sent.
             code: The error code.
             streamed: Whether the request is streamed.
             reason: Which rule refused a ``queue_unavailable`` request; None for every other error.
+            max_tokens: The request's completion limit, recorded as its
+                [`max_tokens_bucket`][horde.oai.metrics.max_tokens_bucket] so the label stays bounded.
             stage: The stage at which a ``no_eligible_worker`` request was found unservable. None for every other
                 error.
         """
@@ -602,6 +632,7 @@ class FrontMetrics:
                 MetricAttribute.STREAMED: streamed,
                 MetricAttribute.REASON: reason or "",
                 MetricAttribute.STAGE: str(stage) if stage is not None else "",
+                MetricAttribute.MAX_TOKENS_BUCKET: max_tokens_bucket(max_tokens),
             },
         )
 
