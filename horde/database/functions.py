@@ -1362,6 +1362,12 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 ImageWaitingPrompt.nsfw.is_(False),
                 worker.nsfw is True,
             ),
+            # A trusted-only request is refused to an untrusted owner's worker by can_generate as well. Filtering
+            # here keeps such a request from taking a slot in the page of a worker that cannot serve it.
+            or_(
+                ImageWaitingPrompt.trusted_workers.is_(False),
+                worker.user.trusted is True,
+            ),
             or_(
                 not_(ImageWaitingPrompt.params.has_key("loras")),
                 and_(

@@ -153,6 +153,12 @@ def text_wp_offer_clauses(worker, models_list):
             TextWaitingPrompt.nsfw.is_(False),
             worker.nsfw is True,
         ),
+        # A trusted-only request is refused to an untrusted owner's worker by can_generate as well. Filtering here keeps
+        # such a request from taking a slot in the page of a worker that cannot serve it.
+        or_(
+            TextWaitingPrompt.trusted_workers.is_(False),
+            worker.user.trusted is True,
+        ),
         or_(
             wp_serves_model,
             ~wp_names_any_model,
@@ -267,7 +273,6 @@ def worker_may_be_speed_gated(worker, models_list) -> bool:
 def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_user_ids=None, page=0):
     # This is just the top 3 - Adjusted method to send Worker object. Filters to add.
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1
-    # TODO: Filter by WP.trusted_workers == False __ONLY IF__ Worker.user.trusted == False
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
     PER_PAGE = 3  # how many requests we're picking up to filter further

@@ -85,6 +85,37 @@ def _make_pair(make_user: Any, make_user_role: Any) -> tuple[ImageWaitingPrompt,
     return _make_request(user), _make_worker(user)
 
 
+def _activate(request: ImageWaitingPrompt) -> None:
+    """Make ``request`` a pop candidate without the kudos bookkeeping of ``activate()``."""
+    request.active = True
+    request.expiry = datetime.utcnow() + timedelta(minutes=10)
+    db.session.commit()
+
+
+def test_a_trusted_only_request_is_paged_only_to_a_trusted_owners_worker(
+    db_session: Any,
+    make_user: Any,
+    make_user_role: Any,
+) -> None:
+    """The pop query of a worker whose owner is not trusted does not page a trusted-only request, so the request takes
+    no slot in that worker's page. Once the owner is trusted, the same worker pages it."""
+    from horde.database import functions as database
+
+    user = make_user()
+    worker = _make_worker(user)
+    request = _make_request(user)
+    request.trusted_workers = True
+    _activate(request)
+
+    untrusted_popped = database.get_sorted_wp_filtered_to_worker(worker, [_MODEL], [])
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    db.session.expire_all()
+    trusted_popped = database.get_sorted_wp_filtered_to_worker(worker, [_MODEL], [])
+
+    assert [wp.id for wp in untrusted_popped] == []
+    assert [wp.id for wp in trusted_popped] == [request.id]
+
+
 @pytest.mark.parametrize(
     ("request_change", "worker_change", "model_names", "reason"),
     [

@@ -919,6 +919,37 @@ def _post_progress(client: FlaskClient, generation: TextProcessingGeneration, se
     )
 
 
+class TestTrustedOnlyRequests:
+    """A request for trusted workers only is paged only to workers whose owner is trusted."""
+
+    def test_a_trusted_only_request_is_paged_only_to_a_trusted_owners_worker(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        make_user_role: MakeUserRole,
+    ) -> None:
+        """The pop query of a worker whose owner is not trusted does not page a trusted-only request, so the request
+        takes no slot in that worker's page. Once the owner is trusted, the same worker pages and can take it."""
+        user = make_user()
+        worker = _make_worker(user)
+        waiting_prompt = _make_request(user, 80)
+        waiting_prompt.trusted_workers = True
+        db.session.commit()
+
+        untrusted_popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
+        untrusted_verdict = worker.can_generate(waiting_prompt)
+        make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+        db.session.expire_all()
+        trusted_popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
+        trusted_verdict = worker.can_generate(waiting_prompt)
+
+        assert [wp.id for wp in untrusted_popped] == []
+        assert untrusted_verdict == [False, "untrusted"]
+        assert [wp.id for wp in trusted_popped] == [waiting_prompt.id]
+        assert trusted_verdict == [True, None]
+
+
 _FEATURE_CONTAINMENT_CASES = [
     pytest.param(["seed", "tools"], ["tools"], True, id="holds_the_required_feature"),
     pytest.param(["seed"], ["tools"], False, id="lacks_the_required_feature"),
