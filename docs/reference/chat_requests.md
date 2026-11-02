@@ -484,7 +484,8 @@ The request is therefore served with the lower limit and is not refused. A dry r
 [Impossible reason](#impossible-reason)). The `horde.chat.max_length_lowered` counter records each lowered request.
 Its attributes are `horde.requested_bucket` and `horde.declared_bucket`, both in the `TEXT_LENGTH_BUCKETS` labels,
 and `horde.dry_run`. The front's `horde.oai.completions` counter records the `finish_reason` of a delivered
-completion and whether its request was lowered (see [Metrics](chat_front.md#metrics)). The list is
+completion and whether its request was lowered, and the `horde.oai.request.max_tokens` histogram records each
+request's completion limit by its source (see [Metrics](chat_front.md#metrics)). The list is
 stored in a separate nullable JSONB column: the requested length is not kept anywhere else once growth overwrites
 it, so the adjustment cannot be recomputed at status time.
 
@@ -801,6 +802,23 @@ empty `content` and reasoning in `reasoning_content` ran out of tokens while thi
 has no way to resume reasoning. Reasoning sent back inside an assistant message is a prior turn, and
 `reasoning_content` on a request message is dropped. Send a fresh request with a larger `max_tokens` or a lower
 `reasoning_effort` (`none` disables thinking).
+
+koboldcpp applies `reasoning_effort` as a thinking budget, a fraction of `max_length`. When the budget runs out it
+appends `(Reasoning budget exceeded)` and a short instruction to the reasoning, closes the thinking block and writes
+the reply. Two counters in `horde/metrics.py` and the front's instruments show how often the budget fires and how
+often a reply is lost to reasoning:
+
+| Counter                               | Attributes                                                     | Counts |
+| ------------------------------------- | -------------------------------------------------------------- | ------ |
+| `horde.chat.reasoning_effort_default` | `horde.model`, `horde.applied`                                 | Chat job pops whose client did not send `reasoning_effort`. `horde.applied` is `true` when the worker declares the feature and received `medium`, and `false` when it does not declare it, so its reasoning is not capped by the Horde |
+| `horde.chat.reasoning_marker`         | `horde.model`, `horde.where` (`ReasoningMarkerPlace`)          | Stored chat replies with a sign of the budget. `reasoning` is the marker in `reasoning_content`, `content` is the marker in `content`, and `open_think` is a `content` that starts with a `<think>` opening tag, after leading whitespace, with empty `reasoning_content`. A reply is counted once for each place it matches |
+
+The marker match (`REASONING_BUDGET_EXCEEDED_MARKER` in `horde/classes/kobold/chat_request.py`) is an instrument and
+not a contract with any worker. Only a submit that stored its reply is counted, so a repeated submit is not counted
+again. The front's `horde.oai.completions` counter classes each delivered completion by `content` and
+`reasoning_effort`, the `horde.oai.reasoning_share` histogram records the share of its tokens spent on reasoning, and
+a completion without visible text is logged with its completion limit (see [Metrics](chat_front.md#metrics) and
+[No-visible-text log line](chat_front.md#no-visible-text-log-line)).
 
 ### Reply verification
 

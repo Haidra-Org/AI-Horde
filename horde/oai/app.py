@@ -85,6 +85,7 @@ from horde.oai.horde_client import (
     HordeActiveModel,
     HordeAPIError,
     HordeAsyncSubmission,
+    HordeChatGeneration,
     HordeChatModelOffer,
     HordeChatStatus,
     HordeClient,
@@ -101,12 +102,19 @@ from horde.oai.mapping import (
     build_model_card,
     build_native_chat_body,
     build_system_fingerprint,
+    effective_completion_limit,
+    generation_content,
+    generation_reasoning,
+    generation_tool_calls,
     lowered_max_length,
     relays_deltas,
 )
 from horde.oai.metrics import (
+    OMITTED_REASONING_EFFORT_LABEL,
     CancelOutcome,
+    CompletionContent,
     FrontMetrics,
+    MaxTokensSource,
     NoEligibleWorkerStage,
     PacingFlushReason,
     RelayOutcome,
@@ -1140,6 +1148,32 @@ def _max_length_was_lowered(context_adjustments: Sequence[object] | None) -> boo
     return lowered_max_length(context_adjustments) is not None
 
 
+def _max_tokens_source(chat_request: ChatCompletionRequest, context_adjustments: Sequence[object] | None) -> MaxTokensSource:
+    """Return where the request's [`effective_completion_limit`][horde.oai.mapping.effective_completion_limit] came
+    from: the Horde's ``worker_max_length`` adjustment, the client's ``max_tokens`` or ``max_completion_tokens``, or
+    the native route's default."""
+    if lowered_max_length(context_adjustments) is not None:
+        return MaxTokensSource.LOWERED
+    if chat_request.max_completion_tokens is not None or chat_request.max_tokens is not None:
+        return MaxTokensSource.CLIENT
+    return MaxTokensSource.DEFAULT
+
+
+def _completion_content(generation: HordeChatGeneration) -> CompletionContent:
+    """Return what a generation of the native status holds.
+
+    The reasoning is read from the native generation, so a request with ``horde.include_reasoning: false`` is classed
+    by the reasoning returned by its worker. Whitespace is not visible content, as for the empty-return notice.
+    """
+    if (generation_content(generation) or "").strip():
+        return CompletionContent.TEXT
+    if generation_tool_calls(generation):
+        return CompletionContent.TOOL_CALLS
+    if (generation_reasoning(generation) or "").strip():
+        return CompletionContent.REASONING_ONLY
+    return CompletionContent.EMPTY
+
+
 def _refused_parameter_label(request_path: str | None) -> str:
     """Return the ``horde.parameter`` label of an ``UnsupportedChatParameter`` refusal at ``request_path``.
 
@@ -1685,19 +1719,22 @@ class RequestTrace:
     client's attribution.
     """
 
-    def __init__(self, *, front_metrics: FrontMetrics, streamed: bool, received_at: float, requested_models: Sequence[str]) -> None:
+    def __init__(self, *, front_metrics: FrontMetrics, streamed: bool, received_at: float, chat_request: ChatCompletionRequest) -> None:
         """Create the trace of an admitted request.
 
         Args:
             front_metrics: The front's instruments.
             streamed: Whether the request is streamed.
             received_at: The monotonic time the request arrived.
-            requested_models: The models the request accepts.
+            chat_request: The client's request, for the models it accepts, its completion limit and its
+                ``reasoning_effort``.
         """
         self.streamed: bool = streamed
         """Whether the request is streamed."""
-        self.requested_models: tuple[str, ...] = tuple(requested_models)
+        self.requested_models: tuple[str, ...] = tuple(chat_request.requested_models())
         """The models the request accepts."""
+        self.chat_request: ChatCompletionRequest = chat_request
+        """The client's request."""
         self.served_model: str | None = None
         """The model of the delivered completion, once one is recorded."""
         self.request_id: str | None = None
@@ -1709,6 +1746,7 @@ class RequestTrace:
         self._submitted_monotonic: float | None = None
         self._first_content_recorded = False
         self._finished = False
+        self._completion_status: HordeChatStatus | None = None
 
     def mark_submitted(self, request_id: str) -> float:
         """Mutate the trace with the Horde's acknowledgement of the submit and return its wall-clock time."""
@@ -1734,16 +1772,54 @@ class RequestTrace:
         )
 
     def record_completion(self, completion: ChatCompletionResponse, status: HordeChatStatus) -> None:
-        """Record the content, usage, empty-return and queue-wait facts of a completion about to be sent."""
+        """Record the content, usage, empty-return, reasoning and queue-wait facts of a completion about to be sent.
+
+        A completion whose first generation holds no visible text and no tool calls is also logged at INFO with its
+        completion limit, the limit's source, the client's ``reasoning_effort``, the reasoning tokens and the finish
+        reason, since a client cannot recover a reply whose budget went to reasoning.
+        """
         self.record_first_content()
         self.served_model = completion.model
+        self._completion_status = status
+        finish_reason = str(completion.choices[0].finish_reason) if completion.choices else ""
+        content = _completion_content(status.generations[0]) if status.generations else CompletionContent.EMPTY
+        reasoning_effort = (
+            str(self.chat_request.reasoning_effort) if self.chat_request.reasoning_effort is not None else OMITTED_REASONING_EFFORT_LABEL
+        )
         self._front_metrics.record_completion(
             model=completion.model,
             estimated_usage=completion.x_horde.estimated_usage,
             has_empty_return=completion.x_horde.notice is not None,
-            finish_reason=str(completion.choices[0].finish_reason) if completion.choices else "",
+            finish_reason=finish_reason,
             max_length_lowered=_max_length_was_lowered(completion.x_horde.context_adjustments),
+            content=content,
+            reasoning_effort=reasoning_effort,
         )
+        token_details = completion.usage.completion_tokens_details
+        reasoning_tokens = token_details.reasoning_tokens if token_details is not None else None
+        if reasoning_tokens and completion.usage.completion_tokens > 0:
+            self._front_metrics.record_reasoning_share(
+                reasoning_share=reasoning_tokens / completion.usage.completion_tokens,
+                model=completion.model,
+                finish_reason=finish_reason,
+            )
+        if content in (CompletionContent.REASONING_ONLY, CompletionContent.EMPTY):
+            no_text_fields: dict[str, object] = {
+                "request_id": self.request_id,
+                "model": completion.model,
+                "max_tokens": effective_completion_limit(self.chat_request, status.context_adjustments),
+                "max_tokens_source": str(_max_tokens_source(self.chat_request, status.context_adjustments)),
+                "reasoning_effort": reasoning_effort,
+                "reasoning_tokens": reasoning_tokens,
+                "finish_reason": finish_reason,
+                "content": str(content),
+            }
+            logger.bind(**no_text_fields).info(
+                f"Chat request {self.request_id} returned no visible text: content={content} model={completion.model} "
+                f"max_tokens={no_text_fields['max_tokens']} max_tokens_source={no_text_fields['max_tokens_source']} "
+                f"reasoning_effort={reasoning_effort} reasoning_tokens={_format_optional(reasoning_tokens)} "
+                f"finish_reason={finish_reason}",
+            )
         for generation in status.generations:
             if generation.queue_wait_seconds is not None:
                 self._front_metrics.record_queue_wait(
@@ -1811,6 +1887,7 @@ class RequestTrace:
             status_code=int(status_code),
             code=code,
         )
+        self._record_max_tokens(watcher)
         woke_at = watcher.woke_at if watcher is not None else None
         if woke_by is None and watcher is not None:
             woke_by = watcher.woke_by
@@ -1866,6 +1943,25 @@ class RequestTrace:
             f"first_read_eligible_worker_threads={_format_optional(finished_fields['first_read_eligible_worker_threads'])}"
         )
         logger.bind(**finished_fields).info(message)
+
+    def _record_max_tokens(self, watcher: ChatRequestWatcher | None) -> None:
+        """Record the request's completion limit and its source, once per request the Horde accepted.
+
+        A request the Horde refused at submit never ran under a limit, so it is not recorded. The Horde reports a
+        lowered limit only in a status, so the limit is recorded at the request's end, from the delivered
+        completion's status or else the last status read. A request that ended before any status read is recorded
+        with the client's limit or the default.
+        """
+        if self._submitted_monotonic is None:
+            return
+        status = self._completion_status
+        if status is None and watcher is not None:
+            status = watcher.latest_status
+        context_adjustments = status.context_adjustments if status is not None else None
+        self._front_metrics.record_max_tokens(
+            max_tokens=effective_completion_limit(self.chat_request, context_adjustments),
+            source=_max_tokens_source(self.chat_request, context_adjustments),
+        )
 
 
 def _format_seconds(seconds: float | None) -> str:
@@ -2353,7 +2449,7 @@ async def _chat_completions(request: Request) -> Response:
         front_metrics=front_metrics,
         streamed=streamed,
         received_at=received_at,
-        requested_models=chat_request.requested_models(),
+        chat_request=chat_request,
     )
     budget_seconds = settings.stream_timeout_seconds if chat_request.stream else settings.nonstream_timeout_seconds
     deadline = time.monotonic() + budget_seconds

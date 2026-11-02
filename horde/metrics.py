@@ -815,6 +815,22 @@ chat_max_length_lowered = logfire.metric_counter(
         "serving the models, split by the requested length bucket, the declared length bucket and dry run"
     ),
 )
+chat_reasoning_effort_default = logfire.metric_counter(
+    "horde.chat.reasoning_effort_default",
+    unit="1",
+    description=(
+        "Chat job pops whose client did not send reasoning_effort, split by model and by whether the worker declares "
+        "the feature and received medium (applied true) or reasons without a budget (applied false)"
+    ),
+)
+chat_reasoning_marker = logfire.metric_counter(
+    "horde.chat.reasoning_marker",
+    unit="1",
+    description=(
+        "Stored chat replies with a sign of koboldcpp's reasoning budget, split by model and by where it appears, "
+        "one of horde.classes.kobold.chat_request.ReasoningMarkerPlace"
+    ),
+)
 
 # --- API refusals -------------------------------------------------------------
 api_rejections = logfire.metric_counter(

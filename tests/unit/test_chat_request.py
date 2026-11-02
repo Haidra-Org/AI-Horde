@@ -60,6 +60,8 @@ from horde.classes.kobold.chat_request import (
     DEFAULT_CHAT_MAX_TOKENS,
     UNSUPPORTED_CHAT_PARAMETER_RC,
     ChatSubmittedMessage,
+    ReasoningEffortDefault,
+    ReasoningMarkerPlace,
     apply_worker_chat_defaults,
     build_chat_extras,
     build_chat_image_key,
@@ -78,6 +80,7 @@ from horde.classes.kobold.chat_request import (
     chat_reply_finish_reason,
     chat_tools_temperature,
     estimate_chat_prompt_tokens,
+    find_reasoning_markers,
     flatten_messages,
     has_image_parts,
     inline_chat_images,
@@ -1958,6 +1961,86 @@ class TestWorkerChatDefaults:
         assert "reasoning_effort" not in params
         assert "reasoning_effort" not in stored_payload
         assert job_payload["reasoning_effort"] == "medium"
+
+    @pytest.mark.parametrize(
+        ("client_reasoning_effort", "worker_chat_features", "expected_default"),
+        [
+            (None, [ChatFeature.REASONING_EFFORT.value], ReasoningEffortDefault.APPLIED),
+            (None, [ChatFeature.SEED.value], ReasoningEffortDefault.UNDECLARED),
+            (None, None, ReasoningEffortDefault.UNDECLARED),
+            ("low", [ChatFeature.REASONING_EFFORT.value], ReasoningEffortDefault.CLIENT_VALUE),
+            ("none", [ChatFeature.REASONING_EFFORT.value], ReasoningEffortDefault.CLIENT_VALUE),
+        ],
+    )
+    def test_the_result_reports_what_was_done_with_the_reasoning_effort(
+        self,
+        client_reasoning_effort: str | None,
+        worker_chat_features: list[str] | None,
+        expected_default: ReasoningEffortDefault,
+    ) -> None:
+        overrides = {} if client_reasoning_effort is None else {"reasoning_effort": client_reasoning_effort}
+        chat_payload = self._payload(**overrides)
+
+        assert apply_worker_chat_defaults(chat_payload, worker_chat_features) == expected_default
+
+
+class TestReasoningMarkers:
+    """Where a stored chat reply holds a sign of koboldcpp's reasoning budget."""
+
+    @pytest.mark.parametrize(
+        ("message", "expected_places"),
+        [
+            (
+                {"content": "Blue.", "reasoning_content": "Thinking.\n(Reasoning budget exceeded)\nTime to respond now.\n"},
+                [ReasoningMarkerPlace.REASONING],
+            ),
+            (
+                {"content": "(Reasoning budget exceeded)\nTime to respond now.\nBlue."},
+                [ReasoningMarkerPlace.CONTENT],
+            ),
+            (
+                {"content": "  \n<think>The user asked"},
+                [ReasoningMarkerPlace.OPEN_THINK],
+            ),
+            (
+                {"content": "<think\n"},
+                [ReasoningMarkerPlace.OPEN_THINK],
+            ),
+            (
+                {
+                    "content": "(Reasoning budget exceeded) Blue.",
+                    "reasoning_content": "(Reasoning budget exceeded)",
+                },
+                [ReasoningMarkerPlace.REASONING, ReasoningMarkerPlace.CONTENT],
+            ),
+            (
+                {"content": "<think>(Reasoning budget exceeded)"},
+                [ReasoningMarkerPlace.CONTENT, ReasoningMarkerPlace.OPEN_THINK],
+            ),
+            (
+                {"content": "<think>Blue.", "reasoning_content": "Thinking."},
+                [],
+            ),
+            (
+                {"content": "Blue. <think>", "reasoning_content": ""},
+                [],
+            ),
+            (
+                {"content": None, "tool_calls": []},
+                [],
+            ),
+            (
+                {"content": "Reasoning budget exceeded", "reasoning_content": "Time to respond now."},
+                [],
+            ),
+        ],
+    )
+    def test_each_matching_place_is_listed_once(
+        self,
+        message: dict[str, Any],
+        expected_places: list[ReasoningMarkerPlace],
+    ) -> None:
+        assert find_reasoning_markers(message) == expected_places
 
 
 class TestMessages:

@@ -150,6 +150,8 @@ __all__ = [
     "MAX_CHAT_REFUSAL_RC_LENGTH",
     "MAX_NATIVE_FINISH_REASON_LENGTH",
     "MAX_REPORTED_TOKEN_COUNT",
+    "OPEN_THINK_TAG_PREFIX",
+    "REASONING_BUDGET_EXCEEDED_MARKER",
     "UNSUPPORTED_CHAT_PARAMETER_RC",
     "ChargeBasis",
     "ChatCompletionRequest",
@@ -159,6 +161,8 @@ __all__ = [
     "ChatMessagesOffload",
     "ChatRole",
     "ChatSubmittedMessage",
+    "ReasoningEffortDefault",
+    "ReasoningMarkerPlace",
     "apply_worker_chat_defaults",
     "build_chat_extras",
     "build_chat_image_key",
@@ -181,6 +185,7 @@ __all__ = [
     "chat_worker_fault_reason_label",
     "create_image_total_refusal",
     "estimate_chat_prompt_tokens",
+    "find_reasoning_markers",
     "flatten_messages",
     "has_image_parts",
     "inline_chat_images",
@@ -224,6 +229,15 @@ reaches this width; a longer message is stored cut to it."""
 CHAT_STREAM_PROGRESS_KEY = "stream_progress"
 """The stored extras key, and the job payload key, of the stream hint: ``true`` when the client streams the reply,
 so the worker posts deltas to the progress route while it generates. Absent otherwise."""
+
+REASONING_BUDGET_EXCEEDED_MARKER = "(Reasoning budget exceeded)"
+"""Part of the text koboldcpp appends to the reasoning when the thinking budget from ``reasoning_effort`` runs out.
+Only the ``horde.chat.reasoning_marker`` counter matches on it. The counter is an instrument and the text is not a
+contract with any worker, so a backend that changes or drops the text only stops the count."""
+
+OPEN_THINK_TAG_PREFIX = "<think"
+"""The start of a ``<think>`` opening tag. A reply whose content starts with it, with no reasoning split off, is a
+reply that was cut off while thinking and returned with the raw tag in ``content``."""
 
 SUPPORTED_REQUEST_KEYS = frozenset(
     {
@@ -405,6 +419,39 @@ class ChargeBasis(enum.StrEnum):
     """The text formula's estimate of the output: the characters returned divided by 4, rounded up, at least 20
     and at most the requested ``max_length``. Identical to a text generation's; reported token counts do not
     enter it."""
+
+
+class ReasoningEffortDefault(enum.StrEnum):
+    """What [`apply_worker_chat_defaults`][horde.classes.kobold.chat_request.apply_worker_chat_defaults] did with a
+    job's ``reasoning_effort``."""
+
+    CLIENT_VALUE = "client_value"
+    """The client sent a value, which is passed to the worker unchanged."""
+
+    APPLIED = "applied"
+    """The client did not send a value and the worker declares ``reasoning_effort``, so it received
+    [`DEFAULT_CHAT_REASONING_EFFORT`][horde.chat_contract.DEFAULT_CHAT_REASONING_EFFORT]."""
+
+    UNDECLARED = "undeclared"
+    """The client did not send a value and the worker does not declare ``reasoning_effort``, so the worker received no
+    value and its reasoning is not capped by the Horde."""
+
+
+class ReasoningMarkerPlace(enum.StrEnum):
+    """Where a stored chat reply holds a sign of koboldcpp's reasoning budget, the ``horde.where`` label of
+    ``horde.chat.reasoning_marker``."""
+
+    REASONING = "reasoning"
+    """[`REASONING_BUDGET_EXCEEDED_MARKER`][horde.classes.kobold.chat_request.REASONING_BUDGET_EXCEEDED_MARKER] is in
+    ``reasoning_content``. The budget ran out and the reasoning was closed as intended."""
+
+    CONTENT = "content"
+    """[`REASONING_BUDGET_EXCEEDED_MARKER`][horde.classes.kobold.chat_request.REASONING_BUDGET_EXCEEDED_MARKER] is in
+    ``content``, so the client receives the marker as part of the reply."""
+
+    OPEN_THINK = "open_think"
+    """``content`` starts with a ``<think>`` opening tag, after leading whitespace, and ``reasoning_content`` is
+    empty. The reasoning was not split off, which happens when a non-streamed reply is cut off while thinking."""
 
 
 class ChatRole(enum.StrEnum):
@@ -2219,7 +2266,10 @@ def build_chat_job_payload(params: Mapping[str, Any], *, max_length: int, max_co
     return chat_payload
 
 
-def apply_worker_chat_defaults(chat_payload: dict[str, Any], worker_chat_features: Collection[str] | None) -> None:
+def apply_worker_chat_defaults(
+    chat_payload: dict[str, Any],
+    worker_chat_features: Collection[str] | None,
+) -> ReasoningEffortDefault:
     """Add the defaults that depend on the popping worker's declaration to a chat job's payload.
 
     A worker that declares ``reasoning_effort`` receives
@@ -2232,7 +2282,37 @@ def apply_worker_chat_defaults(chat_payload: dict[str, Any], worker_chat_feature
         chat_payload: One job's copy of the payload, from
             [`build_chat_job_payload`][horde.classes.kobold.chat_request.build_chat_job_payload]. Changed in place.
         worker_chat_features: The worker's stored ``chat_features``.
+
+    Returns:
+        What was done with the job's ``reasoning_effort``, for the ``horde.chat.reasoning_effort_default`` counter.
     """
+    if chat_payload.get("reasoning_effort") is not None:
+        return ReasoningEffortDefault.CLIENT_VALUE
     worker_chat_features = worker_chat_features or ()
-    if ChatFeature.REASONING_EFFORT.value in worker_chat_features and chat_payload.get("reasoning_effort") is None:
-        chat_payload["reasoning_effort"] = DEFAULT_CHAT_REASONING_EFFORT.value
+    if ChatFeature.REASONING_EFFORT.value not in worker_chat_features:
+        return ReasoningEffortDefault.UNDECLARED
+    chat_payload["reasoning_effort"] = DEFAULT_CHAT_REASONING_EFFORT.value
+    return ReasoningEffortDefault.APPLIED
+
+
+def find_reasoning_markers(message: Mapping[str, Any]) -> list[ReasoningMarkerPlace]:
+    """Return where a stored chat reply holds a sign of koboldcpp's reasoning budget.
+
+    Args:
+        message: The stored assistant message, from
+            [`build_stored_reply`][horde.classes.kobold.chat_request.build_stored_reply].
+
+    Returns:
+        Each [`ReasoningMarkerPlace`][horde.classes.kobold.chat_request.ReasoningMarkerPlace] the reply matches, in
+        declaration order. A reply can match more than one, or none.
+    """
+    content = message.get("content") or ""
+    reasoning = message.get("reasoning_content") or ""
+    marker_places = []
+    if REASONING_BUDGET_EXCEEDED_MARKER in reasoning:
+        marker_places.append(ReasoningMarkerPlace.REASONING)
+    if REASONING_BUDGET_EXCEEDED_MARKER in content:
+        marker_places.append(ReasoningMarkerPlace.CONTENT)
+    if not reasoning and content.lstrip().startswith(OPEN_THINK_TAG_PREFIX):
+        marker_places.append(ReasoningMarkerPlace.OPEN_THINK)
+    return marker_places

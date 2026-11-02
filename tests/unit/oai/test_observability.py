@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
@@ -27,8 +27,10 @@ from horde.oai.metrics import (
     INFLIGHT_NAME,
     INFLIGHT_SOURCE_MAX_NAME,
     INFLIGHT_SOURCES_NAME,
+    MAX_TOKENS_NAME,
     NATIVE_CALL_DURATION_NAME,
     QUEUE_WAIT_NAME,
+    REASONING_SHARE_NAME,
     REFUSED_NAME,
     REQUEST_DURATION_NAME,
     STREAM_FAILURES_NAME,
@@ -98,6 +100,16 @@ FINISH_DELAY_SECONDS: float = 0.2
 QUEUE_REFUSAL_FIELDS: frozenset[str] = frozenset({"queue_reason", "wait_time", "eligible_worker_threads"})
 """The structured fields a ``queue_unavailable`` refusal adds to the finished-request line."""
 
+TOOL_CALL: dict[str, object] = {
+    "id": "call_a",
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "arguments": '{"city":"Paris"}',
+    },
+}
+"""A tool call a worker returns in place of content."""
+
 
 class CapturedLogs:
     """Hold the Loguru records written while a capture is open."""
@@ -110,6 +122,10 @@ class CapturedLogs:
     def finished_records(self) -> list[Record]:
         """Return the finished-request records."""
         return [record for record in self.records if " finished: " in record["message"]]
+
+    def no_text_records(self) -> list[Record]:
+        """Return the records of completions without visible text."""
+        return [record for record in self.records if " returned no visible text: " in record["message"]]
 
 
 @pytest.fixture
@@ -315,6 +331,204 @@ async def test_a_completion_records_its_finish_reason_and_whether_max_tokens_was
         )
         == 1
     )
+
+
+def _tool_call_status() -> dict[str, Any]:
+    """Return a finished status whose one generation holds a tool call and no content."""
+    status = done_status(finish_reason="tool_calls", native_finish_reason="tool_calls")
+    status["generations"][0]["text"] = ""
+    status["generations"][0]["message"] = {"role": "assistant", "content": None, "tool_calls": [TOOL_CALL]}
+    return status
+
+
+@pytest.mark.parametrize(
+    ("status_payload", "chat_body_overrides", "expected_content"),
+    [
+        (done_status(), {}, "text"),
+        (done_status(content="Blue.", reasoning_content="Thinking."), {}, "text"),
+        (_tool_call_status(), {}, "tool_calls"),
+        (done_status(content="", reasoning_content="Thinking."), {}, "reasoning_only"),
+        (done_status(content=" ", reasoning_content="Thinking."), {"horde": {"include_reasoning": False}}, "reasoning_only"),
+        (done_status(content=""), {}, "empty"),
+    ],
+    ids=["text", "text_with_reasoning", "tool_calls", "reasoning_only", "reasoning_only_not_returned", "empty"],
+)
+async def test_a_completion_records_what_its_generation_holds(
+    start_front: StartFront,
+    status_payload: dict[str, Any],
+    chat_body_overrides: dict[str, Any],
+    expected_content: str,
+) -> None:
+    """Reasoning is read from the native status, so a request with ``horde.include_reasoning: false`` is still
+    classed by the reasoning its worker returned."""
+    async with start_front() as front:
+        front.horde.status_payload = status_payload
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(**chat_body_overrides))
+
+    assert response.status_code == 200
+    assert front.metric_total(COMPLETIONS_NAME, horde_content=expected_content) == 1
+
+
+@pytest.mark.parametrize(
+    ("chat_body_overrides", "expected_reasoning_effort"),
+    [
+        ({}, "omitted"),
+        ({"reasoning_effort": "low"}, "low"),
+        ({"reasoning_effort": "none"}, "none"),
+    ],
+)
+async def test_a_completion_records_the_client_reasoning_effort(
+    start_front: StartFront,
+    chat_body_overrides: dict[str, Any],
+    expected_reasoning_effort: str,
+) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(**chat_body_overrides))
+
+    assert response.status_code == 200
+    assert front.metric_total(COMPLETIONS_NAME, horde_reasoning_effort=expected_reasoning_effort) == 1
+
+
+@pytest.mark.parametrize(
+    ("chat_body_overrides", "context_adjustments", "expected_max_tokens", "expected_source"),
+    [
+        ({"max_tokens": 64}, None, 64, "client"),
+        ({"max_tokens": None, "max_completion_tokens": 300}, None, 300, "client"),
+        ({"max_tokens": None}, None, 512, "default"),
+        ({"max_tokens": 4096}, [{"from": 4096, "to": 2048, "reason": "worker_max_length"}], 2048, "lowered"),
+    ],
+    ids=["max_tokens", "max_completion_tokens", "default", "lowered"],
+)
+async def test_an_admitted_request_records_its_completion_limit_and_the_limit_source(
+    start_front: StartFront,
+    chat_body_overrides: dict[str, Any],
+    context_adjustments: list[dict[str, object]] | None,
+    expected_max_tokens: int,
+    expected_source: str,
+) -> None:
+    chat_body = {key: value for key, value in build_chat_body(**chat_body_overrides).items() if value is not None}
+    async with start_front() as front:
+        front.horde.status_payload = {**done_status(), "context_adjustments": context_adjustments}
+        response = await front.client.post("/v1/chat/completions", json=chat_body)
+
+    assert response.status_code == 200
+    (max_tokens_point,) = metric_points(front.metric_reader, MAX_TOKENS_NAME)
+    assert max_tokens_point.attributes == {"horde.source": expected_source}
+    assert max_tokens_point.value == 1
+    assert max_tokens_point.histogram_sum == expected_max_tokens
+
+
+async def test_a_request_that_ends_with_an_error_records_its_completion_limit_once(start_front: StartFront) -> None:
+    async with start_front(FAST_TEST_SETTINGS.model_copy(update={"nonstream_timeout_seconds": 0.3})) as front:
+        front.horde.status_payload = {
+            **waiting_status(),
+            "context_adjustments": [{"from": 4096, "to": 2048, "reason": "worker_max_length"}],
+        }
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(max_tokens=4096))
+
+    assert response.status_code == 408
+    (max_tokens_point,) = metric_points(front.metric_reader, MAX_TOKENS_NAME)
+    assert max_tokens_point.attributes == {"horde.source": "lowered"}
+    assert max_tokens_point.value == 1
+    assert max_tokens_point.histogram_sum == 2048
+
+
+async def test_a_request_the_horde_refuses_at_submit_does_not_record_a_completion_limit(start_front: StartFront) -> None:
+    """A refused request never ran under a limit, so the histogram holds only requests the Horde accepted."""
+    async with start_front() as front:
+        front.horde.submit_route.respond(
+            403,
+            json={"message": "No worker is currently serving the model 'test-model'.", "rc": "NoEligibleWorker"},
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(max_tokens=4096))
+
+    assert response.status_code == 503
+    assert metric_points(front.metric_reader, MAX_TOKENS_NAME) == []
+
+
+async def test_a_completion_with_reasoning_records_the_reasoning_share_of_its_tokens(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status(
+            content="Blue.",
+            reasoning_content="Thinking.",
+            completion_tokens=8,
+            reasoning_tokens=2,
+            finish_reason="stop",
+        )
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 200
+    (share_point,) = metric_points(front.metric_reader, REASONING_SHARE_NAME)
+    assert share_point.attributes == {"horde.model": MODEL_NAME, "horde.finish_reason": "stop"}
+    assert share_point.value == 1
+    assert share_point.histogram_sum == pytest.approx(0.25)
+
+
+async def test_a_completion_without_reasoning_records_no_reasoning_share(start_front: StartFront) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = done_status()
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 200
+    assert metric_points(front.metric_reader, REASONING_SHARE_NAME) == []
+
+
+@pytest.mark.parametrize(
+    ("status_payload", "expected_content", "expected_reasoning_tokens"),
+    [
+        (done_status(content="", reasoning_content="Thinking.", completion_tokens=6, reasoning_tokens=6), "reasoning_only", 6),
+        (done_status(content=""), "empty", None),
+    ],
+    ids=["reasoning_only", "empty"],
+)
+async def test_a_completion_without_visible_text_is_logged_with_its_limit_and_reasoning_facts(
+    start_front: StartFront,
+    captured_logs: CapturedLogs,
+    status_payload: dict[str, Any],
+    expected_content: str,
+    expected_reasoning_tokens: int | None,
+) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = status_payload
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body(max_tokens=64))
+
+    assert response.status_code == 200
+    (no_text_record,) = captured_logs.no_text_records()
+    assert no_text_record["level"].name == "INFO"
+    assert no_text_record["extra"] == {
+        "request_id": REQUEST_ID,
+        "model": MODEL_NAME,
+        "max_tokens": 64,
+        "max_tokens_source": "client",
+        "reasoning_effort": "omitted",
+        "reasoning_tokens": expected_reasoning_tokens,
+        "finish_reason": "length",
+        "content": expected_content,
+    }
+    logged_text = no_text_record["message"] + repr(no_text_record["extra"])
+    assert PROMPT_TEXT not in logged_text
+
+
+@pytest.mark.parametrize(
+    "status_payload",
+    [
+        done_status(),
+        _tool_call_status(),
+    ],
+    ids=["text", "tool_calls"],
+)
+async def test_a_completion_with_text_or_tool_calls_is_not_logged_as_without_visible_text(
+    start_front: StartFront,
+    captured_logs: CapturedLogs,
+    status_payload: dict[str, Any],
+) -> None:
+    async with start_front() as front:
+        front.horde.status_payload = status_payload
+        response = await front.client.post("/v1/chat/completions", json=build_chat_body())
+
+    assert response.status_code == 200
+    assert captured_logs.no_text_records() == []
 
 
 async def test_lost_submit_records_outcome_unknown_and_unreachable_recoveries(start_front: StartFront) -> None:

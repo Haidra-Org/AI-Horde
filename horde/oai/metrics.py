@@ -35,9 +35,12 @@ from horde.metrics import BUCKETS_REQUEST_LIFECYCLE_SECONDS, BUCKETS_SECONDS
 
 __all__ = [
     "METER_NAME",
+    "OMITTED_REASONING_EFFORT_LABEL",
     "CancelOutcome",
+    "CompletionContent",
     "FrontMetrics",
     "InflightCounts",
+    "MaxTokensSource",
     "MetricAttribute",
     "NativeCallOutcome",
     "NativeCallType",
@@ -114,8 +117,18 @@ CLIENT_RETRY_HINTS_NAME: str = "horde.oai.client_retry_hints"
 """Counter: chat requests carrying ``x-stainless-retry-count`` above zero."""
 
 COMPLETIONS_NAME: str = "horde.oai.completions"
-"""Counter: completions delivered, by model, whether the usage was estimated, the first choice's finish reason, and
-whether the Horde lowered the request's ``max_tokens`` to the largest one declared by a worker."""
+"""Counter: completions delivered, by model, whether the usage was estimated, the first choice's finish reason,
+whether the Horde lowered the request's ``max_tokens`` to the largest one declared by a worker, what the first
+generation holds, and the client's ``reasoning_effort``."""
+
+MAX_TOKENS_NAME: str = "horde.oai.request.max_tokens"
+"""Histogram: the completion limit of each request the Horde accepted, by where the limit came from."""
+
+REASONING_SHARE_NAME: str = "horde.oai.reasoning_share"
+"""Histogram: the share of a delivered completion's tokens spent on reasoning, by model and finish reason."""
+
+OMITTED_REASONING_EFFORT_LABEL: str = "omitted"
+"""The ``horde.reasoning_effort`` label of a request whose client did not send ``reasoning_effort``."""
 
 GRACE_RESCUES_NAME: str = "horde.oai.fail_fast.rescues"
 """Counter: waits in which one status read showed no eligible worker, and a later read within the fail-fast grace
@@ -160,6 +173,38 @@ BUCKETS_POST_GAP_SECONDS: tuple[float, ...] = (
 """Post gap and pacing lag bucket boundaries in seconds. The buckets are dense around one second, which is the post
 interval of a koboldcpp worker. They reach past the 2 s maximum pacing window, so a stalled worker is visible."""
 
+BUCKETS_MAX_TOKENS: tuple[int, ...] = (
+    16,
+    64,
+    128,
+    256,
+    512,
+    768,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384,
+)
+"""Completion limit bucket boundaries in tokens. The 512 boundary is the default limit of a request without
+``max_tokens``, and 16384 is the largest limit the Horde accepts."""
+
+BUCKETS_REASONING_SHARE: tuple[float, ...] = (
+    0.0,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    1.0,
+)
+"""Reasoning share bucket boundaries, in steps of 0.1 from 0 to 1. A share of 1 is a completion whose tokens all went
+to reasoning."""
+
 BUCKETS_PIECES_PER_POST: tuple[int, ...] = (
     1,
     2,
@@ -182,6 +227,8 @@ HISTOGRAM_BUCKETS: Mapping[str, tuple[float, ...]] = {
     POST_GAP_NAME: BUCKETS_POST_GAP_SECONDS,
     PIECES_PER_POST_NAME: BUCKETS_PIECES_PER_POST,
     PACING_LAG_NAME: BUCKETS_POST_GAP_SECONDS,
+    MAX_TOKENS_NAME: BUCKETS_MAX_TOKENS,
+    REASONING_SHARE_NAME: BUCKETS_REASONING_SHARE,
 }
 """The bucket boundaries of each front histogram; native calls take seconds, waits take minutes."""
 
@@ -206,6 +253,37 @@ class MetricAttribute(StrEnum):
     STAGE = "horde.stage"
     FINISH_REASON = "horde.finish_reason"
     MAX_LENGTH_LOWERED = "horde.max_length_lowered"
+    CONTENT = "horde.content"
+    REASONING_EFFORT = "horde.reasoning_effort"
+    SOURCE = "horde.source"
+
+
+class CompletionContent(StrEnum):
+    """What the first generation of a delivered completion holds, the ``horde.content`` label of
+    ``horde.oai.completions``. Reasoning is read from the native status, so a request with
+    ``horde.include_reasoning: false`` is classed by the reasoning returned by its worker."""
+
+    TEXT = "text"
+    """The visible content is not empty."""
+    TOOL_CALLS = "tool_calls"
+    """The visible content is empty and the generation holds tool calls."""
+    REASONING_ONLY = "reasoning_only"
+    """The visible content is empty, without tool calls, and the generation holds reasoning. The OpenAI API cannot
+    resume reasoning, so after a ``length`` finish the client cannot recover the reply."""
+    EMPTY = "empty"
+    """The generation holds no visible content, no tool calls and no reasoning."""
+
+
+class MaxTokensSource(StrEnum):
+    """Where a request's completion limit came from, the ``horde.source`` label of ``horde.oai.request.max_tokens``."""
+
+    CLIENT = "client"
+    """The client sent ``max_tokens`` or ``max_completion_tokens``."""
+    DEFAULT = "default"
+    """The client sent neither, so the limit is the native route's default."""
+    LOWERED = "lowered"
+    """The Horde lowered the limit to the largest one declared by an online worker, the ``worker_max_length``
+    context adjustment."""
 
 
 class NativeCallType(StrEnum):
@@ -388,6 +466,16 @@ class FrontMetrics:
             COMPLETIONS_NAME,
             unit="1",
             description="Completions delivered by model and whether the usage was estimated",
+        )
+        self._max_tokens = meter.create_histogram(
+            MAX_TOKENS_NAME,
+            unit="1",
+            description="Completion limit of each admitted request, by where the limit came from",
+        )
+        self._reasoning_share = meter.create_histogram(
+            REASONING_SHARE_NAME,
+            unit="1",
+            description="Share of a delivered completion's tokens spent on reasoning, by model and finish reason",
         )
         self._empty_returns = meter.create_counter(
             EMPTY_RETURNS_NAME,
@@ -621,6 +709,8 @@ class FrontMetrics:
         has_empty_return: bool,
         finish_reason: str = "",
         max_length_lowered: bool = False,
+        content: CompletionContent = CompletionContent.TEXT,
+        reasoning_effort: str = OMITTED_REASONING_EFFORT_LABEL,
     ) -> None:
         """Record a delivered completion and, when one of its generations holds no visible text, an empty return.
 
@@ -632,6 +722,10 @@ class FrontMetrics:
                 OpenAI vocabulary.
             max_length_lowered: Whether the Horde lowered ``max_tokens`` to the largest value declared by an online
                 worker. A ``length`` finish on such a request may come from the lowered limit.
+            content: What the first generation holds.
+            reasoning_effort: The client's ``reasoning_effort``, or
+                [`OMITTED_REASONING_EFFORT_LABEL`][horde.oai.metrics.OMITTED_REASONING_EFFORT_LABEL]. The request
+                schema limits it to the closed OpenAI vocabulary.
         """
         self._completions.add(
             1,
@@ -640,10 +734,33 @@ class FrontMetrics:
                 MetricAttribute.ESTIMATED_USAGE: estimated_usage,
                 MetricAttribute.FINISH_REASON: finish_reason,
                 MetricAttribute.MAX_LENGTH_LOWERED: max_length_lowered,
+                MetricAttribute.CONTENT: str(content),
+                MetricAttribute.REASONING_EFFORT: reasoning_effort,
             },
         )
         if has_empty_return:
             self._empty_returns.add(1, {MetricAttribute.MODEL: model})
+
+    def record_max_tokens(self, *, max_tokens: int, source: MaxTokensSource) -> None:
+        """Record the completion limit of an admitted request and where the limit came from."""
+        self._max_tokens.record(max_tokens, {MetricAttribute.SOURCE: str(source)})
+
+    def record_reasoning_share(self, *, reasoning_share: float, model: str, finish_reason: str) -> None:
+        """Record the share of a delivered completion's tokens spent on reasoning.
+
+        Args:
+            reasoning_share: The reasoning tokens divided by the completion tokens of the response usage. Either
+                count may be an estimate.
+            model: The served model.
+            finish_reason: The finish reason of the first choice.
+        """
+        self._reasoning_share.record(
+            reasoning_share,
+            {
+                MetricAttribute.MODEL: model,
+                MetricAttribute.FINISH_REASON: finish_reason,
+            },
+        )
 
     def record_grace_rescue(self) -> None:
         """Record a wait whose status showed an eligible worker or processing within the fail-fast grace, after a

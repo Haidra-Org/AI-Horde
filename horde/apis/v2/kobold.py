@@ -86,6 +86,7 @@ from horde.classes.kobold.chat_request import (
     check_data_url_image_total,
     create_image_total_refusal,
     estimate_chat_prompt_tokens,
+    find_reasoning_markers,
     flatten_messages,
     inline_chat_images,
     list_image_urls,
@@ -1908,6 +1909,25 @@ class TextJobSubmit(JobSubmitTemplate):
         elif self.args.generation is None:
             raise e.BadRequest("'generation' is required for text jobs.")
         super().set_generation()
+        self.record_reasoning_markers()
+
+    def record_reasoning_markers(self) -> None:
+        """Count each sign of koboldcpp's reasoning budget in a stored chat reply in ``horde.chat.reasoning_marker``.
+
+        Only a submit that stored its reply is counted, so the reply of a repeated or aborted submit of the same
+        generation is not counted again. A faulted submit has no reply to count. The places are listed by
+        [`find_reasoning_markers`][horde.classes.kobold.chat_request.find_reasoning_markers], with one add for each.
+        """
+        if self.chat_message is None or self.kudos <= 0:
+            return
+        for marker_place in find_reasoning_markers(self.chat_message):
+            metrics.chat_reasoning_marker.add(
+                1,
+                {
+                    "horde.model": self.procgen.model,
+                    "horde.where": marker_place.value,
+                },
+            )
 
     def prepare_chat_submission(self):
         """Validate a chat job's submission and store its message content as the generation.

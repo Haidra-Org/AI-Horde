@@ -536,6 +536,58 @@ def test_an_omitted_reasoning_effort_reaches_a_worker_without_the_feature_withou
     _cancel(client, request_headers, "chat", request_id)
 
 
+@pytest.fixture
+def reasoning_effort_default_counter(monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+    """Replace the counter of chat pops without a client reasoning_effort with a recorder."""
+    from horde import metrics
+
+    recorder = _CounterRecorder()
+    monkeypatch.setattr(metrics, "chat_reasoning_effort_default", recorder)
+    return recorder
+
+
+@pytest.mark.parametrize(
+    ("chat_features", "expected_applied"),
+    [
+        (["reasoning_effort"], "true"),
+        (None, "false"),
+    ],
+)
+def test_a_pop_without_a_client_reasoning_effort_is_counted_by_whether_the_default_was_applied(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    reasoning_effort_default_counter: _CounterRecorder,
+    chat_features: list[str] | None,
+    expected_applied: str,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers)
+
+    pop_options = {} if chat_features is None else {"chat_features": chat_features}
+    pop_result = chat_worker.pop(**pop_options)
+
+    assert pop_result["id"] is not None, pop_result
+    assert reasoning_effort_default_counter.increments == [
+        (1, {"horde.model": CHAT_MODEL, "horde.applied": expected_applied}),
+    ]
+    _cancel(client, request_headers, "chat", request_id)
+
+
+def test_a_pop_with_a_client_reasoning_effort_is_not_counted_as_a_default(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    reasoning_effort_default_counter: _CounterRecorder,
+) -> None:
+    request_id = _submit_chat_request(client, request_headers, reasoning_effort="low")
+
+    pop_result = chat_worker.pop(chat_features=["reasoning_effort"])
+
+    assert pop_result["id"] is not None, pop_result
+    assert reasoning_effort_default_counter.increments == []
+    _cancel(client, request_headers, "chat", request_id)
+
+
 def _age_worker_into_the_check_in_debounce(app, worker_name: str) -> None:
     """Make every following pop within 30 seconds a debounced check-in, as for a long-running worker."""
     from horde.classes.kobold.worker import TextWorker
@@ -3137,3 +3189,78 @@ def test_a_submit_with_reasoning_over_the_text_cap_is_refused_as_invalid(
 
     assert response.status_code == 400, response.get_data(as_text=True)
     assert response.get_json()["rc"] == "ChatSubmitInvalid"
+
+
+@pytest.fixture
+def reasoning_marker_counter(monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+    """Replace the counter of reasoning budget signs in chat replies with a recorder."""
+    from horde import metrics
+
+    recorder = _CounterRecorder()
+    monkeypatch.setattr(metrics, "chat_reasoning_marker", recorder)
+    return recorder
+
+
+@pytest.mark.parametrize(
+    ("submit_fields", "expected_places"),
+    [
+        (
+            {"content": "Blue.", "reasoning_content": "Thinking.\n(Reasoning budget exceeded)\nTime to respond now.\n"},
+            ["reasoning"],
+        ),
+        (
+            {"content": "(Reasoning budget exceeded)\nTime to respond now.\nBlue."},
+            ["content"],
+        ),
+        (
+            {"content": "\n<think>The user asked", "finish_reason": "length"},
+            ["open_think"],
+        ),
+        (
+            {"content": "<think>(Reasoning budget exceeded)", "finish_reason": "length"},
+            ["content", "open_think"],
+        ),
+        (
+            {"content": "Blue.", "reasoning_content": "Thinking."},
+            [],
+        ),
+    ],
+)
+def test_a_stored_chat_reply_is_counted_once_for_each_reasoning_budget_sign(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    reasoning_marker_counter: _CounterRecorder,
+    submit_fields: dict[str, Any],
+    expected_places: list[str],
+) -> None:
+    _submit_chat_request(client, request_headers)
+    pop_result = chat_worker.pop()
+
+    response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL, **submit_fields))
+
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert reasoning_marker_counter.increments == [(1, {"horde.model": CHAT_MODEL, "horde.where": place}) for place in expected_places]
+
+
+def test_a_repeated_submit_of_a_reply_does_not_count_its_reasoning_budget_sign_again(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    reasoning_marker_counter: _CounterRecorder,
+) -> None:
+    _submit_chat_request(client, request_headers)
+    pop_result = chat_worker.pop()
+    submit_body = build_chat_submit_body(
+        generation_id=pop_result["id"],
+        content="Blue.",
+        model_id=CHAT_MODEL,
+        reasoning_content="(Reasoning budget exceeded)",
+    )
+
+    first_response = chat_worker.submit(submit_body)
+    repeated_response = chat_worker.submit(submit_body)
+
+    assert first_response.status_code == 200, first_response.get_data(as_text=True)
+    assert repeated_response.status_code == 400, repeated_response.get_data(as_text=True)
+    assert reasoning_marker_counter.increments == [(1, {"horde.model": CHAT_MODEL, "horde.where": "reasoning"})]

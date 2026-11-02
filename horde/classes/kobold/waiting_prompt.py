@@ -15,6 +15,7 @@ from sqlalchemy import Text, cast
 from sqlalchemy.orm import Mapped, query_expression
 from sqlalchemy.sql import ColumnElement, expression
 
+from horde import metrics
 from horde import vars as hv
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.kudos import StyleReward
@@ -23,6 +24,7 @@ from horde.classes.kobold.chat_request import (
     CHAT_IMAGE_DATA_URL_PREFIX,
     MAX_CHAT_FAULT_REASON_LENGTH,
     MAX_CHAT_REFUSAL_RC_LENGTH,
+    ReasoningEffortDefault,
     apply_worker_chat_defaults,
     build_chat_job_payload,
     build_chat_messages_key,
@@ -357,13 +359,23 @@ class TextWaitingPrompt(WaitingPrompt):
             [`build_worker_chat_extras`][horde.classes.kobold.chat_request.build_worker_chat_extras]; the response
             carries ``chat: true``. A text job's response is unchanged. The defaults that depend on the worker's chat
             declaration are added by
-            [`apply_worker_chat_defaults`][horde.classes.kobold.chat_request.apply_worker_chat_defaults].
+            [`apply_worker_chat_defaults`][horde.classes.kobold.chat_request.apply_worker_chat_defaults]. A pop of a
+            chat job whose client did not send ``reasoning_effort`` is counted in
+            ``horde.chat.reasoning_effort_default``.
         """
         if not self.is_chat:
             return super().get_pop_payload(procgen_list, payload)
 
         chat_payload = dict(payload)
-        apply_worker_chat_defaults(chat_payload, procgen_list[0].worker.chat_features)
+        reasoning_effort_default = apply_worker_chat_defaults(chat_payload, procgen_list[0].worker.chat_features)
+        if reasoning_effort_default != ReasoningEffortDefault.CLIENT_VALUE:
+            metrics.chat_reasoning_effort_default.add(
+                1,
+                {
+                    "horde.model": procgen_list[0].model,
+                    "horde.applied": str(reasoning_effort_default == ReasoningEffortDefault.APPLIED).lower(),
+                },
+            )
         if procgen_list[0].image_transport == ChatImageTransport.MESSAGES_URL:
             # Signing is local, so no store request is made while the pop response is built.
             chat_payload["messages_url"] = generate_chat_image_download_url(

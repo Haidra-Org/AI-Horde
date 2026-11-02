@@ -387,8 +387,10 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | `horde.oai.submit.outcome_unknown` | counter | none | Requests answered with `submit_outcome: "unknown"`. |
 | `horde.oai.submit.recoveries` | counter | `existing_claim` | Lost submits recovered by re-sending; `existing_claim` true is a claim match (horde answered 200). |
 | `horde.oai.client_retry_hints` | counter | none | Chat requests carrying `x-stainless-retry-count` above zero. |
-| `horde.oai.completions` | counter | `model`, `estimated_usage`, `finish_reason`, `max_length_lowered` | Delivered completions; `estimated_usage` true when a count was estimated because the worker did not report it. `finish_reason` is the finish reason of the first choice (`stop`, `length`, `content_filter` or `tool_calls`). `max_length_lowered` is true when `x_horde.context_adjustments` holds a `worker_max_length` entry. Such a completion with `finish_reason` `length` may have been cut short by the lowered limit. |
+| `horde.oai.completions` | counter | `model`, `estimated_usage`, `finish_reason`, `max_length_lowered`, `content`, `reasoning_effort` | Delivered completions; `estimated_usage` true when a count was estimated because the worker did not report it. `finish_reason` is the finish reason of the first choice (`stop`, `length`, `content_filter` or `tool_calls`). `max_length_lowered` is true when `x_horde.context_adjustments` holds a `worker_max_length` entry. Such a completion with `finish_reason` `length` may have been cut short by the lowered limit. `content` is what the first generation holds: `text` (visible content), `tool_calls` (no visible content, tool calls), `reasoning_only` (no visible content or tool calls, reasoning) or `empty` (none of them). Whitespace is not visible content. The reasoning is read from the native status, so a request with `horde.include_reasoning: false` is classed by the reasoning returned by its worker. A `reasoning_only` completion with `finish_reason` `length` is a lost reply, since the OpenAI API cannot resume reasoning. `reasoning_effort` is the client's value, or `omitted`. |
 | `horde.oai.completions.empty` | counter | `model` | Delivered completions whose generation does not hold visible text, the case `x_horde.notice` reports. |
+| `horde.oai.request.max_tokens` | histogram, tokens | `source` | The completion limit of each request the Horde accepted at submit, recorded once when the request ends. A request refused at submit never ran under a limit and is not recorded. `source` is `client` (the client sent `max_tokens` or `max_completion_tokens`), `default` (the client sent neither, so the limit is 512) or `lowered` (the Horde lowered the limit to the largest one declared by an online worker, the `worker_max_length` context adjustment). The Horde reports a lowered limit only in a status, so a request that ended before any status read is recorded as `client` or `default`. |
+| `horde.oai.reasoning_share` | histogram, ratio | `model`, `finish_reason` | For each delivered completion with reasoning tokens: `usage.completion_tokens_details.reasoning_tokens` divided by `usage.completion_tokens`. Both counts are estimates when the worker did not report them. A share near 1 with `finish_reason` `length` is a reply whose budget went to reasoning. |
 | `horde.oai.stream.relayed` | counter | none | Streamed requests that sent at least one relayed delta. |
 | `horde.oai.stream.relay_outcomes` | counter | `outcome` | How relayed streams ended: `equal`, `prefix`, `mismatch`, `replaced_attempt`, `ended` or `gap`; see [Relayed deltas](#relayed-deltas). |
 | `horde.oai.stream.post_gap` | histogram, seconds | none | Gap between the stream id append times of consecutive accepted worker progress posts in a relayed stream. The pacing window is estimated from these gaps. A negative gap, from a stream recreated with lower ids, is recorded as 0. |
@@ -403,7 +405,9 @@ the horde's settlement.
 Bucket boundaries: native call latency uses the horde's `BUCKETS_SECONDS`; queue wait, first content and request
 duration use `BUCKETS_REQUEST_LIFECYCLE_SECONDS` (both in `horde/metrics.py`); body size uses
 `horde.oai.metrics.BUCKETS_BODY_BYTES`. Post gap and pacing lag use `horde.oai.metrics.BUCKETS_POST_GAP_SECONDS` (0.1
-to 10 seconds), and pieces per post uses `horde.oai.metrics.BUCKETS_PIECES_PER_POST` (1 to 80).
+to 10 seconds), and pieces per post uses `horde.oai.metrics.BUCKETS_PIECES_PER_POST` (1 to 80). The completion limit
+uses `horde.oai.metrics.BUCKETS_MAX_TOKENS` (16 to 16384 tokens), and the reasoning share uses
+`horde.oai.metrics.BUCKETS_REASONING_SHARE` (0 to 1 in steps of 0.1).
 
 ## Refused parameter log line
 
@@ -458,3 +462,18 @@ request refused at submit does not have an id; its message starts `Unsubmitted c
 | `first_read_eligible_worker_threads` | `fail_fast` only: the eligible worker threads that read reported; null as for `first_read_wait_time`. |
 
 The line does not carry the API key, the messages, the client's title or address, or the operation key.
+
+## No-visible-text log line
+
+A delivered completion whose `horde.oai.completions` `content` is `reasoning_only` or `empty` also logs one Loguru
+`INFO` record before its finished-request line:
+
+```text
+Chat request <id> returned no visible text: content=<reasoning_only|empty> model=<model> max_tokens=<limit> max_tokens_source=<client|default|lowered> reasoning_effort=<effort|omitted> reasoning_tokens=<count|none> finish_reason=<reason>
+```
+
+The same values are bound to the record's `extra` as `request_id`, `model`, `max_tokens`, `max_tokens_source`,
+`reasoning_effort`, `reasoning_tokens`, `finish_reason` and `content`. `max_tokens` is the completion limit the
+request ran under, and `max_tokens_source` is its `source` as in `horde.oai.request.max_tokens`. `reasoning_tokens` is
+`usage.completion_tokens_details.reasoning_tokens`, an estimate when the worker did not report it, or null when the
+completion has no reasoning count. The line does not include the messages, the reply or the reasoning.
