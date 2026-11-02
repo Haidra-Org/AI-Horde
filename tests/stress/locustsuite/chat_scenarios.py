@@ -80,9 +80,6 @@ FAULTED_CODE: str = "ChatRequestFaulted"
 DECLARATION_GAP_CODE: str = "no_worker_supports_features"
 """The front's code for a request no online worker of the model declares enough for."""
 
-NO_WORKER_SUPPORTS_LIMIT_CODE: str = "no_worker_supports_limit"
-"""The front's code for a request over the size limits every online worker serving its model declares."""
-
 UNSUPPORTED_PARAMETER_CODE: str = "UnsupportedChatParameter"
 """The code of a refused key or value."""
 
@@ -501,18 +498,13 @@ def max_tokens_at_worker_limit(context: ScenarioContext) -> ChatScenario:
 
 
 def max_tokens_over_worker_limit(context: ScenarioContext) -> ChatScenario:
-    """One token above every worker's limit, the mistake clients make most: the first status read reports the exceeded
-    completion limit, and the front cancels the request before a stream's headers with 400 ``no_worker_supports_limit``
-    on ``max_tokens`` and no ``Retry-After``."""
+    """One token above every worker's limit, the mistake clients make most. At submit the Horde lowers ``max_tokens`` to
+    the largest ``max_length`` declared by the online workers, so the request is served. The persona's payload check
+    fails any job whose ``max_length`` is above the persona's declaration, so a request that was not lowered is a
+    violation."""
     model = context.models.conformant
     body = _body(model, [_user(f"Say hello. {nonce_marker(context.nonce)}")], max_tokens=context.worker_max_length + 1)
-    expectation = ErrorExpectation(
-        status=400,
-        codes=frozenset({NO_WORKER_SUPPORTS_LIMIT_CODE}),
-        param="max_tokens",
-        should_not_retry=True,
-        retry_after=False,
-    )
+    expectation = _text_reply(context, model)
     return ChatScenario("max_tokens_over_worker_limit", ScenarioGroup.ORDINARY, body, expectation, ChatPersonaRole.CONFORMANT)
 
 

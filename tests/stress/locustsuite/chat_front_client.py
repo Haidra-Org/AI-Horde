@@ -122,8 +122,11 @@ CONFORMANT_CARD_PARAMETERS: frozenset[str] = frozenset(
 )
 """The ``supported_parameters`` a model served by the conformant or flaky persona lists."""
 
-LIMITED_CARD_PARAMETERS: frozenset[str] = frozenset({"max_tokens", "temperature", "top_p", "stop", "seed", "tools"})
-"""The ``supported_parameters`` a model served only by the limited persona lists, and no more."""
+LIMITED_CARD_PARAMETERS: frozenset[str] = frozenset(
+    {"max_tokens", "temperature", "top_p", "stop", "seed", "tools", "parallel_tool_calls"},
+)
+"""The ``supported_parameters`` a model served only by the limited persona lists, and no more. A model with a worker
+that declares ``tools`` also lists ``parallel_tool_calls`` (``TOOL_SUPPORTED_PARAMETERS`` in ``horde/oai/mapping.py``)."""
 
 
 class ChatMixFrontClient(HttpUser):
