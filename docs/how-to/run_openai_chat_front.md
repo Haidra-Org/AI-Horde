@@ -22,7 +22,8 @@ runs; the Redis server that horde's cache uses; at least one text worker that op
 will wait; and the project's dependencies installed (`uv sync`).
 
 End state: a `python -m horde.oai` process answering `GET /healthz`, `GET /v1/models` and
-`POST /v1/chat/completions`, subscribed to the horde's chat completion signals.
+`POST /v1/chat/completions`, subscribed to the horde's chat completion signals, and serving its API documentation at
+`/docs`, `/redoc` and `/openapi.json`.
 
 The front is a separate ASGI process. It does not hold a database connection or import anything from the Flask
 application: it submits each chat request to the horde's native `/v2/generate/chat/async`, waits for the horde's
@@ -105,6 +106,10 @@ curl -s http://127.0.0.1:7002/healthz
 returns `{"live": true, "ready": true, "signal_subscribed": true, "inflight": 0}`. `ready: false` means the
 process is at `HORDE_OAI_MAX_INFLIGHT` or stopping. `signal_subscribed: false` means Redis is unset or unreachable;
 requests still complete, but only at the fallback poll interval.
+
+The interactive API documentation is at `http://127.0.0.1:7002/docs`, and `/` redirects there. `/redoc` shows the same
+description, and `/openapi.json` is the OpenAPI document itself. `/healthz` is left out of it, since only operators
+call it.
 
 Reversal: stop the process, or `docker compose stop aihorde_oai`. On a clean stop the front waits up to
 `HORDE_OAI_SHUTDOWN_DRAIN_SECONDS` for open requests, then cancels every request still open on the horde within

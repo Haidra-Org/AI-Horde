@@ -29,6 +29,7 @@ model list routes over the horde's native `/v2/generate/chat` routes (see
 | Entry point and telemetry setup | `horde/oai/__main__.py` | `main`, `configure_telemetry`, `FRONT_SERVICE_NAME` |
 | Settings | `horde/oai/settings.py` | `FrontSettings`, `load_settings` |
 | Application and routes | `horde/oai/app.py` | `create_app`, `FrontState` |
+| OpenAPI description and documentation routes | `horde/oai/openapi.py` | `build_openapi_schema`, `FRONT_DESCRIPTION`, `chat_completions_route_options` |
 | Admission caps and gauges' source | `horde/oai/app.py` | `InflightLimiter`, `InflightSlot` |
 | Request lifecycle | `horde/oai/app.py` | `_chat_completions`, `_wait_for_completion`, `_stream_completion` |
 | Submit and lost-submit recovery | `horde/oai/app.py` | `_submit`, `_recover_submit` |
@@ -48,6 +49,31 @@ model list routes over the horde's native `/v2/generate/chat` routes (see
 | Per-request wait, poll and deadline | `horde/oai/waiter.py` | `ChatRequestWatcher`, `WaitBudget`, `WakeSource` |
 | No eligible worker and declaration gap | `horde/oai/waiter.py`, `horde/oai/app.py` | `NoEligibleWorkerError`, `DeclarationGapError`, `_wait_error` |
 | Instruments and bucket boundaries | `horde/oai/metrics.py` | `FrontMetrics`, `histogram_views` |
+
+## API documentation
+
+The front serves its OpenAPI description. `/openapi.json` is the OpenAPI 3.1 document, `/docs` renders it with
+Swagger UI and `/redoc` with ReDoc, and `/` redirects to `/docs`. `/healthz` is left out of the description.
+
+The route handlers read and validate the body by hand, so FastAPI does not derive any schema from them.
+`horde/oai/openapi.py` generates the component schemas from `ChatCompletionRequest`, as validated, and from
+`ChatCompletionResponse`, `ChatCompletionChunk`, `OpenAIErrorEnvelope`, `ModelList` and `ModelCard`, as serialized.
+It also supplies each route's request body, responses by status with their error codes, and the `x-should-retry`
+and `Retry-After` headers. The document describes the handlers and does not change how they behave.
+The document adjusts the generated schemas where the handlers differ from the models:
+
+- The request schema lists the keys of `DEFAULT_NO_OP_PARAMETERS` that are not request fields, from
+  `NO_OP_PARAMETER_SCHEMAS`, each accepted only at its default.
+- The schemas of the objects whose unknown keys are dropped by `drop_unknown_nested_keys` (`KEY_DROPPING_MODELS`)
+  allow other keys. The top level, `stream_options`, `response_format` and `horde` do not.
+- FastAPI's 422 response is removed, since the front does not return it.
+
+Each field's description is the docstring of the model field in `horde/oai/schema.py` or `horde/chat_contract.py`,
+so those docstrings are public text for API users, and they state where the front differs from OpenAI. In the
+document, `plain_description` drops a parenthetical ``(see [`name`][path])`` cross-reference and renders an inline
+``[`name`][path]`` one as `` `name` ``. A detail needed only by maintainers goes in a comment above the field. Models
+serialized through a wrap `model_serializer` that returns `dict[str, object]` are documented by their fields
+(`DocumentedJsonSchema`). The description links to the published documentation site (`DOCS_URL`).
 
 ## Request keys
 

@@ -13,6 +13,9 @@
 - ``GET /v1/models`` and ``GET /v1/models/{id}``: the text models an online chat worker serves, in the OpenAI list
   shape with OpenRouter's limit and parameter fields; an id may contain slashes.
 - ``GET /healthz``: liveness, admission readiness and whether the completion signal subscription is up.
+- ``GET /docs``, ``GET /redoc`` and ``GET /openapi.json``: the interactive documentation and the OpenAPI description,
+  built by [`horde.oai.openapi`][horde.oai.openapi] from the request and response models. ``GET /`` redirects to
+  ``/docs``.
 
 Every error before headers is an OpenAI error envelope with a ``metadata`` object; after stream headers it is one SSE
 error event. Each client request gets a fresh operation key, sent as ``horde.operation_key``; a submit whose answer was
@@ -29,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import itertools
 import json
 import math
@@ -46,7 +50,7 @@ import httpx
 import redis.asyncio
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from horde_sdk.generation_parameters.text.chat_policy import ChatGuarantee
 from loguru import logger
 from opentelemetry.metrics import Meter
@@ -121,6 +125,16 @@ from horde.oai.metrics import (
     PacingFlushReason,
     RelayOutcome,
     get_front_meter,
+)
+from horde.oai.openapi import (
+    DOCS_PATH,
+    FRONT_DESCRIPTION,
+    FRONT_SUMMARY,
+    OPENAPI_TAGS,
+    build_openapi_schema,
+    chat_completions_route_options,
+    get_model_route_options,
+    list_models_route_options,
 )
 from horde.oai.schema import (
     CHAT_REQUEST_CONFLICT_CODE,
@@ -969,7 +983,17 @@ def create_app(
             for owned_http_client in owned_http_clients:
                 await owned_http_client.aclose()
 
-    app = FastAPI(title="AI Horde OpenAI-compatible front", version=HORDE_VERSION, lifespan=lifespan)
+    app = FastAPI(
+        title="AI Horde OpenAI-compatible front",
+        version=HORDE_VERSION,
+        summary=FRONT_SUMMARY,
+        description=FRONT_DESCRIPTION,
+        docs_url=DOCS_PATH,
+        openapi_tags=[dict(openapi_tag) for openapi_tag in OPENAPI_TAGS],
+        lifespan=lifespan,
+    )
+    # FastAPI calls app.openapi() without arguments. The partial passes the app, so the builder takes it explicitly.
+    app.openapi = functools.partial(build_openapi_schema, app)  # type: ignore[method-assign]
     app.state.front = front_state
     # Browser clients such as KoboldAI Lite call the front directly with a bearer key, so every origin is allowed, as
     # the Horde API itself is served; a bearer key is not a cookie, so no credentials flag is needed.
@@ -981,10 +1005,11 @@ def create_app(
         expose_headers=[RETRY_AFTER_HEADER, SHOULD_RETRY_HEADER],
         max_age=CORS_PREFLIGHT_MAX_AGE_SECONDS,
     )
-    app.add_api_route("/v1/chat/completions", _chat_completions, methods=["POST"], response_model=None)
-    app.add_api_route("/v1/models", _list_models, methods=["GET"], response_model=None)
-    app.add_api_route("/v1/models/{model_id:path}", _get_model, methods=["GET"], response_model=None)
-    app.add_api_route("/healthz", _health, methods=["GET"], response_model=None)
+    app.add_api_route("/v1/chat/completions", _chat_completions, methods=["POST"], response_model=None, **chat_completions_route_options())
+    app.add_api_route("/v1/models", _list_models, methods=["GET"], response_model=None, **list_models_route_options())
+    app.add_api_route("/v1/models/{model_id:path}", _get_model, methods=["GET"], response_model=None, **get_model_route_options())
+    app.add_api_route("/healthz", _health, methods=["GET"], response_model=None, include_in_schema=False)
+    app.add_api_route("/", _root, methods=["GET"], response_model=None, include_in_schema=False)
     return app
 
 
@@ -3535,6 +3560,11 @@ async def _get_model(request: Request, model_id: str) -> Response:
         if model_card.model_id == model_id:
             return JSONResponse(content=model_card.model_dump(mode="json"))
     return _model_not_found(model_id).to_response()
+
+
+async def _root() -> Response:
+    """Serve ``GET /``: redirect to the interactive API documentation, the front's only human-facing page."""
+    return RedirectResponse(url=DOCS_PATH, status_code=HTTPStatus.FOUND)
 
 
 async def _health(request: Request) -> Response:

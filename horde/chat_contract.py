@@ -256,17 +256,18 @@ class ChatAvailabilityMode(StrEnum):
 class ChatHordeOptions(BaseModel):
     """Represents the ``horde`` extension object of a chat request: options OpenAI has no key for.
 
-    Every field defaults to the behaviour of a request that omits it, so a caller forwarding only the keys a client set
-    does not change the request's meaning.
+    Every field defaults to the behaviour of a request that omits it.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    # The defaults match omission so that a caller forwarding only the keys set by a client does not change the
+    # request's meaning.
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     only: list[str] | None = Field(default=None, min_length=1)
-    """Worker ids the request is limited to; cannot be combined with ``ignore``."""
+    """The ids of the only workers allowed to serve the request. It cannot be combined with ``ignore``."""
 
     ignore: list[str] | None = Field(default=None, min_length=1)
-    """Worker ids that never serve the request; cannot be combined with ``only``."""
+    """The ids of workers that never serve the request. It cannot be combined with ``only``."""
 
     trusted_workers: StrictBool = False
     """Limit the request to trusted workers."""
@@ -278,45 +279,55 @@ class ChatHordeOptions(BaseModel):
     """Allow workers below the speed threshold to serve the request."""
 
     max_context_length: StrictInt | None = Field(default=None, ge=1)
-    """An explicit context length in tokens, in place of the one fitted to the messages."""
+    """An explicit context length in tokens, in place of the one fitted to the messages. Only a worker whose declared
+    chat context is at least this long serves the request."""
 
     context_fit: ChatContextFit = ChatContextFit.TRUNCATE_OLDEST
-    """What to do when the messages do not fit the context. The default is ``truncate_oldest``: a client that keeps
-    a long history is served with its oldest turns dropped rather than refused, and the request records the drop in
-    its context adjustments. ``grow`` and ``reject`` are explicit choices."""
+    """What to do when the messages do not fit the context. The default, ``truncate_oldest``, grows the context as
+    ``grow`` does, then drops whole turns from the oldest forward until the messages fit. It keeps every system and
+    developer message and the latest user message with what follows it, and the dropped turns are listed in the
+    context adjustments. ``grow`` raises the context up to the largest chat context declared by an online worker for
+    the model. ``reject`` refuses messages that do not fit the context."""
 
+    # ADR 0036 records the conformance modes.
     conformance: ChatConformance = DEFAULT_CHAT_CONFORMANCE
-    """How closely the serving worker has to follow the OpenAI chat contract (ADR 0036). ``best_effort`` drops the
-    guarantee requirements and keeps capabilities and limits."""
+    """How closely the serving worker has to follow the OpenAI chat contract. The default, ``strict``, sends the
+    request only to workers that declare the guarantees needed by the request. ``best_effort`` drops the guarantee
+    requirements and keeps the capability and limit requirements."""
 
+    # It acts when the request is admitted and is not stored.
     openai_guards: StrictBool = False
     """Turn on the request refusals OpenAI applies and the Horde relaxes on purpose. It covers one refusal: a
     ``json_object`` response format without the word "json" in any message (see
-    [`check_json_word`][horde.chat_contract.check_json_word]). It acts when the request is admitted and is not stored."""
+    [`check_json_word`][horde.chat_contract.check_json_word])."""
 
+    # It changes only the wait and leaves the work unchanged, so it is not stored and the operation fingerprint leaves
+    # it out.
     availability_mode: ChatAvailabilityMode = ChatAvailabilityMode.WAIT
-    """How a request is treated when the online pool cannot serve it within the client's budget. ``fail_fast``
-    refuses at once with a Retry-After instead of waiting for workers to appear. It changes the wait, not the work,
-    so it is not stored and the operation fingerprint leaves it out."""
+    """How a request is treated when the online pool cannot serve it within the client's budget. The default,
+    ``wait``, queues the request and waits for workers. ``fail_fast`` refuses the request with a Retry-After when the
+    first status read shows no eligible worker thread online, or an estimated wait over the time left in the budget."""
 
+    # It acts only at creation, so it is not stored and the operation fingerprint leaves it out.
     max_kudos: StrictInt | None = Field(default=None, ge=1)
     """The most kudos the request may cost. A request whose kudos estimate at creation exceeds it is refused before it
-    is queued, with the estimate in the refusal. The estimate assumes the full ``max_length`` is generated while the
-    charge is the output estimate, so the check is conservative. It acts only at creation, so it is not stored and the
-    operation fingerprint leaves it out."""
+    is queued, with the estimate in the refusal. The estimate assumes the full requested output length is generated,
+    while the charge is for the output estimate, so the check is conservative."""
 
+    # It changes what the front delivers and leaves the work unchanged, so it is not stored and the operation fingerprint
+    # leaves it out.
     include_reasoning: StrictBool = True
     """Return the model's reasoning as ``reasoning_content`` beside the reply. OpenAI's chat API does not return
-    reasoning text, but clients that read the DeepSeek ``reasoning_content`` field render it live, and the OpenAI SDK
-    keeps the unknown field in ``model_extra``. Without it a client sees nothing during a long reasoning phase. False
-    hides it. It changes what the front delivers and leaves the work unchanged, so it is not stored and the operation
-    fingerprint leaves it out. The native status shows the reasoning a worker submitted regardless."""
+    reasoning text. Clients that read DeepSeek's ``reasoning_content`` field show the reasoning as it arrives, and the
+    OpenAI SDK keeps the field in ``model_extra``. Set it to false to leave the reasoning out. The native status route
+    returns the reasoning submitted by a worker either way."""
 
     dry_run: StrictBool = False
-    """Return the kudos cost without queueing; native callers only."""
+    """Return the kudos cost without queueing. It is accepted only on the native API. The OpenAI front refuses it."""
 
     operation_key: UUID | None = None
-    """Identifies one submission so a repeated submit returns the existing request; native callers only."""
+    """Identifies one submission so a repeated submit returns the existing request. It is accepted only on the native
+    API. The OpenAI front sets it itself and refuses it from clients."""
 
     @field_validator("ignore")
     @classmethod
@@ -422,7 +433,7 @@ class ChatToolChoiceMode(StrEnum):
 class ChatFunctionDefinition(BaseModel):
     """Represents one callable function a client offers the model."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     name: StrictStr = Field(min_length=1, max_length=MAX_CHAT_TOOL_NAME_LENGTH, pattern=TOOL_NAME_PATTERN)
     """What the model calls the function by."""
@@ -431,10 +442,11 @@ class ChatFunctionDefinition(BaseModel):
     """What the function does, for the model."""
 
     parameters: dict[str, Any] | None = None
-    """The JSON Schema of the arguments; forwarded to the worker unchanged."""
+    """The JSON Schema of the arguments, forwarded to the worker unchanged."""
 
     strict: StrictBool | None = None
-    """Whether the arguments have to match the schema exactly; forwarded to the worker, which decides what it honours."""
+    """Whether the arguments have to match the schema exactly. It is forwarded to the worker and applied as far as the
+    worker's backend supports it."""
 
     @field_validator("parameters")
     @classmethod
@@ -450,7 +462,7 @@ class ChatFunctionDefinition(BaseModel):
 class ChatTool(BaseModel):
     """Represents one entry of a request's ``tools``. Only function tools exist."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     type: Literal["function"]
     """Always ``function``."""
@@ -462,7 +474,7 @@ class ChatTool(BaseModel):
 class ChatNamedFunction(BaseModel):
     """Represents the function a ``tool_choice`` object points at."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     name: StrictStr = Field(min_length=1, max_length=MAX_CHAT_TOOL_NAME_LENGTH, pattern=TOOL_NAME_PATTERN)
     """The name of one of the request's tools."""
@@ -471,7 +483,7 @@ class ChatNamedFunction(BaseModel):
 class ChatNamedToolChoice(BaseModel):
     """Represents a ``tool_choice`` that forces one function."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     type: Literal["function"]
     """Always ``function``."""
@@ -500,7 +512,7 @@ class ChatResponseFormatType(StrEnum):
 class ChatTextResponseFormat(BaseModel):
     """Represents ``{"type": "text"}``, the default."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     type: Literal["text"]
     """Always ``text``."""
@@ -509,21 +521,20 @@ class ChatTextResponseFormat(BaseModel):
 class ChatJsonObjectResponseFormat(BaseModel):
     """Represents ``{"type": "json_object"}``."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     type: Literal["json_object"]
     """Always ``json_object``."""
 
 
 class ChatJsonSchema(BaseModel):
-    """Represents the ``json_schema`` object of a structured output request.
+    """Represents the ``json_schema`` object of a structured output request."""
 
-    The schema itself is read from the ``schema`` key and held in ``schema_``, because ``schema`` is a pydantic method
-    name; dump with ``by_alias=True`` to get the client's key back. Validation reads only the ``schema`` key, so
-    ``schema_`` in a request is an unknown key and refused like any other.
-    """
+    # The schema is read from the ``schema`` key and held in ``schema_``, because ``schema`` is a pydantic method name.
+    # Dump with ``by_alias=True`` to get the client's key back. Validation reads only the ``schema`` key, so ``schema_``
+    # in a request is an unknown key and refused like any other.
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     name: StrictStr = Field(min_length=1, max_length=MAX_CHAT_TOOL_NAME_LENGTH, pattern=TOOL_NAME_PATTERN)
     """What the client calls the schema."""
@@ -532,13 +543,13 @@ class ChatJsonSchema(BaseModel):
     """What the output is, for the model."""
 
     schema_: dict[str, Any] = Field(alias="schema")
-    """The JSON Schema the output has to match; forwarded to the worker unchanged. Required: a worker compiles it
-    into a grammar, and without one the format would mean nothing."""
+    """The JSON Schema that the output has to match, forwarded to the worker unchanged. Required, because the worker
+    compiles it into a grammar."""
 
     strict: StrictBool | None = None
-    """Whether the output has to match the schema exactly; forwarded to the worker, which decides what it honours.
-    ``true`` also subjects the schema to OpenAI's structural rules
-    ([`check_strict_response_schema`][horde.chat_contract.check_strict_response_schema])."""
+    """Whether the output has to match the schema exactly. It is forwarded to the worker and applied as far as the
+    worker's backend supports it. ``true`` also subjects the schema to OpenAI's structural rules for strict schemas (see
+    [`check_strict_response_schema`][horde.chat_contract.check_strict_response_schema])."""
 
     @field_validator("schema_")
     @classmethod
@@ -555,7 +566,7 @@ class ChatJsonSchema(BaseModel):
 class ChatJsonSchemaResponseFormat(BaseModel):
     """Represents ``{"type": "json_schema", "json_schema": {...}}``."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     type: Literal["json_schema"]
     """Always ``json_schema``."""
@@ -574,22 +585,23 @@ ChatResponseFormat = Annotated[
 class ChatFunctionCall(BaseModel):
     """Represents the function part of a tool call: which function, with which arguments."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     name: StrictStr = Field(min_length=1, max_length=MAX_CHAT_TOOL_NAME_LENGTH, pattern=TOOL_NAME_PATTERN)
     """The function called."""
 
     arguments: StrictStr
-    """The arguments as the model wrote them, a JSON document in a string; never parsed or rewritten by the horde."""
+    """The arguments as the model wrote them, a JSON document in a string. The horde does not parse or rewrite them."""
 
 
 class ChatToolCall(BaseModel):
     """Represents one tool call, in an assistant message of the history or in a worker's submission."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     id: StrictStr = Field(min_length=1, max_length=MAX_CHAT_TOOL_CALL_ID_LENGTH)
-    """The id a ``tool`` message answers with; minted by the backend and never rewritten by the horde."""
+    """The id of the call, which a ``tool`` message repeats in ``tool_call_id``. The backend assigns it, and the
+    horde does not rewrite it."""
 
     type: Literal["function"]
     """Always ``function``."""

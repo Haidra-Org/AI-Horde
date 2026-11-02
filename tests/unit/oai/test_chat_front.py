@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Behavior of the chat front's successful paths: completions, streams, models, health and the Horde call headers."""
+"""Behavior of the chat front's successful paths: completions, streams, models, health, documentation and the Horde call headers."""
 
 from __future__ import annotations
 
@@ -11,13 +11,17 @@ import json
 import math
 import time
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
-from horde.chat_contract import DEFAULT_CHAT_MAX_TOKENS
+from horde.chat_contract import DEFAULT_CHAT_MAX_TOKENS, MAX_CHAT_MODEL_COUNT, ChatHordeOptions
 from horde.consts import ANONYMOUS_API_KEY
+from horde.oai import app as app_module
 from horde.oai.mapping import CHARACTERS_PER_ESTIMATED_TOKEN, build_system_fingerprint
+from horde.oai.openapi import RETRY_AFTER_HEADER, SHOULD_RETRY_HEADER, plain_description
+from horde.oai.schema import DEFAULT_NO_OP_PARAMETERS, ChatCompletionRequest
 from tests.unit.oai.conftest import (
     CHARGE_BASIS,
     FAST_TEST_SETTINGS,
@@ -517,6 +521,114 @@ async def test_health_reports_liveness_readiness_and_subscription_separately(sta
 
     assert subscribed.json() == {"live": True, "ready": True, "signal_subscribed": True, "inflight": 0}
     assert poll_only.json() == {"live": True, "ready": True, "signal_subscribed": False, "inflight": 0}
+
+
+async def test_root_redirects_to_the_documentation(start_front: StartFront) -> None:
+    async with start_front() as front:
+        root = await front.client.get("/")
+        docs = await front.client.get("/docs")
+
+    assert root.status_code == 302
+    assert root.headers["location"] == "/docs"
+    assert docs.status_code == 200
+    assert "swagger-ui" in docs.text
+
+
+def _schema_refs(node: object) -> Iterator[str]:
+    """Yield every ``$ref`` value under an OpenAPI document node."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "$ref" and isinstance(value, str):
+                yield value
+            else:
+                yield from _schema_refs(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _schema_refs(item)
+
+
+async def test_openapi_document_describes_the_routes_with_the_request_and_response_models(start_front: StartFront) -> None:
+    async with start_front() as front:
+        response = await front.client.get("/openapi.json")
+
+    document = response.json()
+    schemas = document["components"]["schemas"]
+    chat_operation = document["paths"]["/v1/chat/completions"]["post"]
+    chat_responses = chat_operation["responses"]
+
+    assert response.status_code == 200
+    assert set(document["paths"]) == {"/v1/chat/completions", "/v1/models", "/v1/models/{model_id}"}
+    assert ANONYMOUS_API_KEY in document["info"]["description"]
+    assert chat_operation["requestBody"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ChatCompletionRequest",
+    }
+    assert chat_responses["200"]["content"]["text/event-stream"]["schema"] == {"$ref": "#/components/schemas/ChatCompletionChunk"}
+    assert chat_responses["400"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/OpenAIErrorEnvelope"}
+    assert set(chat_responses["503"]["headers"]) == {SHOULD_RETRY_HEADER, RETRY_AFTER_HEADER}
+    assert all("422" not in operation["responses"] for path_item in document["paths"].values() for operation in path_item.values())
+    assert document["components"]["securitySchemes"]["AIHordeApiKey"]["scheme"] == "bearer"
+    assert {} in document["security"]
+    unresolved = {ref for ref in _schema_refs(document) if ref.removeprefix("#/components/schemas/") not in schemas}
+    assert unresolved == set()
+
+
+async def test_openapi_document_lists_every_accepted_request_key_and_horde_option(start_front: StartFront) -> None:
+    async with start_front() as front:
+        schemas = (await front.client.get("/openapi.json")).json()["components"]["schemas"]
+
+    request_schema = schemas["ChatCompletionRequest"]
+    horde_properties = schemas["ChatHordeOptions"]["properties"]
+
+    assert set(request_schema["properties"]) == set(ChatCompletionRequest.model_fields) | set(DEFAULT_NO_OP_PARAMETERS)
+    assert request_schema["additionalProperties"] is False
+    assert set(horde_properties) == set(ChatHordeOptions.model_fields)
+    assert horde_properties["include_reasoning"]["default"] is True
+    assert [key for key, field_schema in request_schema["properties"].items() if not field_schema.get("description")] == []
+    assert [key for key, field_schema in horde_properties.items() if not field_schema.get("description")] == []
+    assert "additionalProperties" not in schemas["ChatMessage"]
+    assert schemas["StreamOptions"]["additionalProperties"] is False
+
+
+async def test_openapi_header_names_match_the_front_response_headers() -> None:
+    assert (SHOULD_RETRY_HEADER, RETRY_AFTER_HEADER) == (app_module.SHOULD_RETRY_HEADER, app_module.RETRY_AFTER_HEADER)
+
+
+def _schema_descriptions(node: object) -> Iterator[str]:
+    """Yield every ``description`` string under an OpenAPI document node."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "description" and isinstance(value, str):
+                yield value
+            else:
+                yield from _schema_descriptions(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _schema_descriptions(item)
+
+
+async def test_openapi_document_describes_fields_from_their_docstrings_without_cross_reference_syntax(
+    start_front: StartFront,
+) -> None:
+    async with start_front() as front:
+        document = (await front.client.get("/openapi.json")).json()
+
+    schemas = document["components"]["schemas"]
+    request_properties = schemas["ChatCompletionRequest"]["properties"]
+    usage_properties = schemas["ChatCompletionUsage"]["properties"]
+
+    assert request_properties["messages"]["description"]
+    assert f"at most {MAX_CHAT_MODEL_COUNT}," in request_properties["models"]["description"]
+    assert set(usage_properties) == {"prompt_tokens", "completion_tokens", "total_tokens", "completion_tokens_details"}
+    assert [description for description in _schema_descriptions(document) if "][" in description] == []
+
+
+async def test_plain_description_drops_see_references_and_keeps_inline_names() -> None:
+    described = plain_description(
+        "At most 5 (see [`MAX_CHAT_MODEL_COUNT`][horde.chat_contract.MAX_CHAT_MODEL_COUNT]), as\n"
+        "[`check_json_word`][horde.chat_contract.check_json_word] checks (see\n[`a`][x.a] and [`b`][x.b]).",
+    )
+
+    assert described == "At most 5, as\n`check_json_word` checks."
 
 
 TOOL_CALLS: list[dict[str, object]] = [

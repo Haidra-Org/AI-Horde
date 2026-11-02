@@ -189,7 +189,7 @@ class ChatRole(StrEnum):
 
 
 class ImageDetail(StrEnum):
-    """The OpenAI ``detail`` hint of an image part; forwarded to the worker unchanged."""
+    """The OpenAI ``detail`` hint of an image part, forwarded to the worker unchanged."""
 
     AUTO = "auto"
     LOW = "low"
@@ -549,7 +549,7 @@ def _served_keys(raw_object: Mapping[str, object], served_keys: Collection[str])
 class TextContentPart(BaseModel):
     """Represents one text part of a message's content array."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     type: Literal["text"]
     """Always ``text``."""
@@ -561,10 +561,11 @@ class TextContentPart(BaseModel):
 class ImageUrl(BaseModel):
     """Represents the ``image_url`` object of an image part."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     url: StrictStr
-    """A ``data:image/...;base64,`` URL or an ``http(s)`` URL; the native route validates, fetches and stores it."""
+    """A ``data:image/...;base64,`` URL or an ``http(s)`` URL. The Horde fetches a URL at submit and stores each image
+    as JPEG for the worker."""
 
     detail: ImageDetail | None = None
     """The client's detail hint."""
@@ -573,7 +574,7 @@ class ImageUrl(BaseModel):
 class ImageContentPart(BaseModel):
     """Represents one image part of a user message's content array."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     type: Literal["image_url"]
     """Always ``image_url``."""
@@ -589,14 +590,14 @@ ContentPart = Annotated[TextContentPart | ImageContentPart, Field(discriminator=
 class ChatMessage(BaseModel):
     """Represents one message of a chat request.
 
-    Which keys each role may carry is enforced by
-    [`drop_unknown_nested_keys`][horde.oai.schema.drop_unknown_nested_keys] before validation (see
-    [`SUPPORTED_MESSAGE_KEYS`][horde.oai.schema.SUPPORTED_MESSAGE_KEYS]). Counts, sizes and whether the tool turns
-    follow OpenAI's rule ([`check_tool_history`][horde.chat_contract.check_tool_history]) are checked after
-    validation.
+    A key not used by the message's role is dropped, as OpenAI ignores it (see
+    [`drop_unknown_nested_keys`][horde.oai.schema.drop_unknown_nested_keys] and
+    [`SUPPORTED_MESSAGE_KEYS`][horde.oai.schema.SUPPORTED_MESSAGE_KEYS]). Message counts and sizes, and whether the
+    tool turns follow OpenAI's rule, are checked after the body is parsed (see
+    [`check_tool_history`][horde.chat_contract.check_tool_history]).
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     role: ChatRole
     """Who wrote the message."""
@@ -608,7 +609,7 @@ class ChatMessage(BaseModel):
         default=None,
         validate_default=True,
     )
-    """The id of the call a ``tool`` message answers; required on a tool message."""
+    """The id of the tool call that this ``tool`` message responds to. Required on a tool message."""
 
     tool_calls: Annotated[list[ChatToolCall], Field(min_length=1)] | None = None
     """The tool calls of an earlier assistant reply, forwarded unchanged."""
@@ -616,9 +617,9 @@ class ChatMessage(BaseModel):
     # Declared after ``tool_calls`` so its validator can read them and report at this path; the default is validated
     # so an omitted content is checked too.
     content: StrictStr | Annotated[list[ContentPart], Field(min_length=1)] | None = Field(default=None, validate_default=True)
-    """The message text as one string, or an array of parts; only a user message may hold image parts, which
-    [`find_refused_parameter`][horde.oai.schema.find_refused_parameter] enforces before validation. Null or omitted
-    only on an assistant message with ``tool_calls``."""
+    """The message text as one string, or an array of parts. Only a user message may hold image parts (see
+    [`find_refused_parameter`][horde.oai.schema.find_refused_parameter]). Null or omitted only on an assistant message
+    with ``tool_calls``."""
 
     @field_validator("content", mode="after")
     @classmethod
@@ -652,7 +653,7 @@ class ChatMessage(BaseModel):
 class StreamOptions(BaseModel):
     """Represents the ``stream_options`` object of a chat request."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
     include_usage: StrictBool | None = None
     """Send a usage chunk with ``choices: []`` before ``[DONE]``."""
@@ -711,33 +712,40 @@ def _openai_value_error(
 class ChatCompletionRequest(BaseModel):
     """Represents an OpenAI chat completions request in the subset the service serves.
 
-    A null value means the key was omitted.
+    A null value means the key was omitted. Any other top-level key is refused with 400 ``UnsupportedChatParameter``,
+    except the keys in [`DEFAULT_NO_OP_PARAMETERS`][horde.oai.schema.DEFAULT_NO_OP_PARAMETERS], which are accepted
+    and dropped at their default value.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False, use_attribute_docstrings=True)
 
     model: StrictStr | None = Field(default=None, min_length=1)
     """The Horde text model name. A request sets exactly one of ``model``, the OpenAI key, and ``models``."""
 
     models: list[Annotated[StrictStr, AfterValidator(_validate_listed_model_name)]] | None = Field(default=None, min_length=1)
-    """The Horde text model names the request accepts, at most
-    [`MAX_CHAT_MODEL_COUNT`][horde.chat_contract.MAX_CHAT_MODEL_COUNT], each listed once, forwarded unchanged.
-    Whichever of them an online worker runs serves the request, and the response ``model`` is the one that did."""
+    """The Horde text model names acceptable for the request, at most 5 (see
+    [`MAX_CHAT_MODEL_COUNT`][horde.chat_contract.MAX_CHAT_MODEL_COUNT]), each listed once and forwarded unchanged.
+    OpenAI does not define this key. Any online worker that runs one of them may serve the request, and the response
+    ``model`` is the one that did."""
 
     messages: list[ChatMessage]
-    """The conversation so far, in order; at least one message."""
+    """The conversation so far, in order, with at least one message."""
 
     stream: StrictBool | None = None
-    """Answer as server-sent events; the whole text arrives in one content chunk."""
+    """Return the reply as server-sent events. A plain text reply arrives in pieces about once a second when the
+    worker reports progress. A reply to a request with ``tools`` or a ``response_format`` other than text, or from a
+    worker that does not report progress, arrives whole when it finishes."""
 
     stream_options: StreamOptions | None = None
-    """Options for a streamed answer; only allowed with ``stream: true``."""
+    """Options for a streamed reply. They are allowed only with ``stream: true``."""
 
     max_tokens: StrictInt | None = None
-    """The most tokens to generate, 16 to 16384; OpenAI accepts any value from 1."""
+    """The most tokens to generate, reasoning included, from 16 to 16384. OpenAI accepts any value from 1. When neither
+    token limit is set, the limit is 512. A limit above the largest length declared by an online worker for the model
+    is lowered to that length and reported in ``x_horde.context_adjustments``."""
 
     max_completion_tokens: StrictInt | None = None
-    """The newer key for ``max_tokens``; both must agree when both are set."""
+    """The newer name of ``max_tokens``. When both are set, they must be equal."""
 
     temperature: StrictFloat | StrictInt | None = None
     """The sampling temperature, 0 to 2."""
@@ -746,45 +754,46 @@ class ChatCompletionRequest(BaseModel):
     """The nucleus sampling probability, 0 to 1."""
 
     frequency_penalty: StrictFloat | StrictInt | None = None
-    """The frequency penalty, -2 to 2; a non-default value needs a worker that declares it."""
+    """The frequency penalty, -2 to 2. A value other than 0 needs a worker that declares the feature."""
 
     presence_penalty: StrictFloat | StrictInt | None = None
-    """The presence penalty, -2 to 2; a non-default value needs a worker that declares it."""
+    """The presence penalty, -2 to 2. A value other than 0 needs a worker that declares the feature."""
 
     stop: StrictStr | list[StrictStr] | None = None
     """One stop sequence or up to four."""
 
     seed: StrictInt | None = None
-    """The sampling seed."""
+    """The sampling seed. Any value needs a worker that declares the feature."""
 
     reasoning_effort: ChatReasoningEffort | None = None
-    """How much the model reasons before answering, forwarded unchanged. A value needs a worker that declares the
-    feature. When it is omitted, a declaring worker receives ``medium``, and ``max_tokens`` has to cover the reasoning
-    and the answer, since a reply cut off while thinking cannot be continued."""
+    """How much the model reasons before answering, forwarded unchanged. Any value, ``none`` included, needs a worker
+    that declares the feature. When it is omitted, any chat worker may serve the request, and a worker that declares
+    the feature receives ``medium``, OpenAI's default. ``max_tokens`` has to cover the reasoning and the answer, since
+    a reply cut off while thinking cannot be continued."""
 
     n: StrictInt | None = None
-    """How many choices to generate; only 1 is served."""
+    """How many choices to generate. Only 1 is served."""
 
     user: Annotated[StrictStr, Field(max_length=MAX_USER_CHARACTERS)] | None = None
-    """An end-user identifier; accepted, unused and not persisted."""
+    """An end-user identifier. It is accepted for compatibility, and the service does not use or store it."""
 
     metadata: Annotated[dict[MetadataKey, MetadataValue], Field(max_length=MAX_METADATA_PAIRS)] | None = None
-    """Free-form annotations; accepted, unused and not persisted."""
+    """Free-form annotations. They are accepted for compatibility, and the service does not use or store them."""
 
     tools: list[ChatTool] | None = None
-    """The functions the model may call, forwarded verbatim; an empty or null list is dropped before validation."""
+    """The functions the model may call, forwarded verbatim. An empty list or null is the same as omitting it."""
 
     tool_choice: ChatToolChoice | None = None
-    """Whether and which tool the model calls, forwarded verbatim; only allowed with tools, as under OpenAI."""
+    """Whether and which tool the model calls, forwarded verbatim. As under OpenAI, it is allowed only with tools."""
 
     parallel_tool_calls: StrictBool | None = None
-    """Whether the model may call several tools in one reply, forwarded verbatim; only allowed with tools."""
+    """Whether the model may call several tools in one reply, forwarded verbatim. It is allowed only with tools."""
 
     response_format: ChatResponseFormat | None = None
-    """The output format, forwarded verbatim; ``{"type": "text"}`` is dropped before validation."""
+    """The output format, forwarded verbatim. ``{"type": "text"}`` is the default and the same as omitting it."""
 
     horde: ChatHordeOptions | None = None
-    """The Horde extension object."""
+    """The Horde's options, which OpenAI does not define."""
 
     def requested_models(self) -> list[str]:
         """Return the models the request accepts: ``models`` as listed, or ``model`` alone.
@@ -961,23 +970,26 @@ def _drop_absent_fields(model: BaseModel, handler: SerializerFunctionWrapHandler
 class ChatCompletionResponseMessage(BaseModel):
     """Represents the assistant message of one completion choice.
 
-    ``content`` is always written, null included; ``tool_calls`` only when the worker returned calls;
-    ``reasoning_content`` only when the client asked for it with ``horde.include_reasoning`` and the worker submitted it.
+    ``content`` is always present and may be null. ``tool_calls`` is present only when the worker returned calls.
+    ``reasoning_content`` is present only when the worker submitted reasoning and ``horde.include_reasoning`` is not
+    false.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     role: Literal["assistant"] = "assistant"
     """Always ``assistant``."""
 
     content: str | None
-    """The generated text; null only when the worker answered with tool calls alone."""
+    """The generated text. It is null only when the worker returned tool calls without text."""
 
     tool_calls: list[ChatToolCall] | None = None
     """The tool calls the worker returned, unchanged."""
 
     reasoning_content: str | None = None
-    """The model's reasoning, as DeepSeek and OpenRouter return it; never part of ``content``."""
+    """The model's reasoning, as DeepSeek and OpenRouter return it. It is not included in ``content``. OpenAI does
+    not return reasoning text, and the OpenAI SDK keeps this field in ``model_extra``. Set
+    ``horde.include_reasoning`` to false to leave it out."""
 
     @model_serializer(mode="wrap")
     def serialize_without_absent_tool_calls(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
@@ -993,28 +1005,29 @@ class ChatCompletionResponseMessage(BaseModel):
 class ChatCompletionChoice(BaseModel):
     """Represents one completion choice, built from one Horde generation."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     index: int
-    """The position of the choice, in the order the Horde lists its generations."""
+    """The position of the choice, in the order of the Horde's generations."""
 
     message: ChatCompletionResponseMessage
     """The generated message."""
 
     finish_reason: FinishReason
-    """Why the generation stopped; ``stop`` when the worker did not say."""
+    """Why the generation stopped. It is ``stop`` when the worker did not report a reason."""
 
     native_finish_reason: str | None = None
-    """The backend's own reason, as the worker reported it; null when it did not."""
+    """The finish reason reported by the worker's backend, or null when it did not report one. OpenRouter returns the
+    same field."""
 
     logprobs: None = None
-    """Always null; log probabilities are not served."""
+    """Always null, because log probabilities are not served."""
 
 
 class CompletionTokensDetails(BaseModel):
     """Represents the breakdown of a completion's generated tokens, in OpenAI's ``completion_tokens_details`` shape."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     reasoning_tokens: int
     """How many of the generated tokens were reasoning, as the worker reported them or as estimated from the reasoning
@@ -1022,10 +1035,10 @@ class CompletionTokensDetails(BaseModel):
 
 
 class ChatCompletionUsage(BaseModel):
-    """Represents the token counts of a completion; ``completion_tokens_details`` only when a reply has reasoning or a reported
-    reasoning count."""
+    """Represents the token counts of a completion. ``completion_tokens_details`` is present only when the reply has
+    reasoning or a reported reasoning count."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     prompt_tokens: int
     """Tokens in the prompt, as the worker reported or as estimated."""
@@ -1037,12 +1050,12 @@ class ChatCompletionUsage(BaseModel):
     """The sum of the prompt and completion tokens."""
 
     completion_tokens_details: CompletionTokensDetails | None = None
-    """The reasoning tokens among the completion tokens, when a worker reported them or submitted reasoning.
-    Informational: the Horde charges and rewards on the reply it measures."""
+    """The reasoning tokens among the completion tokens, when the worker reported them or submitted reasoning. The
+    count is informational. The Horde charges and rewards kudos for the measured reply."""
 
     @model_serializer(mode="wrap")
     def serialize_without_absent_details(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
-        """Convert the usage to a dict, leaving ``completion_tokens_details`` out when no worker reported them."""
+        """Convert the usage to a dict, leaving ``completion_tokens_details`` out when it is not set."""
         serialised: dict[str, object] = handler(self)
         if self.completion_tokens_details is None:
             serialised.pop("completion_tokens_details", None)
@@ -1050,12 +1063,13 @@ class ChatCompletionUsage(BaseModel):
 
 
 class HordeResponseDetails(BaseModel):
-    """Represents the ``x_horde`` details of a completion; fields the Horde did not supply are left out."""
+    """Represents the ``x_horde`` details of a completion, which OpenAI does not define. Fields not supplied by the
+    Horde are left out."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     request_id: str
-    """The Horde request id; also the completion id without its prefix."""
+    """The Horde request id. It is also the completion id without its prefix."""
 
     worker_id: str | None = None
     """The worker that generated the choice."""
@@ -1076,7 +1090,9 @@ class HordeResponseDetails(BaseModel):
     """Seconds from submit to the first assignment to a worker, when the Horde supplies an assignment time."""
 
     context_adjustments: list[object] | None = None
-    """The context changes the Horde applied to fit the messages, when it reports any."""
+    """The changes made by the Horde to the request's size, when it made any. A ``worker_max_length`` entry means
+    ``max_tokens`` was lowered to the largest length declared by an online worker. A ``grow`` entry means the context
+    grew, and a ``truncate_oldest`` entry with ``dropped_messages`` means the oldest turns were dropped."""
 
     notice: str | None = None
     """Present on an empty return: the worker ran the job and returned no visible text."""
@@ -1090,7 +1106,7 @@ class HordeResponseDetails(BaseModel):
 class ChatCompletionResponse(BaseModel):
     """Represents an OpenAI ``chat.completion`` response."""
 
-    model_config = ConfigDict(frozen=True, serialize_by_alias=True)
+    model_config = ConfigDict(frozen=True, serialize_by_alias=True, use_attribute_docstrings=True)
 
     completion_id: str = Field(serialization_alias="id")
     """``chatcmpl-`` followed by the Horde request id."""
@@ -1111,16 +1127,17 @@ class ChatCompletionResponse(BaseModel):
     """The token counts."""
 
     system_fingerprint: str | None = None
-    """The serving worker and model the first choice came from, as a short hash; null when no worker is known."""
+    """A short hash of the worker id and model of the first choice, or null when the worker is not known. In OpenAI's
+    API, this field identifies the backend configuration."""
 
     x_horde: HordeResponseDetails
-    """The Horde-specific details."""
+    """The Horde-specific details. OpenAI does not define this field."""
 
 
 class ErrorMetadata(BaseModel):
-    """Represents the ``metadata`` object of an error; only the details that are known are written."""
+    """Represents the ``metadata`` object of an error. Only known details are present."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     request_id: str | None = None
     """The Horde request id, once one exists."""
@@ -1135,8 +1152,8 @@ class ErrorMetadata(BaseModel):
     """Set when the front cannot tell whether the submit created a request."""
 
     operation_key: str | None = None
-    """The operation key the submit carried, when its outcome is unknown or the Horde refused the key; an operator
-    finds the request it claimed by it."""
+    """The operation key sent with the submit, when the submit's outcome is unknown or the Horde refused the key. An
+    operator can find the request with it."""
 
     kudos_estimate: int | None = None
     """The request's kudos estimate at current pricing, when the Horde refused it as over ``horde.max_kudos``."""
@@ -1151,9 +1168,9 @@ class ErrorMetadata(BaseModel):
 
 
 class OpenAIError(BaseModel):
-    """Represents the body of an OpenAI error envelope; the four OpenAI fields are always written, null included."""
+    """Represents the body of an OpenAI error envelope. The four OpenAI fields are always present, null when unset."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     message: str
     """The explanation for the client."""
@@ -1165,16 +1182,18 @@ class OpenAIError(BaseModel):
     """The request path at fault, when one is."""
 
     code: str | None
-    """The Horde return code when the Horde produced the error, or the front's own code."""
+    """The Horde return code when the Horde produced the error, otherwise the front's code. The codes differ from
+    OpenAI's per-failure codes."""
 
     metadata: ErrorMetadata = Field(default_factory=ErrorMetadata)
-    """The request id, Horde return code and retry details that are known."""
+    """The known request id, Horde return code and retry details. OpenAI's error envelope does not define this
+    field."""
 
 
 class OpenAIErrorEnvelope(BaseModel):
     """Represents an OpenAI error response, ``{"error": {...}}``, before or after stream headers."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     error: OpenAIError
     """The error details."""
@@ -1183,22 +1202,22 @@ class OpenAIErrorEnvelope(BaseModel):
 class ModelArchitecture(BaseModel):
     """Represents the modalities a model list entry serves."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     modality: str = "text->text"
     """The input and output modalities in OpenRouter's notation."""
 
     input_modalities: list[str] = Field(default_factory=lambda: ["text"])
-    """The content the model accepts; ``image`` is added when an online chat worker declares ``vision``."""
+    """The content the model accepts. ``image`` is added when an online chat worker declares ``vision``."""
 
     output_modalities: list[str] = Field(default_factory=lambda: ["text"])
     """The content the model produces."""
 
 
 class ModelTopProvider(BaseModel):
-    """Represents the ``top_provider`` limits of a model list entry: the largest an online chat worker declares."""
+    """Represents the ``top_provider`` limits of a model list entry: the largest declared by an online chat worker."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     context_length: int | None
     """The largest context, in tokens."""
@@ -1210,7 +1229,7 @@ class ModelTopProvider(BaseModel):
 class HordeModelDetails(BaseModel):
     """Represents the ``x_horde`` details of a model list entry."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     workers: int
     """How many online workers serve chat jobs with the model."""
@@ -1227,11 +1246,11 @@ class HordeModelDetails(BaseModel):
 class ModelCard(BaseModel):
     """Represents one entry of the OpenAI model list, with OpenRouter's limit and parameter fields.
 
-    The limits and parameters are availability hints over the online chat workers; a request can still find no
+    The limits and parameters describe the online chat workers at the time of the list. A request can still have no
     eligible worker a moment later.
     """
 
-    model_config = ConfigDict(frozen=True, serialize_by_alias=True)
+    model_config = ConfigDict(frozen=True, serialize_by_alias=True, use_attribute_docstrings=True)
 
     model_id: str = Field(serialization_alias="id")
     """The Horde text model name."""
@@ -1240,31 +1259,31 @@ class ModelCard(BaseModel):
     """Always ``model``."""
 
     created: int = 0
-    """Unix seconds the Horde supplies for the model; 0 when it records none."""
+    """The time in Unix seconds supplied by the Horde for the model, or 0 when the Horde does not record one."""
 
     owned_by: str = "aihorde"
     """Always ``aihorde``."""
 
     context_length: int | None
-    """The largest context an online chat worker declares, in tokens."""
+    """The largest context declared by an online chat worker for the model, in tokens."""
 
     architecture: ModelArchitecture = Field(default_factory=ModelArchitecture)
     """The modalities served."""
 
     top_provider: ModelTopProvider
-    """The largest context and output an online chat worker declares."""
+    """The largest context and output declared by an online chat worker for the model."""
 
     supported_parameters: list[str]
-    """The OpenAI request fields some online chat worker honours."""
+    """The OpenAI request keys honoured by at least one online chat worker for the model."""
 
     x_horde: HordeModelDetails
-    """The Horde-specific details."""
+    """The Horde-specific details. OpenAI does not define this field."""
 
 
 class ModelList(BaseModel):
     """Represents the OpenAI model list response."""
 
-    model_config = ConfigDict(frozen=True, serialize_by_alias=True)
+    model_config = ConfigDict(frozen=True, serialize_by_alias=True, use_attribute_docstrings=True)
 
     object_type: Literal["list"] = Field(default="list", serialization_alias="object")
     """Always ``list``."""
@@ -1276,13 +1295,13 @@ class ModelList(BaseModel):
 class ChatCompletionChunkToolCall(BaseModel):
     """Represents one whole tool call in a streamed ``delta``, with the position a client accumulates it by."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     index: int
     """The position of the call in the reply's ``tool_calls``, from 0."""
 
     id: str
-    """The id the worker returned for the call."""
+    """The id of the call, as returned by the worker."""
 
     type: Literal["function"] = "function"
     """Always ``function``."""
@@ -1292,51 +1311,56 @@ class ChatCompletionChunkToolCall(BaseModel):
 
 
 class ChatCompletionChunkDelta(BaseModel):
-    """Represents the ``delta`` of one streamed choice; unset fields are left out of the chunk."""
+    """Represents the ``delta`` of one streamed choice. Unset fields are left out of the chunk."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     role: Literal["assistant"] | None = None
-    """``assistant`` in the first chunk of a choice, otherwise absent."""
+    """``assistant`` in the first chunk of a choice, otherwise absent. Unlike OpenAI's first chunk, that chunk does
+    not include ``content``."""
 
     content: str | None = None
-    """The generated text in the content chunk, otherwise absent."""
+    """Generated text, otherwise absent. A plain text reply arrives in several pieces when the worker reports
+    progress. Other replies arrive whole in one chunk."""
 
     reasoning_content: str | None = None
-    """The model's reasoning in a reasoning chunk, sent only under ``horde.include_reasoning``, otherwise absent."""
+    """The model's reasoning in a reasoning chunk, otherwise absent. Reasoning chunks come before the content of the
+    same worker post. OpenAI does not stream reasoning text. Set ``horde.include_reasoning`` to false to leave it
+    out."""
 
     tool_calls: list[ChatCompletionChunkToolCall] | None = None
-    """The tool calls in the content chunk when the worker returned any, otherwise absent."""
+    """Every tool call of the reply, each one whole, in the tool-call chunk. Otherwise absent. OpenAI streams the
+    arguments in fragments."""
 
 
 class ChatCompletionChunkChoice(BaseModel):
     """Represents one choice of a streamed chunk."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_attribute_docstrings=True)
 
     index: int
-    """The position of the choice, in the order the Horde lists its generations."""
+    """The position of the choice, in the order of the Horde's generations."""
 
     delta: ChatCompletionChunkDelta
     """What this chunk adds to the choice."""
 
     finish_reason: FinishReason | None = None
-    """Why the generation stopped, in the finish chunk; null before it."""
+    """Why the generation stopped, in the finish chunk. Null before it."""
 
     native_finish_reason: str | None = None
-    """The backend's own reason, in the finish chunk when the worker reported it; null otherwise."""
+    """The finish reason reported by the worker's backend, in the finish chunk. Null otherwise."""
 
     logprobs: None = None
-    """Always null; log probabilities are not served."""
+    """Always null, because log probabilities are not served."""
 
 
 class ChatCompletionChunk(BaseModel):
     """Represents an OpenAI ``chat.completion.chunk`` server-sent event payload."""
 
-    model_config = ConfigDict(frozen=True, serialize_by_alias=True)
+    model_config = ConfigDict(frozen=True, serialize_by_alias=True, use_attribute_docstrings=True)
 
     completion_id: str = Field(serialization_alias="id")
-    """``chatcmpl-`` followed by the Horde request id; the same in every chunk of a stream."""
+    """``chatcmpl-`` followed by the Horde request id. It is the same in every chunk of a stream."""
 
     object_type: Literal["chat.completion.chunk"] = Field(
         default="chat.completion.chunk",
@@ -1351,15 +1375,16 @@ class ChatCompletionChunk(BaseModel):
     """The model that generated the first choice."""
 
     choices: list[ChatCompletionChunkChoice]
-    """The choices this chunk adds to; empty in the usage chunk."""
+    """The choices extended by this chunk. Empty in the usage chunk."""
 
     usage: ChatCompletionUsage | None = None
     """The token counts, in the usage chunk only."""
 
+    # A relayed stream computes it from the worker and model in the first delta's stream entry, so it is null
+    # throughout only when the delta stream entries do not include the worker.
     system_fingerprint: str | None = None
-    """The completion's ``system_fingerprint``; the same in every chunk of a stream. A relayed stream computes it from
-    the worker and model its first delta carries, and is null throughout only when the delta stream does not carry the
-    worker."""
+    """A short hash of the serving worker id and model, as in a completion, or null when the worker is not known. It
+    is the same in every chunk of a stream."""
 
     x_horde: HordeResponseDetails | None = None
-    """The Horde-specific details, in the finish chunk only."""
+    """The Horde-specific details, in the finish chunk only. OpenAI does not define this field."""
