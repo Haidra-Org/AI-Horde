@@ -21,14 +21,24 @@ from horde.chat_contract import KudosCapExcess
 from horde.chat_signal import chat_signal_channel
 from horde.classes.kobold.request_fit import MAX_LENGTH_LIMIT
 from tests.integration._fake_chat_worker import (
+    ANONYMOUS_HEADERS,
     CHAT_MESSAGES,
     CHAT_MODEL,
+    LONG_HISTORY,
+    LONG_HISTORY_LATEST_USER,
+    LONG_HISTORY_SYSTEM,
+    LOOKUP_TOOL,
+    TOOL_HISTORY,
+    TOOLS_FEATURES,
+    TOOLS_REQUEST_EXTRAS,
+    VERIFIED_FEATURES,
     FakeChatWorker,
     build_chat_submit_body,
     build_faulted_chat_submit_body,
     build_tool_call,
     cancel_request,
     chat_status,
+    serve_reply,
     submit_chat_request,
     take_worker_offline,
 )
@@ -1290,10 +1300,6 @@ def test_a_dry_run_over_max_kudos_is_refused_as_its_submission_would_be(app, cli
     assert _count_chat_requests(app, requester.id) == 0
 
 
-ANONYMOUS_HEADERS = {"apikey": "0000000000", "Client-Agent": "aihorde_ci_client:1:test"}
-"""The anonymous key, which holds no kudos, so it is refused any request above the free output allowance."""
-
-
 def _long_output_chat_body(max_tokens: int) -> dict[str, Any]:
     """Return a chat body asking for ``max_tokens`` under a context large enough for it."""
     return {
@@ -1877,23 +1883,6 @@ def test_a_grown_context_is_reported_on_the_chat_status(client, request_headers:
     cancel_request(client, request_headers, "chat", fitting_id)
 
 
-LONG_HISTORY_SYSTEM = {"role": "system", "content": "You are a terse assistant."}
-LONG_HISTORY_LATEST_USER = {"role": "user", "content": "And which colour comes last?"}
-LONG_HISTORY = [
-    LONG_HISTORY_SYSTEM,
-    *(
-        message
-        for turn in range(8)
-        for message in (
-            {"role": "user", "content": f"Turn {turn}: " + "tell me about colours " * 200},
-            {"role": "assistant", "content": f"Reply {turn}: " + "red green blue " * 200},
-        )
-    ),
-    LONG_HISTORY_LATEST_USER,
-]
-"""A history whose estimate is far above any context the fake worker serves, while its latest turn is short."""
-
-
 @pytest.mark.parametrize(
     "context_fit_options",
     [{"context_fit": "truncate_oldest"}, {}],
@@ -2044,40 +2033,8 @@ def test_client_nuls_are_refused_before_storage_and_leave_the_session_usable(
     cancel_request(client, request_headers, "chat", valid_id)
 
 
-LOOKUP_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "lookup_weather",
-        "description": "Look up the weather.",
-        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
-    },
-}
-"""A function tool as an OpenAI client sends it."""
-
-TOOL_HISTORY: list[dict[str, Any]] = [
-    {"role": "user", "content": "Weather in Oslo, then Bergen?"},
-    {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [{"id": "call_oslo", "type": "function", "function": {"name": "lookup_weather", "arguments": '{"city":"Oslo"}'}}],
-    },
-    {"role": "tool", "content": "Rain, 7C", "tool_call_id": "call_oslo"},
-]
-"""A conversation in which the model called a tool once and the client answered it."""
-
-TOOLS_REQUEST_EXTRAS: dict[str, Any] = {
-    "tools": [LOOKUP_TOOL],
-    "tool_choice": "auto",
-    "parallel_tool_calls": False,
-    "response_format": {"type": "json_object"},
-}
-"""The four extra keys of a tools request, as the client sends them and as the worker receives them."""
-
 LONG_ARGUMENTS = '{"city":"Bergen","detail":"' + "d" * 160 + '"}'
 """Tool call arguments long enough that their characters, and not the minimum, set the output estimate."""
-
-TOOLS_FEATURES = ["tools", "json_object", "tools_with_response_format"]
-"""The features a worker declares to serve ``TOOLS_REQUEST_EXTRAS``."""
 
 
 def test_a_tools_request_waits_for_a_worker_declaring_tools_and_is_not_possible_without_one(
@@ -2417,9 +2374,6 @@ def test_a_request_a_worker_can_take_reports_no_impossible_reason(
     cancel_request(client, request_headers, "chat", request_id)
 
 
-VERIFIED_FEATURES = ["tools", "json_object", "json_schema", "tools_with_response_format"]
-"""The features a worker declares to pop every request the reply verification tests make."""
-
 COLOUR_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {"name": {"type": "string"}},
@@ -2431,31 +2385,6 @@ COLOUR_SCHEMA: dict[str, Any] = {
 
 def _colour_format(*, strict: bool) -> dict[str, Any]:
     return {"type": "json_schema", "json_schema": {"name": "colour", "schema": COLOUR_SCHEMA, "strict": strict}}
-
-
-def _serve_reply(
-    client,
-    request_headers: dict[str, str],
-    chat_worker: FakeChatWorker,
-    request_overrides: dict[str, Any],
-    *,
-    content: str | None,
-    tool_calls: list[dict[str, Any]] | None = None,
-) -> tuple[str, Any]:
-    """Queue a chat request, pop it with every feature and guarantee declared, and submit one reply to it."""
-    request_id = submit_chat_request(client, request_headers, **request_overrides)
-    pop_result = chat_worker.pop(chat_features=VERIFIED_FEATURES)
-    assert pop_result["id"] is not None, pop_result
-    submit_response = chat_worker.submit(
-        build_chat_submit_body(
-            generation_id=pop_result["id"],
-            content=content,
-            tool_calls=tool_calls,
-            finish_reason="tool_calls" if tool_calls else "stop",
-            model_id=CHAT_MODEL,
-        ),
-    )
-    return request_id, submit_response
 
 
 NONCONFORMANT_REPLIES = [
@@ -2483,7 +2412,7 @@ def test_a_strict_request_refuses_a_reply_its_tool_choice_or_response_format_rul
     content: str | None,
     tool_calls: list[dict[str, Any]] | None,
 ) -> None:
-    request_id, submit_response = _serve_reply(
+    request_id, submit_response = serve_reply(
         client, request_headers, chat_worker, request_overrides, content=content, tool_calls=tool_calls
     )
 
@@ -2504,7 +2433,7 @@ def test_a_best_effort_request_shows_that_reply_as_submitted(
 ) -> None:
     best_effort_overrides = {**request_overrides, "horde": {"conformance": "best_effort"}}
 
-    request_id, submit_response = _serve_reply(
+    request_id, submit_response = serve_reply(
         client, request_headers, chat_worker, best_effort_overrides, content=content, tool_calls=tool_calls
     )
 
@@ -2531,7 +2460,7 @@ def test_a_reply_no_client_could_use_is_refused_under_every_conformance_mode(
 ) -> None:
     request_overrides = {"tools": [LOOKUP_TOOL], "horde": {"conformance": conformance}}
 
-    request_id, submit_response = _serve_reply(client, request_headers, chat_worker, request_overrides, content=None, tool_calls=tool_calls)
+    request_id, submit_response = serve_reply(client, request_headers, chat_worker, request_overrides, content=None, tool_calls=tool_calls)
 
     assert submit_response.status_code == 400
     assert submit_response.get_json()["rc"] == "ChatSubmitInvalid"
@@ -2551,7 +2480,7 @@ def test_a_strict_single_call_request_shows_only_the_first_of_several_calls(
     first_call, second_call = build_tool_call(call_id="call_one"), build_tool_call("send_email", "call_two")
     request_overrides = {"tools": [EMAIL_TOOL, LOOKUP_TOOL], "parallel_tool_calls": False}
 
-    request_id, submit_response = _serve_reply(
+    request_id, submit_response = serve_reply(
         client, request_headers, chat_worker, request_overrides, content=None, tool_calls=[first_call, second_call]
     )
 
@@ -2588,7 +2517,7 @@ def test_a_named_tool_choice_reply_finishes_with_stop_as_under_openai(
 ) -> None:
     request_overrides = {"tools": [EMAIL_TOOL, LOOKUP_TOOL], "tool_choice": NAMED_LOOKUP_CHOICE, "horde": {"conformance": conformance}}
 
-    request_id, submit_response = _serve_reply(
+    request_id, submit_response = serve_reply(
         client, request_headers, chat_worker, request_overrides, content=None, tool_calls=[build_tool_call()]
     )
 
@@ -2605,7 +2534,7 @@ def test_a_strict_schema_reply_matching_the_schema_completes(
 ) -> None:
     request_overrides = {"response_format": _colour_format(strict=True)}
 
-    request_id, submit_response = _serve_reply(client, request_headers, chat_worker, request_overrides, content='{"name": "blue"}')
+    request_id, submit_response = serve_reply(client, request_headers, chat_worker, request_overrides, content='{"name": "blue"}')
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
     assert chat_status(client, request_headers, request_id)["generations"][0]["text"] == '{"name": "blue"}'
@@ -2618,7 +2547,7 @@ def test_a_non_strict_schema_accepts_any_json_object(
 ) -> None:
     request_overrides = {"response_format": _colour_format(strict=False)}
 
-    request_id, submit_response = _serve_reply(client, request_headers, chat_worker, request_overrides, content='{"name": 7}')
+    request_id, submit_response = serve_reply(client, request_headers, chat_worker, request_overrides, content='{"name": 7}')
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
     assert chat_status(client, request_headers, request_id)["done"] is True

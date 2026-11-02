@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 import fakeredis
 import pytest
 
-from horde import chat_progress, chat_signal
+from horde import chat_signal
 from horde.chat_progress import (
     CHAT_PROGRESS_LEASE_GRACE_SECONDS,
     chat_lease_key,
@@ -27,19 +27,18 @@ from tests.integration._fake_chat_worker import (
     FakeChatWorker,
     build_chat_submit_body,
     build_faulted_chat_submit_body,
+    post_progress,
 )
 
 if TYPE_CHECKING:
     from flask import Flask
     from flask.testing import FlaskClient
-    from werkzeug.test import TestResponse
 
 CHAT_MODEL = "elinas/chronos-70b-v2"
 WORKER_NAME = "CICD Fake Streaming Scribe"
 CHAT_MESSAGES = [
     {"role": "user", "content": "Name one colour."},
 ]
-PROGRESS_ROUTE = "/api/v2/generate/text/progress"
 
 
 @pytest.fixture(autouse=True)
@@ -51,23 +50,6 @@ def _no_rate_limit() -> Iterator[None]:
     limiter.enabled = False
     yield
     limiter.enabled = previous
-
-
-@pytest.fixture
-def progress_redis(monkeypatch: pytest.MonkeyPatch) -> fakeredis.FakeStrictRedis:
-    """Route the stream lease, the delta stream and the chat signals to one in-memory Redis."""
-    fake = fakeredis.FakeStrictRedis(decode_responses=True)
-    monkeypatch.setattr(chat_progress, "_client", fake)
-    monkeypatch.setattr(chat_progress, "_append_script", None)
-    monkeypatch.setattr(chat_signal, "_publisher", fake)
-    return fake
-
-
-@pytest.fixture
-def lua_redis(progress_redis: fakeredis.FakeStrictRedis) -> fakeredis.FakeStrictRedis:
-    """The in-memory Redis, for tests that reach the append script; fakeredis runs Lua only with ``lupa``."""
-    pytest.importorskip("lupa", reason="fakeredis runs Lua scripts only with lupa installed (fakeredis[lua]).")
-    return progress_redis
 
 
 @pytest.fixture
@@ -92,28 +74,6 @@ def _submit_chat_request(client: FlaskClient, request_headers: dict[str, str], *
     assert response.status_code == 202, response.get_data(as_text=True)
     request_id: str = response.get_json()["id"]
     return request_id
-
-
-def _post_progress(
-    client: FlaskClient,
-    apikey: str,
-    generation_id: str,
-    seq: int,
-    content: str,
-    reasoning_content: str | None = None,
-) -> TestResponse:
-    delta = {"content": content}
-    if reasoning_content is not None:
-        delta["reasoning_content"] = reasoning_content
-    return client.post(
-        PROGRESS_ROUTE,
-        json={
-            "id": generation_id,
-            "seq": seq,
-            "delta": delta,
-        },
-        headers={"apikey": apikey},
-    )
 
 
 def test_a_streamed_chat_request_stores_the_hint_and_its_pop_carries_it_with_a_lease(
@@ -170,7 +130,7 @@ def test_progress_for_a_generation_without_a_lease_is_refused_as_not_streaming(
     _submit_chat_request(client, request_headers)
     pop_result = chat_worker.pop()
 
-    response = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue")
+    response = post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue")
 
     assert response.status_code == 404, response.get_data(as_text=True)
     assert response.get_json()["rc"] == "ChatProgressNotStreaming"
@@ -202,7 +162,7 @@ def test_progress_for_a_streamed_generation_faulted_for_a_lapsed_lease_is_refuse
         assert generation.is_stale()
         generation.fault_and_restart(stale=True)
 
-    response = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue")
+    response = post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue")
     client.delete(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
 
     assert response.status_code == 404, response.get_data(as_text=True)
@@ -230,7 +190,7 @@ def test_progress_for_a_generation_whose_request_was_deleted_is_refused_as_abort
         assert generation is not None
         generation.wp.delete()
 
-    response = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue")
+    response = post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue")
 
     assert response.status_code == 404, response.get_data(as_text=True)
     assert response.get_json()["rc"] == "ChatJobAborted"
@@ -247,7 +207,7 @@ def test_progress_with_a_key_other_than_the_worker_owners_is_refused(
     pop_result = chat_worker.pop()
     other_user = make_api_user()
 
-    response = _post_progress(client, other_user.api_key, pop_result["id"], 1, "Blue")
+    response = post_progress(client, other_user.api_key, pop_result["id"], 1, "Blue")
 
     assert response.status_code == 403, response.get_data(as_text=True)
     assert response.get_json()["rc"] == "WrongCredentials"
@@ -274,9 +234,9 @@ def test_progress_in_sequence_is_appended_to_the_request_stream_without_a_signal
     subscription.psubscribe(f"{chat_signal.CHAT_SIGNAL_CHANNEL_PREFIX}*")
     subscription.get_message(timeout=1)
 
-    first = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Bl")
-    retried = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Bl")
-    second = _post_progress(client, request_headers["apikey"], pop_result["id"], 2, "ue")
+    first = post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Bl")
+    retried = post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Bl")
+    second = post_progress(client, request_headers["apikey"], pop_result["id"], 2, "ue")
 
     assert [response.get_json() for response in (first, retried, second)] == [
         {"accepted_seq": 1, "cancelled": False},
@@ -304,9 +264,9 @@ def test_a_gap_is_refused_with_the_seq_expected_next(
 ) -> None:
     _submit_chat_request(client, request_headers, stream=True)
     pop_result = chat_worker.pop()
-    _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Bl")
+    post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Bl")
 
-    response = _post_progress(client, request_headers["apikey"], pop_result["id"], 3, "ue")
+    response = post_progress(client, request_headers["apikey"], pop_result["id"], 3, "ue")
 
     assert response.status_code == 409, response.get_data(as_text=True)
     assert response.get_json()["rc"] == "ChatProgressOutOfSequence"
@@ -321,14 +281,14 @@ def test_a_submitted_reply_releases_the_lease_and_keeps_the_stream(
 ) -> None:
     request_id = _submit_chat_request(client, request_headers, stream=True)
     pop_result = chat_worker.pop()
-    _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue.")
+    post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Blue.")
 
     submit_response = chat_worker.submit(build_chat_submit_body(generation_id=pop_result["id"], content="Blue.", model_id=CHAT_MODEL))
 
     assert submit_response.status_code == 200, submit_response.get_data(as_text=True)
     assert not lua_redis.exists(chat_lease_key(pop_result["id"]))
     assert lua_redis.exists(chat_stream_key(request_id))
-    late_post = _post_progress(client, request_headers["apikey"], pop_result["id"], 2, " More.")
+    late_post = post_progress(client, request_headers["apikey"], pop_result["id"], 2, " More.")
     assert late_post.status_code == 404, late_post.get_data(as_text=True)
 
 
@@ -390,10 +350,10 @@ def test_a_cancel_of_a_streamed_request_tells_its_worker_through_the_next_progre
     pop_result = chat_worker.pop()
     request_id = lua_redis.hget(chat_lease_key(pop_result["id"]), "request")
     assert request_id is not None
-    first = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Bl")
+    first = post_progress(client, request_headers["apikey"], pop_result["id"], 1, "Bl")
 
     cancel_response = client.delete(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
-    after_cancel = _post_progress(client, request_headers["apikey"], pop_result["id"], 2, "ue")
+    after_cancel = post_progress(client, request_headers["apikey"], pop_result["id"], 2, "ue")
 
     assert cancel_response.status_code == 200, cancel_response.get_data(as_text=True)
     assert first.get_json() == {"accepted_seq": 1, "cancelled": False}
@@ -528,9 +488,9 @@ def test_a_cancel_settles_a_streamed_generation_on_the_content_its_worker_posted
 
     worker = _serve_own_chat_model(client, request_headers)
     generation_id, request_id = _pop_own_request(client, request_headers, worker, stream=True)
-    _post_progress(client, request_headers["apikey"], generation_id, 1, "", reasoning_content="The sky is clear today.")
-    _post_progress(client, request_headers["apikey"], generation_id, 2, POSTED_REPLY[:40])
-    _post_progress(client, request_headers["apikey"], generation_id, 3, POSTED_REPLY[40:])
+    post_progress(client, request_headers["apikey"], generation_id, 1, "", reasoning_content="The sky is clear today.")
+    post_progress(client, request_headers["apikey"], generation_id, 2, POSTED_REPLY[:40])
+    post_progress(client, request_headers["apikey"], generation_id, 3, POSTED_REPLY[40:])
     aborted_jobs_before = _read_generation_state(app, generation_id)[3]
 
     cancel_response = client.delete(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
@@ -609,8 +569,8 @@ def test_a_reasoning_delta_is_appended_with_its_reasoning_beside_empty_content(
     _submit_chat_request(client, request_headers, stream=True)
     pop_result = chat_worker.pop()
 
-    reasoning = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "", reasoning_content="Think")
-    text = _post_progress(client, request_headers["apikey"], pop_result["id"], 2, "Blue")
+    reasoning = post_progress(client, request_headers["apikey"], pop_result["id"], 1, "", reasoning_content="Think")
+    text = post_progress(client, request_headers["apikey"], pop_result["id"], 2, "Blue")
 
     assert [response.get_json() for response in (reasoning, text)] == [
         {"accepted_seq": 1, "cancelled": False},
@@ -636,7 +596,7 @@ def test_a_delta_without_content_or_reasoning_is_refused(
     _submit_chat_request(client, request_headers, stream=True)
     pop_result = chat_worker.pop()
 
-    response = _post_progress(client, request_headers["apikey"], pop_result["id"], 1, "", reasoning_content=reasoning_content)
+    response = post_progress(client, request_headers["apikey"], pop_result["id"], 1, "", reasoning_content=reasoning_content)
 
     assert response.status_code == 400, response.get_data(as_text=True)
     assert lua_redis.hget(chat_lease_key(pop_result["id"]), "seq") is None

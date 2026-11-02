@@ -23,7 +23,14 @@ import pytest
 import requests
 from PIL import Image
 
-from tests.integration._fake_chat_worker import FakeChatWorker
+from tests.integration._fake_chat_worker import (
+    MESSAGES_URL_TRANSPORTS,
+    VISION_FEATURES,
+    FakeChatWorker,
+    image_body,
+    png_data_url,
+    submit_image_chat_request,
+)
 
 pytestmark = [
     pytest.mark.object_storage,
@@ -31,8 +38,6 @@ pytestmark = [
 ]
 
 CHAT_MODEL = "elinas/chronos-70b-v2"
-VISION_FEATURES = ["seed", "presence_penalty", "vision"]
-"""A worker declaration with the vision feature."""
 
 
 @pytest.fixture(autouse=True)
@@ -97,12 +102,6 @@ def _worker(client, headers: dict[str, str], **pop_options: Any) -> FakeChatWork
     )
 
 
-def _png_data_url(size: tuple[int, int] = (64, 48), colour: tuple[int, int, int] = (200, 30, 30)) -> str:
-    image_buffer = BytesIO()
-    Image.new("RGB", size, colour).save(image_buffer, format="PNG")
-    return f"data:image/png;base64,{base64.b64encode(image_buffer.getvalue()).decode('ascii')}"
-
-
 NOISE_IMAGE_SIDE = 1024
 """The side of a square noise image, whose PNG holds about 3 MiB: random RGB pixels do not compress, so the file is
 about the raw ``1024 * 1024 * 3`` bytes."""
@@ -136,31 +135,6 @@ def _compact_noise_png_data_url() -> str:
     image_buffer = BytesIO()
     image.save(image_buffer, format="PNG")
     return f"data:image/png;base64,{base64.b64encode(image_buffer.getvalue()).decode('ascii')}"
-
-
-def _image_body(*image_urls: str, **overrides: Any) -> dict[str, Any]:
-    chat_body: dict[str, Any] = {
-        "model": CHAT_MODEL,
-        "messages": [
-            {"role": "system", "content": "Describe images briefly."},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "What is in these?"},
-                    *({"type": "image_url", "image_url": {"url": image_url}} for image_url in image_urls),
-                ],
-            },
-        ],
-        "max_tokens": 64,
-    }
-    chat_body.update(overrides)
-    return chat_body
-
-
-def _submit(client, headers: dict[str, str], chat_body: dict[str, Any]) -> str:
-    response = client.post("/api/v2/generate/chat/async", json=chat_body, headers=headers)
-    assert response.status_code == 202, response.get_data(as_text=True)
-    return response.get_json()["id"]
 
 
 def _stored_request(app, request_id: str) -> SimpleNamespace:
@@ -210,7 +184,7 @@ def _decoded_image(image_bytes: bytes) -> Image.Image:
 def test_a_valid_image_is_stored_as_normalised_jpeg_and_replaced_by_a_reference(app, client, request_headers: dict[str, str]) -> None:
     from horde.classes.kobold.chat_request import CHAT_IMAGE_PLACEHOLDER, CHAT_IMAGE_REFERENCE_PREFIX, build_chat_image_key
 
-    request_id = _submit(client, request_headers, _image_body(_png_data_url((3000, 1500))))
+    request_id = submit_image_chat_request(client, request_headers, image_body(png_data_url((3000, 1500))))
 
     stored = _stored_request(app, request_id)
     image_part = stored.messages[1]["content"][1]
@@ -230,7 +204,7 @@ def test_a_valid_image_is_stored_as_normalised_jpeg_and_replaced_by_a_reference(
 
 
 def test_a_worker_without_vision_or_a_transport_never_pops_an_image_request(client, request_headers: dict[str, str]) -> None:
-    _submit(client, request_headers, _image_body(_png_data_url()))
+    submit_image_chat_request(client, request_headers, image_body(png_data_url()))
 
     assert _worker(client, request_headers, image_transports=["url"]).pop()["id"] is None
     assert _worker(client, request_headers, chat_features=VISION_FEATURES).pop()["id"] is None
@@ -243,7 +217,7 @@ def test_a_worker_without_vision_or_a_transport_never_pops_an_image_request(clie
 
 
 def test_a_worker_without_vision_still_pops_chat_requests_without_images(client, request_headers: dict[str, str]) -> None:
-    _submit(client, request_headers, _image_body())
+    submit_image_chat_request(client, request_headers, image_body())
 
     assert _worker(client, request_headers).pop()["id"] is not None
 
@@ -253,7 +227,7 @@ def test_a_url_worker_receives_a_signed_url_valid_for_at_least_the_job_ttl(app, 
     from horde.classes.kobold.waiting_prompt import MIN_CHAT_IMAGE_URL_SECONDS
     from horde.flask import db
 
-    _submit(client, request_headers, _image_body(_png_data_url()))
+    submit_image_chat_request(client, request_headers, image_body(png_data_url()))
 
     pop_result = _worker(client, request_headers, chat_features=VISION_FEATURES, image_transports=["base64", "url"]).pop()
 
@@ -284,7 +258,7 @@ def test_a_base64_worker_receives_a_jpeg_data_url_built_after_the_queue_lock_is_
     from horde.classes.kobold.processing_generation import TextProcessingGeneration
     from horde.flask import db
 
-    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    request_id = submit_image_chat_request(client, request_headers, image_body(png_data_url()))
     original_download = text_waiting_prompt.download_chat_image
     lock_observations: list[bool] = []
 
@@ -325,13 +299,13 @@ def test_each_image_is_charged_the_extra_source_image_tax(app, client, make_api_
         settle_kudos()
         with app.app_context():
             before = database.find_user_by_id(requester.id).kudos
-        _submit(client, headers, chat_body)
+        submit_image_chat_request(client, headers, chat_body)
         settle_kudos()
         with app.app_context():
             return before - database.find_user_by_id(requester.id).kudos
 
-    without_images = kudos_spent_on(_image_body())
-    with_two_images = kudos_spent_on(_image_body(_png_data_url(), _png_data_url(colour=(0, 0, 200))))
+    without_images = kudos_spent_on(image_body())
+    with_two_images = kudos_spent_on(image_body(png_data_url(), png_data_url(colour=(0, 0, 200))))
 
     assert with_two_images - without_images == 2 * EXTRA_SOURCE_IMAGE_HORDE_TAX
 
@@ -344,8 +318,8 @@ def test_the_dry_run_quote_includes_the_image_tax_and_stores_nothing(app, client
         assert response.status_code == 200, response.get_data(as_text=True)
         return response.get_json()["kudos"]
 
-    plain_quote = quote(_image_body(horde={"dry_run": True}))
-    image_quote = quote(_image_body(_png_data_url(), horde={"dry_run": True}))
+    plain_quote = quote(image_body(horde={"dry_run": True}))
+    image_quote = quote(image_body(png_data_url(), horde={"dry_run": True}))
 
     assert image_quote - plain_quote == EXTRA_SOURCE_IMAGE_HORDE_TAX
 
@@ -354,7 +328,9 @@ def test_several_small_images_from_an_untrusted_user_are_accepted(client, make_a
     requester = make_api_user(kudos=1000)
     headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
 
-    _submit(client, headers, _image_body(_png_data_url(), _png_data_url(colour=(0, 0, 200)), _png_data_url(colour=(0, 200, 0))))
+    submit_image_chat_request(
+        client, headers, image_body(png_data_url(), png_data_url(colour=(0, 0, 200)), png_data_url(colour=(0, 200, 0)))
+    )
 
 
 def test_untrusted_images_over_the_untrusted_total_are_refused_at_the_second_large_image(client, make_api_user) -> None:
@@ -365,7 +341,7 @@ def test_untrusted_images_over_the_untrusted_total_are_refused_at_the_second_lar
     first_image = _noise_png_data_url()
     second_image = _noise_png_data_url()
 
-    response = client.post("/api/v2/generate/chat/async", json=_image_body(first_image, second_image), headers=headers)
+    response = client.post("/api/v2/generate/chat/async", json=image_body(first_image, second_image), headers=headers)
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "SourceImageSizeExceeded"
@@ -377,7 +353,7 @@ def test_untrusted_images_whose_jpegs_pass_the_untrusted_total_are_refused_after
     headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
     compact_image = _compact_noise_png_data_url()
 
-    response = client.post("/api/v2/generate/chat/async", json=_image_body(compact_image, compact_image), headers=headers)
+    response = client.post("/api/v2/generate/chat/async", json=image_body(compact_image, compact_image), headers=headers)
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "SourceImageSizeExceeded"
@@ -389,14 +365,14 @@ def test_trusted_images_whose_jpegs_pass_the_untrusted_total_are_accepted(client
     headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
     compact_image = _compact_noise_png_data_url()
 
-    _submit(client, headers, _image_body(compact_image, compact_image))
+    submit_image_chat_request(client, headers, image_body(compact_image, compact_image))
 
 
 def test_trusted_images_over_the_untrusted_total_are_accepted(client, make_api_user) -> None:
     requester = make_api_user(trusted=True, kudos=1000)
     headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:(test)ci"}
 
-    _submit(client, headers, _image_body(_noise_png_data_url(), _noise_png_data_url()))
+    submit_image_chat_request(client, headers, image_body(_noise_png_data_url(), _noise_png_data_url()))
 
 
 def test_untrusted_url_images_are_refused_once_the_fetched_total_passes_the_cap(
@@ -417,7 +393,7 @@ def test_untrusted_url_images_are_refused_once_the_fetched_total_passes_the_cap(
     monkeypatch.setattr(kobold, "read_chat_image_bytes", fetch_noise_image)
     image_urls = [f"https://images.example/{index}.png" for index in range(3)]
 
-    response = client.post("/api/v2/generate/chat/async", json=_image_body(*image_urls), headers=headers)
+    response = client.post("/api/v2/generate/chat/async", json=image_body(*image_urls), headers=headers)
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "SourceImageSizeExceeded"
@@ -426,7 +402,7 @@ def test_untrusted_url_images_are_refused_once_the_fetched_total_passes_the_cap(
 
 @pytest.mark.parametrize("image_url", ["http://10.0.0.5/a.png", "http://127.0.0.1:9/a.png", "http://[::1]/a.png"])
 def test_an_image_url_at_a_private_address_is_refused(client, request_headers: dict[str, str], image_url: str) -> None:
-    response = client.post("/api/v2/generate/chat/async", json=_image_body(image_url), headers=request_headers)
+    response = client.post("/api/v2/generate/chat/async", json=image_body(image_url), headers=request_headers)
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "SourceImageUrlRefused"
@@ -446,14 +422,14 @@ def test_an_image_url_whose_name_resolves_to_a_private_address_is_refused(
 
     monkeypatch.setattr(outbound, "socket", SimpleNamespace(getaddrinfo=private_getaddrinfo, SOCK_STREAM=socket.SOCK_STREAM))
 
-    response = client.post("/api/v2/generate/chat/async", json=_image_body("https://images.example/a.png"), headers=request_headers)
+    response = client.post("/api/v2/generate/chat/async", json=image_body("https://images.example/a.png"), headers=request_headers)
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "SourceImageUrlRefused"
 
 
 def test_an_image_over_the_resolution_cap_is_refused_and_nothing_is_queued(app, client, request_headers: dict[str, str]) -> None:
-    response = client.post("/api/v2/generate/chat/async", json=_image_body(_png_data_url((3100, 3100))), headers=request_headers)
+    response = client.post("/api/v2/generate/chat/async", json=image_body(png_data_url((3100, 3100))), headers=request_headers)
 
     assert response.status_code == 400
     assert response.get_json()["rc"] == "SourceImageResolutionExceeded"
@@ -464,7 +440,7 @@ def test_images_are_deleted_with_the_expired_request_row(app, client, request_he
     from horde.database import threads
     from horde.flask import db
 
-    request_id = _submit(client, request_headers, _image_body(_png_data_url(), _png_data_url(colour=(1, 2, 3))))
+    request_id = submit_image_chat_request(client, request_headers, image_body(png_data_url(), png_data_url(colour=(1, 2, 3))))
     image_keys = _image_keys(_stored_request(app, request_id).messages)
     assert len(image_keys) == 2
     assert all(_stored_object(image_key) is not None for image_key in image_keys)
@@ -494,7 +470,7 @@ def test_a_failed_activation_deletes_the_images_it_stored(
     monkeypatch.setattr(TextWaitingPrompt, "activate", failing_activation)
 
     with pytest.raises(RuntimeError, match="activation failed"):
-        client.post("/api/v2/generate/chat/async", json=_image_body(_png_data_url()), headers=request_headers)
+        client.post("/api/v2/generate/chat/async", json=image_body(png_data_url()), headers=request_headers)
 
     assert len(stored_keys) == 1
     assert _stored_object(stored_keys[0]) is None
@@ -520,29 +496,12 @@ def test_a_storage_failure_refuses_the_request_and_leaves_no_row(
 
     monkeypatch.setattr(kobold, "upload_chat_image", unreachable_store)
 
-    response = client.post("/api/v2/generate/chat/async", json=_image_body(_png_data_url()), headers=headers)
+    response = client.post("/api/v2/generate/chat/async", json=image_body(png_data_url()), headers=headers)
 
     assert response.status_code == 503
     assert response.get_json()["rc"] == "ChatImageStorageUnavailable"
     with app.app_context():
         assert db.session.query(TextWaitingPrompt).filter(TextWaitingPrompt.user_id == requester.id).count() == 0
-
-
-OFFLOAD_THRESHOLD_BYTES = 256
-"""A threshold that a request carrying one small image exceeds and a short text-only request stays under."""
-
-MESSAGES_URL_TRANSPORTS = ["url", "messages_url"]
-"""A worker declaration that takes offloaded messages, and per-image URLs for a request sent inline."""
-
-
-@pytest.fixture
-def messages_offload(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Enable the messages offload, uncompressed, with a threshold small enough for this module's requests."""
-    from horde.config import Config
-
-    monkeypatch.setattr(Config, "chat_messages_offload_enabled", True)
-    monkeypatch.setattr(Config, "chat_messages_offload_bytes", OFFLOAD_THRESHOLD_BYTES)
-    monkeypatch.setattr(Config, "chat_messages_offload_gzip", False)
 
 
 def _offloaded(app, request_id: str) -> bool:
@@ -578,7 +537,7 @@ def test_a_messages_url_worker_fetches_the_offloaded_messages_as_plain_json_with
     from horde.classes.kobold.waiting_prompt import CHAT_MESSAGES_URL_SECONDS
     from horde.flask import db
 
-    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    request_id = submit_image_chat_request(client, request_headers, image_body(png_data_url()))
     assert _offloaded(app, request_id) is True
 
     pop_result = _worker(client, request_headers, chat_features=VISION_FEATURES, image_transports=MESSAGES_URL_TRANSPORTS).pop()
@@ -614,10 +573,10 @@ def test_with_gzip_enabled_the_offloaded_messages_are_stored_with_content_encodi
     monkeypatch.setattr(Config, "chat_messages_offload_enabled", True)
     monkeypatch.setattr(Config, "chat_messages_offload_bytes", 16)
     monkeypatch.setattr(Config, "chat_messages_offload_gzip", True)
-    chat_body = _image_body()
+    chat_body = image_body()
     chat_body["messages"][0]["content"] = "Describe images briefly. " * 400
 
-    request_id = _submit(client, request_headers, chat_body)
+    request_id = submit_image_chat_request(client, request_headers, chat_body)
 
     stored_head = _messages_head(request_id)
     assert stored_head["ContentEncoding"] == "gzip"
@@ -630,7 +589,7 @@ def test_a_worker_without_messages_url_receives_an_offloaded_request_inline(app,
     from horde.classes.kobold.processing_generation import TextProcessingGeneration
     from horde.flask import db
 
-    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    request_id = submit_image_chat_request(client, request_headers, image_body(png_data_url()))
     assert _offloaded(app, request_id) is True
 
     pop_result = _worker(client, request_headers, chat_features=VISION_FEATURES, image_transports=["url"]).pop()
@@ -645,7 +604,7 @@ def test_a_worker_without_messages_url_receives_an_offloaded_request_inline(app,
 def test_a_request_under_the_threshold_is_not_offloaded(app, client, request_headers: dict[str, str]) -> None:
     from horde.classes.kobold.chat_request import build_chat_messages_key
 
-    request_id = _submit(client, request_headers, _image_body())
+    request_id = submit_image_chat_request(client, request_headers, image_body())
 
     assert _offloaded(app, request_id) is False
     assert _stored_object(build_chat_messages_key(request_id)) is None
@@ -657,7 +616,7 @@ def test_a_request_under_the_threshold_is_not_offloaded(app, client, request_hea
 def test_messages_stay_inline_while_the_offload_is_disabled(app, client, request_headers: dict[str, str]) -> None:
     from horde.classes.kobold.chat_request import build_chat_messages_key
 
-    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    request_id = submit_image_chat_request(client, request_headers, image_body(png_data_url()))
 
     assert _offloaded(app, request_id) is False
     assert _stored_object(build_chat_messages_key(request_id)) is None
@@ -678,7 +637,7 @@ def test_a_large_text_only_request_is_offloaded_and_sent_inline_to_a_worker_with
 
     monkeypatch.setattr(Config, "chat_messages_offload_enabled", True)
     monkeypatch.setattr(Config, "chat_messages_offload_bytes", 16)
-    request_id = _submit(client, request_headers, _image_body())
+    request_id = submit_image_chat_request(client, request_headers, image_body())
     assert _offloaded(app, request_id) is True
 
     pop_result = _worker(client, request_headers).pop()
@@ -696,7 +655,7 @@ def test_the_offloaded_messages_are_deleted_with_the_expired_request_row(app, cl
     from horde.database import threads
     from horde.flask import db
 
-    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    request_id = submit_image_chat_request(client, request_headers, image_body(png_data_url()))
     assert _stored_object(build_chat_messages_key(request_id)) is not None
     with app.app_context():
         db.session.get(TextWaitingPrompt, uuid.UUID(request_id)).expiry = datetime.utcnow() - timedelta(hours=1)
@@ -713,7 +672,7 @@ def test_the_offloaded_messages_are_deleted_with_the_request(app, client, reques
     from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
     from horde.flask import db
 
-    request_id = _submit(client, request_headers, _image_body(_png_data_url()))
+    request_id = submit_image_chat_request(client, request_headers, image_body(png_data_url()))
     assert _stored_object(build_chat_messages_key(request_id)) is not None
 
     with app.app_context():

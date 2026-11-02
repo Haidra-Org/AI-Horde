@@ -24,14 +24,27 @@ import pytest
 from flask_restx import fields as restx_fields
 
 from tests.integration._fake_chat_worker import (
+    ANONYMOUS_HEADERS,
     CHAT_MESSAGES,
     CHAT_MODEL,
+    LONG_HISTORY,
+    LOOKUP_TOOL,
+    MESSAGES_URL_TRANSPORTS,
+    TOOL_HISTORY,
+    TOOLS_FEATURES,
+    TOOLS_REQUEST_EXTRAS,
+    VISION_FEATURES,
     FakeChatWorker,
     build_chat_submit_body,
     build_faulted_chat_submit_body,
     cancel_request,
     chat_status,
+    image_body,
+    png_data_url,
+    post_progress,
+    serve_reply,
     submit_chat_request,
+    submit_image_chat_request,
     take_worker_offline,
 )
 from tests.integration._wire_examples import (
@@ -41,29 +54,6 @@ from tests.integration._wire_examples import (
     filled,
     structure_differences,
 )
-from tests.integration.test_chat import (
-    ANONYMOUS_HEADERS,
-    LONG_HISTORY,
-    LOOKUP_TOOL,
-    TOOL_HISTORY,
-    TOOLS_FEATURES,
-    TOOLS_REQUEST_EXTRAS,
-    _no_rate_limit,  # noqa: F401  (registers the autouse fixture in this module)
-    _serve_reply,
-)
-from tests.integration.test_chat_images import (
-    MESSAGES_URL_TRANSPORTS,
-    VISION_FEATURES,
-    _image_body,
-    _png_data_url,
-    _submit,
-    messages_offload,  # noqa: F401  (registers the fixture in this module)
-)
-from tests.integration.test_chat_progress import (
-    _post_progress,
-    lua_redis,  # noqa: F401  (registers the fixture in this module)
-    progress_redis,  # noqa: F401  (registers the fixture in this module)
-)
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -72,12 +62,26 @@ if TYPE_CHECKING:
     from flask_restx.reqparse import RequestParser
     from werkzeug.test import TestResponse
 
+pytestmark = pytest.mark.integration
+
 CHAT_ASYNC_ROUTE = "/api/v2/generate/chat/async"
 """The native route a requester queues a chat request on."""
 
 NO_ELIGIBLE_WORKER_MAX_TOKENS = 1024
 """A completion length above the free output floor of 512, which the anonymous key cannot hold kudos for, and within
 the scribe's chat limit, so the only gap the refusal states is the missing ``vision`` declaration."""
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit() -> Iterator[None]:
+    """Lift the per-address submit limit, which this module's request volume would otherwise trip."""
+    from horde.limiter import limiter
+
+    previous = limiter.enabled
+    limiter.enabled = False
+    yield
+    limiter.enabled = previous
+
 
 JOB_ID_PLACEHOLDER = "<job-id>"
 """The placeholder the page writes for a generation id."""
@@ -314,7 +318,7 @@ def _live_pop_tools_job(wire: WireRun) -> TestResponse:
 def _live_pop_image_job(wire: WireRun) -> TestResponse:
     wire.request.getfixturevalue("object_store_ready")
     worker = wire.worker(chat_features=VISION_FEATURES, image_transports=["base64"])
-    wire.track(_submit(wire.client, wire.headers, _image_body(_png_data_url())))
+    wire.track(submit_image_chat_request(wire.client, wire.headers, image_body(png_data_url())))
     return worker.pop_response()
 
 
@@ -322,7 +326,7 @@ def _live_pop_messages_url_job(wire: WireRun) -> TestResponse:
     wire.request.getfixturevalue("object_store_ready")
     wire.request.getfixturevalue("messages_offload")
     worker = wire.worker(chat_features=VISION_FEATURES, image_transports=MESSAGES_URL_TRANSPORTS)
-    wire.track(_submit(wire.client, wire.headers, _image_body(_png_data_url())))
+    wire.track(submit_image_chat_request(wire.client, wire.headers, image_body(png_data_url())))
     return worker.pop_response()
 
 
@@ -375,22 +379,22 @@ def _post_progress_post(wire: WireRun, documented: dict[str, Any]) -> TestRespon
 
 def _live_progress_accepted(wire: WireRun) -> TestResponse:
     request_id, generation_id = _streamed_job(wire)
-    response = _post_progress(wire.client, wire.headers["apikey"], generation_id, 1, "Blue")
+    response = post_progress(wire.client, wire.headers["apikey"], generation_id, 1, "Blue")
     wire.cancel(request_id)
     return response
 
 
 def _live_progress_cancelled(wire: WireRun) -> TestResponse:
     request_id, generation_id = _streamed_job(wire)
-    _post_progress(wire.client, wire.headers["apikey"], generation_id, 1, "Bl")
+    post_progress(wire.client, wire.headers["apikey"], generation_id, 1, "Bl")
     wire.cancel(request_id)
-    return _post_progress(wire.client, wire.headers["apikey"], generation_id, 2, "ue")
+    return post_progress(wire.client, wire.headers["apikey"], generation_id, 2, "ue")
 
 
 def _live_progress_out_of_sequence(wire: WireRun) -> TestResponse:
     request_id, generation_id = _streamed_job(wire)
-    _post_progress(wire.client, wire.headers["apikey"], generation_id, 1, "Bl")
-    response = _post_progress(wire.client, wire.headers["apikey"], generation_id, 3, "ue")
+    post_progress(wire.client, wire.headers["apikey"], generation_id, 1, "Bl")
+    response = post_progress(wire.client, wire.headers["apikey"], generation_id, 3, "ue")
     wire.cancel(request_id)
     return response
 
@@ -409,7 +413,7 @@ def _live_chat_submit_invalid(wire: WireRun) -> TestResponse:
 
 def _live_chat_submit_nonconformant(wire: WireRun) -> TestResponse:
     worker = wire.worker()
-    request_id, submit_response = _serve_reply(
+    request_id, submit_response = serve_reply(
         wire.client,
         wire.headers,
         worker,
@@ -501,7 +505,7 @@ def _live_no_eligible_worker(wire: WireRun) -> TestResponse:
     wire.worker()
     return wire.client.post(
         CHAT_ASYNC_ROUTE,
-        json=_image_body(_png_data_url(), max_tokens=NO_ELIGIBLE_WORKER_MAX_TOKENS),
+        json=image_body(png_data_url(), max_tokens=NO_ELIGIBLE_WORKER_MAX_TOKENS),
         headers=ANONYMOUS_HEADERS,
     )
 

@@ -10,25 +10,43 @@ The body builders are plain functions so a suite that mocks the native API can r
 [`chat_status`][tests.integration._fake_chat_worker.chat_status],
 [`cancel_request`][tests.integration._fake_chat_worker.cancel_request] and
 [`take_worker_offline`][tests.integration._fake_chat_worker.take_worker_offline] are the requester and cleanup calls
-around it.
+around it. The module also holds the request fixtures, worker feature lists and image helpers that several chat test
+modules share.
 """
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 from horde_sdk.generation_parameters.text.chat_policy import ChatGuarantee
+from PIL import Image
 
 if TYPE_CHECKING:
+    from flask.testing import FlaskClient
     from werkzeug.test import TestResponse
 
 __all__ = [
+    "ANONYMOUS_HEADERS",
     "CHAT_MESSAGES",
     "CHAT_MODEL",
     "DEFAULT_CHAT_FEATURES",
     "DEFAULT_CHAT_GUARANTEES",
+    "LONG_HISTORY",
+    "LONG_HISTORY_LATEST_USER",
+    "LONG_HISTORY_SYSTEM",
+    "LOOKUP_TOOL",
+    "MESSAGES_URL_TRANSPORTS",
+    "OFFLOAD_THRESHOLD_BYTES",
+    "PROGRESS_ROUTE",
+    "TOOLS_FEATURES",
+    "TOOLS_REQUEST_EXTRAS",
+    "TOOL_HISTORY",
+    "VERIFIED_FEATURES",
+    "VISION_FEATURES",
     "FakeChatWorker",
     "build_chat_submit_body",
     "build_faulted_chat_submit_body",
@@ -36,7 +54,12 @@ __all__ = [
     "build_tool_call",
     "cancel_request",
     "chat_status",
+    "image_body",
+    "png_data_url",
+    "post_progress",
+    "serve_reply",
     "submit_chat_request",
+    "submit_image_chat_request",
     "take_worker_offline",
 ]
 
@@ -342,3 +365,149 @@ def take_worker_offline(app: Any, worker_name: str) -> None:
         worker = db.session.query(TextWorker).filter_by(name=worker_name).one()
         worker.last_check_in = datetime.utcnow() - timedelta(hours=1)
         db.session.commit()
+
+
+ANONYMOUS_HEADERS = {"apikey": "0000000000", "Client-Agent": "aihorde_ci_client:1:test"}
+"""The anonymous key, which holds no kudos, so it is refused any request above the free output allowance."""
+
+LONG_HISTORY_SYSTEM = {"role": "system", "content": "You are a terse assistant."}
+
+LONG_HISTORY_LATEST_USER = {"role": "user", "content": "And which colour comes last?"}
+
+LONG_HISTORY = [
+    LONG_HISTORY_SYSTEM,
+    *(
+        message
+        for turn in range(8)
+        for message in (
+            {"role": "user", "content": f"Turn {turn}: " + "tell me about colours " * 200},
+            {"role": "assistant", "content": f"Reply {turn}: " + "red green blue " * 200},
+        )
+    ),
+    LONG_HISTORY_LATEST_USER,
+]
+"""A history whose estimate is far above any context the fake worker serves, while its latest turn is short."""
+
+LOOKUP_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "lookup_weather",
+        "description": "Look up the weather.",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+    },
+}
+"""A function tool as an OpenAI client sends it."""
+
+TOOL_HISTORY: list[dict[str, Any]] = [
+    {"role": "user", "content": "Weather in Oslo, then Bergen?"},
+    {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": "call_oslo", "type": "function", "function": {"name": "lookup_weather", "arguments": '{"city":"Oslo"}'}}],
+    },
+    {"role": "tool", "content": "Rain, 7C", "tool_call_id": "call_oslo"},
+]
+"""A conversation in which the model called a tool once and the client answered it."""
+
+TOOLS_REQUEST_EXTRAS: dict[str, Any] = {
+    "tools": [LOOKUP_TOOL],
+    "tool_choice": "auto",
+    "parallel_tool_calls": False,
+    "response_format": {"type": "json_object"},
+}
+"""The four extra keys of a tools request, as the client sends them and as the worker receives them."""
+
+TOOLS_FEATURES = ["tools", "json_object", "tools_with_response_format"]
+"""The features a worker declares to serve ``TOOLS_REQUEST_EXTRAS``."""
+
+VERIFIED_FEATURES = ["tools", "json_object", "json_schema", "tools_with_response_format"]
+"""The features a worker declares to pop every request the reply verification tests make."""
+
+VISION_FEATURES = ["seed", "presence_penalty", "vision"]
+"""A worker declaration with the vision feature."""
+
+OFFLOAD_THRESHOLD_BYTES = 256
+"""A threshold that a request carrying one small image exceeds and a short text-only request stays under."""
+
+MESSAGES_URL_TRANSPORTS = ["url", "messages_url"]
+"""A worker declaration that takes offloaded messages, and per-image URLs for a request sent inline."""
+
+PROGRESS_ROUTE = "/api/v2/generate/text/progress"
+
+
+def serve_reply(
+    client,
+    request_headers: dict[str, str],
+    chat_worker: FakeChatWorker,
+    request_overrides: dict[str, Any],
+    *,
+    content: str | None,
+    tool_calls: list[dict[str, Any]] | None = None,
+) -> tuple[str, Any]:
+    """Queue a chat request, pop it with every feature and guarantee declared, and submit one reply to it."""
+    request_id = submit_chat_request(client, request_headers, **request_overrides)
+    pop_result = chat_worker.pop(chat_features=VERIFIED_FEATURES)
+    assert pop_result["id"] is not None, pop_result
+    submit_response = chat_worker.submit(
+        build_chat_submit_body(
+            generation_id=pop_result["id"],
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason="tool_calls" if tool_calls else "stop",
+            model_id=CHAT_MODEL,
+        ),
+    )
+    return request_id, submit_response
+
+
+def png_data_url(size: tuple[int, int] = (64, 48), colour: tuple[int, int, int] = (200, 30, 30)) -> str:
+    image_buffer = BytesIO()
+    Image.new("RGB", size, colour).save(image_buffer, format="PNG")
+    return f"data:image/png;base64,{base64.b64encode(image_buffer.getvalue()).decode('ascii')}"
+
+
+def image_body(*image_urls: str, **overrides: Any) -> dict[str, Any]:
+    chat_body: dict[str, Any] = {
+        "model": CHAT_MODEL,
+        "messages": [
+            {"role": "system", "content": "Describe images briefly."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is in these?"},
+                    *({"type": "image_url", "image_url": {"url": image_url}} for image_url in image_urls),
+                ],
+            },
+        ],
+        "max_tokens": 64,
+    }
+    chat_body.update(overrides)
+    return chat_body
+
+
+def submit_image_chat_request(client, headers: dict[str, str], chat_body: dict[str, Any]) -> str:
+    response = client.post("/api/v2/generate/chat/async", json=chat_body, headers=headers)
+    assert response.status_code == 202, response.get_data(as_text=True)
+    return response.get_json()["id"]
+
+
+def post_progress(
+    client: FlaskClient,
+    apikey: str,
+    generation_id: str,
+    seq: int,
+    content: str,
+    reasoning_content: str | None = None,
+) -> TestResponse:
+    delta = {"content": content}
+    if reasoning_content is not None:
+        delta["reasoning_content"] = reasoning_content
+    return client.post(
+        PROGRESS_ROUTE,
+        json={
+            "id": generation_id,
+            "seq": seq,
+            "delta": delta,
+        },
+        headers={"apikey": apikey},
+    )

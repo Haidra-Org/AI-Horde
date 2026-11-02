@@ -5,8 +5,8 @@
 """The OpenAI-compatible front's wire examples in ``docs/reference/chat_wire_examples.md`` match the front.
 
 The examples whose id starts with ``FRONT_EXAMPLE_PREFIX`` are checked here against the front served by the harness
-of ``test_chat_front_sdk.py``: uvicorn in front of the in-process Horde, with that module's fake worker serving the
-chat model. Each response example is compared with the live body as
+of ``conftest.py`` and ``_front_stack.py``: uvicorn in front of the in-process Horde, with their fake worker serving
+the chat model. Each response example is compared with the live body as
 [`structure_differences`][tests.integration._wire_examples.structure_differences] describes; the bodies are read as
 raw HTTP, so each is the JSON the front writes and not an SDK object. The request example is posted and has to get the
 status of the response example that answers it; the front refuses unknown keys, so a misspelt key fails the post.
@@ -22,7 +22,15 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
-from tests.integration._fake_chat_worker import take_worker_offline
+from tests.integration._fake_chat_worker import CHAT_MODEL, take_worker_offline
+from tests.integration._front_stack import (
+    FRONT_CHAT_MESSAGES,
+    SDK_TIMEOUT_SECONDS,
+    TOOL_MESSAGES,
+    WEATHER_TOOL,
+    WORKER_NAME,
+    FixedReplyWorker,
+)
 from tests.integration._wire_examples import (
     DOCUMENTED,
     FRONT_EXAMPLE_PREFIX,
@@ -30,27 +38,32 @@ from tests.integration._wire_examples import (
     filled,
     structure_differences,
 )
-from tests.integration.test_chat_front_sdk import (
-    CHAT_MESSAGES,
-    CHAT_MODEL,
-    SDK_TIMEOUT_SECONDS,
-    TOOL_MESSAGES,
-    WEATHER_TOOL,
-    WORKER_NAME,
-    FixedReplyWorker,
-    _no_rate_limit,  # noqa: F401  (registers the autouse fixture in this module)
-    _worker_kept_up,  # noqa: F401  (registers the autouse fixture in this module)
-    fixed_reply_worker,  # noqa: F401  (registers the fixture in this module)
-    front_base_url,  # noqa: F401  (registers the fixture in this module)
-    horde_api_root,  # noqa: F401  (registers the fixture in this module)
-    owner_api_key,  # noqa: F401  (registers the fixture in this module)
-    signal_redis_url,  # noqa: F401  (registers the fixture in this module)
-)
 
 if TYPE_CHECKING:
     from flask import Flask
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit() -> Iterator[None]:
+    """Lift the per-address submit limit, which this module's request volume would otherwise trip."""
+    from horde.limiter import limiter
+
+    previous = limiter.enabled
+    limiter.enabled = False
+    yield
+    limiter.enabled = previous
+
+
+@pytest.fixture(autouse=True)
+def _worker_kept_up(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Fail a test during which the fake worker saw an unexpected answer or stopped."""
+    yield
+    if "fixed_reply_worker" in request.fixturenames:
+        worker: FixedReplyWorker = request.getfixturevalue("fixed_reply_worker")
+        assert worker.failures == []
+
 
 COMPLETIONS_PATH = "chat/completions"
 """The chat completions route, relative to the front's ``/v1`` base URL."""
@@ -63,7 +76,7 @@ SSE_DONE = "[DONE]"
 
 FRONT_CHAT_BODY: dict[str, Any] = {
     "model": CHAT_MODEL,
-    "messages": CHAT_MESSAGES,
+    "messages": FRONT_CHAT_MESSAGES,
     "max_tokens": 64,
     "temperature": 0.5,
 }
