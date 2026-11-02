@@ -15,7 +15,8 @@ import httpx
 import pytest
 from loguru import logger
 
-from horde.oai.app import REFUSED_PARAMETER_LOG_LENGTH
+from horde.oai import app as front_app
+from horde.oai.app import NO_ELIGIBLE_WORKER_CODE, REFUSED_PARAMETER_LOG_LENGTH, outcome_class_for
 from horde.oai.metrics import (
     ADMITTED_NAME,
     CANCELS_NAME,
@@ -37,6 +38,8 @@ from horde.oai.metrics import (
     STREAM_FAILURES_NAME,
     SUBMIT_OUTCOME_UNKNOWN_NAME,
     WAKES_NAME,
+    NoEligibleWorkerStage,
+    OutcomeClass,
     max_tokens_bucket,
 )
 from tests.unit.oai.conftest import (
@@ -163,6 +166,7 @@ async def test_completed_request_records_inflight_native_latency_wake_and_comple
     assert front.metric_total(WAKES_NAME, horde_wake_source="immediate", horde_found_finished=False) == 1
     assert front.metric_total(WAKES_NAME, horde_wake_source="signal", horde_found_finished=True) == 1
     assert front.metric_total(REQUEST_DURATION_NAME, horde_streamed=False, horde_status_code=200, horde_code="ok") == 1
+    assert front.metric_total(REQUEST_DURATION_NAME, horde_code="ok", horde_outcome_class="served") == 1
     assert front.metric_total(FIRST_CONTENT_NAME, horde_streamed=False) == 1
     assert front.metric_total(COMPLETIONS_NAME, horde_model=MODEL_NAME, horde_estimated_usage=False) == 1
     assert front.metric_total(EMPTY_RETURNS_NAME) == 0
@@ -191,6 +195,7 @@ async def test_front_at_capacity_records_the_refusal(start_front: StartFront) ->
 
     assert refused.status_code == 503
     assert front.metric_total(REFUSED_NAME, horde_status_code=503, horde_code="FrontAtCapacity") == 1
+    assert front.metric_total(REFUSED_NAME, horde_code="FrontAtCapacity", horde_outcome_class="front_capacity") == 1
     assert front.metric_total(ADMITTED_NAME) == 1
     assert front.metric_total(ERRORS_NAME) == 0
 
@@ -266,6 +271,8 @@ async def test_a_no_worker_refusal_at_submit_records_the_submit_stage(start_fron
     assert response.status_code == 503
     assert front.metric_total(ERRORS_NAME, horde_code="no_eligible_worker", horde_stage="submit") == 1
     assert front.metric_total(ERRORS_NAME, horde_code="no_eligible_worker", horde_stage="grace") == 0
+    assert front.metric_total(ERRORS_NAME, horde_code="no_eligible_worker", horde_outcome_class="unservable") == 1
+    assert front.metric_total(REQUEST_DURATION_NAME, horde_code="no_eligible_worker", horde_outcome_class="unservable") == 1
 
 
 @pytest.mark.parametrize(
@@ -324,6 +331,62 @@ async def test_the_completion_limit_bucket_is_the_smallest_bound_at_or_above_the
     assert max_tokens_bucket(max_tokens) == expected_bucket
 
 
+async def test_every_front_code_has_an_outcome_class() -> None:
+    """Each ``*_CODE`` value in the front's module, including the imported conflict and unsupported-parameter codes,
+    has a class other than ``unclassified``. ``no_eligible_worker`` has one at both stages."""
+    front_codes = {value for name, value in vars(front_app).items() if name.endswith("_CODE") and isinstance(value, str)}
+    assert front_app.CHAT_REQUEST_CONFLICT_CODE in front_codes
+    assert front_app.UNSUPPORTED_PARAMETER_CODE in front_codes
+    assert NO_ELIGIBLE_WORKER_CODE in front_codes
+    unclassified_codes = {
+        (code, stage)
+        for code in front_codes
+        for stage in ([NoEligibleWorkerStage.SUBMIT, NoEligibleWorkerStage.GRACE] if code == NO_ELIGIBLE_WORKER_CODE else [None])
+        if outcome_class_for(code, stage) == OutcomeClass.UNCLASSIFIED
+    }
+    assert unclassified_codes == set()
+
+
+@pytest.mark.parametrize(
+    ("code", "stage", "expected_class"),
+    [
+        ("ok", None, OutcomeClass.SERVED),
+        ("client_closed", None, OutcomeClass.CLIENT_GAVE_UP),
+        ("no_eligible_worker", NoEligibleWorkerStage.GRACE, OutcomeClass.CAPACITY),
+        ("no_eligible_worker", NoEligibleWorkerStage.SUBMIT, OutcomeClass.UNSERVABLE),
+        ("ChatWorkerFault", None, OutcomeClass.SERVICE_FAULT),
+        ("HordeUnexpectedResponse", None, OutcomeClass.SERVICE_FAULT),
+        ("UnknownChatModel", None, OutcomeClass.UNSERVABLE),
+        ("PromptExceedsContext", None, OutcomeClass.UNSERVABLE),
+        ("InvalidAPIKey", None, OutcomeClass.CLIENT_ERROR),
+        ("KudosUpfront", None, OutcomeClass.CLIENT_ERROR),
+        ("FrontAtCapacity", None, OutcomeClass.FRONT_CAPACITY),
+    ],
+)
+async def test_a_code_maps_to_its_outcome_class(
+    code: str,
+    stage: NoEligibleWorkerStage | None,
+    expected_class: OutcomeClass,
+) -> None:
+    """The class of each listed code, including the Horde return codes passed through by the front."""
+    assert outcome_class_for(code, stage) == expected_class
+
+
+@pytest.mark.parametrize(
+    ("code", "stage"),
+    [
+        ("SomeNewReturnCode", None),
+        (None, None),
+        ("no_eligible_worker", None),
+    ],
+    ids=["unknown_code", "no_code", "no_eligible_worker_without_a_stage"],
+)
+async def test_a_code_without_a_class_maps_to_unclassified(code: str | None, stage: NoEligibleWorkerStage | None) -> None:
+    """A code not in the class table is ``unclassified`` rather than a default class, so a new Horde return code
+    passed through by the front stays visible."""
+    assert outcome_class_for(code, stage) == OutcomeClass.UNCLASSIFIED
+
+
 async def test_the_finished_line_records_a_lowered_completion_limit_and_its_source(
     start_front: StartFront,
     captured_logs: CapturedLogs,
@@ -352,6 +415,8 @@ async def test_a_no_worker_refusal_after_the_grace_records_the_grace_stage(start
 
     failure_name = STREAM_FAILURES_NAME if stream else ERRORS_NAME
     assert front.metric_total(failure_name, horde_code="no_eligible_worker", horde_stage="grace") == 1
+    assert front.metric_total(failure_name, horde_code="no_eligible_worker", horde_outcome_class="capacity") == 1
+    assert front.metric_total(REQUEST_DURATION_NAME, horde_code="no_eligible_worker", horde_outcome_class="capacity") == 1
     assert front.metric_total(GRACE_RESCUES_NAME) == 0
 
 
@@ -639,6 +704,7 @@ async def test_streamed_fault_after_headers_is_a_stream_failure_not_an_error_sta
 
     assert response.status_code == 200
     assert front.metric_total(STREAM_FAILURES_NAME, horde_code="ChatRequestFaulted") == 1
+    assert front.metric_total(STREAM_FAILURES_NAME, horde_code="ChatRequestFaulted", horde_outcome_class="service_fault") == 1
     assert front.metric_total(ERRORS_NAME) == 0
     assert front.metric_total(REQUEST_DURATION_NAME, horde_streamed=True, horde_status_code=200, horde_code="ChatRequestFaulted") == 1
 
@@ -665,6 +731,7 @@ async def test_disconnect_during_the_wait_records_a_disconnect_wake(start_front:
 
     assert front.metric_total(WAKES_NAME, horde_wake_source="disconnect") == 1
     assert front.metric_total(REQUEST_DURATION_NAME, horde_status_code=499, horde_code="client_closed") == 1
+    assert front.metric_total(REQUEST_DURATION_NAME, horde_code="client_closed", horde_outcome_class="client_gave_up") == 1
     assert front.metric_total(CANCELS_NAME, horde_outcome="acknowledged") == 1
 
 

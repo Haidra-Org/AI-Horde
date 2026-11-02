@@ -383,15 +383,15 @@ anything.
 ## Metrics
 
 Attribute keys carry the `horde.` prefix. Every attribute is bounded: call types, outcomes, wake sources, HTTP
-statuses, error codes, refusal reasons, booleans and the model id. The model id comes from a delivered completion, so it is a model a
+statuses, error codes, outcome classes, refusal reasons, booleans and the model id. The model id comes from a delivered completion, so it is a model a
 worker served. Client addresses, API keys, prompts, client titles and request ids are never attributes.
 
 | Name | Type | Attributes | Meaning |
 | --- | --- | --- | --- |
 | `horde.oai.requests.admitted` | counter | `streamed` | Chat requests that took an in-flight slot. |
-| `horde.oai.requests.refused` | counter | `status_code`, `code`, `parameter` | Chat requests refused before an in-flight slot: body size (413), body read timeout (408 `RequestBodyTimeout`), validation (400, 404), authorization (401), `FrontAtCapacity` (503). For `UnsupportedChatParameter`, `parameter` is the top-level request key of the refused path (`store`, `messages` for a refused role or content part, `horde` for a refused horde option) when the request schema, the default no-op table or the OpenAI chat completions request keys the front does not define (`logit_bias`, `functions` and the others in `UNDEFINED_OPENAI_PARAMETERS`) or the common non-OpenAI sampler keys in `COMMON_NON_OPENAI_SAMPLER_PARAMETERS` (`top_k`, `min_p`, `rep_pen` and the others) list it. It is `other` for any other key, so a client-chosen key does not become a label value. It is empty for every other code. Each such refusal also logs its path (see [Refused parameter log line](#refused-parameter-log-line)), and the log shows the keys counted as `other`. |
-| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed`, `reason`, `stage`, `max_tokens_bucket` | Admitted requests that got an error status before any header: horde refusals at submit (429 `rate_limit_exceeded` when the horde's 429 does not include an `rc`), 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 400 `no_worker_supports_limit`, 503 `no_eligible_worker`, 503 `queue_unavailable`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. `reason` is `no_eligible_threads` or `wait_exceeds_budget` for `queue_unavailable` and empty for every other code. `stage` is `submit` for a `no_eligible_worker` refused by the Horde at creation, such as for a model without an online chat worker. It is `grace` for a `no_eligible_worker` returned when the fail-fast grace ended, and empty for every other code. `max_tokens_bucket` is the request's completion limit, as in the finished line's `max_tokens`, reported as the upper bound of its `BUCKETS_MAX_TOKENS` bucket (`16`, `64`, `128`, `256`, `512`, `768`, `1024`, `2048`, `4096`, `8192`, `16384`), or `over` above 16384. A limit of 600 is `768`. It shows refusals by the limit clients asked for. |
-| `horde.oai.stream.failures` | counter | `code`, `stage` | Streamed requests whose 200 headers were sent and which ended in an SSE error event. `stage` is as for `horde.oai.requests.errors`. |
+| `horde.oai.requests.refused` | counter | `status_code`, `code`, `parameter`, `outcome_class` | Chat requests refused before an in-flight slot: body size (413), body read timeout (408 `RequestBodyTimeout`), validation (400, 404), authorization (401), `FrontAtCapacity` (503). For `UnsupportedChatParameter`, `parameter` is the top-level request key of the refused path (`store`, `messages` for a refused role or content part, `horde` for a refused horde option) when the request schema, the default no-op table or the OpenAI chat completions request keys the front does not define (`logit_bias`, `functions` and the others in `UNDEFINED_OPENAI_PARAMETERS`) or the common non-OpenAI sampler keys in `COMMON_NON_OPENAI_SAMPLER_PARAMETERS` (`top_k`, `min_p`, `rep_pen` and the others) list it. It is `other` for any other key, so a client-chosen key does not become a label value. It is empty for every other code. Each such refusal also logs its path (see [Refused parameter log line](#refused-parameter-log-line)), and the log shows the keys counted as `other`. |
+| `horde.oai.requests.errors` | counter | `status_code`, `code`, `streamed`, `reason`, `stage`, `max_tokens_bucket`, `outcome_class` | Admitted requests that got an error status before any header: horde refusals at submit (429 `rate_limit_exceeded` when the horde's 429 does not include an `rc`), 408 `ChatRequestTimeout`, 404 `no_worker_supports_features`, 400 `no_worker_supports_limit`, 503 `no_eligible_worker`, 503 `queue_unavailable`, 502 `ChatRequestFaulted`, `ChatRequestNoGeneration` and `HordeUnavailable`. `reason` is `no_eligible_threads` or `wait_exceeds_budget` for `queue_unavailable` and empty for every other code. `stage` is `submit` for a `no_eligible_worker` refused by the Horde at creation, such as for a model without an online chat worker. It is `grace` for a `no_eligible_worker` returned when the fail-fast grace ended, and empty for every other code. `max_tokens_bucket` is the request's completion limit, as in the finished line's `max_tokens`, reported as the upper bound of its `BUCKETS_MAX_TOKENS` bucket (`16`, `64`, `128`, `256`, `512`, `768`, `1024`, `2048`, `4096`, `8192`, `16384`), or `over` above 16384. A limit of 600 is `768`. It shows refusals by the limit clients asked for. |
+| `horde.oai.stream.failures` | counter | `code`, `stage`, `outcome_class` | Streamed requests whose 200 headers were sent and which ended in an SSE error event. `stage` is as for `horde.oai.requests.errors`. |
 | `horde.oai.fail_fast.rescues` | counter | none | Waits in which one status read showed no eligible worker and nothing processing, and a later read within `fail_fast_grace_seconds` showed an eligible worker or the request processing. Compared with the `no_eligible_worker` count at the `grace` stage, it shows how many requests the grace kept from a refusal. |
 | `horde.oai.inflight` | observable gauge | none | Requests holding an in-flight slot. |
 | `horde.oai.inflight.sources` | observable gauge | none | Distinct client addresses holding at least one slot. |
@@ -400,7 +400,7 @@ worker served. Client addresses, API keys, prompts, client titles and request id
 | `horde.oai.native.duration` | histogram, seconds | `call_type`, `outcome` | Latency of each native call from taking a call slot to the answer. The histogram count is the call count. `call_type` is `submit`, `recovery`, `status`, `cancel` or `models`; `outcome` is `ok`, `refused` (horde status 400 or above), `unreachable` or `abandoned` (the request's budget ended first). |
 | `horde.oai.queue_wait` | histogram, seconds | `model` | The horde's `queue_wait_seconds` of each delivered generation: request creation to assignment. |
 | `horde.oai.first_content.duration` | histogram, seconds | `streamed`, `relayed` | From the submit acknowledgement, when a stream's headers go out, to the first content sent: the first relayed delta (`relayed` true), the first completion chunk, or the non-streamed body. |
-| `horde.oai.request.duration` | histogram, seconds | `streamed`, `status_code`, `code` | From an admitted request's arrival to its end. A stream records 200 whatever its outcome; `code` is the error code, `ok` for a delivered completion or `client_closed` for a client that disconnected before delivery. |
+| `horde.oai.request.duration` | histogram, seconds | `streamed`, `status_code`, `code`, `outcome_class` | From an admitted request's arrival to its end. A stream records 200 whatever its outcome; `code` is the error code, `ok` for a delivered completion or `client_closed` for a client that disconnected before delivery. |
 | `horde.oai.wakes` | counter | `wake_source`, `found_finished`, `found_done_without_generation` | Each status read of a waiting request, by what caused it: `immediate` (the read after the submit), `signal`, `recheck`, `poll`, `deadline`; and `disconnect`, recorded without a read when the client disconnects. `found_done_without_generation` marks a read showing the request done, not faulted and without a generation. |
 | `horde.oai.submit.outcome_unknown` | counter | none | Requests answered with `submit_outcome: "unknown"`. |
 | `horde.oai.submit.recoveries` | counter | `existing_claim` | Lost submits recovered by re-sending; `existing_claim` true is a claim match (horde answered 200). |
@@ -426,6 +426,36 @@ duration use `BUCKETS_REQUEST_LIFECYCLE_SECONDS` (both in `horde/metrics.py`); b
 to 10 seconds), and pieces per post uses `horde.oai.metrics.BUCKETS_PIECES_PER_POST` (1 to 80). The completion limit
 uses `horde.oai.metrics.BUCKETS_MAX_TOKENS` (16 to 16384 tokens), and the reasoning share uses
 `horde.oai.metrics.BUCKETS_REASONING_SHARE` (0 to 1 in steps of 0.1).
+
+### Outcome class
+
+Every finished front request has one `outcome_class` on `horde.oai.requests.refused`, `horde.oai.requests.errors`,
+`horde.oai.stream.failures` and `horde.oai.request.duration`. `outcome_class_for` in `horde/oai/app.py` derives it
+from the request's `code` and, for `no_eligible_worker`, its `stage`, through the table `OUTCOME_CLASS_BY_CODE`.
+
+| Class | Codes |
+| --- | --- |
+| `served` | `ok` |
+| `client_gave_up` | `client_closed` |
+| `capacity` | `no_eligible_worker` at stage `grace`, `ChatRequestTimeout`, `queue_unavailable` |
+| `service_fault` | `HordeUnavailable`, `HordeUnexpectedResponse`, `ChatRequestFaulted`, `ChatRequestNoGeneration`, `ChatStreamDiverged`, `ChatWorkerFault` |
+| `unservable` | `no_eligible_worker` at stage `submit`, `UnknownChatModel`, `model_not_found`, `no_worker_supports_features`, `no_worker_supports_limit`, `PromptExceedsContext` |
+| `client_error` | `UnsupportedChatParameter`, `InvalidAPIKey`, `InvalidAuthorizationHeader`, `RequestTooLarge`, `RequestBodyTimeout`, `rate_limit_exceeded`, `max_kudos_exceeded`, `KudosUpfront`, `OperationKeyConflict`, `SourceImageSizeExceeded`, `TooManyExtraSourceImages`, `ChatRequestConflict` |
+| `front_capacity` | `FrontAtCapacity` |
+| `unclassified` | any other code |
+
+The class of `no_eligible_worker` depends on its `stage`. At `grace` the Horde accepted the request and no eligible
+worker took it within the fail-fast grace, so it is `capacity`. At `submit` the Horde refused it because no online
+worker could serve it, so it is `unservable`. That describes the moment, since a volunteer worker coming online can
+make the same request servable.
+
+The front passes the Horde's `rc` through as the code, so the code set is open. A code not in the table is
+`unclassified` and is not given a default class, so a new return code stays visible.
+
+`FrontAtCapacity` is the in-flight cap per client address or in total. It rises with client concurrency, and also when
+served requests wait longer, so it has its own class.
+
+The served share of servable requests is `served` divided by the sum of `served`, `capacity` and `service_fault`.
 
 ## Refused parameter log line
 

@@ -81,6 +81,7 @@ from horde.consts import ANONYMOUS_API_KEY, HORDE_VERSION
 from horde.oai.attribution import build_client_agent
 from horde.oai.horde_client import (
     SUBMIT_MAX_CONCURRENT_CALLS,
+    UNEXPECTED_RESPONSE_CODE,
     CancelSlotUnavailableError,
     HordeActiveModel,
     HordeAPIError,
@@ -116,6 +117,7 @@ from horde.oai.metrics import (
     FrontMetrics,
     MaxTokensSource,
     NoEligibleWorkerStage,
+    OutcomeClass,
     PacingFlushReason,
     RelayOutcome,
     get_front_meter,
@@ -427,6 +429,95 @@ more than the native total cap; the native rc for the same."""
 
 TOO_MANY_IMAGES_CODE: str = "TooManyExtraSourceImages"
 """The error code of a request with more image parts than the native cap; the native rc for the same."""
+
+UNKNOWN_CHAT_MODEL_RC: str = "UnknownChatModel"
+"""The Horde rc for a model that is not listed in the text model reference and has no online chat worker. The front
+passes it through as the code. The Horde raises it from ``horde.exceptions.UnknownChatModel``, which the front does not
+import."""
+
+PROMPT_EXCEEDS_CONTEXT_RC: str = "PromptExceedsContext"
+"""The Horde rc for a prompt that, with the requested completion, does not fit the request's usable context length.
+The front passes it through as the code. The Horde builds it in ``horde.classes.kobold.request_fit``."""
+
+INVALID_API_KEY_RC: str = "InvalidAPIKey"
+"""The Horde rc for an API key that does not identify a user. The front passes it through as the code. The Horde
+raises it from ``horde.exceptions.InvalidAPIKey``, which the front does not import."""
+
+KUDOS_UPFRONT_RC: str = "KudosUpfront"
+"""The Horde rc for a requester who cannot cover the request's kudos hold. The front passes it through as the code.
+The Horde raises it from ``horde.exceptions.KudosUpfront``, which the front does not import."""
+
+OUTCOME_CLASS_BY_CODE: Mapping[str, OutcomeClass] = MappingProxyType(
+    {
+        COMPLETED_CODE: OutcomeClass.SERVED,
+        CLIENT_CLOSED_CODE: OutcomeClass.CLIENT_GAVE_UP,
+        TIMEOUT_CODE: OutcomeClass.CAPACITY,
+        QUEUE_UNAVAILABLE_CODE: OutcomeClass.CAPACITY,
+        HORDE_UNAVAILABLE_CODE: OutcomeClass.SERVICE_FAULT,
+        UNEXPECTED_RESPONSE_CODE: OutcomeClass.SERVICE_FAULT,
+        FAULTED_CODE: OutcomeClass.SERVICE_FAULT,
+        NO_GENERATION_CODE: OutcomeClass.SERVICE_FAULT,
+        STREAM_DIVERGED_CODE: OutcomeClass.SERVICE_FAULT,
+        WORKER_FAULT_RC: OutcomeClass.SERVICE_FAULT,
+        UNKNOWN_CHAT_MODEL_RC: OutcomeClass.UNSERVABLE,
+        MODEL_NOT_FOUND_CODE: OutcomeClass.UNSERVABLE,
+        NO_WORKER_SUPPORTS_FEATURES_CODE: OutcomeClass.UNSERVABLE,
+        NO_WORKER_SUPPORTS_LIMIT_CODE: OutcomeClass.UNSERVABLE,
+        PROMPT_EXCEEDS_CONTEXT_RC: OutcomeClass.UNSERVABLE,
+        UNSUPPORTED_PARAMETER_CODE: OutcomeClass.CLIENT_ERROR,
+        INVALID_API_KEY_RC: OutcomeClass.CLIENT_ERROR,
+        INVALID_AUTHORIZATION_CODE: OutcomeClass.CLIENT_ERROR,
+        REQUEST_TOO_LARGE_CODE: OutcomeClass.CLIENT_ERROR,
+        REQUEST_BODY_TIMEOUT_CODE: OutcomeClass.CLIENT_ERROR,
+        RATE_LIMIT_EXCEEDED_CODE: OutcomeClass.CLIENT_ERROR,
+        MAX_KUDOS_EXCEEDED_CODE: OutcomeClass.CLIENT_ERROR,
+        KUDOS_UPFRONT_RC: OutcomeClass.CLIENT_ERROR,
+        OPERATION_KEY_CONFLICT_CODE: OutcomeClass.CLIENT_ERROR,
+        IMAGE_SIZE_EXCEEDED_CODE: OutcomeClass.CLIENT_ERROR,
+        TOO_MANY_IMAGES_CODE: OutcomeClass.CLIENT_ERROR,
+        CHAT_REQUEST_CONFLICT_CODE: OutcomeClass.CLIENT_ERROR,
+        FRONT_FULL_CODE: OutcomeClass.FRONT_CAPACITY,
+    },
+)
+"""The outcome class of each code whose class does not depend on a stage. Classes are decided in this table and
+nowhere else. ``no_eligible_worker`` is not listed, because its class depends on the stage, which
+[`outcome_class_for`][horde.oai.app.outcome_class_for] reads. The front passes the Horde's ``rc`` through as the
+code, so the code set is open. A code that is not listed here is ``unclassified`` rather than given a default class,
+so a new return code stays visible instead of being counted in a class that may be wrong for it."""
+
+OUTCOME_CLASS_BY_NO_ELIGIBLE_WORKER_STAGE: Mapping[NoEligibleWorkerStage, OutcomeClass] = MappingProxyType(
+    {
+        NoEligibleWorkerStage.GRACE: OutcomeClass.CAPACITY,
+        NoEligibleWorkerStage.SUBMIT: OutcomeClass.UNSERVABLE,
+    },
+)
+"""The outcome class of a ``no_eligible_worker`` code at each stage. At ``grace`` the Horde accepted the request and no
+eligible worker took it in time, so the request was servable. At ``submit`` the Horde refused it because no online
+worker could serve it. The request is unservable only at that time, since a volunteer coming online can make the same
+request servable."""
+
+
+def outcome_class_for(code: str | None, stage: NoEligibleWorkerStage | None) -> OutcomeClass:
+    """Return the outcome class of a finished request, the ``horde.outcome_class`` label of its outcome metrics.
+
+    Args:
+        code: The request's final code: an error code, [`COMPLETED_CODE`][horde.oai.app.COMPLETED_CODE] or
+            [`CLIENT_CLOSED_CODE`][horde.oai.app.CLIENT_CLOSED_CODE].
+        stage: The stage of a ``no_eligible_worker`` error, and None for every other code.
+
+    Returns:
+        The class from [`OUTCOME_CLASS_BY_CODE`][horde.oai.app.OUTCOME_CLASS_BY_CODE], or for ``no_eligible_worker``
+        from [`OUTCOME_CLASS_BY_NO_ELIGIBLE_WORKER_STAGE`][horde.oai.app.OUTCOME_CLASS_BY_NO_ELIGIBLE_WORKER_STAGE].
+        ``unclassified`` for any other code, for None, and for ``no_eligible_worker`` without a stage.
+    """
+    if code is None:
+        return OutcomeClass.UNCLASSIFIED
+    if code == NO_ELIGIBLE_WORKER_CODE:
+        if stage is None:
+            return OutcomeClass.UNCLASSIFIED
+        return OUTCOME_CLASS_BY_NO_ELIGIBLE_WORKER_STAGE[stage]
+    return OUTCOME_CLASS_BY_CODE.get(code, OutcomeClass.UNCLASSIFIED)
+
 
 DATA_URL_PREFIX: str = "data:"
 """The scheme prefix of an inline image URL."""
@@ -1835,6 +1926,7 @@ class RequestTrace:
             streamed=self.streamed,
             reason=error.queue_refusal.reason if error.queue_refusal is not None else None,
             max_tokens=effective_completion_limit(self.chat_request, self._final_context_adjustments(watcher)),
+            outcome_class=outcome_class_for(error.code, error.no_eligible_worker_stage),
             stage=error.no_eligible_worker_stage,
         )
         if error.metadata.submit_outcome == SubmitOutcome.UNKNOWN:
@@ -1844,7 +1936,11 @@ class RequestTrace:
 
     def error_events(self, error: ChatFrontError, *, watcher: ChatRequestWatcher | None) -> list[ServerSentEvent]:
         """Return the error events sent after a stream's 200 headers, recording the failure and the request's end."""
-        self._front_metrics.record_stream_failure(code=error.code, stage=error.no_eligible_worker_stage)
+        self._front_metrics.record_stream_failure(
+            code=error.code,
+            outcome_class=outcome_class_for(error.code, error.no_eligible_worker_stage),
+            stage=error.no_eligible_worker_stage,
+        )
         self.finish(status_code=HTTPStatus.OK, code=error.code or "", watcher=watcher, front_error=error)
         return error.to_events()
 
@@ -1887,6 +1983,10 @@ class RequestTrace:
             streamed=self.streamed,
             status_code=int(status_code),
             code=code,
+            outcome_class=outcome_class_for(
+                code,
+                front_error.no_eligible_worker_stage if front_error is not None else None,
+            ),
         )
         self._record_max_tokens(watcher)
         context_adjustments = self._final_context_adjustments(watcher)
@@ -2426,7 +2526,11 @@ async def _chat_completions(request: Request) -> Response:
     # the front buffers any of it.
     inflight_slot = front_state.inflight_limiter.try_acquire(_request_source(request))
     if inflight_slot is None:
-        front_metrics.record_refusal(status_code=HTTPStatus.SERVICE_UNAVAILABLE, code=FRONT_FULL_CODE)
+        front_metrics.record_refusal(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            code=FRONT_FULL_CODE,
+            outcome_class=outcome_class_for(FRONT_FULL_CODE, None),
+        )
         return ChatFrontError(
             status_code=HTTPStatus.SERVICE_UNAVAILABLE,
             message="This front holds its maximum of open requests for this client or in total; retry shortly.",
@@ -2439,7 +2543,11 @@ async def _chat_completions(request: Request) -> Response:
         chat_request = await _read_chat_request(request, front_state)
     except ClientDisconnect:
         inflight_slot.release()
-        front_metrics.record_refusal(status_code=CLIENT_CLOSED_REQUEST_STATUS, code=CLIENT_CLOSED_CODE)
+        front_metrics.record_refusal(
+            status_code=CLIENT_CLOSED_REQUEST_STATUS,
+            code=CLIENT_CLOSED_CODE,
+            outcome_class=outcome_class_for(CLIENT_CLOSED_CODE, None),
+        )
         return Response(status_code=CLIENT_CLOSED_REQUEST_STATUS)
     except ChatFrontError as error:
         inflight_slot.release()
@@ -2450,6 +2558,7 @@ async def _chat_completions(request: Request) -> Response:
         front_metrics.record_refusal(
             status_code=error.status_code,
             code=error.code,
+            outcome_class=outcome_class_for(error.code, error.no_eligible_worker_stage),
             parameter=refused_parameter_label,
         )
         return error.to_response()

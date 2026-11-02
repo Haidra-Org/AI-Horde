@@ -47,6 +47,7 @@ __all__ = [
     "NativeCallOutcome",
     "NativeCallType",
     "NoEligibleWorkerStage",
+    "OutcomeClass",
     "PacingFlushReason",
     "RelayOutcome",
     "get_front_meter",
@@ -263,6 +264,7 @@ class MetricAttribute(StrEnum):
     REASONING_EFFORT = "horde.reasoning_effort"
     SOURCE = "horde.source"
     MAX_TOKENS_BUCKET = "horde.max_tokens_bucket"
+    OUTCOME_CLASS = "horde.outcome_class"
 
 
 class CompletionContent(StrEnum):
@@ -323,6 +325,40 @@ class NoEligibleWorkerStage(StrEnum):
     """The Horde refused the request at creation, such as for a model without an online chat worker."""
     GRACE = "grace"
     """For the whole fail-fast grace, the status reads showed no eligible worker and nothing processing."""
+
+
+class OutcomeClass(StrEnum):
+    """How a finished front request ended, recorded as the ``horde.outcome_class`` label on the instruments that count
+    outcomes. [`outcome_class_for`][horde.oai.app.outcome_class_for] derives it from the request's code.
+
+    The served share of servable requests is ``served`` divided by the sum of ``served``, ``capacity`` and
+    ``service_fault``. The other classes are left out of it, because the front could not have served those requests or
+    the client ended them.
+    """
+
+    SERVED = "served"
+    """The completion was delivered. Counts as served in the served share of servable requests."""
+    CLIENT_GAVE_UP = "client_gave_up"
+    """The client disconnected before delivery. Left out of the served share of servable requests."""
+    CAPACITY = "capacity"
+    """The request was servable, but no worker served it in time, or the queue could not take it. Counts against the
+    served share of servable requests."""
+    SERVICE_FAULT = "service_fault"
+    """The Horde, a worker or the front failed the request: an unreachable or unparsable Horde, a faulted or empty
+    generation, or a relayed stream that diverged. Counts against the served share of servable requests."""
+    UNSERVABLE = "unservable"
+    """No online worker could serve the request at the time, such as for an unknown model, a model without an online
+    chat worker, or a limit or feature that is not declared by any online worker. A volunteer coming online can change
+    this, so the class describes the moment and not the request. Left out of the served share of servable requests."""
+    CLIENT_ERROR = "client_error"
+    """The request itself was refused: an invalid key or header, an unsupported parameter, a body too large or too
+    slow, a rate limit, or a kudos limit. Left out of the served share of servable requests."""
+    FRONT_CAPACITY = "front_capacity"
+    """The front held its maximum of open requests for the client's address or in total. It rises with client
+    concurrency, and also when served requests wait longer. Left out of the served share of servable requests."""
+    UNCLASSIFIED = "unclassified"
+    """A code that is not in the class table, such as a new Horde return code passed through by the front. Left out of
+    the served share of servable requests."""
 
 
 class CancelOutcome(StrEnum):
@@ -584,12 +620,20 @@ class FrontMetrics:
         """Record a chat request that took an in-flight slot."""
         self._admitted.add(1, {MetricAttribute.STREAMED: streamed})
 
-    def record_refusal(self, *, status_code: int, code: str | None, parameter: str | None = None) -> None:
+    def record_refusal(
+        self,
+        *,
+        status_code: int,
+        code: str | None,
+        outcome_class: OutcomeClass,
+        parameter: str | None = None,
+    ) -> None:
         """Record a chat request refused before it took an in-flight slot.
 
         Args:
             status_code: The HTTP status sent.
             code: The error code.
+            outcome_class: The class of the refusal's code.
             parameter: The bounded label of the refused parameter of an ``UnsupportedChatParameter`` refusal; None
                 for every other refusal.
         """
@@ -599,6 +643,7 @@ class FrontMetrics:
                 MetricAttribute.STATUS_CODE: int(status_code),
                 MetricAttribute.CODE: code or "",
                 MetricAttribute.PARAMETER: parameter or "",
+                MetricAttribute.OUTCOME_CLASS: str(outcome_class),
             },
         )
 
@@ -610,6 +655,7 @@ class FrontMetrics:
         streamed: bool,
         reason: str | None,
         max_tokens: int,
+        outcome_class: OutcomeClass,
         stage: NoEligibleWorkerStage | None = None,
     ) -> None:
         """Record an admitted chat request that got an error status before any header was sent.
@@ -617,6 +663,7 @@ class FrontMetrics:
         Args:
             status_code: The HTTP status sent.
             code: The error code.
+            outcome_class: The class of the error's code and stage.
             streamed: Whether the request is streamed.
             reason: Which rule refused a ``queue_unavailable`` request; None for every other error.
             max_tokens: The request's completion limit, recorded as its
@@ -633,14 +680,22 @@ class FrontMetrics:
                 MetricAttribute.REASON: reason or "",
                 MetricAttribute.STAGE: str(stage) if stage is not None else "",
                 MetricAttribute.MAX_TOKENS_BUCKET: max_tokens_bucket(max_tokens),
+                MetricAttribute.OUTCOME_CLASS: str(outcome_class),
             },
         )
 
-    def record_stream_failure(self, *, code: str | None, stage: NoEligibleWorkerStage | None = None) -> None:
+    def record_stream_failure(
+        self,
+        *,
+        code: str | None,
+        outcome_class: OutcomeClass,
+        stage: NoEligibleWorkerStage | None = None,
+    ) -> None:
         """Record a streamed request that ended in an error event after its 200 headers.
 
         Args:
             code: The error code.
+            outcome_class: The class of the error's code and stage.
             stage: The stage at which a ``no_eligible_worker`` request was found unservable. None for every other
                 error.
         """
@@ -649,6 +704,7 @@ class FrontMetrics:
             {
                 MetricAttribute.CODE: code or "",
                 MetricAttribute.STAGE: str(stage) if stage is not None else "",
+                MetricAttribute.OUTCOME_CLASS: str(outcome_class),
             },
         )
 
@@ -684,7 +740,15 @@ class FrontMetrics:
             },
         )
 
-    def record_request_duration(self, *, duration_seconds: float, streamed: bool, status_code: int, code: str) -> None:
+    def record_request_duration(
+        self,
+        *,
+        duration_seconds: float,
+        streamed: bool,
+        status_code: int,
+        code: str,
+        outcome_class: OutcomeClass,
+    ) -> None:
         """Record an admitted request's time from arrival to its end.
 
         Args:
@@ -692,6 +756,7 @@ class FrontMetrics:
             streamed: Whether the request was streamed.
             status_code: The HTTP status sent, 200 for every stream whose headers went out.
             code: The error code the request ended with, or the success or disconnect code.
+            outcome_class: The class of the request's code and, for an error, its stage.
         """
         self._request_duration.record(
             duration_seconds,
@@ -699,6 +764,7 @@ class FrontMetrics:
                 MetricAttribute.STREAMED: streamed,
                 MetricAttribute.STATUS_CODE: int(status_code),
                 MetricAttribute.CODE: code,
+                MetricAttribute.OUTCOME_CLASS: str(outcome_class),
             },
         )
 
