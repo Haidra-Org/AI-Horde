@@ -127,7 +127,7 @@ telemetry-profiling = [
     "pyroscope-otel",
 ]
 docs = [
-    "zensical>=0.0.56",
+    "zensical==0.0.74",
 ]
 
 [tool.ruff]

@@ -4,7 +4,8 @@
 
 # Static documentation site over docs/, built with Zensical (https://zensical.org).
 # Navigation is implicit from the directory structure; docs/README.md is the landing
-# page. Build with `uvx zensical build`; preview with `uvx zensical serve`.
+# page. Build with `uv run --only-group docs --locked zensical build`;
+# preview with `uv run --only-group docs --locked zensical serve`.
 
 [project]
 site_name = "AI Horde"
