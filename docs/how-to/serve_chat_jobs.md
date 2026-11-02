@@ -55,7 +55,7 @@ The worker renders `payload.messages` with its chat template, generates, and sub
 --8<-- "docs/reference/chat_wire_examples.md:submit-reply"
 ```
 
-The submit is answered with the kudos the worker earned:
+The submit returns the kudos the worker earned:
 
 ```json
 --8<-- "docs/reference/chat_wire_examples.md:submit-reply-response"
@@ -158,7 +158,7 @@ Add five fields to every pop body, beside the usual `name`, `models`, `max_lengt
   then not sent to the worker, under either conformance mode, since a clamped value changes the request. Leave it out
   when the backend applies every temperature as sent.
 - `model_id` is the model the worker serves chat jobs with, and it has to be one of `models`. The native route treats
-  it as an opaque string. The OpenAI-compatible front reserves `:` and answers 404 for any model id that contains
+  it as an opaque string. The OpenAI-compatible front reserves `:` and returns 404 for any model id that contains
   one, so a model name with a colon can be served natively and cannot be reached through the front
   ([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). Choose a name without a
   colon.
@@ -185,15 +185,15 @@ serving the model, and the sorted union of their `features`
 `tests/integration/test_statistics.py`, `test_text_models_carry_the_chat_declarations_only_when_asked_for`, and
 `tests/integration/test_chat.py`, `test_an_invalid_chat_declaration_is_refused_on_pop`.
 
-The worker's details show the declaration the horde stored from the last pop:
+The worker's details show the horde's stored declaration from the last pop:
 
 ```bash
 curl -s "<HORDE_URL>/api/v2/workers/name/<worker-name>" | jq '{accepts_chat_jobs, accepts_prompt_jobs, chat}'
 ```
 
 `accepts_chat_jobs` and `accepts_prompt_jobs` are the pop's `chat_jobs` and `prompt_jobs`. `chat` holds `model_id`,
-`features`, `limits` and `image_transports` as the pop sent them, without the feature and transport names the horde
-does not know, and is absent while the worker does not accept chat jobs
+`features`, `limits` and `image_transports` as the pop sent them, without the feature and transport names unknown to the
+horde, and is absent while the worker does not accept chat jobs
 ([Worker details](../reference/chat_requests.md#worker-details)). Worker details are cached for 30 seconds, so a
 changed declaration can take that long to show. Covered by
 `test_worker_details_read_back_the_chat_declaration_of_the_last_pop`.
@@ -525,7 +525,7 @@ Covered by `test_a_chat_worker_still_pops_text_jobs_with_an_unchanged_response`.
 ## Worked example: koboldcpp's embedded worker
 
 koboldcpp's embedded Horde worker, `run_horde_worker` in `koboldcpp.py`, serves chat jobs from koboldcpp 1.124. Every
-embedded worker of that release declares chat on each pop, beside its text limits, and koboldcpp has no option to turn
+embedded worker of that release declares chat on each pop, beside its text limits, and koboldcpp does not have an option to turn
 chat off. The worker pops from and submits to `https://aihorde.net`, which koboldcpp sets in code. It is configured by
 these flags (help text as printed by `koboldcpp --help`):
 
@@ -542,29 +542,29 @@ Each pop of the embedded worker declares:
 
 - `chat_jobs: true`;
 - `chat_features` `seed`, `presence_penalty`, `tools`, `json_object`, `json_schema`, `reasoning_effort` and the
-  guarantee `prompt_overflow_refused`, plus `vision` when a multimodal projector is loaded. The worker declares no
+  guarantee `prompt_overflow_refused`, plus `vision` when a multimodal projector is loaded. The worker does not declare any
   other guarantee, so a `strict` request that needs `tool_choice_enforced` or `structured_output_enforced` does not
   reach it. `frequency_penalty` is not declared, since koboldcpp reads it only as a fallback for a missing presence
   penalty. `tools_with_response_format` is not declared either: koboldcpp's generic tool path replaces the response
-  format grammar with its tool grammar, so a request carrying both is served by other workers;
+  format grammar with its tool grammar, so a request with both is served by other workers;
 - `image_transports` `messages_url`, plus `base64` when `vision` is declared;
 - `chat_limits.max_context_length` as the smaller of the loaded context size and `--hordemaxctx`,
-  `chat_limits.max_length` as `--hordegenlen`, and `chat_limits.tools_max_temperature` as 1.0, the temperature
-  koboldcpp clamps tool requests to;
+  `chat_limits.max_length` as `--hordegenlen`, and `chat_limits.tools_max_temperature` as 1.0, koboldcpp's clamp
+  temperature for tool requests;
 - `model_id` as the model name it registers: `--hordemodelname`, or the model file's name without its extension when
   the flag is not set, prefixed with `koboldcpp/`. A `--hordemodelname` combined with `--debugmode 1` or
-  `--gendefaults` carries `debug-` after the prefix.
+  `--gendefaults` has `debug-` after the prefix.
 
-The worker fetches a chat job's `messages_url` when the payload carries one, checks the job for fit as in
+The worker fetches a chat job's `messages_url` when the payload has one, checks the job for fit as in
 [step 3](#3-render-and-fit-the-conversation), and generates it through koboldcpp's local `/v1/chat/completions`. A text
 job still goes to `/api/v1/generate`. A job with `stream_progress: true` and no tools is streamed from the local
-endpoint, and the worker posts its progress about once a second; a `cancelled: true` answer aborts the local
+endpoint, and the worker posts its progress about once a second. A `cancelled: true` response aborts the local
 generation, and the job is not submitted. A job with tools is generated whole, since the tool calls are parsed from the complete reply.
 
 The reply is submitted with the backend's `finish_reason` and with each token count the backend reported. The worker
 faults the job with `prompt_overflow` when the fit check fails, and with `reply_refused` when the horde refuses the
-reply with `ChatSubmitInvalid`, `ChatSubmitNonconformant` or `ChatModelMismatch`. A failed fetch, a failed generation
-or a finish reason outside the four the horde accepts faults the job without a reason. A chat job is not generated a
+reply with `ChatSubmitInvalid`, `ChatSubmitNonconformant` or `ChatModelMismatch`. A failed fetch faults the job without a reason, as does a failed generation.
+A finish reason outside the four accepted by the horde does the same. A chat job is not generated a
 second time.
 
 ### Start koboldcpp as a chat worker

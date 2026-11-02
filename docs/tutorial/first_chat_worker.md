@@ -18,7 +18,7 @@ Topics: [chat](../topics.md#chat), [workers](../topics.md#workers)
 <!-- END GENERATED: topics -->
 
 In this tutorial you run koboldcpp as a chat worker on the AI Horde, watch the horde list its model as a chat model,
-send it one chat request and one tool request with curl, and read the structured replies the worker submitted. Each step
+send it one chat request and one tool request with curl, and read the structured replies submitted by the worker. Each step
 ends with the output that shows it worked.
 
 The procedure behind each step, with every option, is [Serve chat jobs from a text worker](../how-to/serve_chat_jobs.md).
@@ -42,8 +42,8 @@ export HORDE_API_KEY=<api-key>
 export MODEL_NAME=koboldcpp/<model-name>
 ```
 
-koboldcpp prefixes the model name it registers with `koboldcpp/`, so `MODEL_NAME` is `<model-name>` with that prefix.
-Choose a `<model-name>` that no other worker serves, so the requests below reach your worker. Leave out the colon: the
+koboldcpp prefixes its registered model name with `koboldcpp/`, so `MODEL_NAME` is `<model-name>` with that prefix.
+Choose a `<model-name>` that is not served by any other worker, so the requests below reach your worker. Leave out the colon: the
 OpenAI-compatible front reserves it and does not route to a model whose name contains one.
 
 ## 1. Start koboldcpp as a chat worker
@@ -56,7 +56,7 @@ koboldcpp --model <model.gguf> --contextsize 4096 --jinja \
 
 `--hordekey` and `--hordeworkername` start the embedded worker, which accepts chat jobs and text jobs. `--jinja` formats
 each conversation with the model's Jinja chat template, including tool calls. `--hordemaxctx` and `--hordegenlen` set
-the largest context and reply the worker accepts.
+the worker's largest accepted context and reply.
 
 Once the model has loaded, the log shows:
 
@@ -91,7 +91,7 @@ The model list refreshes every few seconds; repeat the command until it prints:
 `created` differs. The worker declared what it serves: up to 4096 tokens of context, up to 512 tokens of reply, the
 optional features `seed`, `presence_penalty`, `tools`, `json_object`, `json_schema` and `reasoning_effort`, and the
 guarantee `prompt_overflow_refused`, a promise to fault a conversation that does not fit instead of trimming it. A
-request that needs a feature or guarantee the worker did not declare waits for another worker.
+request that needs a feature or guarantee not declared by the worker waits for another worker.
 
 The model list merges every worker serving the model. The worker's details hold this worker's declaration alone,
 including `limits.tools_max_temperature`, which the model list does not show:

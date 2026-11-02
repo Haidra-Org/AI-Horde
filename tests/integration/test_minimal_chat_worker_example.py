@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 REQUESTED_MAX_TOKENS = 64
-"""The ``max_tokens`` each chat request asks for."""
+"""The ``max_tokens`` sent with each chat request."""
 
 SUBMIT_PATH = "/api/v2/generate/text/submit"
 """The horde route the worker submits on."""

@@ -399,14 +399,14 @@ def progress_redis(monkeypatch: pytest.MonkeyPatch) -> fakeredis.FakeStrictRedis
 
 @pytest.fixture
 def lua_redis(progress_redis: fakeredis.FakeStrictRedis) -> fakeredis.FakeStrictRedis:
-    """The in-memory Redis, for tests that reach the append script; fakeredis runs Lua only with ``lupa``."""
+    """The in-memory Redis, for tests that reach the append script. fakeredis runs Lua only with ``lupa``."""
     pytest.importorskip("lupa", reason="fakeredis runs Lua scripts only with lupa installed (fakeredis[lua]).")
     return progress_redis
 
 
 @pytest.fixture(scope="module")
 def signal_redis_url() -> Iterator[str]:
-    """Route the Horde's chat signals to the test Redis and return the URL the front subscribes with."""
+    """Route the Horde's chat signals to the test Redis and return the URL used by the front to subscribe."""
     import redis
 
     from horde import chat_signal
@@ -465,8 +465,8 @@ def horde_api_root(app: Flask) -> Iterator[str]:
 def fixed_reply_worker(app: Flask, owner_api_key: str, CIVERSION: str) -> Iterator[FixedReplyWorker]:
     """Run the fake worker for the module, registered with the Horde and its model list before the front starts.
 
-    The native model list reads a cache that a maintenance thread refreshes in production; the fixture refreshes it
-    once after the first pop, since the test app runs no maintenance threads.
+    The native model list reads a cache that a maintenance thread refreshes in production. The fixture refreshes it
+    once after the first pop, since the test app does not run maintenance threads.
     """
     from horde.database.threads import store_available_models
 

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Serve AI Horde chat jobs from an OpenAI-compatible backend such as llama.cpp's server, vLLM or koboldcpp.
+"""Serve AI Horde chat jobs from an OpenAI-compatible backend such as llama.cpp's server.
 
 Usage: minimal_chat_worker.py --horde-url URL --api-key KEY --worker-name NAME --model MODEL --backend-url URL
 
@@ -41,10 +41,10 @@ from horde_sdk.worker.chat_declaration import (
 )
 
 DESCRIPTION: Final = "Serve AI Horde chat jobs from an OpenAI-compatible backend."
-"""The summary ``--help`` prints."""
+"""The summary printed by ``--help``."""
 
 CLIENT_AGENT: Final = "minimal_chat_worker:1:unknown"
-"""The ``Client-Agent`` header and ``bridge_agent`` the horde records for this worker."""
+"""The ``Client-Agent`` header and ``bridge_agent`` recorded by the horde for this worker."""
 
 EMPTY_POP_SLEEP_SECONDS: Final = 2
 """The pause after a pop without a job, so an idle worker does not poll the horde in a tight loop."""
@@ -60,7 +60,7 @@ HORDE_TIMEOUT_SECONDS: Final = 30
 """The longest wait for the horde's response to a pop or submit."""
 
 NATIVE_FINISH_REASON_LIMIT: Final = 32
-"""The longest ``native_finish_reason`` the horde stores."""
+"""The longest ``native_finish_reason`` stored by the horde."""
 
 NATIVE_TOOL_CALL_FINISH_REASONS: Final = frozenset({"tool_calls", "function_call"})
 """The backend finish reasons of a reply that calls tools: OpenAI's current one and its deprecated one."""
@@ -69,7 +69,7 @@ REPLY_REFUSAL_RCS: Final = frozenset({"ChatSubmitInvalid", "ChatSubmitNonconform
 """The return codes of a ``400`` that refuses the reply itself, which the worker follows with a ``reply_refused`` fault.
 
 The horde refuses the same reply again, so the fault sends the job back to the queue. ``AbortedGen`` and
-``DuplicateGen`` are also ``400`` responses. They refuse a job that the worker no longer holds, and a fault after them
+``DuplicateGen`` are also ``400`` responses. They refuse a job that the worker has lost, and a fault after them
 would record a refused reply for a reply that the horde did not check.
 """
 
@@ -84,7 +84,7 @@ SUPPORTED_FEATURES: Final[frozenset[ChatFeature]] = frozenset(
         ChatFeature.REASONING_EFFORT,
     },
 )
-"""The features ``--features`` accepts. ``vision`` needs an image transport and ``tools_with_response_format`` a
+"""The features accepted by ``--features``. ``vision`` needs an image transport and ``tools_with_response_format`` a
 backend that keeps both apart, which this worker does not handle."""
 
 TEMPLATE_OVERHEAD_HELP: Final = (
@@ -97,7 +97,7 @@ class TokenCounter(StrEnum):
     """Identify how the fit check counts a prompt: the UTF-8 byte bound, or the backend's tokenizer."""
 
     BYTES = "bytes"
-    """An upper bound from the UTF-8 length of the JSON, which needs no backend route."""
+    """An upper bound from the UTF-8 length of the JSON, which does not need a backend route."""
 
     LLAMACPP = "llamacpp"
     """llama.cpp's ``/apply-template`` and ``/tokenize``."""
@@ -120,7 +120,7 @@ class BackendConfig:
     token_counter: TokenCounter
     """How the fit check counts a prompt."""
     template_overhead: int | None
-    """The operator's count of the tokens the fit check adds to every prompt count, for every token counter.
+    """The operator's count of the tokens added by the fit check to every prompt count, for every token counter.
 
     It replaces the startup measurement: the probe's prompt count for the byte bound, and 0 for an exact counter,
     which counts the template itself.
@@ -136,13 +136,13 @@ class WorkerConfig:
     api_key: str
     """The worker owner's API key."""
     worker_name: str
-    """The name the worker registers under."""
+    """The worker's registered name."""
     backend: BackendConfig
     """The backend settings."""
     limits: ChatWorkerLimits
-    """The context and reply lengths the backend serves."""
+    """The backend's served context and reply lengths."""
     features: frozenset[ChatFeature]
-    """The optional features the operator knows the backend honours."""
+    """The optional features known by the operator to be honoured by the backend."""
 
 
 def parse_config(argv: list[str] | None = None) -> WorkerConfig:
@@ -203,7 +203,7 @@ def parse_config(argv: list[str] | None = None) -> WorkerConfig:
 
 
 def _post_json(session: requests.Session, url: str, body: dict[str, Any], *, deadline: float) -> dict[str, Any]:
-    """Return the JSON body of a backend response, waiting no longer than the ``time.monotonic()`` ``deadline``.
+    """Return the JSON body of a backend response, waiting at most until the ``time.monotonic()`` ``deadline``.
 
     Raises:
         requests.Timeout: The deadline has passed before the call.
@@ -219,17 +219,17 @@ def _post_json(session: requests.Session, url: str, body: dict[str, Any], *, dea
 
 
 def _byte_bound(body: dict[str, Any]) -> int:
-    """Return an upper bound on a chat body's prompt tokens, without the template's fixed part, that needs no tokenizer."""
+    """Return an upper bound on a chat body's prompt tokens, without the template's fixed part, that does not need a tokenizer."""
     # A byte-level BPE tokenizer, which most current models use, emits at least one UTF-8 byte per token, so a text
-    # has no more tokens than bytes, and JSON escaping only adds bytes. Each message's JSON keys (28 bytes or more)
-    # outweigh the role markup ChatML, Llama 3, Gemma and Mistral templates put around a message, and the template
+    # has at most as many tokens as bytes, and JSON escaping only adds bytes. Each message's JSON keys (28 bytes or more)
+    # outweigh the role markup added around a message by ChatML, Llama 3, Gemma and Mistral templates, and the template
     # overhead covers the template's fixed part. For English text the bound is about four times the real count.
     rendered = json.dumps([body["messages"], body.get("tools"), body.get("response_format")], ensure_ascii=False)
     return len(rendered.encode())
 
 
 def count_prompt_tokens(session: requests.Session, *, backend: BackendConfig, body: dict[str, Any], deadline: float) -> int:
-    """Return the backend tokenizer's count of the prompt a ``/v1/chat/completions`` body renders to.
+    """Return the backend tokenizer's count of the prompt rendered from a ``/v1/chat/completions`` body.
 
     Args:
         session: The HTTP session for the backend calls.
@@ -244,7 +244,7 @@ def count_prompt_tokens(session: requests.Session, *, backend: BackendConfig, bo
         requests.RequestException: The backend's counter route did not respond in time or responded with an error.
     """
     if backend.token_counter is TokenCounter.LLAMACPP:
-        # /apply-template renders tools as generation does; add_special adds the BOS token the rendered text omits.
+        # /apply-template renders tools as generation does. add_special adds the BOS token omitted by the rendered text.
         template_body: dict[str, Any] = {key: body[key] for key in ("messages", "tools") if key in body}
         rendered = _post_json(session, f"{backend.backend_url}/apply-template", template_body, deadline=deadline)
         tokenize_body = {"content": rendered["prompt"], "add_special": True}
@@ -265,9 +265,9 @@ def check_fit_counting(session: requests.Session, config: WorkerConfig) -> int |
     """Return the template overhead the fit check adds, or None when the check cannot back the overflow guarantee.
 
     The backend's prompt count for a one-token generation of one empty user message is the reference: it covers the
-    BOS token, any system prompt the template injects and the generation prompt. The byte bound takes it as the
+    BOS token, any system prompt injected by the template and the generation prompt. The byte bound takes it as the
     template's fixed part. An exact counter, plus any ``--template-overhead``, has to reach it for the same body,
-    which catches a counter that renders with another template or without the BOS token. The probe has no tools, so
+    which catches a counter that renders with another template or without the BOS token. The probe does not include tools, so
     with ``tools`` declared the byte bound needs ``--template-overhead``, which is less code than probing again with a
     stand-in tool.
 
@@ -286,14 +286,14 @@ def check_fit_counting(session: requests.Session, config: WorkerConfig) -> int |
     if backend.template_overhead is not None and not exact:
         return backend.template_overhead
     if ChatFeature.TOOLS in config.features and not exact:
-        logging.warning("The byte bound does not measure a tool preamble; tools need --template-overhead or an exact counter.")
+        logging.warning("The byte bound does not measure a tool preamble. Tools need --template-overhead or an exact counter.")
         return None
     deadline = time.monotonic() + JOB_DEADLINE_SECONDS
     probe: dict[str, Any] = {"model": backend.model, "messages": [{"role": "user", "content": ""}], "max_tokens": 1}
     probe_completion = _post_json(session, f"{backend.backend_url}/v1/chat/completions", probe, deadline=deadline)
     reference: int | None = (probe_completion.get("usage") or {}).get("prompt_tokens")
     if reference is None:
-        logging.warning("The backend reported no usage for the probe, so the worker cannot measure the template.")
+        logging.warning("The backend did not report usage for the probe, so the worker cannot measure the template.")
         return None
     if not exact:
         return reference
@@ -338,7 +338,7 @@ def _prompt_tokens_for(
     template_overhead: int,
     deadline: float,
 ) -> int:
-    """Return the prompt count the fit check compares: the counter's exact count or the byte bound, plus the overhead."""
+    """Return the prompt count compared by the fit check: the counter's exact count or the byte bound, plus the overhead."""
     if backend.token_counter is TokenCounter.BYTES:
         return _byte_bound(body) + template_overhead
     return count_prompt_tokens(session, backend=backend, body=body, deadline=deadline) + template_overhead
@@ -382,7 +382,7 @@ def _finish_reason(native: str | None, message: dict[str, Any]) -> ChatFinishRea
 
 
 def _usage(completion: dict[str, Any]) -> ChatUsage:
-    """Return the token counts a completion reports, each None when the backend omits it."""
+    """Return a completion's reported token counts, each None when the backend omits it."""
     usage = completion.get("usage") or {}
     return ChatUsage(
         prompt_tokens=usage.get("prompt_tokens"),
@@ -405,7 +405,7 @@ def generate(
         session: The HTTP session for the backend calls.
         config: The operator's settings.
         job: The popped job.
-        template_overhead: The tokens the fit check adds to every prompt count.
+        template_overhead: The tokens added by the fit check to every prompt count.
         deadline: The ``time.monotonic()`` value by which every backend call for the job has to finish.
 
     Returns:
@@ -457,7 +457,7 @@ def serve_one_pop(
         session: The HTTP session for the horde and backend calls.
         config: The operator's settings.
         declaration: The declaration to send on the pop.
-        template_overhead: The tokens the fit check adds to every prompt count.
+        template_overhead: The tokens added by the fit check to every prompt count.
 
     Returns:
         Whether the pop returned a job.

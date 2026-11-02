@@ -7,9 +7,9 @@
 The examples whose id starts with ``FRONT_EXAMPLE_PREFIX`` are checked here against the front served by the harness
 of ``conftest.py`` and ``_front_stack.py``: uvicorn in front of the in-process Horde, with their fake worker serving
 the chat model. Each response example is compared with the live body as
-[`structure_differences`][tests.integration._wire_examples.structure_differences] describes; the bodies are read as
-raw HTTP, so each is the JSON the front writes and not an SDK object. The request example is posted and has to get the
-status of the response example that answers it; the front refuses unknown keys, so a misspelt key fails the post.
+[`structure_differences`][tests.integration._wire_examples.structure_differences] describes. The bodies are read as
+raw HTTP, so each is the JSON written by the front and not an SDK object. The request example is posted and has to get the
+status of the response example for it. The front refuses unknown keys, so a misspelt key fails the post.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def _no_rate_limit() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _worker_kept_up(request: pytest.FixtureRequest) -> Iterator[None]:
-    """Fail a test during which the fake worker saw an unexpected answer or stopped."""
+    """Fail a test during which the fake worker saw an unexpected response or stopped."""
     yield
     if "fixed_reply_worker" in request.fixturenames:
         worker: FixedReplyWorker = request.getfixturevalue("fixed_reply_worker")
@@ -69,7 +69,7 @@ COMPLETIONS_PATH = "chat/completions"
 """The chat completions route, relative to the front's ``/v1`` base URL."""
 
 SSE_DATA_PREFIX = "data: "
-"""The prefix of each server-sent event line that carries a chunk."""
+"""The prefix of each server-sent event line with a chunk."""
 
 SSE_DONE = "[DONE]"
 """The data of the event that ends a stream."""
@@ -80,10 +80,10 @@ FRONT_CHAT_BODY: dict[str, Any] = {
     "max_tokens": 64,
     "temperature": 0.5,
 }
-"""The body the response and stream examples send, which the documented front request holds as well."""
+"""The body sent by the response and stream examples, which the documented front request also holds."""
 
 FEATURE_GAP_REASONING_EFFORT = "low"
-"""A ``reasoning_effort``, which needs a feature the fake worker does not declare, so the request has a declaration
+"""A ``reasoning_effort``, which needs a feature not declared by the fake worker, so the request has a declaration
 gap."""
 
 KUDOS_CAP = 1
@@ -92,10 +92,10 @@ KUDOS_CAP = 1
 
 @dataclass(frozen=True)
 class FrontCapture:
-    """One body the front sent, with the HTTP status of the response that carried it."""
+    """One body the front sent, with the HTTP status of the response that delivered it."""
 
     status: int
-    """The HTTP status; for a streamed chunk, the status of the stream."""
+    """The HTTP status. For a streamed chunk, it is the status of the stream."""
 
     body: Any
     """The parsed JSON body or chunk."""
@@ -106,10 +106,10 @@ class FrontRun:
     """Holds one test's HTTP client for the front."""
 
     http: httpx.Client
-    """A client addressed at the front's ``/v1`` base URL, carrying the owner's key as its bearer token."""
+    """A client addressed at the front's ``/v1`` base URL, with the owner's key as its bearer token."""
 
     def complete(self, chat_body: dict[str, Any]) -> FrontCapture:
-        """Send a non-streamed completion request and return its answer.
+        """Send a non-streamed completion request and return its response.
 
         Args:
             chat_body: The request body.
@@ -169,7 +169,7 @@ def _live_front_response(front: FrontRun) -> FrontCapture:
 
 
 def _live_stream_chunk(front: FrontRun, select: Callable[[dict[str, Any]], bool]) -> FrontCapture:
-    """Return the one chunk of the documented stream that ``select`` picks."""
+    """Return the one chunk of the documented stream picked by ``select``."""
     status, chunks = front.stream_chunks()
     [chunk] = [chunk for chunk in chunks if select(chunk)]
     return FrontCapture(status=status, body=chunk)
@@ -209,22 +209,22 @@ class FrontScenario:
     """Produces one front response example's live body, or posts the front request example."""
 
     live: Callable[[FrontRun], FrontCapture] | None = None
-    """Returns the live ``FrontCapture``; None for a request example."""
+    """Returns the live ``FrontCapture``. It is None for a request example."""
 
     status: int | None = None
-    """The HTTP status of a response example, which its prose states; None for a request example."""
+    """The HTTP status of a response example, which its prose states. It is None for a request example."""
 
     post: Callable[[FrontRun, dict[str, Any]], httpx.Response] | None = None
-    """Posts the documented request body with its placeholders filled in; None for a response example."""
+    """Posts the documented request body with its placeholders filled in. It is None for a response example."""
 
-    answered_by: str | None = None
+    response_example: str | None = None
     """The response example whose status the posted documented body gets."""
 
 
 FRONT_SCENARIOS: dict[str, FrontScenario] = {
     "front-request": FrontScenario(
         post=_post_front_request,
-        answered_by="front-response",
+        response_example="front-response",
     ),
     "front-response": FrontScenario(
         live=_live_front_response,
@@ -284,14 +284,14 @@ def test_each_front_response_example_matches_the_live_response(front: FrontRun, 
     sorted(example_id for example_id, scenario in FRONT_SCENARIOS.items() if scenario.post is not None),
 )
 def test_each_documented_front_request_body_gets_the_documented_status(front: FrontRun, example_id: str) -> None:
-    """The documented front request gets the status of the response example that answers it."""
+    """The documented front request gets the status of the response example for it."""
     scenario = FRONT_SCENARIOS[example_id]
     assert scenario.post is not None
-    assert scenario.answered_by is not None
+    assert scenario.response_example is not None
 
     response = scenario.post(front, DOCUMENTED[example_id].body)
 
-    assert response.status_code == FRONT_SCENARIOS[scenario.answered_by].status, response.text
+    assert response.status_code == FRONT_SCENARIOS[scenario.response_example].status, response.text
 
 
 @pytest.mark.parametrize(
@@ -299,5 +299,5 @@ def test_each_documented_front_request_body_gets_the_documented_status(front: Fr
     sorted(example_id for example_id, scenario in FRONT_SCENARIOS.items() if scenario.status is not None),
 )
 def test_each_front_response_example_states_its_status(example_id: str) -> None:
-    """The prose before a front response example states the status the live response has."""
+    """The prose before a front response example states the live response's status."""
     assert f"`{FRONT_SCENARIOS[example_id].status}`" in DOCUMENTED[example_id].prose

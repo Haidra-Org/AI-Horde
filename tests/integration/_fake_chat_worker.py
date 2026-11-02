@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""A fake text worker that speaks the chat pop and submit fields, and the requester calls chat tests share.
+"""A fake text worker that speaks the chat pop and submit fields, and the requester calls shared by chat tests.
 
 The body builders are plain functions so a suite that mocks the native API can reuse them; the
 [`FakeChatWorker`][tests.integration._fake_chat_worker.FakeChatWorker] drives them through a Flask test client.
@@ -10,8 +10,8 @@ The body builders are plain functions so a suite that mocks the native API can r
 [`chat_status`][tests.integration._fake_chat_worker.chat_status],
 [`cancel_request`][tests.integration._fake_chat_worker.cancel_request] and
 [`take_worker_offline`][tests.integration._fake_chat_worker.take_worker_offline] are the requester and cleanup calls
-around it. The module also holds the request fixtures, worker feature lists and image helpers that several chat test
-modules share.
+around it. The module also holds the request fixtures, worker feature lists and image helpers shared by several chat test
+modules.
 """
 
 from __future__ import annotations
@@ -64,13 +64,13 @@ __all__ = [
 ]
 
 CHAT_MODEL = "elinas/chronos-70b-v2"
-"""A text model the horde's reference lists, so a chat request for it is accepted."""
+"""A text model listed in the horde's reference, so a chat request for it is accepted."""
 
 CHAT_MESSAGES = [
     {"role": "system", "content": "You are a terse assistant."},
     {"role": "user", "content": [{"type": "text", "text": "Name one colour."}]},
 ]
-"""The conversation a chat request sends unless a test gives another."""
+"""The conversation sent by a chat request unless a test supplies another."""
 
 DEFAULT_CHAT_FEATURES = ("seed", "presence_penalty")
 """The features the fake worker declares unless told otherwise, matching what koboldcpp declares."""
@@ -332,7 +332,7 @@ def cancel_request(client: Any, request_headers: dict[str, str], route_family: s
 
 
 def chat_status(client: Any, request_headers: dict[str, str], request_id: str) -> dict[str, Any]:
-    """Return a chat request's status, asserting the route answered.
+    """Return a chat request's status, asserting the route responded.
 
     Args:
         client: The Flask test client.
@@ -349,7 +349,7 @@ def chat_status(client: Any, request_headers: dict[str, str], request_id: str) -
 
 
 def take_worker_offline(app: Any, worker_name: str) -> None:
-    """Move a worker's last check-in an hour back, so it no longer counts as online.
+    """Move a worker's last check-in an hour back, so it stops counting as online.
 
     A worker left online makes later tests' requests for its models possible, which tests of an unserved model rely
     on not being.
@@ -368,7 +368,7 @@ def take_worker_offline(app: Any, worker_name: str) -> None:
 
 
 ANONYMOUS_HEADERS = {"apikey": "0000000000", "Client-Agent": "aihorde_ci_client:1:test"}
-"""The anonymous key, which holds no kudos, so it is refused any request above the free output allowance."""
+"""The anonymous key, which does not hold kudos, so it is refused any request above the free output allowance."""
 
 LONG_HISTORY_SYSTEM = {"role": "system", "content": "You are a terse assistant."}
 
@@ -386,7 +386,7 @@ LONG_HISTORY = [
     ),
     LONG_HISTORY_LATEST_USER,
 ]
-"""A history whose estimate is far above any context the fake worker serves, while its latest turn is short."""
+"""A history whose estimate is far above any context served by the fake worker, while its latest turn is short."""
 
 LOOKUP_TOOL: dict[str, Any] = {
     "type": "function",
@@ -418,16 +418,16 @@ TOOLS_REQUEST_EXTRAS: dict[str, Any] = {
 """The four extra keys of a tools request, as the client sends them and as the worker receives them."""
 
 TOOLS_FEATURES = ["tools", "json_object", "tools_with_response_format"]
-"""The features a worker declares to serve ``TOOLS_REQUEST_EXTRAS``."""
+"""The features declared by a worker to serve ``TOOLS_REQUEST_EXTRAS``."""
 
 VERIFIED_FEATURES = ["tools", "json_object", "json_schema", "tools_with_response_format"]
-"""The features a worker declares to pop every request the reply verification tests make."""
+"""The features declared by a worker to pop every request the reply verification tests make."""
 
 VISION_FEATURES = ["seed", "presence_penalty", "vision"]
 """A worker declaration with the vision feature."""
 
 OFFLOAD_THRESHOLD_BYTES = 256
-"""A threshold that a request carrying one small image exceeds and a short text-only request stays under."""
+"""A threshold exceeded by a request with one small image and not reached by a short text-only request."""
 
 MESSAGES_URL_TRANSPORTS = ["url", "messages_url"]
 """A worker declaration that takes offloaded messages, and per-image URLs for a request sent inline."""

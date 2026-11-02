@@ -87,7 +87,7 @@ def main() -> int:
         counted = worker.count_prompt_tokens(session, backend=backend, body=body, deadline=deadline)
         reaches_generation = reference is not None and counted >= reference
         failed |= not reaches_generation
-        verdict = "no usage reported" if reference is None else ("ok" if reaches_generation else "UNDERCOUNTS")
+        verdict = "usage not reported" if reference is None else ("ok" if reaches_generation else "UNDERCOUNTS")
         print(f"{name:24} counter {counted:6}  generation {reference!s:6}  {verdict}")
     # A prompt whose words each cost at least one token runs past the context on its own.
     oversized = {"model": args.model, "messages": [{"role": "user", "content": "colour " * (args.context_size + 100)}], "max_tokens": 16}

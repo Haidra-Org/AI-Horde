@@ -4,8 +4,8 @@
 
 """The fake chat worker thread, reply picker and constants the front conformance modules share.
 
-[`FixedReplyWorker`][tests.integration._front_stack.FixedReplyWorker] pops chat jobs on a thread and submits the reply
-[`build_reply_message`][tests.integration._front_stack.build_reply_message] picks for each. The constants are the
+[`FixedReplyWorker`][tests.integration._front_stack.FixedReplyWorker] pops chat jobs on a thread and submits the reply picked for each by
+[`build_reply_message`][tests.integration._front_stack.build_reply_message]. The constants are the
 worker's declarations and replies, the front's timing settings and the requests the SDK and wire-example modules send.
 The fixtures that start the Horde, the worker and the front are in ``tests/integration/conftest.py``.
 """
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
 LOOPBACK_HOST: str = "127.0.0.1"
-"""The address both servers bind; an ephemeral port on loopback keeps them unreachable from elsewhere."""
+"""The address bound by both servers. An ephemeral port on loopback keeps them unreachable from elsewhere."""
 
 WORKER_NAME: str = "CICD SDK Conformance Scribe"
 """The fake worker's name."""
@@ -63,10 +63,10 @@ WEATHER_TOOL: ChatCompletionToolParam = {
 """The tool the tool rounds offer."""
 
 WEATHER_CALL_ID: str = "call_weather_1"
-"""The id the fake worker gives the tool call it returns."""
+"""The id of the tool call returned by the fake worker."""
 
 WEATHER_ARGUMENTS: str = '{"city":"Paris"}'
-"""The arguments of the tool call the fake worker returns."""
+"""The arguments of the tool call returned by the fake worker."""
 
 TOOL_ANSWER_REPLY: str = "It is 18C and clear in Paris."
 """The reply the fake worker submits for a job whose last message is a tool result."""
@@ -80,13 +80,13 @@ STRUCTURED_REPLY: dict[str, str] = {"colour": "blue"}
 """The JSON document the fake worker submits for a structured output job."""
 
 WORKER_IMAGE_TRANSPORTS: list[str] = ["url"]
-"""The image transports the fake worker declares; only ``url``, so an image reaches it as a signed URL."""
+"""The image transports declared by the fake worker. It lists only ``url``, so an image reaches it as a signed URL."""
 
 CHAT_SIGNAL_REDIS_DB: int = 7
-"""The Redis database the Horde publishes chat signals on, as ``horde.redis_ctrl.chat_signal_db``."""
+"""The Redis database for the chat signals published by the Horde, as ``horde.redis_ctrl.chat_signal_db``."""
 
 POP_INTERVAL_SECONDS: float = 0.2
-"""How long the fake worker waits after a pop that found no job."""
+"""How long the fake worker waits after a pop without a job."""
 
 SERVER_START_TIMEOUT_SECONDS: float = 20.0
 """How long a fixture waits for a server or the worker's first pop before failing."""
@@ -98,25 +98,25 @@ FAIL_FAST_GRACE_SECONDS: float = 1.0
 """The front's no-eligible-worker grace, short so the fail-fast case finishes quickly."""
 
 FALLBACK_POLL_SECONDS: float = 30.0
-"""The front's fallback poll interval, longer than a served completion may take, so no answer waits on a fallback poll.
+"""The front's fallback poll interval, longer than a served completion may take, so a response does not wait on a fallback poll.
 
 The fail-fast read is scheduled from the grace, not the poll interval, so the long interval does not slow that case.
 """
 
 REQUEST_BUDGET_SECONDS: float = 60.0
-"""The front's request budgets; well above what a served request takes, so a stall fails rather than hangs."""
+"""The front's request budgets. They are well above what a served request takes, so a stall fails rather than hangs."""
 
 SDK_TIMEOUT_SECONDS: float = 90.0
-"""The SDK's request timeout, above the front's budget so the front's own answer arrives first."""
+"""The SDK's request timeout, above the front's budget so the front's own response arrives first."""
 
 
 def build_reply_message(payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    """Return the assistant message and finish reason the fake worker submits for a popped chat payload.
+    """Return the assistant message and finish reason submitted by the fake worker for a popped chat payload.
 
     A job offering tools whose last message is not a tool result gets one call of
-    [`WEATHER_TOOL`][tests.integration._front_stack.WEATHER_TOOL] with null content; a tool result gets
-    [`TOOL_ANSWER_REPLY`][tests.integration._front_stack.TOOL_ANSWER_REPLY]; a ``json_schema`` job gets
-    [`STRUCTURED_REPLY`][tests.integration._front_stack.STRUCTURED_REPLY]; anything else gets
+    [`WEATHER_TOOL`][tests.integration._front_stack.WEATHER_TOOL] with null content. A tool result gets
+    [`TOOL_ANSWER_REPLY`][tests.integration._front_stack.TOOL_ANSWER_REPLY]. A ``json_schema`` job gets
+    [`STRUCTURED_REPLY`][tests.integration._front_stack.STRUCTURED_REPLY]. Anything else gets
     [`FIXED_REPLY`][tests.integration._front_stack.FIXED_REPLY].
     """
     last_role = payload["messages"][-1]["role"]
@@ -132,12 +132,12 @@ def build_reply_message(payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
 
 
 class FixedReplyWorker:
-    """Pop chat jobs on a thread and submit the reply
-    [`build_reply_message`][tests.integration._front_stack.build_reply_message] picks for each.
+    """Pop chat jobs on a thread and submit the reply picked for each by
+    [`build_reply_message`][tests.integration._front_stack.build_reply_message].
 
     Thread Safety:
-        The thread builds its own Flask test client; each of its requests pushes and pops its own app context, so it
-        shares no ORM session with the test thread.
+        The thread builds its own Flask test client. Each of its requests pushes and pops its own app context, so it
+        does not share an ORM session with the test thread.
     """
 
     def __init__(self, *, app: Flask, headers: dict[str, str]) -> None:
@@ -153,7 +153,7 @@ class FixedReplyWorker:
         self._first_pop_event = threading.Event()
         self._thread = threading.Thread(target=self._run, name="sdk-conformance-worker", daemon=True)
         self.failures: list[str] = []
-        """Each unexpected pop or submit answer, or an exception that ended the thread."""
+        """Each unexpected pop or submit response, or an exception that ended the thread."""
         self.served_payloads: list[dict[str, Any]] = []
         """The ``payload`` of every chat job the worker popped, in pop order."""
 
@@ -184,7 +184,7 @@ class FixedReplyWorker:
             raise
 
     def _serve_one(self, worker: FakeChatWorker) -> bool:
-        """Pop once and submit the fixed reply for a job; return whether a job was served."""
+        """Pop once and submit the fixed reply for a job. Return whether a job was served."""
         pop_response = worker.pop_response()
         self._first_pop_event.set()
         if pop_response.status_code != 200:

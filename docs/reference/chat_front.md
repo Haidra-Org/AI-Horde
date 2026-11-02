@@ -332,7 +332,7 @@ the kudos estimate exceeds the cap (`ChatKudosCapExceeded`, see [Request body](c
 `_kudos_cap_error` in `horde/oai/app.py` returns 400 `invalid_request_error` with code `max_kudos_exceeded`, `param`
 `horde.max_kudos`, the native message, and `metadata.rc`, `metadata.kudos_estimate` and `metadata.max_kudos`. The
 native error body holds only the message and the `rc`, so both values are read from the message with
-`KUDOS_CAP_EXCESS_PATTERN` in `horde/chat_contract.py`, the module that writes it; a message that does not match
+`KUDOS_CAP_EXCESS_PATTERN` in `horde/chat_contract.py`, the module that writes it. A message that does not match
 leaves them out of `metadata`.
 
 ```json

@@ -19,12 +19,12 @@ Topics: [chat](../topics.md#chat), [requests](../topics.md#requests), [workers](
 
 This page holds full JSON bodies for the three chat parties: a requester on the native routes, a client of the
 OpenAI-compatible front, and a text worker serving chat jobs. The native fields and rules are specified in the
-[chat requests reference](chat_requests.md), the front's in the [chat front reference](chat_front.md); each example
-links to the section that specifies it. Ids, keys and kudos values are placeholders such as `"<job-id>"`; limits and
-token counts are realistic values. Every example is checked against the running code. A response body has the keys
-the server sends; its `rc`, `code`, `type`, `object`, `state`, `finish_reason`, `kind` and `reason` strings and its
+[chat requests reference](chat_requests.md), the front's in the [chat front reference](chat_front.md). Each example
+links to the section that specifies it. Ids, keys and kudos values are placeholders such as `"<job-id>"`. Limits and
+token counts are realistic values. Every example is checked against the running code. A response body has the
+server's key set. Its `rc`, `code`, `type`, `object`, `state`, `finish_reason`, `kind` and `reason` strings and its
 booleans are the live values, and every other value that is not a placeholder has the live value's JSON type. Each
-request body shown is posted and gets the status shown, and each worker request holds only keys its route reads.
+request body shown is posted and gets the status shown, and each worker request holds only keys read by its route.
 `tests/integration/test_chat_wire_examples.py` checks the native requester and worker examples, and
 `tests/integration/test_chat_front_wire_examples.py` checks the front's examples against a front running over the
 in-process horde.
@@ -78,7 +78,7 @@ sequenceDiagram
 ## Native requester
 
 A requester queues a chat request on `POST /api/v2/generate/chat/async`, polls or cancels it on
-`/api/v2/generate/chat/status/{id}`, and finds the models it can ask for on
+`/api/v2/generate/chat/status/{id}`, and finds the models available to it on
 `GET /api/v2/status/models?type=text&chat=true`. The routes are listed in [Routes](chat_requests.md#routes).
 
 ### Request
@@ -109,7 +109,7 @@ specified in [Request body](chat_requests.md#request-body).
 
 ### Request accepted
 
-A queued request is answered `202` with its id, which the status route takes
+A queued request returns `202` with its id, which the status route takes
 ([Routes](chat_requests.md#routes)).
 
 <!-- wire-example: chat-request-accepted -->
@@ -119,7 +119,7 @@ A queued request is answered `202` with its id, which the status route takes
 
 ### Dry run
 
-A request with `horde.dry_run` is answered `200` with its quote in `kudos` and is not queued. `resolved` holds the
+A request with `horde.dry_run` returns `200` with its quote in `kudos` and is not queued. `resolved` holds the
 request as the horde sized it ([Context adjustments](chat_requests.md#context-adjustments)).
 
 <!-- wire-example: chat-dry-run -->
@@ -139,7 +139,7 @@ request as the horde sized it ([Context adjustments](chat_requests.md#context-ad
 
 ### Status while waiting
 
-`GET /api/v2/generate/chat/status/{id}` answers `200`; here the request waits for its one eligible worker. The fields
+`GET /api/v2/generate/chat/status/{id}` returns `200`. Here the request waits for its one eligible worker. The fields
 are those of the text status route ([Routes](chat_requests.md#routes)).
 
 <!-- wire-example: chat-status-waiting -->
@@ -168,8 +168,8 @@ are those of the text status route ([Routes](chat_requests.md#routes)).
 
 ### Status when done
 
-The status of a served request answers `200` with the generation's structured reply, the token counts its worker
-reported and the `charge_basis` the horde priced it by. The generation fields are listed in
+The status of a served request returns `200` with the generation's structured reply, its worker's reported token
+counts and the `charge_basis` used to price it. The generation fields are listed in
 [Pricing](chat_requests.md#pricing).
 
 <!-- wire-example: chat-status-done -->
@@ -217,7 +217,7 @@ reported and the `charge_basis` the horde priced it by. The generation fields ar
 ### Status with context adjustments
 
 The `200` status of a long history sent with `max_context_length` 2048 under the default `truncate_oldest`: the
-context grew to the largest chat context an online worker declares, and the oldest turns were dropped to fit it. The
+context grew to an online worker's largest declared chat context, and the oldest turns were dropped to fit it. The
 entries are specified in [Context adjustments](chat_requests.md#context-adjustments).
 
 <!-- wire-example: chat-status-context-adjustments -->
@@ -250,7 +250,7 @@ entries are specified in [Context adjustments](chat_requests.md#context-adjustme
 ### NoEligibleWorker
 
 An anonymous request with an image and `max_tokens` 1024, above the free output floor, while the only online worker
-serving the model does not declare `vision`, is answered `403`. The refusal is specified in
+serving the model does not declare `vision`, returns `403`. The refusal is specified in
 [Free output allowance](chat_requests.md#free-output-allowance) and `impossible_reason` in
 [Impossible reason](chat_requests.md#impossible-reason).
 
@@ -267,7 +267,7 @@ serving the model does not declare `vision`, is answered `403`. The refusal is s
 
 ### UnsupportedChatParameter
 
-A request carrying `logprobs` is answered `400`, with the key in the message. The keys and values refused this way are
+A request with `logprobs` returns `400`, with the key in the message. The keys and values refused this way are
 listed in [Refused keys and values](chat_requests.md#refused-keys-and-values).
 
 <!-- wire-example: refusal-unsupported-chat-parameter -->
@@ -280,7 +280,7 @@ listed in [Refused keys and values](chat_requests.md#refused-keys-and-values).
 
 ### Chat model list
 
-`GET /api/v2/status/models?type=text&chat=true` answers `200` with an array holding one entry per model an online chat
+`GET /api/v2/status/models?type=text&chat=true` returns `200` with an array holding one entry per model an online chat
 worker serves, shown here with one entry. The `chat` object is specified in
 [Chat model list](chat_requests.md#chat-model-list).
 
@@ -332,7 +332,7 @@ as well ([Sampling defaults and the horde object](../how-to/send_chat_completion
 
 ### Completion
 
-The front answers `200` with the completion once the worker's reply arrives. `x_horde` carries the native request id,
+The front returns `200` with the completion once the worker's reply arrives. `x_horde` holds the native request id,
 the worker and the charge. The fields are specified in [Response shape](chat_front.md#response-shape).
 
 <!-- wire-example: front-response -->
@@ -367,8 +367,8 @@ the worker and the charge. The fields are specified in [Response shape](chat_fro
 
 ### Content chunk
 
-The same request with `stream: true` and `stream_options.include_usage` is answered `200` with a stream of
-`chat.completion.chunk` events. After the role chunk, this chunk carries the reply's text. The order of the chunks is
+The same request with `stream: true` and `stream_options.include_usage` returns `200` with a stream of
+`chat.completion.chunk` events. After the role chunk, this chunk has the reply's text. The order of the chunks is
 in [Response shape](chat_front.md#response-shape).
 
 <!-- wire-example: front-stream-content-chunk -->
@@ -446,7 +446,7 @@ The last chunk of the same `200` stream, sent for `stream_options.include_usage`
 
 ### Tool-call completion
 
-A request offering a `get_weather` tool, answered `200` with the worker's call: `content` is null and `finish_reason`
+A request offering a `get_weather` tool returns `200` with the worker's call: `content` is null and `finish_reason`
 is `tool_calls`. The message shape is specified in [Response shape](chat_front.md#response-shape), and the round
 trip is in [Tools and tool_choice](../how-to/send_chat_completions.md#tools-and-tool_choice).
 
@@ -492,8 +492,8 @@ trip is in [Tools and tool_choice](../how-to/send_chat_completions.md#tools-and-
 
 ### No worker supports features
 
-A request with `reasoning_effort` while the only online worker serving the model does not declare that feature is
-answered `404`, and the front cancels the native request. The answer is specified in
+A request with `reasoning_effort` while the only online worker serving the model does not declare that feature
+returns `404`, and the front cancels the native request. The response is specified in
 [No eligible worker](chat_front.md#no-eligible-worker).
 
 <!-- wire-example: front-no-worker-supports-features -->
@@ -513,7 +513,7 @@ answered `404`, and the front cancels the native request. The answer is specifie
 
 ### Kudos cap
 
-A request whose kudos estimate is above its `horde.max_kudos` is answered `400`, and the horde does not create it.
+A request whose kudos estimate is above its `horde.max_kudos` returns `400`, and the horde does not create it.
 The values in `metadata` are read from the native `ChatKudosCapExceeded` message, as specified in
 [Kudos cap](chat_front.md#kudos-cap).
 
@@ -534,7 +534,7 @@ The values in `metadata` are read from the native `ChatKudosCapExceeded` message
 
 ### Model list
 
-`GET /v1/models` answers `200` with one model card per text model an online chat worker serves, shown here with one
+`GET /v1/models` returns `200` with one model card per text model an online chat worker serves, shown here with one
 card. The card's fields are specified in [Model card fields](chat_front.md#model-card-fields) and read as in
 [Choose a model from the model card](../how-to/send_chat_completions.md#choose-a-model-from-the-model-card).
 
@@ -583,8 +583,8 @@ submits on `/api/v2/generate/text/submit`. The procedure is
 
 #### Pop request
 
-`POST /api/v2/generate/text/pop` with the chat declaration beside the text fields. `chat_features` carries three
-features and two guarantees in one list. The chat fields are specified in
+`POST /api/v2/generate/text/pop` with the chat declaration beside the text fields. `chat_features` lists three
+features and two guarantees together. The chat fields are specified in
 [Chat declaration on pop](chat_requests.md#chat-declaration-on-pop) and explained in
 [Declare chat on pop](../how-to/serve_chat_jobs.md#1-declare-chat-on-pop).
 
@@ -615,7 +615,7 @@ features and two guarantees in one list. The chat fields are specified in
 
 #### Chat job
 
-The pop answers `200` with `chat: true` and the conversation in `payload.messages`; the top-level `messages` holds
+The pop returns `200` with `chat: true` and the conversation in `payload.messages`. The top-level `messages` holds
 horde messages for the worker's owner. The payload is specified in
 [Chat job pop response](chat_requests.md#chat-job-pop-response).
 
@@ -760,8 +760,8 @@ inline JPEG data URL. Image parts are specified in [Images](chat_requests.md#ima
 
 #### Chat job with offloaded messages
 
-A `200` pop of an offloaded request for a worker that declares `messages_url`: the payload carries `messages_url` and
-no `messages`. The URL and its body are specified in [Messages offload](chat_requests.md#messages-offload) and
+A `200` pop of an offloaded request for a worker that declares `messages_url`: the payload has `messages_url` and
+does not have `messages`. The URL and its body are specified in [Messages offload](chat_requests.md#messages-offload) and
 fetched as in [Fetch offloaded messages](../how-to/serve_chat_jobs.md#fetch-offloaded-messages).
 
 <!-- wire-example: pop-chat-job-messages-url -->
@@ -794,7 +794,7 @@ fetched as in [Fetch offloaded messages](../how-to/serve_chat_jobs.md#fetch-offl
 
 #### No job
 
-A pop with no job for the worker answers `200` with `id` null, an empty `ids` and no `chat` key. The pop loop around
+A pop with no job for the worker returns `200` with `id` null, an empty `ids` and no `chat` key. The pop loop around
 it is in [Recognise a chat job](../how-to/serve_chat_jobs.md#2-recognise-a-chat-job).
 
 <!-- wire-example: pop-no-job -->
@@ -895,7 +895,7 @@ in `reasoning_tokens`. Both are specified in [Reasoning](chat_requests.md#reason
 
 #### Reply response
 
-Each of the three replies above is answered `200` with the kudos the worker earned. The reward is priced as in
+Each of the three replies above returns `200` with the kudos the worker earned. The reward is priced as in
 [Pricing](chat_requests.md#pricing).
 
 <!-- wire-example: submit-reply-response -->
@@ -923,7 +923,7 @@ A job the worker cannot serve is submitted with `state` `faulted`, neither `gene
 
 #### Fault response
 
-A fault is answered `200` with a reward of 0, and the job returns to the queue for another worker
+A fault returns `200` with a reward of 0, and the job returns to the queue for another worker
 ([Fault a job](../how-to/serve_chat_jobs.md#7-fault-a-job)).
 
 <!-- wire-example: submit-fault-response -->
@@ -935,7 +935,7 @@ A fault is answered `200` with a reward of 0, and the job returns to the queue f
 
 #### Progress post
 
-`POST /api/v2/generate/text/progress`, sent with the worker owner's `apikey` header, for a job whose payload carries
+`POST /api/v2/generate/text/progress`, sent with the worker owner's `apikey` header, for a job whose payload has
 `stream_progress: true`. The fields are specified in [Streaming progress](chat_requests.md#streaming-progress) and
 the posting loop is in [Streaming progress](../how-to/serve_chat_jobs.md#streaming-progress).
 
@@ -946,7 +946,7 @@ the posting loop is in [Streaming progress](../how-to/serve_chat_jobs.md#streami
 
 #### Progress accepted
 
-An accepted post is answered `200` with its `seq` and `cancelled` false.
+An accepted post returns `200` with its `seq` and `cancelled` false.
 
 <!-- wire-example: progress-accepted -->
 ```json
@@ -955,7 +955,7 @@ An accepted post is answered `200` with its `seq` and `cancelled` false.
 
 #### Progress after a cancel
 
-The first post after the requester cancelled is answered `200` with `cancelled` true. The worker's response to it is
+The first post after the requester cancelled returns `200` with `cancelled` true. The worker's response to it is
 in [Streaming progress](../how-to/serve_chat_jobs.md#streaming-progress).
 
 <!-- wire-example: progress-cancelled -->
@@ -965,7 +965,7 @@ in [Streaming progress](../how-to/serve_chat_jobs.md#streaming-progress).
 
 #### Progress out of sequence
 
-A post whose `seq` skips one is answered `409` with the `seq` the horde expects next. The other refusals of the route
+A post whose `seq` skips one returns `409` with the next `seq` the horde accepts. The other refusals of the route
 are listed in [Streaming progress](chat_requests.md#streaming-progress).
 
 <!-- wire-example: progress-out-of-sequence -->
@@ -985,7 +985,7 @@ Every refusal has a `message` for people and an `rc` for code. The conditions fo
 
 #### ChatDeclarationInvalid
 
-A pop whose `model_id` is not one of its `models` is answered `400`, and the pop does not assign a job.
+A pop whose `model_id` is not one of its `models` returns `400`, and the pop does not assign a job.
 
 <!-- wire-example: refusal-chat-declaration-invalid -->
 ```json
@@ -997,7 +997,7 @@ A pop whose `model_id` is not one of its `models` is answered `400`, and the pop
 
 #### ChatSubmitInvalid
 
-A chat submit without `finish_reason` is answered `400`. The other malformed submits get the same return code with
+A chat submit without `finish_reason` returns `400`. The other malformed submits get the same return code with
 their own message.
 
 <!-- wire-example: refusal-chat-submit-invalid -->
@@ -1010,7 +1010,7 @@ their own message.
 
 #### ChatSubmitNonconformant
 
-A text reply to a strict request with `tool_choice: "required"` is answered `400`. The checks are specified in
+A text reply to a strict request with `tool_choice: "required"` returns `400`. The checks are specified in
 [Reply verification](chat_requests.md#reply-verification).
 
 <!-- wire-example: refusal-chat-submit-nonconformant -->
@@ -1023,7 +1023,7 @@ A text reply to a strict request with `tool_choice: "required"` is answered `400
 
 #### ChatModelMismatch
 
-A submit whose `model_id` differs from the model the job was assigned is answered `400`.
+A submit whose `model_id` differs from the job's assigned model returns `400`.
 
 <!-- wire-example: refusal-chat-model-mismatch -->
 ```json
@@ -1035,7 +1035,7 @@ A submit whose `model_id` differs from the model the job was assigned is answere
 
 ### Worker details
 
-`GET /api/v2/workers/name/<worker-name>` without an API key answers `200` with the public details of a worker whose
+`GET /api/v2/workers/name/<worker-name>` without an API key returns `200` with the public details of a worker whose
 last pop declared chat jobs with a tool temperature limit. `accepts_chat_jobs`,
 `accepts_prompt_jobs` and `chat` are specified in [Worker details](chat_requests.md#worker-details).
 

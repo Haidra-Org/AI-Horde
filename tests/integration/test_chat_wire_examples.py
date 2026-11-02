@@ -6,7 +6,7 @@
 
 Each response example has a scenario here that produces the live body through the in-process app, compared as
 [`structure_differences`][tests.integration._wire_examples.structure_differences] describes. Each request example is
-posted with its placeholders filled in and has to get the status of the response example that answers it. The worker
+posted with its placeholders filled in and has to get the status of the response example for it. The worker
 routes ignore keys they do not read, so each worker request example's keys are also checked against the route's
 parser and models. The examples whose id starts with ``FRONT_EXAMPLE_PREFIX`` are checked against the
 OpenAI-compatible front in ``test_chat_front_wire_examples.py``.
@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 CHAT_ASYNC_ROUTE = "/api/v2/generate/chat/async"
-"""The native route a requester queues a chat request on."""
+"""The native route for queueing a chat request."""
 
 NO_ELIGIBLE_WORKER_MAX_TOKENS = 1024
 """A completion length above the free output floor of 512, which the anonymous key cannot hold kudos for, and within
@@ -96,7 +96,7 @@ IMAGE_TRANSPORTS = ["url", "base64"]
 """The image transports the documented worker details declare."""
 
 SCRIBE_NAME = "CICD Wire Example Scribe"
-"""The worker most scenarios pop with; the user's worker count is capped, so scenarios share one."""
+"""The worker most scenarios pop with. The user's worker count is capped, so scenarios share one."""
 
 DECLARED_FEATURES = [
     "seed",
@@ -131,7 +131,7 @@ class WireRun:
     """The chat requests to cancel when the test ends."""
 
     def worker(self, *, fresh_name: bool = False, **pop_options: Any) -> FakeChatWorker:
-        """Return a worker and bring it online with one pop, which finds no job.
+        """Return a worker and bring it online with one pop without a job.
 
         Each pop replaces the stored declaration, so scenarios share ``SCRIBE_NAME`` with their own pop options.
 
@@ -191,7 +191,7 @@ class WireRun:
         return request_id
 
     def cancel(self, request_id: str) -> None:
-        """Cancel a tracked request now, while the fixtures it depends on are still in place.
+        """Cancel a tracked request before teardown, while the fixtures it depends on are still in place.
 
         Args:
             request_id: The request id.
@@ -233,13 +233,13 @@ class RouteSchema:
     """Represents what a worker route reads from a request body: its parser's arguments and its body model."""
 
     parser: RequestParser
-    """The parser the route parses its arguments with."""
+    """The parser used by the route to parse its arguments."""
 
     model: Model
-    """The model the route validates the body against, whose nested models hold the keys of nested objects."""
+    """The model used by the route to validate the body, whose nested models hold the keys of nested objects."""
 
     def json_arguments(self) -> set[str]:
-        """Return the body keys the parser reads; empty for a parser that reads only headers."""
+        """Return the body keys read by the parser. The result is empty for a parser that reads only headers."""
         return {argument.name for argument in self.parser.args if "json" in argument.location}
 
 
@@ -279,7 +279,7 @@ def _unread_nested_keys(documented: Any, model_field: Any, path: str) -> list[st
 
 
 def _unread_keys(documented: dict[str, Any], schema: RouteSchema) -> list[str]:
-    """Return the documented keys the route does not read.
+    """Return the documented keys not read by the route.
 
     A top-level key has to be an argument of the route's parser, or a field of its model when the parser reads only
     headers, as the progress route's does. A nested object's keys have to be fields of the nested model the route's
@@ -518,7 +518,7 @@ def _live_chat_model_list(wire: WireRun) -> TestResponse:
     from horde.database.threads import store_available_models
 
     wire.worker()
-    # The test app runs no maintenance threads, so the model list cache is refreshed here, as the production thread would.
+    # The test app does not run maintenance threads, so the model list cache is refreshed here, as the production thread would.
     store_available_models()  # type: ignore[no-untyped-call]
     return wire.client.get("/api/v2/status/models?type=text&chat=true", headers={"Client-Agent": wire.headers["Client-Agent"]})
 
@@ -528,19 +528,19 @@ class Scenario:
     """Produces one response example's live body, or posts one request example."""
 
     live: Callable[[WireRun], TestResponse] | None = None
-    """Returns the live response; None for a request example."""
+    """Returns the live response. It is None for a request example."""
 
     status: int | None = None
-    """The HTTP status of a response example, which its prose states; None for a request example."""
+    """The HTTP status of a response example, which its prose states. It is None for a request example."""
 
     post: Callable[[WireRun, dict[str, Any]], TestResponse] | None = None
-    """Posts the documented request body with its placeholders filled in; None for a response example."""
+    """Posts the documented request body with its placeholders filled in. It is None for a response example."""
 
-    answered_by: str | None = None
+    response_example: str | None = None
     """The response example whose status the posted documented body gets."""
 
     schema: Callable[[], RouteSchema] | None = None
-    """Returns what the route reads from the body, for a worker request example; the route ignores other keys."""
+    """Returns what the route reads from the body, for a worker request example. The route ignores other keys."""
 
     object_storage: bool = False
     """Whether the scenario stores images, which needs the object store."""
@@ -549,7 +549,7 @@ class Scenario:
 SCENARIOS: dict[str, Scenario] = {
     "pop-request": Scenario(
         post=_post_pop_request,
-        answered_by="pop-no-job",
+        response_example="pop-no-job",
         schema=_pop_schema,
     ),
     "pop-chat-job": Scenario(
@@ -576,7 +576,7 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "submit-reply": Scenario(
         post=lambda wire, documented: _post_submit(wire, documented, finished=True),
-        answered_by="submit-reply-response",
+        response_example="submit-reply-response",
         schema=_chat_submit_schema,
     ),
     "submit-tool-calls": Scenario(
@@ -587,17 +587,17 @@ SCENARIOS: dict[str, Scenario] = {
             messages=TOOL_HISTORY,
             **TOOLS_REQUEST_EXTRAS,
         ),
-        answered_by="submit-reply-response",
+        response_example="submit-reply-response",
         schema=_chat_submit_schema,
     ),
     "submit-reasoning": Scenario(
         post=lambda wire, documented: _post_submit(wire, documented, finished=True),
-        answered_by="submit-reply-response",
+        response_example="submit-reply-response",
         schema=_chat_submit_schema,
     ),
     "submit-fault": Scenario(
         post=lambda wire, documented: _post_submit(wire, documented, finished=False),
-        answered_by="submit-fault-response",
+        response_example="submit-fault-response",
         schema=_chat_submit_schema,
     ),
     "submit-reply-response": Scenario(
@@ -610,7 +610,7 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "progress-post": Scenario(
         post=_post_progress_post,
-        answered_by="progress-accepted",
+        response_example="progress-accepted",
         schema=_progress_schema,
     ),
     "progress-accepted": Scenario(
@@ -647,7 +647,7 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "chat-request": Scenario(
         post=_post_chat_request,
-        answered_by="chat-request-accepted",
+        response_example="chat-request-accepted",
     ),
     "chat-request-accepted": Scenario(
         live=_live_chat_request_accepted,
@@ -727,18 +727,18 @@ def test_each_worker_request_example_holds_only_keys_the_route_reads(example_id:
     _scenario_params(sorted(example_id for example_id, scenario in SCENARIOS.items() if scenario.post is not None)),
 )
 def test_each_documented_request_body_gets_the_documented_status(wire: WireRun, example_id: str) -> None:
-    """The documented request, posted with live ids, gets the status of the response example that answers it."""
+    """The documented request, posted with live ids, gets the status of the response example for it."""
     scenario = SCENARIOS[example_id]
     assert scenario.post is not None
-    assert scenario.answered_by is not None
+    assert scenario.response_example is not None
 
     response = scenario.post(wire, DOCUMENTED[example_id].body)
 
-    assert response.status_code == SCENARIOS[scenario.answered_by].status, response.get_data(as_text=True)
+    assert response.status_code == SCENARIOS[scenario.response_example].status, response.get_data(as_text=True)
 
 
 def test_the_documented_pop_request_reaches_the_worker_details(wire: WireRun) -> None:
-    """The worker details read back the chat declaration the documented pop request sends."""
+    """The worker details read back the chat declaration sent by the documented pop request."""
     documented = DOCUMENTED["pop-request"].body
     response = _post_pop_request(wire, documented)
     assert response.status_code == 200, response.get_data(as_text=True)
@@ -757,5 +757,5 @@ def test_the_documented_pop_request_reaches_the_worker_details(wire: WireRun) ->
 
 @pytest.mark.parametrize("example_id", sorted(example_id for example_id, scenario in SCENARIOS.items() if scenario.status is not None))
 def test_each_response_example_states_its_status(example_id: str) -> None:
-    """The prose before a response example states the status the live response has."""
+    """The prose before a response example states the live response's status."""
     assert f"`{SCENARIOS[example_id].status}`" in DOCUMENTED[example_id].prose

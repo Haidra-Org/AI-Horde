@@ -279,7 +279,7 @@ A backend without a counter route can still back the guarantee with an upper bou
 at least one UTF-8 byte per token, so the byte length of the messages' JSON bounds the token count of the message
 text. The JSON keys around each message stand in for its role markup. The template's fixed part is the BOS token, any
 system prompt injected by the template, and the generation prompt. The worker measures it once from the probe's
-`usage.prompt_tokens` and adds it to the bound. The probe has no tools, so it does not measure a tool preamble, and
+`usage.prompt_tokens` and adds it to the bound. The probe does not include tools, so it does not measure a tool preamble, and
 the bound backs the guarantee for tool requests only when the operator adds the preamble's size with
 `--template-overhead`.
 

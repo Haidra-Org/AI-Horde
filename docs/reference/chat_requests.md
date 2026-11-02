@@ -87,7 +87,7 @@ those workers keep receiving text jobs.
 
 | Method and path                            | Behavior                                                                   |
 | ------------------------------------------ | -------------------------------------------------------------------------- |
-| `POST /v2/generate/chat/async`             | Queue a chat request. `202` with `{id, kudos}`, plus `message` and `warnings` when the horde warns, as text; `200` with `{id, kudos}` for a repeated operation key. See [Request accepted](chat_wire_examples.md#request-accepted) |
+| `POST /v2/generate/chat/async`             | Queue a chat request. `202` with `{id, kudos}`, plus `message` and `warnings` when the horde warns, as text. `200` with `{id, kudos}` for a repeated operation key. See [Request accepted](chat_wire_examples.md#request-accepted) |
 | `GET /v2/generate/chat/status/<id>`        | Full status, with each finished generation and its structured reply        |
 | `DELETE /v2/generate/chat/status/<id>`     | Cancel, as text                                                            |
 

@@ -60,7 +60,7 @@ VALUE_KEYS = frozenset(
         "reason",
     },
 )
-"""The keys whose string values are part of the contract, so a documented value is compared with the live one; every
+"""The keys whose string values are part of the contract, so a documented value is compared with the live one. Every
 other string can differ by scenario and is compared by type."""
 
 
@@ -137,14 +137,14 @@ def structure_differences(documented: Any, live: Any, path: str = "$", key: str 
     """Return where a documented body departs from the live body.
 
     Objects are compared by their key sets and arrays by their first elements. A string under one of ``VALUE_KEYS``
-    and every boolean are compared by value, and every other scalar by its JSON type; a placeholder such as
+    and every boolean are compared by value, and every other scalar by its JSON type. A placeholder such as
     ``<kudos>`` matches any live value.
 
     Args:
         documented: The documented body.
-        live: The body the code sent or accepted.
+        live: The body sent or accepted by the code.
         path: The JSON path of ``documented`` within the example, for the messages.
-        key: The object key ``documented`` sits under; an array element inherits its array's key.
+        key: The object key holding ``documented``. An array element inherits its array's key.
 
     Returns:
         One message per difference, empty when the bodies agree.
