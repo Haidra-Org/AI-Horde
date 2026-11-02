@@ -714,6 +714,8 @@ the job's `max_length` is offered it only when no capable chat worker is online.
 - is not in maintenance and not paused,
 - declares a chat `max_length` and `max_context_length` at or above the request's,
 - declares every feature in the request's `chat_required_features`,
+- declares the `url` or `base64` image transport when `chat_required_features` holds `vision` (`messages_url` alone
+  delivers no image),
 - has a capacity of at least the request's `max_length`.
 
 The pop query applies this rule as a correlated `NOT EXISTS` over the workers table (`text_wp_speed_gate_clause`,

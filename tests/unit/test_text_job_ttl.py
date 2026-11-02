@@ -23,6 +23,7 @@ import fakeredis
 import pytest
 from flask.testing import FlaskClient
 from horde_sdk.generation_parameters.text.chat_policy import ChatFeature
+from horde_sdk.worker.chat_declaration import ChatImageTransport
 from sqlalchemy import JSON, Text, create_engine, literal, select
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Session
@@ -603,6 +604,49 @@ class TestSpeedGate:
         db.session.commit()
         _declare_chat(worker, waiting_prompt)
         _make_capable_chat_worker(user, waiting_prompt, chat_features=faster_worker_features)
+
+        popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
+
+        assert [wp.id for wp in popped] == ([waiting_prompt.id] if slow_worker_offered else [])
+        assert worker.can_generate(waiting_prompt) == ([True, None] if slow_worker_offered else [False, "lease_speed"])
+
+    @pytest.mark.parametrize(
+        ("faster_worker_transports", "slow_worker_offered"),
+        [
+            (None, True),
+            ([], True),
+            ([ChatImageTransport.MESSAGES_URL.value], True),
+            ([ChatImageTransport.URL.value], False),
+            ([ChatImageTransport.BASE64.value], False),
+        ],
+        ids=[
+            "faster_worker_declares_no_transport",
+            "faster_worker_declares_an_empty_transport_list",
+            "faster_worker_declares_only_messages_url",
+            "faster_worker_declares_url",
+            "faster_worker_declares_base64",
+        ],
+    )
+    def test_a_faster_vision_worker_counts_as_capable_only_with_an_image_transport(
+        self,
+        db_session: Session,
+        fake_redis: object,
+        make_user: MakeUser,
+        faster_worker_transports: list[str] | None,
+        slow_worker_offered: bool,
+    ) -> None:
+        """A 512-token chat request that requires ``vision`` reaches a worker at 2 tokens/s (capacity 240) that
+        receives images when the only faster worker declares ``vision`` without the ``url`` or ``base64`` transport,
+        and is left to the faster worker when it declares one of them. ``messages_url`` alone delivers no image."""
+        user = make_user()
+        worker = _make_worker(user, speed=2)
+        waiting_prompt = _make_request(user, 512, is_chat=True)
+        waiting_prompt.chat_required_features = [ChatFeature.VISION.value]
+        db.session.commit()
+        _declare_chat(worker, waiting_prompt)
+        worker.image_transports = [ChatImageTransport.URL.value]
+        db.session.commit()
+        _make_capable_chat_worker(user, waiting_prompt, image_transports=faster_worker_transports)
 
         popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
 

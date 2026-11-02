@@ -230,7 +230,7 @@ def text_wp_speed_gate_clause(worker, models_list):
     # - is_chat IS false: a legacy text request is offered at any max_length.
     # - max_length <= capacity: a chat request the worker finishes inside the base lease is offered.
     # - NOT EXISTS capable worker: a chat request over the capacity is offered when no online chat worker for its
-    #   models finishes it in time and declares the chat limits and features that admit it.
+    #   models finishes it in time and declares the chat limits, features and image transport that admit it.
     # For a popping worker measured at 2 tokens/s (capacity 2 * 120 = 240), with one other online chat worker for
     # model m at 10 tokens/s (capacity 1200) and none for model n:
     #

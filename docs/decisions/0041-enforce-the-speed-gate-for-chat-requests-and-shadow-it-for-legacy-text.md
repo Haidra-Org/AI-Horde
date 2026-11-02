@@ -72,8 +72,9 @@ measured?
 Chosen option: "Prefer capable workers for chat requests and record every over-capacity assignment".
 
 A capable worker for a chat request is an online chat worker for one of the request's models, not in maintenance or
-paused, whose declared chat limits admit the request, which declares every chat feature the request requires, and
-whose capacity is at least its `max_length` (`capable_chat_worker_clauses`). `TextWorker.can_generate_with_eligibility_inputs` refuses a chat request over the
+paused, whose declared chat limits admit the request, which declares every chat feature the request requires and the
+`url` or `base64` image transport when the request requires `vision`, and whose capacity is at least its `max_length`
+(`capable_chat_worker_clauses`). `TextWorker.can_generate_with_eligibility_inputs` refuses a chat request over the
 worker's capacity with `lease_speed` while a capable worker is online, and admits it when none is. In the pop query,
 `text_wp_speed_gate_clause` applies the same rule through a correlated `NOT EXISTS` over the capable workers, and
 passes every legacy text request. The feature test is `TextArrayContainsAll`, which compiles to `@>` on PostgreSQL
@@ -141,8 +142,8 @@ record at assignment, since the worker's measured speed moves between pop and su
 
 `tests/unit/test_text_job_ttl.py` pins the pop clause and the eligibility check agreeing for chat and legacy
 requests with and without a capable worker online, an offline, unavailable or under-declared faster worker not
-holding a chat request back, a faster worker counting as capable only when it declares every required feature, an
-unmeasured worker counting as capable at the assumed speed, a slow worker refused a
+holding a chat request back, a faster worker counting as capable only when it declares every required feature, a
+faster `vision` worker counting as capable only with the `url` or `base64` image transport, an unmeasured worker counting as capable at the assumed speed, a slow worker refused a
 chat request a capable worker can take and assigned a legacy one, the capacity-limited count reading only the chat
 declaration, and the shadow records: the marker and assignment count for legacy and chat jobs, the completed outcome
 with its service time, the faulted outcome counted once, the aborted outcome, and no record for an assignment within

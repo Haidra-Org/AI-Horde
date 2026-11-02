@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATIONS, ChatFeature, ChatLimitField
 from horde_sdk.worker.chat_declaration import IMAGE_PART_TRANSPORTS, ChatImageTransport
-from sqlalchemy import JSON, ScalarSelect, case
+from sqlalchemy import JSON, ScalarSelect, case, literal, or_
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import ColumnElement, expression
@@ -167,8 +167,9 @@ def capable_chat_worker_clauses(
     """Return the clauses met by a chat worker row that can take a chat request of these lengths inside the base lease.
 
     The worker is online, accepts chat jobs, is not in maintenance or paused, declares chat limits at or above the
-    request's lengths, declares every chat feature the request requires, and has a lease capacity of at least
-    ``max_length``. The caller adds the model condition. A chat request over a worker's capacity is offered to that
+    request's lengths, declares every chat feature the request requires, declares the ``url`` or ``base64`` image
+    transport when the request requires ``vision``, and has a lease capacity of at least ``max_length``. The caller
+    adds the model condition. A chat request over a worker's capacity is offered to that
     worker only when no worker meets these clauses for one of the request's models. A faster worker that lacks a
     required feature cannot serve the request, so it does not keep the request from a slower worker that has it.
 
@@ -190,8 +191,22 @@ def capable_chat_worker_clauses(
         worker_entity.chat_max_length >= max_length,
         worker_entity.chat_max_context_length >= max_context_length,
         TextArrayContainsAll(worker_entity.chat_features, required_features),
+        # The SQL form of serves_chat_images: a worker receives a request's images only through url or base64, so a
+        # vision declaration without one of them does not make the worker capable of a request with images.
+        or_(
+            ~TextArrayContainsAll(required_features, _text_array_literal([ChatFeature.VISION.value])),
+            *(
+                TextArrayContainsAll(worker_entity.image_transports, _text_array_literal([transport.value]))
+                for transport in sorted(IMAGE_PART_TRANSPORTS)
+            ),
+        ),
         text_worker_lease_capacity_covers_clause(worker_entity, max_length),
     ]
+
+
+def _text_array_literal(values: list[str]) -> ColumnElement[Any]:
+    """Return ``values`` bound as a ``text_array_column_type`` value, a ``text[]`` on PostgreSQL and JSON on SQLite."""
+    return literal(values, type_=text_array_column_type)
 
 
 class TextWorkerSoftprompts(db.Model):
