@@ -54,6 +54,7 @@ from horde.countermeasures import REJECTION_WINDOW, CounterMeasures
 from horde.database import functions as database
 from horde.database import prompt_moderation
 from horde.database import text_functions as text_database
+from horde.database.kudos_retention import AccountingRetentionDisclosure
 from horde.database.prompt_moderation import PromptEvidence, PromptModerationReason, record_prompt_evidence
 from horde.detection import prompt_checker
 from horde.discord import moderation_event_url, send_problem_user_notification
@@ -1523,7 +1524,8 @@ class TransferKudos(Resource):
         type=str,
         required=False,
         location="headers",
-        help="Optional retry key; repeated successful transfers with the same key are applied once.",
+        help="Optional retry key. Repeated successful transfers with the same key are applied once. "
+        "A key is honored for the online retention window (30 days by default); a retry after that creates a new transfer.",
     )
 
     decorators = [
@@ -4112,6 +4114,7 @@ class DocsPrivacy(Resource):
             raise e.BadRequest("'format' needs to be one of ['html', 'markdown']")
         # The disclosed windows come from the policy the retention pass applies, so they cannot drift apart.
         retention = prompt_moderation.MODERATION_RETENTION_POLICY
+        accounting_retention = AccountingRetentionDisclosure.from_policy()
         html_template = render_template(
             os.getenv("HORDE_HTML_PRIVACY", "privacy_policy.html"),
             horde_title=horde_title,
@@ -4124,6 +4127,7 @@ class DocsPrivacy(Resource):
             moderation_text_in_object_storage=r2.evidence_client is not None,
             repository_url=horde_repository,
             worker_suspicion_days=retention.worker_suspicion_days,
+            accounting_retention=accounting_retention,
         )
         if self.args.format == "markdown":
             return {"markdown": markdownify(html_template).strip("\n")}, 200

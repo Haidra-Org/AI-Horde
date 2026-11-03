@@ -1579,18 +1579,41 @@ def test_privacy_document_links_the_source_code(client, monkeypatch, document_fo
         assert f'<a href="{configured}">{configured}</a>' in document
 
 
+@pytest.mark.parametrize("archive_configured", [True, False])
 @pytest.mark.parametrize("store_configured", [True, False])
-def test_privacy_document_states_where_the_prompt_text_is_held(client, monkeypatch, store_configured: bool) -> None:
-    """The object storage disclosure of moderation Prompt text follows whether an evidence store is configured."""
+def test_privacy_document_states_where_the_prompt_text_is_held(
+    client, monkeypatch, store_configured: bool, archive_configured: bool
+) -> None:
+    """The object storage disclosure follows whether an evidence store and a kudos archive are configured.
+
+    The archive can be held by a different provider from the one holding images, so with an archive the transfer
+    sentence names the providers in the plural and lists the archive.
+    """
     from horde import r2
+    from horde.kudos_archive import ARCHIVE_REQUIRED_ENV
 
     monkeypatch.setattr(r2, "evidence_client", object() if store_configured else None)
+    for variable in ARCHIVE_REQUIRED_ENV:
+        if archive_configured:
+            monkeypatch.setenv(variable, "x")
+        else:
+            monkeypatch.delenv(variable, raising=False)
     document = client.get("/api/v2/documents/privacy", query_string={"format": "markdown"}).get_json()["markdown"]
     held_in_storage = "The Prompt text of these records is held with Our object storage Service Provider" in document
     assert held_in_storage is store_configured
     assert ("The Prompt text is held with the record." in document) is not store_configured
-    assert "which holds generated images" in document
     assert ("the Prompt text of moderation records" in document) is store_configured
+    if archive_configured:
+        moderation_text = ", the Prompt text of moderation records" if store_configured else ""
+        assert (
+            "Our object storage Service Providers, which hold generated images"
+            f"{moderation_text} and the archive of kudos movements, and to no other location or company." in document
+        )
+        assert "which holds generated images" not in document
+    else:
+        moderation_text = " and the Prompt text of moderation records" if store_configured else ""
+        assert f"Our object storage Service Provider, which holds generated images{moderation_text}, and to no other location" in document
+        assert "the archive of kudos movements" not in document
 
 
 def test_database_failure_does_not_accept_rejected_prompt(client, app, make_api_user, settle_kudos, monkeypatch) -> None:

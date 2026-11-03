@@ -870,6 +870,108 @@ def apply_kudos_ledger() -> None:
             kudos_applier_cycles_per_tick.record(cycles_used)
 
 
+_kudos_archive_loaded = False
+"""Whether ``_kudos_archive`` was built from the environment in this process."""
+_kudos_archive = None
+"""The kudos archive client for this process, or None when the archive is not configured."""
+
+
+def _get_kudos_archive():
+    """Return the process's kudos archive client, built from ``KUDOS_ARCHIVE_*`` on first use.
+
+    Built once so an unconfigured archive logs its warning once per process, not once per tick.
+    """
+    global _kudos_archive, _kudos_archive_loaded
+    if not _kudos_archive_loaded:
+        from horde.kudos_archive import KudosArchive
+
+        _kudos_archive = KudosArchive.from_environment()
+        _kudos_archive_loaded = True
+    return _kudos_archive
+
+
+@logger.catch(reraise=True)
+def kudos_retention_tick() -> None:
+    """Make one kudos retention transition and record the retention gauges (ADR 42).
+
+    Runs on the quorum node. The tick creates upcoming event partitions, expires idempotency keys and, when retention
+    is enabled, moves one unit one step; see ``horde.database.kudos_retention.run_retention_tick``. The gauges are
+    sampled after the step, so they show the state the step left.
+    """
+    from horde.database.kudos_retention import (
+        KUDOS_RETENTION_POLICY,
+        STEP_TABLE,
+        dump_attempt_failed,
+        retention_health,
+        retention_outcome_warning,
+        run_retention_tick,
+    )
+    from horde.enums import KudosRetentionDataset
+    from horde.kudos_archive import ArchiveTier, KudosArchiveError
+    from horde.metrics import (
+        kudos_archive_budget_bytes,
+        kudos_archive_tier_bytes,
+        kudos_retention_blocked_units,
+        kudos_retention_dump_failures,
+        kudos_retention_held_partitions,
+        kudos_retention_oldest_eligible_age,
+        kudos_retention_partition_coverage,
+        kudos_retention_steps,
+    )
+
+    archive = _get_kudos_archive()
+    with get_app().app_context(), logfire.span("horde.kudos.retention.tick") as tick_span:
+        result = run_retention_tick(archive=archive)
+        step = None
+        if result.dataset is not None and result.from_state is not None:
+            step = STEP_TABLE[result.dataset].get(result.from_state)
+        step_attributes = {
+            "horde.kudos.dataset": str(result.dataset or "none"),
+            "horde.kudos.retention.step": str(step or "none"),
+            "horde.kudos.retention.outcome": str(result.outcome),
+        }
+        # Blocked and failed ticks are rare. A counter with no recordings exports no series, so a zero add per tick
+        # keeps those series present for increase()-based alerts without changing their values.
+        for dataset in KudosRetentionDataset:
+            for rare_outcome in ("blocked", "failed"):
+                kudos_retention_steps.add(
+                    0,
+                    {
+                        "horde.kudos.dataset": str(dataset),
+                        "horde.kudos.retention.step": "none",
+                        "horde.kudos.retention.outcome": rare_outcome,
+                    },
+                )
+            kudos_retention_dump_failures.add(0, {"horde.kudos.dataset": str(dataset)})
+        if dump_attempt_failed(result):
+            kudos_retention_dump_failures.add(1, {"horde.kudos.dataset": str(result.dataset)})
+        kudos_retention_steps.add(1, step_attributes)
+        tick_span.set_attributes(step_attributes)
+        warning = retention_outcome_warning(result)
+        if warning is not None:
+            # LOG CONTRACT: the line starts with RETENTION_BLOCKED_LOG_PREFIX ("Kudos retention blocked") or
+            # RETENTION_DUMP_FAILED_LOG_PREFIX ("Kudos retention dump failed") from horde.database.kudos_retention.
+            logger.warning(warning)
+        health = retention_health()
+        for dataset, age_seconds in health["oldest_eligible_age_seconds"].items():
+            kudos_retention_oldest_eligible_age.set(age_seconds or 0, {"horde.kudos.dataset": str(dataset)})
+        # Every reason is set, at zero when no unit has it, so an alert on one reason has a series before its first block.
+        for block_reason, blocked_count in health["blocked_units_by_reason"].items():
+            kudos_retention_blocked_units.set(blocked_count, {"horde.kudos.block_reason": str(block_reason)})
+        kudos_retention_partition_coverage.set(1 if health["partition_coverage_ok"] else 0)
+        kudos_retention_held_partitions.set(health["held_partitions"])
+        if archive is None:
+            return
+        if KUDOS_RETENTION_POLICY.archive_budget_bytes is not None:
+            kudos_archive_budget_bytes.set(KUDOS_RETENTION_POLICY.archive_budget_bytes)
+        for tier in ArchiveTier:
+            try:
+                kudos_archive_tier_bytes.set(archive.tier_bytes(tier), {"horde.kudos.archive.tier": str(tier)})
+            except KudosArchiveError as err:
+                # The gauge keeps its last value, and the next tick samples again.
+                logger.warning(f"Kudos archive tier size unavailable for {tier}: {err}")
+
+
 # How many performance samples per worker back the materialized ``workers.speed``
 # average. Submits append without bound; the refresh below trims the surplus.
 WORKER_SPEED_SAMPLE_LIMIT = 20
@@ -983,15 +1085,6 @@ def refresh_worker_speeds() -> None:
             db.session.commit()
         if pruned or refreshed:
             logger.debug(f"Refreshed speed on {refreshed} workers and pruned {pruned} surplus performance samples")
-
-
-@logger.catch(reraise=True)
-def prune_kudos_ledger() -> None:
-    """Compatibility no-op retained for an older rolling-deploy scheduler."""
-    from horde.database.kudos_ledger import prune_applied_kudos_ledger
-
-    with get_app().app_context():
-        prune_applied_kudos_ledger()
 
 
 @logger.catch(reraise=True)

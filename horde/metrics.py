@@ -1010,6 +1010,46 @@ kudos_floor_adjustments_created = logfire.metric_counter(
     unit="kudos",
     description="Total kudos created by floor adjustments",
 )
+kudos_retention_steps = logfire.metric_counter(
+    "horde.kudos.retention.steps",
+    unit="1",
+    description=("Kudos retention ticks, by horde.kudos.dataset, horde.kudos.retention.step and horde.kudos.retention.outcome"),
+)
+kudos_retention_oldest_eligible_age = logfire.metric_gauge(
+    "horde.kudos.retention.oldest_eligible_age",
+    unit="s",
+    description="How long the oldest event partition still online has been past its window, by horde.kudos.dataset",
+)
+kudos_retention_blocked_units = logfire.metric_gauge(
+    "horde.kudos.retention.blocked_units",
+    unit="{unit}",
+    description="Kudos retention units blocked until an operator resets them, by horde.kudos.block_reason",
+)
+kudos_retention_partition_coverage = logfire.metric_gauge(
+    "horde.kudos.retention.partition_coverage",
+    unit="1",
+    description="1 when each kudos event table has a partition for now and for now plus one partition width, else 0",
+)
+kudos_retention_held_partitions = logfire.metric_gauge(
+    "horde.kudos.retention.held_partitions",
+    unit="{partition}",
+    description="Drop-ready kudos event partitions kept attached because KUDOS_RETENTION_HOLD_DROPS is set",
+)
+kudos_retention_dump_failures = logfire.metric_counter(
+    "horde.kudos.retention.dump_failures",
+    unit="{failure}",
+    description="Failed kudos statistics dump attempts, by horde.kudos.dataset",
+)
+kudos_archive_tier_bytes = logfire.metric_gauge(
+    "horde.kudos.archive.tier_bytes",
+    unit="By",
+    description="Stored bytes of kudos archive objects, by horde.kudos.archive.tier",
+)
+kudos_archive_budget_bytes = logfire.metric_gauge(
+    "horde.kudos.archive.budget_bytes",
+    unit="By",
+    description="The configured kudos archive byte budget for both tiers together",
+)
 kudos_reservations_rejected = logfire.metric_counter(
     "horde.kudos.reservations.rejected",
     unit="1",

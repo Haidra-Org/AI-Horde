@@ -46,9 +46,11 @@ def start_background_threads():
     PrimaryTimedFunction(1800, threads.store_stripe_members, quorum=quorum)
     PrimaryTimedFunction(3600, threads.assign_monthly_kudos, quorum=quorum)
     # The applier is the single writer of the materialized kudos balances; it runs
-    # frequently to keep applier lag within a few seconds. Applied history is a
-    # permanent recovery archive and is never scheduled for pruning.
+    # frequently to keep applier lag within a few seconds.
     PrimaryTimedFunction(3, threads.apply_kudos_ledger, quorum=quorum)
+    # Retention makes at most one partition transition per tick and holds its own
+    # advisory lock, so a slow export never delays the applier above.
+    PrimaryTimedFunction(60, threads.kudos_retention_tick, quorum=quorum)
     # The quorum node is the only writer of workers.speed: submits merely append a
     # performance sample, and this folds the samples into the materialized rolling
     # average. The interval bounds how stale a pop-side speed reading can be.
