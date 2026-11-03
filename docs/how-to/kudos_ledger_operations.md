@@ -578,12 +578,15 @@ object are in a scratch table in the application database. Qualify the scratch t
    uv run python tools/kudos_ledger_admin.py archive restore <object-key> --into public.kudos_restore_check
    ```
 
-   The command creates the table from the manifest's columns, with the types of the dataset's event table, and
-   copies the rows. A table with that name that exists already is refused, because a retried restore would hold
-   every row twice. To collect several objects in one table, pass `--append` for each restore after the first. The
-   output then has `"appended": true`, and the count check below covers the whole table. The copy commits only when the
-   object's digest, its stored size and the copied row count equal the manifest and the compressed stream is
-   complete. Otherwise the command fails with `does not match its manifest` and does not commit the rows.
+   The command creates the table from the column names and PostgreSQL types the manifest recorded at export, and
+   copies the rows. The live event tables are not consulted, so a column renamed, dropped or retyped since the export
+   does not affect the restore. An object whose manifest is format version 1 does not record column types, and the command
+   refuses it with `predates recorded column types`. A table with that name that exists already is refused,
+   because a retried restore would hold every row twice. To collect several objects in one table, pass `--append`
+   for each restore after the first. The output then has `"appended": true`, and the count check below covers the
+   whole table. The copy commits only when the object's digest, its stored size and the copied row count equal the
+   manifest and the compressed stream is complete. Otherwise the command fails with
+   `does not match its manifest` and does not commit the rows.
    Verify: the printed `rows` equals the manifest's `row_count`, and
    `SELECT count(*) FROM public.kudos_restore_check` returns the same number.
 3. Query the scratch table, then drop it with `DROP TABLE public.kudos_restore_check`.

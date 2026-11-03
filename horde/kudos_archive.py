@@ -11,6 +11,8 @@ dumps only when an operator runs it, and currency objects are never deleted.
 
 - ``KudosArchive`` is the client; ``KudosArchive.from_environment`` builds it from ``KUDOS_ARCHIVE_*`` variables.
 - ``ArchiveManifest`` is the manifest stored beside each object; ``VerificationReport`` is a full read-back of one.
+- ``ArchiveColumn`` is one archived column's name and PostgreSQL type, which the manifest records at export so a
+  restore can build its table without the live schema.
 - ``ArchiveObjectAudit`` is the result of ``KudosArchive.audit_object``, a read-back that reports failures instead of
   raising them.
 - ``ArchiveCodec`` is the streaming compression interface. ``ZstdCodec`` compresses new objects, and ``GzipCodec``
@@ -73,8 +75,17 @@ DEFAULT_ARCHIVE_REGION: Final[str] = "auto"
 
 ARCHIVE_MANIFEST_SUFFIX: Final[str] = ".manifest.json"
 """The suffix appended to an object key to form the key of its manifest."""
-ARCHIVE_MANIFEST_SCHEMA_VERSION: Final[int] = 1
+ARCHIVE_MANIFEST_SCHEMA_VERSION: Final[int] = 2
 """The manifest layout version written by this module."""
+ARCHIVE_MANIFEST_UNTYPED_SCHEMA_VERSION: Final[int] = 1
+"""The manifest layout version that does not record column types. It stays readable for verification and audit, and restore
+refuses it."""
+ARCHIVE_MANIFEST_READABLE_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset(
+    {ARCHIVE_MANIFEST_UNTYPED_SCHEMA_VERSION, ARCHIVE_MANIFEST_SCHEMA_VERSION},
+)
+"""The manifest layout versions this module parses."""
+EXPORT_DESCRIBE_VIEW: Final[str] = "kudos_archive_export_columns"
+"""The temporary view an export defines over its query to read the result column types. It is dropped before the copy."""
 ARCHIVE_PART_BYTES: Final[int] = 8 * 1024 * 1024
 """The compressed bytes buffered before one multipart part is uploaded; S3 requires at least 5 MiB per non-final part."""
 ARCHIVE_READ_CHUNK_BYTES: Final[int] = 1024 * 1024
@@ -306,6 +317,16 @@ def parse_source_range(source_range: str) -> tuple[str, str | None, str]:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ArchiveColumn:
+    """Represents one archived column as PostgreSQL described it at export."""
+
+    name: str
+    """The column name, as in the CSV header."""
+    postgres_type: str
+    """The type as ``format_type`` writes it, modifiers included, such as ``numeric(20,2)``."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class ArchiveManifest:
     """Represents the control totals and digest stored beside one archive object."""
 
@@ -327,6 +348,8 @@ class ArchiveManifest:
     """The stored object size."""
     columns: list[str]
     """The CSV header."""
+    column_types: list[ArchiveColumn] | None
+    """Each column's name and PostgreSQL type at export, in CSV column order. None for a version 1 manifest."""
     codec: str
     """The ``ArchiveCodec.name`` that compressed the object."""
     amount_sum: str
@@ -347,6 +370,7 @@ class ArchiveManifest:
                 "compressed_sha256": self.compressed_sha256,
                 "compressed_bytes": self.compressed_bytes,
                 "columns": self.columns,
+                "column_types": _column_types_to_manifest(self.column_types),
                 "codec": self.codec,
                 "amount_sum": self.amount_sum,
                 "per_user_totals": self.per_user_totals,
@@ -358,15 +382,24 @@ class ArchiveManifest:
     def from_json(cls, raw: str | bytes) -> ArchiveManifest:
         """Parse a stored manifest.
 
+        A version 1 manifest does not include ``column_types``, which parses as None.
+
         Raises:
-            KudosArchiveError: The document is not a manifest of a known schema version.
+            KudosArchiveError: The document is not a manifest of a known schema version, or its column types do not
+                list its columns in order.
         """
         try:
             document = json.loads(raw)
             schema_version = int(document["schema_version"])
-            if schema_version != ARCHIVE_MANIFEST_SCHEMA_VERSION:
+            if schema_version not in ARCHIVE_MANIFEST_READABLE_SCHEMA_VERSIONS:
                 raise KudosArchiveError(f"Unsupported archive manifest schema version {schema_version}")
             per_user_totals = document["per_user_totals"]
+            columns = [str(column) for column in document["columns"]]
+            column_types = None
+            if schema_version != ARCHIVE_MANIFEST_UNTYPED_SCHEMA_VERSION:
+                column_types = _column_types_from_manifest(document["column_types"])
+                if [column.name for column in column_types] != columns:
+                    raise KudosArchiveError(f"Archive manifest column types do not list its columns {columns} in order")
             return cls(
                 schema_version=schema_version,
                 dataset=str(document["dataset"]),
@@ -376,7 +409,8 @@ class ArchiveManifest:
                 row_count=int(document["row_count"]),
                 compressed_sha256=str(document["compressed_sha256"]),
                 compressed_bytes=int(document["compressed_bytes"]),
-                columns=[str(column) for column in document["columns"]],
+                columns=columns,
+                column_types=column_types,
                 codec=str(document["codec"]),
                 amount_sum=str(document["amount_sum"]),
                 per_user_totals=(
@@ -387,6 +421,35 @@ class ArchiveManifest:
             )
         except (ValueError, KeyError, TypeError, AttributeError) as err:
             raise KudosArchiveError(f"Malformed archive manifest: {err}") from err
+
+
+def _column_types_to_manifest(column_types: list[ArchiveColumn] | None) -> list[dict[str, str]] | None:
+    if column_types is None:
+        return None
+    return [{"name": column.name, "type": column.postgres_type} for column in column_types]
+
+
+def _column_types_from_manifest(entries: list[Mapping[str, object]]) -> list[ArchiveColumn]:
+    return [ArchiveColumn(name=str(entry["name"]), postgres_type=str(entry["type"])) for entry in entries]
+
+
+def _describe_copy_columns(connection: PsycopgConnection, copy_sql: str) -> list[ArchiveColumn]:
+    """Return the name and PostgreSQL type of each result column of ``copy_sql``, in result order.
+
+    psycopg2 reports a result column's type without its modifier, so ``numeric(20,2)`` would read as ``numeric``. A
+    temporary view over the query keeps the modifiers in ``pg_attribute``. The view is dropped in the same
+    transaction, so a later export on that transaction can define it again.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE TEMPORARY VIEW {EXPORT_DESCRIBE_VIEW} AS {copy_sql}")
+        cursor.execute(
+            "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute"
+            " WHERE attrelid = CAST(%s AS regclass) AND attnum > 0 AND NOT attisdropped ORDER BY attnum",
+            (f"pg_temp.{EXPORT_DESCRIBE_VIEW}",),
+        )
+        described = [ArchiveColumn(name=str(name), postgres_type=str(postgres_type)) for name, postgres_type in cursor.fetchall()]
+        cursor.execute(f"DROP VIEW pg_temp.{EXPORT_DESCRIBE_VIEW}")
+    return described
 
 
 type PerUserTotals = dict[int, tuple[Decimal, Decimal]]
@@ -809,6 +872,8 @@ class KudosArchive:
         memory is at most one part. For currency, the per-user totals also stay in memory until the manifest is built.
         They hold one entry per distinct user in the unit, a few hundred bytes each, and the manifest's string form
         holds a second copy, so memory grows with the distinct users of the unit, not with its rows.
+        Before the copy, a temporary view over the query is read in the same transaction for each result column's
+        PostgreSQL type, which the manifest records so a restore does not depend on the live schema.
         The manifest is not stored; call ``put_manifest``.
 
         Args:
@@ -821,13 +886,15 @@ class KudosArchive:
                 An oversized upload is aborted without replacing any object already at the key.
 
         Raises:
-            KudosArchiveError: An object-store request failed, or ``source_range`` is malformed. The multipart upload
-                is aborted.
+            KudosArchiveError: An object-store request failed, ``source_range`` is malformed, or the CSV header
+                differs from the described columns. The multipart upload is aborted.
             ArchiveBudgetExceeded: The measured upload exceeds ``max_compressed_bytes``, and no object is published.
         """
         partition_name, unit_lower, unit_upper = parse_source_range(source_range)
         key = self.object_key(tier=tier, source_range=source_range)
         fold = _CsvFold(dataset=dataset)
+        column_types = _describe_copy_columns(connection, copy_sql)
+        described_names = [column.name for column in column_types]
         try:
             upload_id = str(self._client.create_multipart_upload(Bucket=self._bucket, Key=key)["UploadId"])
         except (BotoCoreError, ClientError) as err:
@@ -845,6 +912,9 @@ class KudosArchive:
             with connection.cursor() as cursor:
                 cursor.copy_expert(f"COPY ({copy_sql}) TO STDOUT WITH (FORMAT csv, HEADER)", sink)
             digest, parts = sink.finish()
+            # The view and the COPY plan the query separately, and recorded types must belong to the archived columns.
+            if fold.columns != described_names:
+                raise KudosArchiveError(f"Archive CSV header {fold.columns} differs from the described columns {described_names}")
             self._client.complete_multipart_upload(
                 Bucket=self._bucket,
                 Key=key,
@@ -868,6 +938,7 @@ class KudosArchive:
             compressed_sha256=digest,
             compressed_bytes=sink.compressed_bytes,
             columns=fold.columns,
+            column_types=column_types,
             codec=self._codec.name,
             amount_sum=str(fold.amount_sum),
             per_user_totals=per_user_totals_to_manifest(fold.per_user_totals) if dataset == KudosRetentionDataset.CURRENCY else None,
@@ -1214,6 +1285,7 @@ __all__ = [
     "ARCHIVE_REQUIRED_ENV",
     "ARCHIVE_SECRET_ACCESS_KEY_ENV",
     "ArchiveCodec",
+    "ArchiveColumn",
     "ArchiveBudgetExceeded",
     "ArchiveEvictionError",
     "ArchiveManifest",

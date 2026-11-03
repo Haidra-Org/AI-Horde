@@ -69,9 +69,11 @@ from horde.database.kudos_db import begin_repeatable_read, release_retention_loc
 from horde.enums import KudosEntryType, KudosRetentionDataset, KudosRetentionState
 from horde.flask import SQLITE_MODE, db
 from horde.kudos_archive import (
+    ARCHIVE_MANIFEST_UNTYPED_SCHEMA_VERSION,
     ARCHIVE_PREFIX_ENV,
     ARCHIVE_REQUIRED_ENV,
     ArchiveBudgetExceeded,
+    ArchiveColumn,
     ArchiveObjectAudit,
     ArchiveTier,
     KudosArchive,
@@ -158,6 +160,10 @@ PARTITION_PARENTS: Final[Mapping[KudosRetentionDataset, str]] = {
 """The partitioned parent table of each dataset."""
 
 _IDENTIFIER_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_POSTGRES_TYPE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z_][a-z0-9_ ]*(\([0-9]+(,[0-9]+)?\))?[a-z ]*(\[\])*$")
+"""A built-in type as ``format_type`` writes it, such as ``numeric(20,2)`` or ``timestamp(3) without time zone``.
+
+A restore writes manifest types into ``CREATE TABLE``, so anything else is refused."""
 _BOUND_PATTERN: Final[re.Pattern[str]] = re.compile(r"^FOR VALUES FROM \((?P<lower>[^)]*)\) TO \((?P<upper>[^)]*)\)$")
 _DEFAULT_PARTITION_BOUND: Final[str] = "DEFAULT"
 _MINVALUE: Final[str] = "MINVALUE"
@@ -931,6 +937,26 @@ def _quote_identifier(name: str) -> str:
     return f'"{name}"'
 
 
+def _postgres_type_sql(postgres_type: str) -> str:
+    """Return a manifest column type for use in ``CREATE TABLE``.
+
+    Raises:
+        ValueError: The type is not a built-in type as ``format_type`` writes it.
+    """
+    if not _POSTGRES_TYPE_PATTERN.match(postgres_type):
+        raise ValueError(f"Refusing unexpected column type {postgres_type!r}")
+    return postgres_type
+
+
+def _scratch_column_definitions(column_types: list[ArchiveColumn]) -> str:
+    """Return the ``CREATE TABLE`` column list for the manifest's columns and types.
+
+    Raises:
+        ValueError: A column name is not a plain identifier, or a type is not a built-in type.
+    """
+    return ", ".join(f"{_quote_identifier(column.name)} {_postgres_type_sql(column.postgres_type)}" for column in column_types)
+
+
 def _quote_qualified_identifier(name: str) -> str:
     """Return ``table`` or ``schema.table`` with each part double-quoted.
 
@@ -1252,7 +1278,7 @@ def _archive_unit(archive: KudosArchive, context: _StepContext, tier: ArchiveTie
             budget.
 
     Raises:
-        ArchiveBudgetExceeded: The compressed upload grew past ``allowance``. Nothing is published.
+        ArchiveBudgetExceeded: The compressed upload grew past ``allowance``, and the object is not published.
         KudosArchiveError: An object-store request failed.
     """
     db.session.commit()
@@ -1290,7 +1316,7 @@ class _TierAllowance:
 
 
 def _tier_allowance(archive: KudosArchive, context: _StepContext, tier: ArchiveTier) -> _TierAllowance | None:
-    """Measure the tier once for the unit's upload, or return None when the tier has no budget.
+    """Measure the tier once for the unit's upload, or return None when the tier is not budgeted.
 
     A retry after a crash between the upload and the catalog commit finds the earlier object at the key, which the
     upload replaces.
@@ -2328,11 +2354,12 @@ def daily_statement(*, user_id: int, first_day: date, last_day: date) -> list[Da
 
 
 def restore_archive_unit(archive: KudosArchive, key: str, *, table_name: str, append: bool = False) -> int:
-    """Copy an archive object's rows into a new scratch table created from the manifest's columns.
+    """Copy an archive object's rows into a new scratch table created from the manifest's columns and types.
 
-    A created table takes each column's type from the dataset's event table, so restored values compare with online
-    ones. The copy commits on its own connection. An existing table is refused unless ``append`` is set, because a
-    repeated restore would otherwise copy the rows a second time, and each restore verifies only the rows it copied.
+    A created table takes each column's name and type from the manifest alone, so a later change to the event tables
+    does not affect the restore of an older object. A version 1 manifest does not record column types and is refused. The
+    copy commits on its own connection. An existing table is refused unless ``append`` is set, because a repeated
+    restore would otherwise copy the rows a second time, and each restore verifies only the rows it copied.
 
     Args:
         archive: The archive client.
@@ -2344,14 +2371,19 @@ def restore_archive_unit(archive: KudosArchive, key: str, *, table_name: str, ap
         The rows copied.
 
     Raises:
-        KudosArchiveError: The manifest or object could not be read.
-        ValueError: ``table_name`` exists and ``append`` is not set, it has more than one dot, or a part of it or a
-            manifest column is not a plain identifier.
+        KudosArchiveError: The manifest or object could not be read, or the manifest is version 1 and does not record
+            column types.
+        ValueError: ``table_name`` exists and ``append`` is not set, it has more than one dot, a part of it or a
+            manifest column is not a plain identifier, or a manifest column type is not a built-in type.
     """
     table_sql = _quote_qualified_identifier(table_name)
     manifest = archive.get_manifest(key)
-    parent = PARTITION_PARENTS[KudosRetentionDataset(manifest.dataset)]
-    columns = ", ".join(_quote_identifier(column) for column in manifest.columns)
+    if manifest.column_types is None:
+        raise KudosArchiveError(
+            f"Archive object {key} has a format version {ARCHIVE_MANIFEST_UNTYPED_SCHEMA_VERSION} manifest, which predates "
+            "recorded column types, and restore refuses it",
+        )
+    column_definitions = _scratch_column_definitions(manifest.column_types)
     raw_connection = db.engine.raw_connection()
     try:
         cursor = raw_connection.cursor()
@@ -2363,7 +2395,8 @@ def restore_archive_unit(archive: KudosArchive, key: str, *, table_name: str, ap
                     f"Scratch table {table_name} already exists. Restore into a new table, or pass append to add these rows to it",
                 )
             if not table_exists:
-                cursor.execute(f"CREATE TABLE {table_sql} AS SELECT {columns} FROM {_quote_identifier(parent)} WITH NO DATA")
+                cursor.execute(f"CREATE TABLE {table_sql} ({column_definitions})")
+
         finally:
             cursor.close()
         restored = archive.restore_unit(key, table_name=table_name, connection=raw_connection.driver_connection)

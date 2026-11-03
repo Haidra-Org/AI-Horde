@@ -169,7 +169,7 @@ def _archive_command(options: argparse.Namespace, archive_client: KudosArchive) 
     if options.archive_command == "restore":
         try:
             restored = restore_archive_unit(archive_client, options.key, table_name=options.table_name, append=options.append)
-        except ValueError as err:
+        except (ValueError, KudosArchiveError) as err:
             raise SystemExit(str(err)) from err
         restore_output: dict[str, object] = {"key": options.key, "table": options.table_name, "rows": restored, "appended": options.append}
         if options.append:

@@ -10,6 +10,7 @@ Postgres into the S3-compatible archive bucket the test runtime provisions.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import csv
 import hashlib
@@ -29,6 +30,7 @@ from horde.kudos_archive import (
     ARCHIVE_PREFIX_ENV,
     ARCHIVE_REQUIRED_ENV,
     ArchiveCodec,
+    ArchiveColumn,
     ArchiveManifest,
     ArchiveTier,
     GzipCodec,
@@ -73,7 +75,7 @@ def test_codec_is_chosen_by_extension() -> None:
 
 def _manifest(**overrides: object) -> ArchiveManifest:
     fields: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "dataset": "currency",
         "partition_name": "kudos_ledger_p_20260803",
         "unit_lower": "20260803T000000",
@@ -82,6 +84,12 @@ def _manifest(**overrides: object) -> ArchiveManifest:
         "compressed_sha256": "ab" * 32,
         "compressed_bytes": 120,
         "columns": ["id", "user_id", "escrow", "amount"],
+        "column_types": [
+            ArchiveColumn(name="id", postgres_type="bigint"),
+            ArchiveColumn(name="user_id", postgres_type="integer"),
+            ArchiveColumn(name="escrow", postgres_type="boolean"),
+            ArchiveColumn(name="amount", postgres_type="numeric(20,2)"),
+        ],
         "codec": "zstd",
         "amount_sum": "12.50",
         "per_user_totals": {"7": ["10.00", "2.50"]},
@@ -99,9 +107,18 @@ def test_manifest_serialization_round_trips() -> None:
 
 def test_manifest_rejects_an_unknown_schema_version_and_malformed_documents() -> None:
     with pytest.raises(KudosArchiveError, match="schema version"):
-        ArchiveManifest.from_json(_manifest(schema_version=2).to_json())
+        ArchiveManifest.from_json(_manifest(schema_version=3).to_json())
     with pytest.raises(KudosArchiveError, match="Malformed"):
         ArchiveManifest.from_json('{"schema_version": 1}')
+    with pytest.raises(KudosArchiveError, match="Malformed"):
+        ArchiveManifest.from_json(_manifest(column_types=None).to_json())
+    with pytest.raises(KudosArchiveError, match="do not list its columns"):
+        ArchiveManifest.from_json(_manifest(columns=["id", "user_id", "amount", "escrow"]).to_json())
+
+
+def test_version_1_manifest_parses_without_column_types() -> None:
+    version_1 = _manifest(schema_version=1, column_types=None)
+    assert ArchiveManifest.from_json(version_1.to_json()) == version_1
 
 
 def test_object_key_layout() -> None:
@@ -478,6 +495,12 @@ def test_put_unit_manifest_and_verify_round_trip(archive: KudosArchive, raw_conn
     assert manifest.row_count == 3
     assert Decimal(manifest.amount_sum) == Decimal("11.25")
     assert manifest.columns == ["id", "user_id", "escrow", "amount"]
+    assert manifest.column_types == [
+        ArchiveColumn(name="id", postgres_type="integer"),
+        ArchiveColumn(name="user_id", postgres_type="integer"),
+        ArchiveColumn(name="escrow", postgres_type="boolean"),
+        ArchiveColumn(name="amount", postgres_type="numeric"),
+    ]
     assert manifest.per_user_totals == {"7": ["10.00", "2.50"], "8": ["-1.25", "0"]}
     assert (manifest.partition_name, manifest.unit_lower, manifest.unit_upper) == (
         "kudos_ledger_p_20260803",
@@ -652,6 +675,12 @@ def test_upload_enforces_measured_bytes_including_final_flush(limit_offset: int)
         def copy_expert(self, sql: str, sink: Any) -> None:
             sink.write(RESTORE_CSV.encode())
 
+        def execute(self, statement: str, parameters: object = None) -> None:
+            return None
+
+        def fetchall(self) -> list[tuple[str, str]]:
+            return [("id", "bigint"), ("user_id", "integer"), ("escrow", "boolean"), ("amount", "numeric(20,2)")]
+
     store = _FakeObjectStore()
     archive = KudosArchive(client=store, bucket="test")
     kwargs = dict(
@@ -671,3 +700,98 @@ def test_upload_enforces_measured_bytes_including_final_flush(limit_offset: int)
         assert archive.put_unit(**kwargs, max_compressed_bytes=manifest.compressed_bytes + limit_offset).compressed_bytes == len(previous)
     assert store.objects[key] == previous
     assert store.uploads == {}
+
+
+# Format version fixtures
+#
+# Each format version keeps one stored object and manifest exactly as that version wrote them, so a change to the
+# manifest or to restore that strands older objects fails here.
+
+FIXTURE_OBJECT = base64.b64decode(
+    "KLUv/QRgfQYA8k4vI0CJOAe7GJiK5q00yKyJ7EJj7pWyEjIp+t9+UgCtDRFFDWpcyTuB++q8BjK7sIsa02ch1hwzLFpgw9RhZg8v38/G4N7OuWQtrPWU61oKYi3u"
+    "SVpLYZ0NtBH/fqYh26M/VwwIFAAQJBSJgLdktw1m9LyFceqBNQ1k2GO2MYbUwRY5z0RkIloqSzIomePSvSWMqM1LQb5x8aaDL0cGRelbekwNPWSqoKNix+NMRXoR"
+    "qVrib1y0xAj85Vau4DcGBQBAlgAdPodzhGry7JpkcDReCQ==",
+)
+"""A zstd currency object of two ``kudos_ledger`` rows, one with a quoted JSON detail holding a comma."""
+FIXTURE_MANIFEST_VERSION_1 = (
+    '{"amount_sum": "12.50", "codec": "zstd", "columns": ["id", "created", "event_id", "entry_type", "user_id", "escrow", "amount", '
+    '"applied", "job_id", "wp_type", "detail"], "compressed_bytes": 220, '
+    '"compressed_sha256": "1757a5e67d6616432db8087eec10a5ccb7e103ce259542873aa6b7e78dd041bd", "dataset": "currency", '
+    '"partition_name": "kudos_ledger_p_20260803", "per_user_totals": {"7": ["10.00", "2.50"]}, "row_count": 2, "schema_version": 1, '
+    '"unit_lower": "20260803T000000", "unit_upper": "20260810T000000"}'
+)
+"""The fixture object's manifest at format version 1, which records column names without types."""
+FIXTURE_MANIFEST_VERSION_2 = (
+    '{"amount_sum": "12.50", "codec": "zstd", "column_types": [{"name": "id", "type": "bigint"}, '
+    '{"name": "created", "type": "timestamp without time zone"}, {"name": "event_id", "type": "uuid"}, '
+    '{"name": "entry_type", "type": "character varying(32)"}, {"name": "user_id", "type": "integer"}, '
+    '{"name": "escrow", "type": "boolean"}, {"name": "amount", "type": "numeric(20,2)"}, {"name": "applied", "type": "boolean"}, '
+    '{"name": "job_id", "type": "uuid"}, {"name": "wp_type", "type": "character varying(20)"}, {"name": "detail", "type": "jsonb"}], '
+    '"columns": ["id", "created", "event_id", "entry_type", "user_id", "escrow", "amount", "applied", "job_id", "wp_type", "detail"], '
+    '"compressed_bytes": 220, "compressed_sha256": "1757a5e67d6616432db8087eec10a5ccb7e103ce259542873aa6b7e78dd041bd", '
+    '"dataset": "currency", "partition_name": "kudos_ledger_p_20260803", "per_user_totals": {"7": ["10.00", "2.50"]}, "row_count": 2, '
+    '"schema_version": 2, "unit_lower": "20260803T000000", "unit_upper": "20260810T000000"}'
+)
+"""The fixture object's manifest at format version 2, which records each column's PostgreSQL type."""
+
+
+def _fixture_archive(manifest_json: str) -> KudosArchive:
+    client = _FakeS3()
+    client.objects[RESTORE_KEY] = FIXTURE_OBJECT
+    client.objects[manifest_key(RESTORE_KEY)] = manifest_json.encode("utf-8")
+    return KudosArchive(client=client, bucket="archive")  # type: ignore[arg-type]
+
+
+def test_version_1_fixture_verifies_and_restore_refuses_it(app: Flask) -> None:
+    from horde.database.kudos_retention import restore_archive_unit
+
+    archive = _fixture_archive(FIXTURE_MANIFEST_VERSION_1)
+    manifest = archive.get_manifest(RESTORE_KEY)
+    assert (manifest.schema_version, manifest.column_types) == (1, None)
+    assert archive.verify_unit(RESTORE_KEY, manifest).matches_manifest
+    table_name = f"kudos_restore_{uuid.uuid4().hex[:8]}"
+    with app.app_context(), pytest.raises(KudosArchiveError, match="format version 1 manifest, which predates recorded column types"):
+        restore_archive_unit(archive, RESTORE_KEY, table_name=table_name)
+
+
+def test_version_2_fixture_restores_from_its_recorded_column_types(app: Flask) -> None:
+    from sqlalchemy import text
+
+    from horde.database.kudos_retention import restore_archive_unit
+    from horde.flask import db
+
+    archive = _fixture_archive(FIXTURE_MANIFEST_VERSION_2)
+    manifest = archive.get_manifest(RESTORE_KEY)
+    assert manifest.column_types is not None
+    assert archive.verify_unit(RESTORE_KEY, manifest).matches_manifest
+    table_name = f"kudos_restore_{uuid.uuid4().hex[:8]}"
+    with app.app_context():
+        try:
+            assert restore_archive_unit(archive, RESTORE_KEY, table_name=table_name) == 2
+            described = db.session.execute(
+                text(
+                    "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute"
+                    " WHERE attrelid = CAST(:table_name AS regclass) AND attnum > 0 AND NOT attisdropped ORDER BY attnum",
+                ),
+                {"table_name": table_name},
+            ).all()
+            assert [tuple(row) for row in described] == [(column.name, column.postgres_type) for column in manifest.column_types]
+            restored = db.session.execute(
+                text(f"SELECT user_id, escrow, amount, CAST(job_id AS text), detail FROM {table_name} ORDER BY id"),
+            ).all()
+            assert [tuple(row) for row in restored] == [
+                (7, False, Decimal("10.00"), None, {"note": "a, b"}),
+                (7, True, Decimal("2.50"), "0b9d4e6a-5c3f-4e21-8d7a-1f2e3d4c5b6a", None),
+            ]
+        finally:
+            db.session.rollback()
+            db.session.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+            db.session.commit()
+
+
+def test_restore_refuses_a_manifest_column_type_that_is_not_a_built_in_type() -> None:
+    from horde.database.kudos_retention import restore_archive_unit
+
+    tampered = FIXTURE_MANIFEST_VERSION_2.replace('"type": "jsonb"', '"type": "jsonb); DROP TABLE users; --"')
+    with pytest.raises(ValueError, match="unexpected column type"):
+        restore_archive_unit(_fixture_archive(tampered), RESTORE_KEY, table_name="kudos_restore_refused")
