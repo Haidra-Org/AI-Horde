@@ -5,11 +5,14 @@
 """Write, verify, evict and restore kudos retention archive objects.
 
 The archive is one S3-compatible bucket with credentials of its own. Each retention unit is one compressed CSV object
-written once, with a JSON manifest beside it (``<object key>.manifest.json``). Keys start with the tier, so the budget
-can evict statistic dumps without touching currency objects, which are never evicted.
+written once, with a JSON manifest beside it (``<object key>.manifest.json``). Keys start with the tier, so each tier
+is listed and sized on its own. Nothing is evicted automatically. ``KudosArchive.enforce_budget`` deletes statistic
+dumps only when an operator runs it, and currency objects are never deleted.
 
 - ``KudosArchive`` is the client; ``KudosArchive.from_environment`` builds it from ``KUDOS_ARCHIVE_*`` variables.
 - ``ArchiveManifest`` is the manifest stored beside each object; ``VerificationReport`` is a full read-back of one.
+- ``ArchiveObjectAudit`` is the result of ``KudosArchive.audit_object``, a read-back that reports failures instead of
+  raising them.
 - ``ArchiveCodec`` is the streaming compression interface. ``ZstdCodec`` compresses new objects, and ``GzipCodec``
   stays readable. A reader picks the codec from the object key's extension, and the manifest records it.
 - ``KudosArchiveError`` wraps every object-store failure. Callers decide whether a failure blocks a step.
@@ -122,6 +125,21 @@ def normalize_archive_prefix(raw: str) -> str:
 
 class KudosArchiveError(Exception):
     """An archive object-store request failed, or an object could not be read as an archive object."""
+
+
+class ArchiveEvictionError(KudosArchiveError):
+    """An eviction stopped partway. ``deleted_keys`` holds the object keys whose deletes the store confirmed."""
+
+    def __init__(self, message: str, *, deleted_keys: list[str]) -> None:
+        """Create the error.
+
+        Args:
+            message: What failed.
+            deleted_keys: The object keys deleted before the failure, oldest first.
+        """
+        super().__init__(message)
+        self.deleted_keys: list[str] = list(deleted_keys)
+        """The object keys deleted before the failure, oldest first."""
 
 
 class ArchiveTier(enum.StrEnum):
@@ -402,6 +420,27 @@ class VerificationReport:
     def matches_manifest(self) -> bool:
         """Return whether every recomputed value equals the manifest."""
         return not self.mismatches
+
+
+@dataclass(frozen=True, kw_only=True)
+class ArchiveObjectAudit:
+    """Represents the read-back of one archive object against its manifest, with every problem found."""
+
+    key: str
+    """The object key."""
+    tier: ArchiveTier
+    """The tier the object was listed under."""
+    problems: list[str] = field(default_factory=list)
+    """A description of each problem: an unreadable manifest or object, or a field that differs from the manifest."""
+    row_count: int | None = None
+    """The CSV data rows read, or None when the object was not read in full."""
+    compressed_bytes: int | None = None
+    """The stored bytes read, or None when the object was not read in full."""
+
+    @property
+    def matches_manifest(self) -> bool:
+        """Return whether the manifest was read and the object matched it."""
+        return not self.problems
 
 
 class _CsvFold:
@@ -884,35 +923,82 @@ class KudosArchive:
         """
         return sum(listed.size for listed in self._list_objects(tier))
 
-    def enforce_budget(self, *, budget_bytes: int) -> list[str]:
-        """Delete the oldest statistic objects, by unit upper bound, until the archive fits ``budget_bytes``.
+    def object_sizes(self, tier: ArchiveTier) -> dict[str, int]:
+        """Return the stored size of each of a tier's objects by key, excluding manifests.
 
-        Currency objects count toward the total and are never deleted, so the archive can stay above the budget when
-        the currency tier alone exceeds it. Each deleted object's manifest is deleted with it.
+        Raises:
+            KudosArchiveError: The listing failed.
+        """
+        return {listed.key: listed.size for listed in self._list_objects(tier)}
+
+    def enforce_budget(self, *, budget_bytes: int) -> list[str]:
+        """Delete the oldest statistic objects, by unit upper bound, until the statistics tier fits ``budget_bytes``.
+
+        An operator tool. The retention tick does not call it, and currency objects are never deleted. Each deleted
+        object's manifest is deleted with it. Deletes go out one batch at a time, so a failure leaves the earlier
+        batches deleted and reports them.
 
         Args:
-            budget_bytes: The byte budget for both tiers together.
+            budget_bytes: The byte budget of the statistics tier.
 
         Returns:
             The deleted object keys, oldest first.
 
         Raises:
-            KudosArchiveError: A listing or delete failed.
+            KudosArchiveError: The listing failed, before anything was deleted.
+            ArchiveEvictionError: A delete failed. Its ``deleted_keys`` holds the objects deleted before it.
         """
         statistics_objects = self._list_objects(ArchiveTier.STATISTICS)
-        total = self.tier_bytes(ArchiveTier.CURRENCY) + sum(listed.size for listed in statistics_objects)
-        evicted: list[str] = []
+        total = sum(listed.size for listed in statistics_objects)
+        candidates: list[str] = []
         for listed in sorted(statistics_objects, key=lambda candidate: (unit_upper_from_key(candidate.key), candidate.key)):
             if total <= budget_bytes:
                 break
-            evicted.append(listed.key)
+            candidates.append(listed.key)
             total -= listed.size
-        for start in range(0, len(evicted), ARCHIVE_DELETE_BATCH_SIZE // 2):
-            batch = evicted[start : start + ARCHIVE_DELETE_BATCH_SIZE // 2]
-            self._delete_keys([key for evicted_key in batch for key in (evicted_key, manifest_key(evicted_key))])
+        evicted: list[str] = []
+        for start in range(0, len(candidates), ARCHIVE_DELETE_BATCH_SIZE // 2):
+            batch = candidates[start : start + ARCHIVE_DELETE_BATCH_SIZE // 2]
+            try:
+                failed_keys = self._delete_keys([key for candidate_key in batch for key in (candidate_key, manifest_key(candidate_key))])
+            except KudosArchiveError as err:
+                raise ArchiveEvictionError(f"{err}. {len(evicted)} statistic objects were deleted before it", deleted_keys=evicted) from err
+            evicted.extend(candidate_key for candidate_key in batch if candidate_key not in failed_keys)
+            if failed_keys:
+                raise ArchiveEvictionError(
+                    f"Archive delete failed for {len(failed_keys)} keys, among them {sorted(failed_keys)[0]}. "
+                    f"{len(evicted)} statistic objects were deleted",
+                    deleted_keys=evicted,
+                )
         if evicted:
             logger.warning(f"Kudos archive evicted {len(evicted)} statistic objects to fit {budget_bytes} bytes")
         return evicted
+
+    def audit_object(self, key: str, *, tier: ArchiveTier) -> ArchiveObjectAudit:
+        """Return the read-back of the object at ``key`` against its manifest, with any failure recorded as a problem.
+
+        The checks are those of ``verify_unit``: digest, stored byte count, row count, amount sum, columns and, for
+        currency, per-user totals. Nothing is written.
+
+        Args:
+            key: The object key.
+            tier: The tier the object was listed under.
+        """
+        try:
+            manifest = self.get_manifest(key)
+        except KudosArchiveError as err:
+            return ArchiveObjectAudit(key=key, tier=tier, problems=[f"manifest unreadable: {err}"])
+        try:
+            report = self.verify_unit(key, manifest)
+        except KudosArchiveError as err:
+            return ArchiveObjectAudit(key=key, tier=tier, problems=[f"object unreadable: {err}"])
+        return ArchiveObjectAudit(
+            key=key,
+            tier=tier,
+            problems=[f"{mismatch} differs from the manifest" for mismatch in report.mismatches],
+            row_count=report.row_count,
+            compressed_bytes=report.compressed_bytes,
+        )
 
     def restore_unit(self, key: str, *, table_name: str, connection: PsycopgConnection) -> int:
         """Copy the rows of the object at ``key`` into an existing table, verified against its manifest. Return the count.
@@ -1063,7 +1149,12 @@ class KudosArchive:
             raise KudosArchiveError(f"Archive listing of {tier} failed: {err}") from err
         return listed
 
-    def _delete_keys(self, keys: list[str]) -> None:
+    def _delete_keys(self, keys: list[str]) -> set[str]:
+        """Delete ``keys`` in one request and return the keys the store reports it did not delete.
+
+        Raises:
+            KudosArchiveError: The request itself failed, so which keys were deleted is not known.
+        """
         try:
             response = self._client.delete_objects(
                 Bucket=self._bucket,
@@ -1072,8 +1163,7 @@ class KudosArchive:
         except (BotoCoreError, ClientError) as err:
             raise KudosArchiveError(f"Archive delete failed: {err}") from err
         errors = response.get("Errors") or []
-        if errors:
-            raise KudosArchiveError(f"Archive delete failed for {len(errors)} keys: {errors[0]}")
+        return {str(error.get("Key", "")) for error in errors}
 
     def _abort_upload(self, key: str, upload_id: str) -> None:
         try:
@@ -1093,7 +1183,9 @@ __all__ = [
     "ARCHIVE_REQUIRED_ENV",
     "ARCHIVE_SECRET_ACCESS_KEY_ENV",
     "ArchiveCodec",
+    "ArchiveEvictionError",
     "ArchiveManifest",
+    "ArchiveObjectAudit",
     "ArchiveTier",
     "GzipCodec",
     "KudosArchive",

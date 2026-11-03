@@ -23,9 +23,11 @@ from sqlalchemy import select, text, update
 from horde.database.kudos_retention import (
     ARCHIVE_BUDGET_ENV,
     ARCHIVE_NOT_CONFIGURED,
+    ARCHIVE_STATISTICS_BUDGET_ENV,
     CURRENCY_WINDOW_ENV,
     DROP_DEFER_LOCK_AGE_ENV,
     DROP_GRACE_ENV,
+    DROP_LOCK_TIMEOUT,
     DUMP_RETRY_WINDOW_ENV,
     FUTURE_REFERENCE_REFUSAL,
     HOLD_DROPS_ENV,
@@ -53,7 +55,7 @@ from horde.database.kudos_retention import (
     select_next_unit,
 )
 from horde.enums import KudosEntryType, KudosRetentionDataset, KudosRetentionState, KudosUnit
-from horde.kudos_archive import ARCHIVE_REQUIRED_ENV
+from horde.kudos_archive import ARCHIVE_REQUIRED_ENV, ArchiveTier
 
 if TYPE_CHECKING:
     from flask_sqlalchemy.session import Session
@@ -76,7 +78,7 @@ def _policy(**overrides: Any) -> KudosRetentionPolicy:
         "currency_window": timedelta(days=30),
         "statistics_window": timedelta(days=30),
         "partition_width": WEEK,
-        "archive_budget_bytes": None,
+        "currency_budget_bytes": None,
     }
     fields.update(overrides)
     return KudosRetentionPolicy(**fields)
@@ -92,7 +94,7 @@ def test_policy_defaults() -> None:
         currency_window=timedelta(days=30),
         statistics_window=timedelta(days=30),
         partition_width=WEEK,
-        archive_budget_bytes=None,
+        currency_budget_bytes=None,
     )
 
 
@@ -104,13 +106,16 @@ def test_policy_reads_every_variable() -> None:
             STATISTICS_WINDOW_ENV: "45",
             PARTITION_WIDTH_ENV: "14",
             ARCHIVE_BUDGET_ENV: "1000",
+            ARCHIVE_STATISTICS_BUDGET_ENV: "400",
         },
     )
     assert policy.enabled
     assert policy.currency_window == timedelta(days=90)
     assert policy.statistics_window == timedelta(days=45)
     assert policy.partition_width == timedelta(days=14)
-    assert policy.archive_budget_bytes == 1000
+    assert (policy.currency_budget_bytes, policy.statistics_budget_bytes) == (1000, 400)
+    assert (policy.budget_for(ArchiveTier.CURRENCY), policy.budget_for(ArchiveTier.STATISTICS)) == (1000, 400)
+    assert load_retention_policy({}).statistics_budget_bytes is None
     assert policy.key_lifetime == timedelta(days=45)
     assert policy.window_for(CURRENCY) == timedelta(days=90)
     assert policy.window_for(STATISTICS) == timedelta(days=45)
@@ -146,6 +151,8 @@ def test_policy_reads_the_hold_and_grace_variables() -> None:
         ({RETENTION_ENABLED_ENV: "maybe"}, RETENTION_ENABLED_ENV),
         ({ARCHIVE_BUDGET_ENV: "lots"}, ARCHIVE_BUDGET_ENV),
         ({ARCHIVE_BUDGET_ENV: "0"}, ARCHIVE_BUDGET_ENV),
+        ({ARCHIVE_STATISTICS_BUDGET_ENV: "0"}, ARCHIVE_STATISTICS_BUDGET_ENV),
+        ({ARCHIVE_STATISTICS_BUDGET_ENV: "plenty"}, ARCHIVE_STATISTICS_BUDGET_ENV),
         (dict.fromkeys(ARCHIVE_REQUIRED_ENV, "x"), ARCHIVE_BUDGET_ENV),
         ({DUMP_RETRY_WINDOW_ENV: "0"}, DUMP_RETRY_WINDOW_ENV),
         ({DUMP_RETRY_WINDOW_ENV: "a week"}, DUMP_RETRY_WINDOW_ENV),
@@ -159,7 +166,7 @@ def test_malformed_or_short_policy_stops_load(environ: dict[str, str], variable:
 
 def test_configured_archive_with_budget_loads() -> None:
     environ = dict.fromkeys(ARCHIVE_REQUIRED_ENV, "x") | {ARCHIVE_BUDGET_ENV: "5000"}
-    assert load_retention_policy(environ).archive_budget_bytes == 5000
+    assert load_retention_policy(environ).currency_budget_bytes == 5000
 
 
 # Pure helpers
@@ -303,6 +310,27 @@ def test_selection_finishes_an_interrupted_drop_of_a_detached_partition() -> Non
     assert selection.unit == detached
 
 
+def test_selection_holds_a_detached_partition_whose_sibling_the_recount_blocked() -> None:
+    legacy = "kudos_ledger_p_legacy"
+    detached = _unit(1, CURRENCY, legacy, None, MONDAY + WEEK, KudosRetentionState.DETACHED)
+    blocked = _unit(2, CURRENCY, legacy, MONDAY + WEEK, MONDAY + 2 * WEEK, KudosRetentionState.BLOCKED)
+    later = _partition(CURRENCY, "c_later", MONDAY + 2 * WEEK, MONDAY + 3 * WEEK)
+    # The blocked unit of the detached partition stops the currency dataset, and its sibling is not drop-ready.
+    selection = select_next_unit(dataset=CURRENCY, partitions=[later], catalog=[detached, blocked], cutoff=CUTOFF, archive_configured=True)
+    assert (selection.unit, selection.partition_needing_units) == (None, None)
+    statistics_detached = _unit(3, STATISTICS, "s_detached", None, MONDAY + WEEK, KudosRetentionState.DETACHED)
+    statistics_blocked = _unit(4, STATISTICS, "s_detached", MONDAY + WEEK, MONDAY + 2 * WEEK, KudosRetentionState.BLOCKED)
+    statistics_selection = select_next_unit(
+        dataset=STATISTICS, partitions=[], catalog=[statistics_detached, statistics_blocked], cutoff=CUTOFF, archive_configured=False
+    )
+    assert statistics_selection.unit is None
+    all_detached = _unit(4, STATISTICS, "s_detached", MONDAY + WEEK, MONDAY + 2 * WEEK, KudosRetentionState.DETACHED)
+    detached_selection = select_next_unit(
+        dataset=STATISTICS, partitions=[], catalog=[statistics_detached, all_detached], cutoff=CUTOFF, archive_configured=False
+    )
+    assert detached_selection.unit == statistics_detached
+
+
 def test_selection_skips_a_failed_dump_until_it_is_due_and_lets_later_statistics_proceed() -> None:
     from dataclasses import replace
 
@@ -361,11 +389,13 @@ def test_blocked_reasons_match_the_operator_contract() -> None:
         "unapplied rows",
         "checkpoint chain gap",
         "currency tier would exceed budget",
+        "statistics tier would exceed budget",
         "archive mismatch",
         "online drift since export",
         "boundary already checkpointed",
         "late rows",
         "dump retries exhausted",
+        "archive object missing",
         "reattached by operator",
     ]
     assert ARCHIVE_NOT_CONFIGURED == "archive not configured"
@@ -1009,9 +1039,9 @@ def test_currency_export_verify_and_drop(
     )
     db_session.commit()
 
-    over_budget = run_retention_tick(now=AFTER_WINDOW, policy=_policy(archive_budget_bytes=1), archive=archive)
+    over_budget = run_retention_tick(now=AFTER_WINDOW, policy=_policy(currency_budget_bytes=1), archive=archive)
     assert over_budget.to_state == KudosRetentionState.CHECKPOINTED
-    blocked = run_retention_tick(now=AFTER_WINDOW, policy=_policy(archive_budget_bytes=1), archive=archive)
+    blocked = run_retention_tick(now=AFTER_WINDOW, policy=_policy(currency_budget_bytes=1), archive=archive)
     assert (blocked.outcome, _catalog(db_session)[0].error) == (RetentionTickOutcome.BLOCKED, "currency tier would exceed budget")
 
     from horde.classes.base.kudos import KudosRetentionUnit
@@ -1023,13 +1053,13 @@ def test_currency_export_verify_and_drop(
     )
     db_session.commit()
     budget = archive.tier_bytes(ArchiveTier.CURRENCY) + 10_000_000
-    exported = run_retention_tick(now=AFTER_WINDOW, policy=_policy(archive_budget_bytes=budget), archive=archive)
+    exported = run_retention_tick(now=AFTER_WINDOW, policy=_policy(currency_budget_bytes=budget), archive=archive)
     assert exported.to_state == KudosRetentionState.EXPORTED
     key = _catalog(db_session)[0].object_key
     assert key is not None
     assert archive.get_manifest(key).per_user_totals == {str(user.id): ["5.00", "2.50"]}
 
-    verified = run_retention_tick(now=AFTER_WINDOW, policy=_policy(archive_budget_bytes=budget), archive=archive)
+    verified = run_retention_tick(now=AFTER_WINDOW, policy=_policy(currency_budget_bytes=budget), archive=archive)
     assert verified.to_state == KudosRetentionState.VERIFIED
     from horde.database.kudos_retention import restore_archive_unit
 
@@ -1038,11 +1068,17 @@ def test_currency_export_verify_and_drop(
         assert restore_archive_unit(archive, key, table_name=scratch) == 2
         restored = db_session.execute(text(f"SELECT user_id, escrow, amount FROM {scratch} ORDER BY amount")).all()
         assert [tuple(row) for row in restored] == [(user.id, True, Decimal("2.50")), (user.id, False, Decimal("5.00"))]
+        db_session.commit()
+        # A repeated restore into the same table would hold every row twice, so it needs append.
+        with pytest.raises(ValueError, match="already exists"):
+            restore_archive_unit(archive, key, table_name=scratch)
+        assert restore_archive_unit(archive, key, table_name=scratch, append=True) == 2
+        assert db_session.execute(text(f"SELECT count(*) FROM {scratch}")).scalar_one() == 4
     finally:
         db_session.rollback()
         db_session.execute(text(f"DROP TABLE IF EXISTS {scratch}"))
         db_session.commit()
-    dropped = run_retention_tick(now=AFTER_WINDOW, policy=_policy(archive_budget_bytes=budget), archive=archive)
+    dropped = run_retention_tick(now=AFTER_WINDOW, policy=_policy(currency_budget_bytes=budget), archive=archive)
     assert dropped.to_state == KudosRetentionState.DROPPED
     assert not _attached(db_session, partition)
 
@@ -1285,6 +1321,32 @@ def test_scheduled_tick_records_the_step_and_the_gauges(db_session: scoped_sessi
     ]
     assert recorders["kudos_archive_tier_bytes"].recordings == []
     assert recorders["kudos_archive_budget_bytes"].recordings == []
+
+
+def test_scheduled_tick_records_a_budget_per_configured_tier_and_the_listed_tier_bytes(
+    db_session: scoped_session[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from horde import metrics
+    from horde.database import kudos_retention, threads
+
+    recorders = {name: _MetricRecorder() for name in ("kudos_archive_tier_bytes", "kudos_archive_budget_bytes")}
+    for name, recorder in recorders.items():
+        monkeypatch.setattr(metrics, name, recorder)
+    store = _FakeObjectStore()
+    store.objects["statistics/kudos_stat_events_p_old__20200106T000000_20200113T000000.csv.zst"] = b"x" * 7
+    monkeypatch.setattr(threads, "_kudos_archive_loaded", True)
+    monkeypatch.setattr(threads, "_kudos_archive", _fake_archive(store))
+    monkeypatch.setattr(kudos_retention, "KUDOS_RETENTION_POLICY", _policy(currency_budget_bytes=1000))
+
+    threads.kudos_retention_tick()
+
+    # Only the currency tier has a budget, so the statistics tier has no budget series.
+    assert recorders["kudos_archive_budget_bytes"].recordings == [(1000, {"horde.kudos.archive.tier": "currency"})]
+    assert recorders["kudos_archive_tier_bytes"].recordings == [
+        (0, {"horde.kudos.archive.tier": "currency"}),
+        (7, {"horde.kudos.archive.tier": "statistics"}),
+    ]
 
 
 # Rehearsal time override
@@ -1619,7 +1681,7 @@ def test_unblock_returns_a_checkpointed_currency_unit_to_checkpointed_and_waits_
         source_range=format_source_range(partition_name=partition, lower=MONDAY, upper=MONDAY + WEEK),
     )
     store.objects["currency/kudos_ledger_p_other__20191230T000000_20200106T000000.csv.zst"] = b"x" * budget
-    blocked = _run(archive, archive_budget_bytes=budget)
+    blocked = _run(archive, currency_budget_bytes=budget)
     assert (blocked.outcome, _unit_of(db_session, partition).error) == (RetentionTickOutcome.BLOCKED, "currency tier would exceed budget")
     unit = _unit_of(db_session, partition)
 
@@ -1637,7 +1699,7 @@ def test_unblock_returns_a_checkpointed_currency_unit_to_checkpointed_and_waits_
     # A leftover object at the unit's own key is replaced by the export, so it does not count against the budget.
     del store.objects["currency/kudos_ledger_p_other__20191230T000000_20200106T000000.csv.zst"]
     store.objects[own_key] = b"x" * budget
-    exported = _run(archive, archive_budget_bytes=budget)
+    exported = _run(archive, currency_budget_bytes=budget)
     assert exported.to_state == KudosRetentionState.EXPORTED
     assert len(store.objects[own_key]) < budget
 
@@ -1714,20 +1776,134 @@ def test_restore_into_a_schema_qualified_scratch_table(
         db_session.commit()
 
 
-def test_budget_eviction_clears_the_object_key_of_evicted_units(
+def test_statistics_budget_blocks_the_dump_without_holding_later_statistics(
     db_session: scoped_session[Session],
     make_partition: Callable[..., str],
 ) -> None:
-    make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
+    from horde.database.kudos_retention import unblock_unit
+
+    first = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
+    second = make_partition("kudos_stat_events", MONDAY + WEEK, MONDAY + 2 * WEEK)
+    db_session.add_all([_stat_event(MONDAY + timedelta(hours=1), "2"), _stat_event(MONDAY + WEEK + timedelta(hours=1), "3")])
+    db_session.commit()
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    assert _run(archive, statistics_budget_bytes=1).to_state == KudosRetentionState.ROLLED_UP
+    blocked = _run(archive, statistics_budget_bytes=1)
+    assert (blocked.outcome, blocked.detail.startswith("statistics tier would exceed budget: estimate=")) == (
+        RetentionTickOutcome.BLOCKED,
+        True,
+    )
+    assert (_unit_of(db_session, first).state, _unit_of(db_session, first).error) == (
+        KudosRetentionState.BLOCKED,
+        RetentionBlockReason.STATISTICS_BUDGET_EXCEEDED,
+    )
+    assert not [key for key in store.objects if key.startswith("statistics/")]
+    # The blocked unit does not hold the next statistics unit.
+    assert _run(archive, statistics_budget_bytes=1).to_state == KudosRetentionState.ROLLED_UP
+    assert _unit_of(db_session, second).state == KudosRetentionState.ROLLED_UP
+
+    # With room in the budget, an unblocked unit rolls up again and dumps, and nothing is evicted.
+    assert unblock_unit(_unit_of(db_session, first).id).state == KudosRetentionState.PENDING
+    states = [_run(archive, statistics_budget_bytes=10_000_000, hold_drops=True).to_state for _ in range(3)]
+    assert states == [KudosRetentionState.ROLLED_UP, KudosRetentionState.DUMPED, KudosRetentionState.DUMPED]
+    assert len([key for key in store.objects if key.startswith("statistics/") and key.endswith(".zst")]) == 2
+
+
+def test_statistics_unit_blocked_by_the_budget_can_be_waived(
+    db_session: scoped_session[Session], make_partition: Callable[..., str]
+) -> None:
+    from horde.database.kudos_retention import waive_unit_dump
+
+    partition = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
+    db_session.add(_stat_event(MONDAY + timedelta(hours=1), "2"))
+    db_session.commit()
+    archive = _fake_archive(_FakeObjectStore())
+    states = [_run(archive, statistics_budget_bytes=1).to_state for _ in range(2)]
+    assert states == [KudosRetentionState.ROLLED_UP, KudosRetentionState.BLOCKED]
+    waived = waive_unit_dump(_unit_of(db_session, partition).id)
+    assert (waived.state, waived.error) == (KudosRetentionState.DUMP_WAIVED, RetentionBlockReason.STATISTICS_BUDGET_EXCEEDED)
+    assert _run(archive, statistics_budget_bytes=1).to_state == KudosRetentionState.DROPPED
+
+
+def _verified_currency_week(
+    db_session: scoped_session[Session], make_partition: Callable[..., str], make_user: MakeUser
+) -> tuple[str, Any, Any]:
+    """Create a currency week with one posting and step it to ``VERIFIED`` with drops held. Returns the partition, store
+    and archive."""
+    partition = make_partition("kudos_ledger", MONDAY, MONDAY + WEEK)
+    user = make_user()
+    _seed_checkpoint(db_session, MONDAY, {user.id: ("0", "0")})
+    db_session.add(_posting(MONDAY + timedelta(hours=1), user.id, "5"))
+    db_session.commit()
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    states = [_run(archive, hold_drops=True).to_state for _ in range(3)]
+    assert states == [KudosRetentionState.CHECKPOINTED, KudosRetentionState.EXPORTED, KudosRetentionState.VERIFIED]
+    return partition, store, archive
+
+
+def test_verified_currency_unit_whose_object_vanishes_blocks_and_is_exported_again(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+    make_user: MakeUser,
+) -> None:
+    from horde.database.kudos_retention import unblock_unit
+    from horde.kudos_archive import manifest_key
+
+    partition, store, archive = _verified_currency_week(db_session, make_partition, make_user)
+    key = _unit_of(db_session, partition).object_key
+    del store.objects[key]
+    del store.objects[manifest_key(key)]
+    _run(archive, hold_drops=True)
+    unit = _unit_of(db_session, partition)
+    assert (unit.state, unit.error, unit.object_key) == (KudosRetentionState.BLOCKED, RetentionBlockReason.ARCHIVE_OBJECT_MISSING, None)
+    assert _attached(db_session, partition)
+
+    assert unblock_unit(unit.id).state == KudosRetentionState.CHECKPOINTED
+    states = [_run(archive).to_state for _ in range(3)]
+    assert states == [KudosRetentionState.EXPORTED, KudosRetentionState.VERIFIED, KudosRetentionState.DROPPED]
+    assert key in store.objects
+    assert not _relation_present(db_session, partition)
+
+
+def test_drop_blocks_a_currency_unit_without_an_object_key(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+    make_user: MakeUser,
+) -> None:
+    from horde.classes.base.kudos import KudosRetentionUnit
+
+    partition, _, archive = _verified_currency_week(db_session, make_partition, make_user)
+    db_session.execute(update(KudosRetentionUnit).where(KudosRetentionUnit.partition_name == partition).values(object_key=None))
+    db_session.commit()
+    blocked = _run(archive)
+    assert (blocked.outcome, blocked.detail) == (RetentionTickOutcome.BLOCKED, "archive object missing: no object key is recorded")
+    assert _attached(db_session, partition)
+
+
+def test_tick_clears_object_keys_whose_objects_are_gone_and_reports_tier_bytes(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+) -> None:
+    partition = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
     db_session.add(_stat_event(MONDAY + timedelta(hours=1), "2"))
     db_session.commit()
     store = _FakeObjectStore()
     archive = _fake_archive(store)
-    # A one-byte budget evicts every statistics object, including the one just written.
-    assert [_run(archive, archive_budget_bytes=1).to_state for _ in range(2)] == [KudosRetentionState.ROLLED_UP, KudosRetentionState.DUMPED]
-    unit = _catalog(db_session)[0]
+    assert _run(archive).to_state == KudosRetentionState.ROLLED_UP
+    dumped = _run(archive, hold_drops=True)
+    assert dumped.to_state == KudosRetentionState.DUMPED
+    key = _unit_of(db_session, partition).object_key
+    assert key is not None
+    assert dumped.archive_tier_bytes == {ArchiveTier.CURRENCY: 0, ArchiveTier.STATISTICS: len(store.objects[key])}
+
+    # An eviction outside the tick removes the object, and the next tick clears the key that points at nothing.
+    del store.objects[key]
+    idle = _run(archive, hold_drops=True)
+    assert idle.archive_tier_bytes == {ArchiveTier.CURRENCY: 0, ArchiveTier.STATISTICS: 0}
+    unit = _unit_of(db_session, partition)
     assert (unit.state, unit.object_key) == (KudosRetentionState.DUMPED, None)
-    assert not [key for key in store.objects if key.startswith("statistics/")]
 
 
 def test_tick_aborts_multipart_uploads_older_than_a_day(db_session: scoped_session[Session]) -> None:
@@ -1770,9 +1946,26 @@ def test_recheckpoint_cascade_recovers_a_late_row_through_the_later_units(
     make_partition: Callable[..., str],
     make_user: MakeUser,
 ) -> None:
+    from sqlalchemy import func
+
     from horde.classes.base.kudos import KudosLedgerCheckpoint, KudosLedgerDailyStatement
-    from horde.database.kudos_reconciliation import _applied_totals_subquery
+    from horde.database.kudos_reconciliation import (
+        StaleCheckpointsError,
+        _applied_totals_subquery,
+        create_balance_snapshot,
+        reconcile_balances,
+        stale_checkpoint_units,
+    )
     from horde.database.kudos_retention import recheckpoint_from_unit
+
+    def applied_balance_total() -> Decimal:
+        totals_subquery = _applied_totals_subquery()
+        totals = {
+            int(row.user_id): Decimal(row.balance_total)
+            for row in db_session.execute(select(totals_subquery.c.user_id, totals_subquery.c.balance_total)).all()
+        }
+        db_session.commit()
+        return totals[user.id]
 
     unit_n = make_partition("kudos_ledger", MONDAY, MONDAY + WEEK)
     unit_next = make_partition("kudos_ledger", MONDAY + WEEK, MONDAY + 2 * WEEK)
@@ -1792,11 +1985,30 @@ def test_recheckpoint_cascade_recovers_a_late_row_through_the_later_units(
     assert (blocked.outcome, _unit_of(db_session, unit_n).error) == (RetentionTickOutcome.BLOCKED, "late rows")
     assert _unit_of(db_session, unit_next).state == KudosRetentionState.CHECKPOINTED
 
+    # Checkpoints N and N+1 omit the late row, so a repair would compensate for drift that does not exist.
+    assert applied_balance_total() == Decimal(10 + 5 + 2)
+    assert [stale_unit.partition_name for stale_unit in stale_checkpoint_units()] == [unit_n]
+    db_session.commit()
+    snapshot_id = create_balance_snapshot()
+    with pytest.raises(StaleCheckpointsError, match="retention unblock --recheckpoint"):
+        reconcile_balances(snapshot_id, apply_repairs=True)
+    reconcile_balances(snapshot_id)
+
     reset = recheckpoint_from_unit(_unit_of(db_session, unit_n).id)
     assert [(unit.partition_name, unit.state, unit.row_count) for unit in reset] == [
         (unit_n, KudosRetentionState.PENDING, None),
         (unit_next, KudosRetentionState.PENDING, None),
     ]
+    # The reset deleted the stale checkpoints and statements, so the tail after the seeded boundary holds the late row.
+    assert db_session.execute(select(func.max(KudosLedgerCheckpoint.boundary))).scalar_one() == MONDAY
+    n_range = format_source_range(partition_name=unit_n, lower=MONDAY, upper=MONDAY + WEEK)
+    daily_rows = db_session.scalars(select(KudosLedgerDailyStatement).where(KudosLedgerDailyStatement.source_range == n_range)).all()
+    assert daily_rows == []
+    db_session.commit()
+    assert applied_balance_total() == Decimal(10 + 5 + 4 + 2)
+    assert stale_checkpoint_units() == []
+    db_session.commit()
+    assert reconcile_balances(create_balance_snapshot(), apply_repairs=True) == []
 
     _run_until(AFTER_WINDOW, archive, lambda result: result.outcome == RetentionTickOutcome.IDLE)
     assert [(unit.partition_name, unit.state, unit.row_count) for unit in _catalog(db_session)] == [
@@ -1808,20 +2020,13 @@ def test_recheckpoint_cascade_recovers_a_late_row_through_the_later_units(
         for row in db_session.scalars(select(KudosLedgerCheckpoint).where(KudosLedgerCheckpoint.user_id == user.id)).all()
     }
     assert balances == {MONDAY: Decimal(10), MONDAY + WEEK: Decimal(19), MONDAY + 2 * WEEK: Decimal(21)}
-    n_range = format_source_range(partition_name=unit_n, lower=MONDAY, upper=MONDAY + WEEK)
     statement_sum = sum(
         row.amount_sum
         for row in db_session.scalars(select(KudosLedgerDailyStatement).where(KudosLedgerDailyStatement.source_range == n_range)).all()
     )
     assert statement_sum == Decimal(9)
     # Zero drift: the reconciliation baseline equals the seeded total plus every posting, the late one included.
-    totals_subquery = _applied_totals_subquery()
-    totals = {
-        int(row.user_id): Decimal(row.balance_total)
-        for row in db_session.execute(select(totals_subquery.c.user_id, totals_subquery.c.balance_total)).all()
-    }
-    db_session.commit()
-    assert totals[user.id] == Decimal(10 + 5 + 4 + 2)
+    assert applied_balance_total() == Decimal(10 + 5 + 4 + 2)
 
 
 def test_recheckpoint_refuses_when_a_later_currency_unit_is_dropped(db_session: scoped_session[Session]) -> None:
@@ -2091,4 +2296,276 @@ def test_recheckpoint_resets_a_reattached_currency_unit(db_session: scoped_sessi
     reset = recheckpoint_from_unit(_catalog(db_session)[0].id)
     assert [(reset_unit.state, reset_unit.error, reset_unit.state_before_detach) for reset_unit in reset] == [
         (KudosRetentionState.PENDING, None, None),
+    ]
+
+
+# Late rows found after the detach
+
+
+def _ledger_rows_through_parent(db_session: scoped_session[Session], lower: datetime, upper: datetime) -> int:
+    statement = text("SELECT count(*) FROM kudos_ledger WHERE created >= :lower AND created < :upper")
+    return int(db_session.execute(statement, {"lower": lower, "upper": upper}).scalar_one())
+
+
+@pytest.mark.parametrize("drop_grace", [timedelta(0), GRACE], ids=["without_grace", "with_grace"])
+def test_late_row_after_the_detach_leaves_the_partition_reattachable(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+    make_user: MakeUser,
+    monkeypatch: pytest.MonkeyPatch,
+    drop_grace: timedelta,
+) -> None:
+    from sqlalchemy.orm import Session as OrmSession
+
+    from horde.classes.base.kudos import KudosLedgerCheckpoint
+    from horde.database import kudos_retention
+    from horde.database.kudos_retention import reattach_partition, recheckpoint_from_unit
+    from horde.flask import db
+
+    partition = make_partition("kudos_ledger", MONDAY, MONDAY + WEEK)
+    user = make_user()
+    user_id = user.id
+    _seed_checkpoint(db_session, MONDAY, {user_id: ("10", "0")})
+    db_session.add(_posting(MONDAY + timedelta(hours=1), user_id, "5"))
+    db_session.commit()
+    archive = _fake_archive(_FakeObjectStore())
+    states = [_run(archive, drop_grace=drop_grace).to_state for _ in range(3)]
+    assert states == [KudosRetentionState.CHECKPOINTED, KudosRetentionState.EXPORTED, KudosRetentionState.VERIFIED]
+
+    def lock_holder_writing_a_late_row(context: Any, connection: Any) -> None:
+        # Committed after the recount before the detach, so only the recount after the detach finds it.
+        with OrmSession(db.engine) as writer:
+            writer.add(_posting(MONDAY + timedelta(hours=2), user_id, "4"))
+            writer.commit()
+
+    monkeypatch.setattr(kudos_retention, "_long_lock_holder", lock_holder_writing_a_late_row)
+    blocked = _run(archive, drop_grace=drop_grace)
+    monkeypatch.undo()
+    assert blocked.outcome == RetentionTickOutcome.BLOCKED
+    assert blocked.detail.endswith("reattach it with retention reattach before unblocking")
+    unit = _unit_of(db_session, partition)
+    assert (unit.state, unit.error, unit.detached_at, unit.state_before_detach) == (
+        KudosRetentionState.BLOCKED,
+        RetentionBlockReason.LATE_ROWS,
+        AFTER_WINDOW,
+        KudosRetentionState.VERIFIED,
+    )
+    assert not _attached(db_session, partition)
+    assert _relation_present(db_session, partition)
+    # The blocked unit stops the currency dataset, so the detached table is not dropped on a later pass either.
+    assert _run(archive, drop_grace=drop_grace).outcome == RetentionTickOutcome.IDLE
+    assert _relation_present(db_session, partition)
+
+    reattached = reattach_partition(unit.id)
+    assert [
+        (reattached_unit.state, reattached_unit.error, reattached_unit.detached_at, reattached_unit.state_before_detach)
+        for reattached_unit in reattached
+    ] == [(KudosRetentionState.BLOCKED, RetentionBlockReason.LATE_ROWS, None, None)]
+    assert _attached(db_session, partition)
+    assert _ledger_rows_through_parent(db_session, MONDAY, MONDAY + WEEK) == 2
+    db_session.commit()
+
+    assert [reset_unit.state for reset_unit in recheckpoint_from_unit(unit.id)] == [KudosRetentionState.PENDING]
+    _run_until(AFTER_WINDOW, archive, lambda result: result.outcome == RetentionTickOutcome.IDLE, drop_grace=drop_grace)
+    if drop_grace:
+        assert _unit_of(db_session, partition).state == KudosRetentionState.DETACHED
+        assert _run(archive, AFTER_WINDOW + drop_grace, drop_grace=drop_grace).to_state == KudosRetentionState.DROPPED
+    final = _unit_of(db_session, partition)
+    assert (final.state, final.row_count) == (KudosRetentionState.DROPPED, 2)
+    assert not _relation_present(db_session, partition)
+    checkpoint = db_session.scalars(
+        select(KudosLedgerCheckpoint).where(KudosLedgerCheckpoint.boundary == MONDAY + WEEK, KudosLedgerCheckpoint.user_id == user_id),
+    ).one()
+    assert checkpoint.balance_total == Decimal(10 + 5 + 4)
+
+
+def test_late_row_in_a_detached_partition_blocks_its_only_unit_and_reattach_restores_it(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+) -> None:
+    from horde.database.kudos_retention import reattach_partition, unblock_unit
+
+    partition = _waive_one_statistics_week(db_session, make_partition, drop_grace=GRACE)
+    assert _tick(AFTER_WINDOW, drop_grace=GRACE).to_state == KudosRetentionState.DETACHED
+    # A copy of the row with a new id and event, written to the standalone table while it waits out the grace.
+    db_session.execute(
+        text(
+            f"INSERT INTO {partition} SELECT (jsonb_populate_record(source, "
+            "jsonb_build_object('id', source.id + 1000000, 'event_id', gen_random_uuid()))).* "
+            f"FROM {partition} AS source",
+        ),
+    )
+    db_session.commit()
+    blocked = _tick(AFTER_WINDOW + GRACE, drop_grace=GRACE)
+    assert blocked.outcome == RetentionTickOutcome.BLOCKED
+    assert blocked.detail.endswith("reattach it with retention reattach before unblocking")
+    unit = _catalog(db_session)[0]
+    assert (unit.state, unit.error, unit.detached_at) == (KudosRetentionState.BLOCKED, RetentionBlockReason.LATE_ROWS, AFTER_WINDOW)
+    assert _relation_present(db_session, partition)
+    with pytest.raises(ValueError, match="Reattach it first"):
+        unblock_unit(unit.id)
+
+    reattached = reattach_partition(unit.id)
+    assert [(reattached_unit.state, reattached_unit.error, reattached_unit.detached_at) for reattached_unit in reattached] == [
+        (KudosRetentionState.BLOCKED, RetentionBlockReason.LATE_ROWS, None),
+    ]
+    assert _attached(db_session, partition)
+    assert _rows_through_parent(db_session, MONDAY, MONDAY + WEEK) == 2
+    db_session.commit()
+    restored = unblock_unit(unit.id)
+    assert (restored.state, restored.error, restored.state_before_detach) == (KudosRetentionState.PENDING, None, None)
+    assert _tick(AFTER_WINDOW + GRACE, drop_grace=GRACE).to_state == KudosRetentionState.ROLLED_UP
+    assert _catalog(db_session)[0].row_count == 2
+
+
+def _pooled_lock_timeouts() -> set[str]:
+    """Return the ``lock_timeout`` of every connection the pool holds, checking them all out at once."""
+    from horde.flask import db
+
+    connections = [db.engine.connect() for _ in range(max(db.engine.pool.checkedin(), 1))]  # type: ignore[attr-defined]
+    try:
+        return {str(connection.execute(text("SHOW lock_timeout")).scalar_one()) for connection in connections}
+    finally:
+        for connection in connections:
+            connection.close()
+
+
+def test_drop_connection_lock_timeout_does_not_reach_the_pool(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from horde.database import kudos_retention
+
+    partition = _waive_one_statistics_week(db_session, make_partition)
+
+    monkeypatch.setattr(kudos_retention, "_long_lock_holder", lambda context, connection: "pid 0 holds a lock")
+    assert _tick(AFTER_WINDOW).outcome == RetentionTickOutcome.DEFERRED
+    assert DROP_LOCK_TIMEOUT not in _pooled_lock_timeouts()
+
+    def lose_the_lock_connection(context: Any, connection: Any) -> None:
+        context.lock_connection.invalidate()
+
+    monkeypatch.setattr(kudos_retention, "_long_lock_holder", lose_the_lock_connection)
+    failed = _tick(AFTER_WINDOW)
+    assert (failed.outcome, failed.detail.startswith("retention lock connection lost")) == (RetentionTickOutcome.FAILED, True)
+    assert DROP_LOCK_TIMEOUT not in _pooled_lock_timeouts()
+
+    monkeypatch.undo()
+    assert _tick(AFTER_WINDOW).to_state == KudosRetentionState.DROPPED
+    assert not _relation_present(db_session, partition)
+    assert DROP_LOCK_TIMEOUT not in _pooled_lock_timeouts()
+
+
+# Operator eviction and the archive audit
+
+
+def _store_statistics_object(archive: Any, store: _FakeObjectStore, source_range: str, payload: bytes) -> str:
+    key = archive.object_key(tier=ArchiveTier.STATISTICS, source_range=source_range)
+    store.objects[key] = payload
+    return key
+
+
+def test_eviction_deletes_batch_by_batch_and_reports_the_keys_deleted_before_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from botocore.exceptions import ClientError
+
+    from horde import kudos_archive
+    from horde.kudos_archive import ArchiveEvictionError, manifest_key
+
+    # One object and its manifest per delete request.
+    monkeypatch.setattr(kudos_archive, "ARCHIVE_DELETE_BATCH_SIZE", 2)
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    keys = [
+        _store_statistics_object(archive, store, f"kudos_stat_events_p_2020010{day}/2020010{day}T000000_2020010{day + 1}T000000", b"x" * 10)
+        for day in (1, 2, 3)
+    ]
+    for key in keys:
+        store.objects[manifest_key(key)] = b"{}"
+    delete_calls = 0
+    original_delete = store.delete_objects
+
+    def delete_failing_on_the_second_request(**kwargs: Any) -> dict[str, Any]:
+        nonlocal delete_calls
+        delete_calls += 1
+        if delete_calls == 2:
+            raise ClientError({"Error": {"Code": "InternalError", "Message": "simulated"}}, "DeleteObjects")
+        return original_delete(**kwargs)
+
+    monkeypatch.setattr(store, "delete_objects", delete_failing_on_the_second_request)
+    with pytest.raises(ArchiveEvictionError) as raised:
+        archive.enforce_budget(budget_bytes=0)
+    assert raised.value.deleted_keys == [keys[0]]
+    assert keys[0] not in store.objects
+    assert keys[1] in store.objects
+
+    # A delete the store reports as failed keeps that object out of the deleted keys.
+    def delete_reporting_an_error(**kwargs: Any) -> dict[str, Any]:
+        original_delete(**kwargs)
+        return {"Errors": [{"Key": keys[1], "Code": "AccessDenied"}]}
+
+    monkeypatch.setattr(store, "delete_objects", delete_reporting_an_error)
+    with pytest.raises(ArchiveEvictionError) as reported:
+        archive.enforce_budget(budget_bytes=0)
+    assert reported.value.deleted_keys == []
+
+    monkeypatch.setattr(store, "delete_objects", original_delete)
+    store.objects[keys[1]] = b"x" * 10
+    # The budget covers the statistics tier alone: the newest object fits and stays.
+    assert archive.enforce_budget(budget_bytes=10) == [keys[1]]
+    assert keys[2] in store.objects
+
+
+def test_archive_audit_reports_matching_corrupted_and_unmanifested_objects_and_missing_catalog_objects(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+) -> None:
+    from horde.database.kudos_retention import MissingArchiveObject, audit_archive
+    from horde.kudos_archive import manifest_key
+
+    partition = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
+    lost_partition = make_partition("kudos_stat_events", MONDAY + WEEK, MONDAY + 2 * WEEK)
+    db_session.add_all([_stat_event(MONDAY + timedelta(hours=1), "2"), _stat_event(MONDAY + WEEK + timedelta(hours=1), "3")])
+    db_session.commit()
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    states = [_run(archive, hold_drops=True).to_state for _ in range(4)]
+    assert states == [KudosRetentionState.ROLLED_UP, KudosRetentionState.DUMPED] * 2
+    good_key = _unit_of(db_session, partition).object_key
+    lost_key = _unit_of(db_session, lost_partition).object_key
+    stored = store.objects[good_key]
+    corrupted_key = _store_statistics_object(
+        archive, store, "kudos_stat_events_p_corrupt/20200106T000000_20200113T000000", stored[:-1] + bytes([stored[-1] ^ 0xFF])
+    )
+    store.objects[manifest_key(corrupted_key)] = store.objects[manifest_key(good_key)]
+    unmanifested_key = _store_statistics_object(archive, store, "kudos_stat_events_p_nomanifest/20200106T000000_20200113T000000", stored)
+    del store.objects[lost_key]
+    del store.objects[manifest_key(lost_key)]
+    # An exported currency unit without a key lost its object, because currency objects are never evicted.
+    _seed_catalog_unit(db_session, CURRENCY, "kudos_ledger_p_20200106", MONDAY, MONDAY + WEEK, KudosRetentionState.DROPPED)
+
+    records = list(audit_archive(archive))
+    audits = {record.key: record for record in records if not isinstance(record, MissingArchiveObject)}
+    assert list(audits) == [good_key, corrupted_key, unmanifested_key]
+    assert audits[good_key].matches_manifest
+    assert audits[good_key].row_count == 1
+    assert not audits[corrupted_key].matches_manifest
+    assert audits[unmanifested_key].problems[0].startswith("manifest unreadable")
+    missing = [record for record in records if isinstance(record, MissingArchiveObject)]
+    assert [(record.source_range.split("/")[0], record.object_key) for record in missing] == [
+        (lost_partition, lost_key),
+        ("kudos_ledger_p_20200106", None),
+    ]
+    # The audit changes nothing, so the lost key is still recorded.
+    assert _unit_of(db_session, lost_partition).object_key == lost_key
+
+    resumed = [
+        record.key
+        for record in audit_archive(archive, tiers=[ArchiveTier.STATISTICS], since_key=good_key)
+        if not isinstance(record, MissingArchiveObject)
+    ]
+    assert resumed == [corrupted_key, unmanifested_key]
+    currency_only = list(audit_archive(archive, tiers=[ArchiveTier.CURRENCY]))
+    assert [(record.dataset, record.object_key) for record in currency_only if isinstance(record, MissingArchiveObject)] == [
+        (CURRENCY, None)
     ]

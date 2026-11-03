@@ -255,7 +255,7 @@ def test_legacy_partitions_retire_with_reconciliation_idempotency_and_projection
             currency_window=timedelta(days=30),
             statistics_window=timedelta(days=30),
             partition_width=timedelta(days=7),
-            archive_budget_bytes=1024 * 1024 * 1024,
+            currency_budget_bytes=1024 * 1024 * 1024,
         )
         tick_now = legacy_upper + timedelta(days=30, hours=1)
         outcomes: list[Any] = []
@@ -361,7 +361,10 @@ def test_legacy_partitions_retire_with_reconciliation_idempotency_and_projection
 
         scratch = f"kudos_restore_{uuid.uuid4().hex[:8]}"
         try:
-            restored = sum(restore_archive_unit(archive, key, table_name=scratch) for key in currency_keys)
+            # Every legacy sub-range goes into one table, so each restore after the first appends.
+            restored = sum(
+                restore_archive_unit(archive, key, table_name=scratch, append=index > 0) for index, key in enumerate(currency_keys)
+            )
             assert restored == legacy_currency_rows
         finally:
             db.session.rollback()

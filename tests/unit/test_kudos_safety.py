@@ -509,6 +509,47 @@ def test_reconciliation_detects_and_repairs_escrow_only_drift(db_session, make_u
     assert reconcile_balances(snapshot_id) == []
 
 
+def test_reconciliation_refuses_repairs_while_a_currency_checkpoint_is_stale(db_session, make_user):
+    """A currency unit blocked for online drift holds rows its checkpoints omit, so repairs wait for the recheckpoint."""
+    from horde.classes.base.kudos import KudosRetentionUnit
+    from horde.database.kudos_reconciliation import StaleCheckpointsError, stale_checkpoint_units
+    from horde.database.kudos_retention import RetentionBlockReason
+    from horde.enums import KudosRetentionDataset, KudosRetentionState
+
+    user = make_user(kudos=100)
+    now = datetime.utcnow()
+    stale_unit = KudosRetentionUnit(
+        dataset=KudosRetentionDataset.CURRENCY,
+        partition_name="kudos_ledger_p_20200106",
+        unit_lower=datetime(2020, 1, 6),
+        unit_upper=datetime(2020, 1, 13),
+        state=KudosRetentionState.BLOCKED,
+        error=str(RetentionBlockReason.ONLINE_DRIFT),
+        row_count=1,
+        created=now,
+        updated=now,
+    )
+    db_session.add(stale_unit)
+    db_session.commit()
+    snapshot_id = create_balance_snapshot()
+    user.kudos = 999
+    db_session.commit()
+
+    assert [unit.unit_id for unit in stale_checkpoint_units()] == [stale_unit.id]
+    db_session.commit()
+    with pytest.raises(StaleCheckpointsError, match=f"retention unblock --recheckpoint {stale_unit.id}"):
+        reconcile_balances(snapshot_id, apply_repairs=True)
+    assert db_session.query(KudosLedger).filter(KudosLedger.entry_type == KudosEntryType.RECONCILIATION).count() == 0
+    # A read-only run still reports the drift.
+    assert len(reconcile_balances(snapshot_id)) == 1
+
+    stale_unit.state = KudosRetentionState.PENDING
+    stale_unit.error = None
+    db_session.commit()
+    reconcile_balances(snapshot_id, apply_repairs=True)
+    assert db_session.query(KudosLedger).filter(KudosLedger.entry_type == KudosEntryType.RECONCILIATION).count() == 1
+
+
 def test_released_hold_exposes_its_unapplied_debit_to_admission(db_session, make_user, fake_redis):
     """A tagged debit counts against admission once its hold has been released.
 

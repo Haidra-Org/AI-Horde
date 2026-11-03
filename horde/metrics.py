@@ -1048,7 +1048,7 @@ kudos_archive_tier_bytes = logfire.metric_gauge(
 kudos_archive_budget_bytes = logfire.metric_gauge(
     "horde.kudos.archive.budget_bytes",
     unit="By",
-    description="The configured kudos archive byte budget for both tiers together",
+    description="The configured kudos archive byte budget, by horde.kudos.archive.tier, for each tier that has one",
 )
 kudos_reservations_rejected = logfire.metric_counter(
     "horde.kudos.reservations.rejected",

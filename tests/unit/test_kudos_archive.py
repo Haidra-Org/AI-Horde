@@ -528,13 +528,13 @@ def test_tier_bytes_excludes_manifests_and_budget_evicts_oldest_statistics_only(
     assert archive.tier_bytes(ArchiveTier.CURRENCY) == sizes[currency_key]
     assert archive.tier_bytes(ArchiveTier.STATISTICS) == sizes[newer] + sizes[oldest] + sizes[middle]
 
-    budget = sizes[currency_key] + sizes[newer]
-    assert archive.enforce_budget(budget_bytes=budget) == [oldest, middle]
+    # The budget covers the statistics tier alone, so the currency object does not count toward it.
+    assert archive.enforce_budget(budget_bytes=sizes[newer]) == [oldest, middle]
     assert archive.tier_bytes(ArchiveTier.STATISTICS) == sizes[newer]
     with pytest.raises(KudosArchiveError):
         archive.get_manifest(oldest)
 
-    # The currency object alone exceeds this budget and stays.
+    # Currency objects are never evicted, whatever the budget.
     assert archive.enforce_budget(budget_bytes=1) == [newer]
     assert archive.tier_bytes(ArchiveTier.CURRENCY) == sizes[currency_key]
     assert archive.verify_unit(currency_key, archive.get_manifest(currency_key)).matches_manifest

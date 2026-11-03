@@ -203,7 +203,7 @@ This is the current inventory of paths that create user currency or kudos-derive
 | Style-owner reward | `STYLE_REWARD` user credit and user style record, for the part of the surcharge the activation debit collected | `User.record_style`, called by `_credit_style_authors` in ledger mode and `project_style_reward` in shadow mode |
 | Administrator adjustment | `ADMIN_ADJUSTMENT` signed user delta | User administration API through `User.modify_kudos` |
 | Minimum-balance forgiveness | Already-applied `FLOOR_ADJUSTMENT` user credit | User projection helper in shadow mode; `_apply_user_deltas` in ledger mode |
-| Reconciliation repair | Deterministic `RECONCILIATION` user spendable/escrow delta and its idempotency key. Refused with `ValueError` when the snapshot is older than the key lifetime | `reconcile_balances(..., apply_repairs=True)` |
+| Reconciliation repair | Deterministic `RECONCILIATION` user spendable/escrow delta and its idempotency key. Refused with `ValueError` when the snapshot is older than the key lifetime, and with `StaleCheckpointsError` while a currency retention unit is blocked with `late rows` or `online drift since export` | `reconcile_balances(..., apply_repairs=True)` |
 
 `User.modify_kudos` also emits the matching per-action user-kudos statistics event. `WorkerTemplate.modify_kudos`
 emits worker display/stat events, not currency. Producer wrappers should retain that distinction.
@@ -385,6 +385,25 @@ UTC.
 It runs in `init_db` at startup with the default width, and on every retention tick with `KUDOS_PARTITION_WIDTH_DAYS`.
 New partitions continue from the highest existing upper bound, so with the default width every bound is a UTC Monday
 00:00. A new partition inherits every partitioned index and, on `kudos_ledger`, the `users` foreign key.
+
+Each new partition is created as a standalone table with
+`LIKE <table> INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES`, the storage parameters of
+`KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS` and a validated `<partition>_bounds` CHECK on its range. It is then
+attached with `ALTER TABLE ... ATTACH PARTITION`, and the CHECK is dropped. The attach skips its validation scan
+because of the CHECK, and attaches each copied index to the matching partitioned index.
+
+| Lock | Mode | Waits behind |
+| --- | --- | --- |
+| Parent, from the second bounds listing to the end of the transaction | `SHARE UPDATE EXCLUSIVE` | Another partition creation, `VACUUM`, `ANALYZE`, a concurrent detach |
+| `users`, during a `kudos_ledger` attach | `SHARE ROW EXCLUSIVE` | Any open transaction that wrote to `users` |
+
+Reads and inserts through the parent do not wait for these locks. Writes to `users` queue behind the `users` request
+while it waits. Every wait ends after `KudosPartitioning.CREATE_LOCK_TIMEOUT` (3 seconds). On a timeout, the partition
+is not created, its standalone table is rolled back, and the call logs the warning
+`Deferred partition <partition> of <table> to the next call`, or `Deferred the partitions of <table> to the next call`
+when the parent lock timed out, and returns without raising. The partitions it created
+before the timeout are kept, and the next retention tick retries the rest. A range whose partition name already
+belongs to a table outside the partitioning, such as a detached partition, is skipped with a warning.
 `kudos_stat_events_p_legacy` also has `ix_kudos_stat_events_legacy_created`. That index belongs to the legacy partition
 alone and is not attached to the parent. The retention job reads the legacy partition by `created` sub-range through
 it.
@@ -403,7 +422,7 @@ for `MINVALUE`), `unit_upper`, `state`, `object_key`, `error` and these bookkeep
 | `first_failed_at` | When the current run of failed statistics dumps began. NULL after a successful dump |
 | `consecutive_dump_failures` | Failed statistics dump attempts since the last success |
 | `last_dump_attempt_at` | When the statistics dump was last attempted, by the tick's reference time. Spaces the retries |
-| `detached_at` | The tick's reference time when the partition was detached and kept for `KUDOS_RETENTION_DROP_GRACE_DAYS`. The drop is due once the grace has passed since it. NULL while the partition is attached, and when it was dropped without a grace period |
+| `detached_at` | The tick's reference time when the partition was detached, set on every unit before the recount that follows the detach. With `KUDOS_RETENTION_DROP_GRACE_DAYS` above 0 the drop is due once the grace has passed since it. A unit that recount blocks keeps it, so `retention reattach` finds the partition. NULL while the partition is attached. A `dropped` unit keeps the value it had |
 | `state_before_detach` | The unit's state before that detach. It stays set while the unit is blocked with `reattached by operator`, and `retention unblock` restores it. NULL otherwise |
 
 A currency unit in `checkpointed`, `exported`, `verified`, `detached` or `dropped` records the checkpoint boundary at
@@ -425,7 +444,7 @@ The states are `KudosRetentionState` values. Each arrow is one transition, and a
 
 | Dataset | Path |
 | --- | --- |
-| `statistics` | `pending` -> `rolled_up` -> `dumped` -> `dropped`, or `rolled_up` -> `dump_failed` (retried) -> `dumped`, or `dump_failed` -> `dump_waived` (operator) -> `dropped`, or without an archive `rolled_up` -> `dump_waived` -> `dropped` |
+| `statistics` | `pending` -> `rolled_up` -> `dumped` -> `dropped`, or `rolled_up` -> `dump_failed` (retried) -> `dumped`, or `dump_failed` -> `dump_waived` (operator) -> `dropped`, or without an archive `rolled_up` -> `dump_waived` -> `dropped`. A dump over the statistics budget makes the unit `blocked` |
 | `currency` | `pending` -> `checkpointed` -> `exported` -> `verified` -> `dropped` |
 
 With `KUDOS_RETENTION_DROP_GRACE_DAYS` above 0, the last arrow of both paths is two transitions: the drop-ready state
@@ -442,22 +461,26 @@ and `retention unblock` then returns it to its drop-ready state.
 | `checkpointed` | `currency` | Per-user checkpoints at `unit_upper` and the unit's daily statements are committed in one repeatable-read transaction |
 | `exported` | `currency` | The unit's rows and manifest are in the currency tier of the archive |
 | `verified` | `currency` | The object was read back and matched its manifest, the online rows and the row count recorded at the checkpoint |
-| `detached` | Both | The partition is detached concurrently and kept as a standalone table for the drop grace period. The unit is drop-ready, and `state_before_detach` holds its previous state. Its rows are no longer read through the parent table |
+| `detached` | Both | The partition is detached concurrently and kept as a standalone table, for the drop grace period or until the drop that follows on the same tick. The unit is drop-ready while every unit of the partition that is not `dropped` is `detached`, and `state_before_detach` holds its previous state. Its rows are no longer read through the parent table |
 | `dropped` | Both | The partition is detached concurrently and dropped |
-| `blocked` | Both | The unit is stopped until an operator resets it. The reason is in `error` |
+| `blocked` | Both | The unit is stopped until an operator resets it. The reason is in `error`. A unit blocked while its partition is detached has `detached_at` set, and `retention unblock` refuses it until `retention reattach` attaches the partition |
 
 Any state except `dropped` can become `blocked`. `retention unblock` returns a unit blocked with `reattached by operator` to `state_before_detach`.
 Otherwise it returns a blocked currency unit whose checkpoint
 is committed (`row_count` is set) to `checkpointed`, so export and verification run again against that checkpoint.
 Every other blocked unit returns to `pending`, and its steps run again from the start. Each step replaces what an
 earlier attempt wrote. `retention unblock --waive-dump` moves a `dump_failed` statistics unit, or one blocked for
-`dump retries exhausted`, to `dump_waived`.
+`dump retries exhausted` or `statistics tier would exceed budget`, to `dump_waived`.
 
 `retention unblock --recheckpoint` returns a blocked currency unit and every later currency unit to `pending`, and
-clears their `error`, `row_count`, `max_id` and `object_key`. The next ticks recompute each checkpoint, daily
+clears their `error`, `row_count`, `max_id` and `object_key`. In the same transaction it deletes the
+`kudos_ledger_checkpoints` rows at the boundary and the `kudos_ledger_daily` rows of the `source_range` of each reset
+unit with a recorded `row_count`. The latest checkpoint is then the last valid one, and reconciliation reads every
+later posting from `kudos_ledger`. The next ticks recompute each checkpoint, daily
 statement and recorded row count in upper-bound order, and each export replaces the object at its key. A blocked
 currency unit stops the currency dataset, so every later unit is still online. The command refuses when a later
-currency unit is `dropped`, because its rows can no longer be recounted. Use it when a unit blocks with `late rows`
+currency unit is `dropped`, because its rows can no longer be recounted, and when the unit's own partition is
+detached. Use it when a unit blocks with `late rows`
 or `online drift since export` because of rows committed after its checkpoint.
 
 `retention reattach <unit-id>` attaches a `detached` partition back to its parent with
@@ -465,9 +488,10 @@ or `online drift since export` because of rows committed after its checkpoint.
 partition's recorded range: the lowest `unit_lower` (`MINVALUE` for the legacy partition) to the highest
 `unit_upper`. Each `detached` unit becomes `blocked` with `reattached by operator` and keeps
 `state_before_detach`, so the partition stays attached until an operator unblocks its units. A unit that the drop
-recount blocked after the detach keeps its own reason and loses `state_before_detach`. The command clears
-`detached_at` and commits with the attach. It refuses when the partition is not `detached` or its table no longer
-exists. `retention unblock` on a unit with `state_before_detach` set returns it to that state and clears the column,
+recount blocked after the detach keeps its own reason and loses `state_before_detach`. A partition whose units are
+all blocked that way, with no `detached` unit, is accepted too. The command clears
+`detached_at` and commits with the attach. It refuses when no unit of the partition has `detached_at` set, or its
+table no longer exists. `retention unblock` on a unit with `state_before_detach` set returns it to that state and clears the column,
 so the partition is drop-ready again and the next tick detaches it again with a new grace period.
 `retention unblock --recheckpoint` also accepts such a currency unit and clears the column. `retention unblock` refuses
 a unit of a detached partition, and `retention unblock --recheckpoint` refuses when a later currency unit is detached.
@@ -489,7 +513,8 @@ Units are selected by these rules:
 - Without an archive, statistics units go from `rolled_up` to `dump_waived` with `error` set to
   `archive not configured`, and are dropped. Currency units stay `checkpointed` and are skipped, so later units are
   still checkpointed. A currency partition is not dropped without an archive.
-- A partition is dropped only when each of its units is `dumped`, `dump_waived`, `verified` or `detached`. The drop
+- A partition is dropped only when each of its units is `dumped`, `dump_waived` or `verified`, or each of them is
+  `detached`. A `blocked` unit of a detached partition is still selected, so it stops the currency dataset. The drop
   marks all of them `dropped`. An interrupted concurrent detach is finished with `DETACH PARTITION ... FINALIZE`.
 - With `KUDOS_RETENTION_HOLD_DROPS` set to `true`, drop-ready units are skipped, so their partitions stay attached
   and the detach of a grace period is held too. Every other step runs. Once every eligible unit is drop-ready, ticks
@@ -505,10 +530,12 @@ Units are selected by these rules:
   real time does not drop it before the real clock reaches that point.
 - Before the detach, and again after it, the drop recounts each unit's rows and highest `id` and compares them with
   `row_count` and `max_id`. A difference, or a unit with no recorded count, blocks that unit with `late rows` and
-  nothing is dropped. A difference found after the detach leaves the partition detached. Reattach it before
-  unblocking. When the partition was already `detached`, `retention reattach` does that. Otherwise its units have no
-  `detached_at`, and the partition is reattached by hand with `ALTER TABLE ... ATTACH PARTITION`.
-- The drop connection sets `lock_timeout` to `DROP_LOCK_TIMEOUT`. When another session holds a lock on the partition
+  nothing is dropped. Every unit is marked `detached` with `detached_at` before the recount that follows the detach,
+  also without a grace period. A difference found then leaves the partition detached, the blocked unit keeps
+  `detached_at`, its siblings stay `detached`, and the partition is not drop-ready. Run `retention reattach` before
+  unblocking.
+- The drop connection sets `lock_timeout` to `DROP_LOCK_TIMEOUT`. The connection is discarded afterwards instead of
+  returning to the pool, because the setting lasts for the database session. When another session holds a lock on the partition
   or its parent in a transaction older than `KUDOS_RETENTION_DROP_DEFER_MINUTES`, or the timeout expires, the tick
   outcome is `deferred` with the pid and transaction age, and the drop is tried again on the next tick. The drop also
   checks that the connection holding the retention lock is alive, and fails without dropping when it is not.
@@ -529,11 +556,13 @@ The `error` of a blocked unit is one of the `RetentionBlockReason` values.
 | `unapplied rows` | Both, at `pending` | The unit has a row with `applied = false`. For statistics, only rows with `quarantined = false` count |
 | `checkpoint chain gap` | `currency`, at `pending` | No catalog unit with a recorded boundary ends at `unit_lower`, or one with a recorded boundary ends after `unit_upper`. Only a unit that starts at `MINVALUE` can start the chain without a previous boundary |
 | `boundary already checkpointed` | `currency`, at `pending` | A unit of another partition already records a boundary at `unit_upper`. Recomputing it would replace that checkpoint with this unit's rows alone |
-| `currency tier would exceed budget` | `currency`, at `checkpointed` | The stored currency tier, minus an object already stored at the unit's own key, plus the estimated export size is larger than `KUDOS_ARCHIVE_BUDGET_BYTES`. The estimate is the unit's share of the partition heap size times `CURRENCY_EXPORT_SIZE_RATIO` |
+| `currency tier would exceed budget` | `currency`, at `checkpointed` | The stored currency tier, minus an object already stored at the unit's own key, plus the estimated export size is larger than `KUDOS_ARCHIVE_BUDGET_BYTES`. The estimate is the unit's share of the partition heap size times `ARCHIVE_SIZE_RATIO` |
+| `statistics tier would exceed budget` | `statistics`, at `rolled_up` or `dump_failed` | The same test against the statistics tier and `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES`. Nothing is uploaded, and later statistics units proceed |
 | `archive mismatch` | `currency`, at `exported` | The object read back differs from its manifest in digest, size, row count, amount sum or per-user totals |
 | `online drift since export` | `currency`, at `exported` | The manifest's row count differs from `row_count`, or the row count, amount sum or per-user totals of the online rows differ from the archived object |
 | `late rows` | Both, at the drop | A unit's row count or highest `id` differs from `row_count` and `max_id`, or the unit has no recorded count |
 | `dump retries exhausted` | `statistics`, at `dump_failed` | A dump retry failed more than `KUDOS_RETENTION_DUMP_RETRY_DAYS` after the first failure |
+| `archive object missing` | `currency`, at `exported`, `verified` or `detached`, or at the drop | The tick's archive listing does not hold the unit's `object_key`, or the drop found a currency unit with no `object_key`. `retention unblock` returns the unit to `checkpointed`, so it is exported and verified again. A unit of a detached partition is reattached first |
 | `reattached by operator` | Both, at `detached` | `retention reattach` attached the unit's partition again. `retention unblock` returns the unit to `state_before_detach` |
 
 ### Reconciliation after retention
@@ -555,8 +584,16 @@ lifetime, whether or not retention is enabled.
 - `reconcile_balances(..., apply_repairs=True)` refuses a snapshot older than the key lifetime with a `ValueError`
   whose message says to take a new snapshot. Without the refusal, a repair repeated after its key expired could post
   a second `RECONCILIATION`.
-- `sql_statements/5.1.16.txt` backfills the keys of `TRANSFER` and `RECONCILIATION` events created in the last 30
-  days.
+- `reconcile_balances(..., apply_repairs=True)` raises `StaleCheckpointsError`, a `ValueError`, while
+  `stale_checkpoint_units` lists a currency unit blocked with `late rows` or `online drift since export`. That unit
+  holds rows its checkpoint and every later checkpoint omit, so a repair would compensate for drift that does not
+  exist. A read-only run still reports drift and logs a warning. The `reconcile` command lists the units in
+  `stale_checkpoint_units` and sets `drift_reliable` to `false`. `retention unblock --recheckpoint` deletes the stale
+  checkpoints, and repairs are accepted again.
+- `sql_statements/5.1.16.txt` backfills the keys of `TRANSFER` and `RECONCILIATION` events created in the last
+  `key_lifetime_days` days, a psql variable that defaults to 30. When either online window is above 30, the file
+  is run with `-v key_lifetime_days=<days>` set to the shorter window, so every key inside the lifetime exists. The
+  file prints the window it used.
 
 ### Retention configuration
 
@@ -569,7 +606,8 @@ that includes the variable.
 | `KUDOS_RETENTION_CURRENCY_DAYS` | 30 | At least 30 | Online window of `kudos_ledger`, counted from a partition's upper bound |
 | `KUDOS_RETENTION_STATISTICS_DAYS` | 30 | At least 30 | Online window of `kudos_stat_events`, counted from a partition's upper bound |
 | `KUDOS_PARTITION_WIDTH_DAYS` | 7 | 1 to 31 | Width of new partitions and of legacy units. The width adds to the effective retention |
-| `KUDOS_ARCHIVE_BUDGET_BYTES` | Unset, no limit | Positive whole number. Required when the archive is configured | Byte budget for both archive tiers together |
+| `KUDOS_ARCHIVE_BUDGET_BYTES` | Unset, no limit | Positive whole number. Required when the archive is configured | Byte budget of the currency tier (`KudosRetentionPolicy.currency_budget_bytes`) |
+| `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES` | Unset, no limit | Positive whole number | Byte budget of the statistics tier (`KudosRetentionPolicy.statistics_budget_bytes`) |
 | `KUDOS_RETENTION_DUMP_RETRY_DAYS` | 7 | Positive whole number | How long failed statistics dumps are retried, from the first failure, before the unit blocks |
 | `KUDOS_RETENTION_DROP_DEFER_MINUTES` | 5 | Positive whole number | Transaction age of another session's lock on the partition or its parent that defers a drop |
 | `KUDOS_RETENTION_HOLD_DROPS` | `false` | `true`, `1`, `yes`, `false`, `0` or `no` | Keeps drop-ready partitions attached. Every other step runs |
@@ -607,9 +645,23 @@ of the unit's rows in `id` order, and a JSON manifest stored beside it. Objects 
 | `amount_sum` | Sum of `amount`, as a decimal string |
 | `per_user_totals` | Currency only: user ID to `[balance_sum, escrow_sum]` as decimal strings. Null for statistics |
 
-After each statistics dump, `enforce_budget` deletes the oldest statistics objects and their manifests, ordered by
-unit upper bound, until both tiers fit the budget. Currency objects count toward the total and are not deleted by the budget.
-The units whose objects were deleted keep their state and get a NULL `object_key`.
+Each tier has its own budget, and a tick does not evict anything. The statistics dump and the currency export each
+admit an upload only when the tier's stored bytes, minus an object already stored at the unit's own key, plus the
+estimate fit the tier's budget. Otherwise the unit blocks with `statistics tier would exceed budget` or
+`currency tier would exceed budget`.
+
+`archive evict --tier statistics --budget-bytes <n>` runs `KudosArchive.enforce_budget`, which deletes the oldest
+statistics objects and their manifests, ordered by unit upper bound, until the statistics tier fits `<n>`. Currency
+objects are never deleted. The deletes go out one batch at a time. When one fails, `ArchiveEvictionError` holds the
+keys deleted before it, and the command prints them.
+
+With an archive configured, every tick lists both tiers after its step, while it still holds the retention lock.
+A unit whose `object_key` is not in the listing gets a NULL `object_key`, and the tick logs
+`Kudos retention cleared object key <key> of <dataset> unit <id> (<source_range>, <state>)`. The unit keeps its
+state, except a currency unit in `exported`, `verified` or `detached`. That unit becomes `blocked` with
+`archive object missing`, and the line starts with `Kudos retention blocked` instead, because a drop would remove
+the only copy of its postings. As a last guard, the drop blocks a currency unit with no `object_key` with the same
+reason. The tier sizes from the same listing are the `horde.kudos.archive.tier_bytes` values.
 
 ### Retention metrics and log lines
 
@@ -623,8 +675,8 @@ The units whose objects were deleted keep their state and get a NULL `object_key
 | `horde.kudos.retention.blocked_units` | Gauge, `{unit}` | `horde.kudos.block_reason` | Catalog units in `blocked`, one series per `RetentionBlockReason` value, 0 when no unit has that reason |
 | `horde.kudos.retention.partition_coverage` | Gauge, `1` | None | 1 when each event table has a partition containing the real current time and one containing it plus one partition width, else 0 |
 | `horde.kudos.retention.held_partitions` | Gauge, `{partition}` | None | `held_partitions` from `retention_health`. 0 when `KUDOS_RETENTION_HOLD_DROPS` is not `true` |
-| `horde.kudos.archive.tier_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | Stored bytes of each tier, excluding manifests. Not recorded without an archive |
-| `horde.kudos.archive.budget_bytes` | Gauge, `By` | None | `KUDOS_ARCHIVE_BUDGET_BYTES`. Not recorded without an archive or a budget |
+| `horde.kudos.archive.tier_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | Stored bytes of each tier, excluding manifests, from the tick's listing. Not recorded without an archive, and kept at the last value when the listing fails |
+| `horde.kudos.archive.budget_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | One series per tier that has a budget: `currency` from `KUDOS_ARCHIVE_BUDGET_BYTES`, `statistics` from `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES`. Not recorded without an archive |
 
 Two warnings are under log contract. Log-based alerting matches their prefixes, and
 `tests/unit/test_kudos_retention.py::test_log_contract_prefixes_start_the_outcome_warnings` tests them.
@@ -661,10 +713,12 @@ These are subcommands of `tools/kudos_ledger_admin.py`. Each prints JSON.
 | --- | --- |
 | `retention status` | Prints the health fields, `archive_configured`, `archive_tier_bytes`, and every unit not yet dropped with its catalog columns and `source_range`. Read-only |
 | `retention step [--dataset <dataset>] [--as-of <timestamp>] [--confirm-live-data-loss]` | Runs one tick as the scheduler does. With `--dataset currency` or `--dataset statistics`, only that dataset's units are stepped. `--as-of` is a rehearsal control: every eligibility, key-expiry and partition-creation decision is taken as of that UTC time, which must be no earlier than the current time and no later than the current time plus the longer window, the drop grace and four partition widths, and retention must be enabled. With a drop grace, a partition detached at one `--as-of` is dropped only by a later tick whose `--as-of` is at least the grace past it. A time later than now is refused without `--confirm-live-data-loss`, because against a live database it removes current data. Use that flag on a restored copy only. It can drop a partition |
-| `retention unblock <unit-id> [--waive-dump \| --recheckpoint]` | Returns a blocked unit to `state_before_detach` when it is set (a unit blocked by `retention reattach`), else to `checkpointed` (currency unit with a committed checkpoint) or `pending`, and clears `error`. With `--waive-dump`, moves a `dump_failed` statistics unit, or one blocked for `dump retries exhausted`, to `dump_waived`. With `--recheckpoint`, returns a blocked currency unit and every later currency unit to `pending` so their checkpoints are recomputed, and refuses when a later currency unit is `dropped` or `detached`. Refuses a unit of a `detached` partition. Exits with an error for any other unit, or while a tick holds the retention lock |
+| `retention unblock <unit-id> [--waive-dump \| --recheckpoint]` | Returns a blocked unit to `state_before_detach` when it is set (a unit blocked by `retention reattach`), else to `checkpointed` (currency unit with a committed checkpoint) or `pending`, and clears `error`. With `--waive-dump`, moves a `dump_failed` statistics unit, or one blocked for `dump retries exhausted` or `statistics tier would exceed budget`, to `dump_waived`. With `--recheckpoint`, returns a blocked currency unit and every later currency unit to `pending` so their checkpoints are recomputed, and refuses when a later currency unit is `dropped` or `detached`. Refuses a unit of a `detached` partition. Exits with an error for any other unit, or while a tick holds the retention lock |
 | `retention reattach <unit-id>` | Attaches the `detached` partition of the unit back to its parent over its recorded range and blocks its units with `reattached by operator`, keeping `state_before_detach`. `retention unblock` on each unit returns it to that state. Refuses when the partition is not `detached` or its table no longer exists. Exits with an error while a tick holds the retention lock |
 | `statement <user-id> --from <YYYY-MM-DD> --to <YYYY-MM-DD>` | Prints the user's lines from `kudos_ledger_daily` for those UTC days, summed across `source_range`. Days still online do not have lines yet |
-| `archive restore <key> --into <scratch-table>` | Copies an archive object into a scratch table, `table` or `schema.table`, which is created from the manifest's columns when missing. Requires the archive configuration |
+| `archive restore <key> --into <scratch-table> [--append]` | Copies an archive object into a new scratch table, `table` or `schema.table`, created from the manifest's columns. An existing table is refused, because a repeated restore would hold every row twice and each restore verifies only its own rows. With `--append` the rows are added to an existing table, and the output has `"appended": true` and a note. Requires the archive configuration |
+| `archive evict --tier statistics --budget-bytes <n>` | Deletes the oldest statistics objects until the statistics tier fits `<n>` and prints the deleted keys. On a failed delete it prints the keys deleted before it with the error and exits 1. The next tick clears the catalog keys of the deleted objects |
+| `archive audit [--tier currency\|statistics] [--since-key <key>]` | Reads every object of the tier, both tiers by default, back against its manifest: digest, stored bytes, row count, amount sum, columns and per-user totals. Prints one JSON line per object (`"kind": "object"`, `matches_manifest`, `problems`), one per catalog unit whose object is missing (`"kind": "missing_object"`), then a summary line with `objects`, `problems` and `last_key`. A unit is missing its object when its `object_key` is not listed, or when it is a currency unit in `exported`, `verified`, `detached` or `dropped` with no `object_key`. Exits 1 on any problem, including an unreadable manifest. `--since-key` audits only objects whose key sorts after `<key>`, to resume from a summary's `last_key`. It reads the catalog and changes nothing |
 
 ### Privacy disclosure
 
@@ -727,14 +781,14 @@ old row or hold can indicate a poisoned path.
 | Accounting discriminators and metadata keys | `horde/enums.py` | `KudosEntryType`, `KudosLedgerMode`, `KudosAuditDetail` |
 | Initial schema and counter uniqueness | `sql_statements/5.1.0.txt` | SQL migration |
 | Quarantine columns and concurrent drainable-queue index replacement | `sql_statements/5.1.9.txt` | SQL migration. Run with psql autocommit |
-| Retention policy, tick, steps, catalog, health, statements, restore and disclosure | `horde/database/kudos_retention.py` | `KudosRetentionPolicy`, `KUDOS_RETENTION_POLICY`, `run_retention_tick`, `select_next_unit`, `STEP_TABLE`, `RetentionBlockReason`, `retention_health`, `unblock_unit`, `reattach_partition`, `daily_statement`, `restore_archive_unit`, `AccountingRetentionDisclosure` |
-| Archive client, manifest, codecs and budget | `horde/kudos_archive.py` | `KudosArchive`, `ArchiveManifest`, `ArchiveTier`, `ZstdCodec`, `GzipCodec`, `KudosArchiveError` |
+| Retention policy, tick, steps, catalog, health, statements, restore, archive audit and disclosure | `horde/database/kudos_retention.py` | `KudosRetentionPolicy`, `KUDOS_RETENTION_POLICY`, `run_retention_tick`, `select_next_unit`, `STEP_TABLE`, `RetentionBlockReason`, `retention_health`, `unblock_unit`, `reattach_partition`, `daily_statement`, `restore_archive_unit`, `audit_archive`, `units_without_archive_objects`, `AccountingRetentionDisclosure` |
+| Archive client, manifest, codecs, operator eviction and object audit | `horde/kudos_archive.py` | `KudosArchive`, `ArchiveManifest`, `ArchiveObjectAudit`, `ArchiveTier`, `ZstdCodec`, `GzipCodec`, `KudosArchiveError`, `ArchiveEvictionError` |
 | Partition bootstrap and retention models | `horde/classes/base/kudos.py` | `ensure_kudos_event_partitions`, `KudosPartitioning`, `KudosStatRollup`, `KudosStatQuarantine`, `KudosLedgerCheckpoint`, `KudosLedgerDailyStatement`, `KudosIdempotencyKey`, `KudosRetentionUnit` |
 | Retention lock | `horde/database/kudos_db.py` | `try_acquire_retention_lock`, `release_retention_lock` |
 | Checkpoint plus online tail and repair key lifetime | `horde/database/kudos_reconciliation.py` | `_applied_totals_subquery`, `_refuse_snapshot_older_than_key_lifetime` |
 | Periodic retention tick, metrics and log contract lines | `horde/database/threads.py` | `kudos_retention_tick` |
 | Retention tables, key backfill and partition conversion | `sql_statements/5.1.16.txt` | SQL migration. Run with psql and `ON_ERROR_STOP=1` |
-| Status, drain, snapshot, reconciliation, repair, promotion-statistic backfill, mode, retention, statement and archive restore commands | `tools/kudos_ledger_admin.py` | `main` |
+| Status, drain, snapshot, reconciliation, repair, promotion-statistic backfill, mode, retention, statement and archive restore, evict and audit commands | `tools/kudos_ledger_admin.py` | `main` |
 
 See [Kudos ledger operations](../how-to/kudos_ledger_operations.md) for cutover, rollback and recovery rehearsals.
 
@@ -756,7 +810,7 @@ See [Kudos ledger operations](../how-to/kudos_ledger_operations.md) for cutover,
 | Migration idempotency against mapped schema | `test_kudos_safety.py` |
 | Partition conversion, index attachment, sequence continuity, key backfill and ORM parity | Integration `test_kudos_retention_migration.py` |
 | Retention policy, unit selection, state transitions, blocked reasons, rollups, checkpoints, export, drop and log contract | `test_kudos_retention.py` |
-| Archive codecs, manifests, object keys, verification, budget eviction and restore | `test_kudos_archive.py` (object-store tests use the `object_storage` marker) |
+| Archive codecs, manifests, object keys, verification, operator eviction and restore | `test_kudos_archive.py` (object-store tests use the `object_storage` marker) |
 | Key expiry for transfers, checkpoint plus tail parity, drift after a checkpoint, repair refusal | `test_kudos_safety.py` |
 | Legacy partitions retired with reconciliation, idempotency and projection intact | Integration `test_kudos_retention_end_to_end.py` |
 

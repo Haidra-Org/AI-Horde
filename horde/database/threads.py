@@ -907,7 +907,7 @@ def kudos_retention_tick() -> None:
         run_retention_tick,
     )
     from horde.enums import KudosRetentionDataset
-    from horde.kudos_archive import ArchiveTier, KudosArchiveError
+    from horde.kudos_archive import ArchiveTier
     from horde.metrics import (
         kudos_archive_budget_bytes,
         kudos_archive_tier_bytes,
@@ -962,14 +962,15 @@ def kudos_retention_tick() -> None:
         kudos_retention_held_partitions.set(health["held_partitions"])
         if archive is None:
             return
-        if KUDOS_RETENTION_POLICY.archive_budget_bytes is not None:
-            kudos_archive_budget_bytes.set(KUDOS_RETENTION_POLICY.archive_budget_bytes)
         for tier in ArchiveTier:
-            try:
-                kudos_archive_tier_bytes.set(archive.tier_bytes(tier), {"horde.kudos.archive.tier": str(tier)})
-            except KudosArchiveError as err:
-                # The gauge keeps its last value, and the next tick samples again.
-                logger.warning(f"Kudos archive tier size unavailable for {tier}: {err}")
+            tier_budget = KUDOS_RETENTION_POLICY.budget_for(tier)
+            if tier_budget is not None:
+                kudos_archive_budget_bytes.set(tier_budget, {"horde.kudos.archive.tier": str(tier)})
+        # The tick lists the tiers after its step to reconcile object keys. When that listing failed, the gauges keep
+        # their last values and the next tick samples again.
+        if result.archive_tier_bytes is not None:
+            for tier, stored_bytes in result.archive_tier_bytes.items():
+                kudos_archive_tier_bytes.set(stored_bytes, {"horde.kudos.archive.tier": str(tier)})
 
 
 # How many performance samples per worker back the materialized ``workers.speed``

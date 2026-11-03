@@ -73,8 +73,8 @@ sub-range is a retention unit with one row in `kudos_retention_catalog`.
 
 | Dataset | Replacement in PostgreSQL | Archive | What the drop proves |
 | --- | --- | --- | --- |
-| Statistics (`kudos_stat_events`) | Rollups per UTC day and full attribution key, whose totals match the unit's totals in the same transaction. Quarantined rows move unchanged to `kudos_stat_quarantine` | A compressed dump, written best-effort and retried. It is not read back, and the budget evicts the oldest dumps first | The rollup is committed, and a recount matches the row count and highest id recorded with it |
-| Currency (`kudos_ledger`) | Per-user cumulative checkpoints at the unit's upper bound and per-user daily statements, committed in one repeatable-read transaction | A compressed object with a manifest of control totals, read back and checked against the manifest and the online rows. The budget never evicts it | The checkpoint is committed, the object is verified, and a recount matches the row count and highest id recorded with the checkpoint |
+| Statistics (`kudos_stat_events`) | Rollups per UTC day and full attribution key, whose totals match the unit's totals in the same transaction. Quarantined rows move unchanged to `kudos_stat_quarantine` | A compressed dump, written best-effort and retried. It is not read back by the tick, and only an operator evicts it | The rollup is committed, and a recount matches the row count and highest id recorded with it |
+| Currency (`kudos_ledger`) | Per-user cumulative checkpoints at the unit's upper bound and per-user daily statements, committed in one repeatable-read transaction | A compressed object with a manifest of control totals, read back and checked against the manifest and the online rows. It is never evicted | The checkpoint is committed, the object is verified, and a recount matches the row count and highest id recorded with the checkpoint |
 
 A checkpoint is a sum of events, so drift that exists when the checkpoint is taken stays visible to reconciliation
 afterwards. The archive layout and manifest fields are in
@@ -162,7 +162,7 @@ The design buys these properties:
 - A reattach window. With a drop grace period, a detached partition stays as a standalone table and can be attached
   again until the grace ends.
 - A verified currency archive. Every archived currency object is read back and matched against its manifest and the
-  online rows before the drop, and the budget never evicts one.
+  online rows before the drop, and none is ever evicted.
 - Best-effort statistics dumps with retries. A failed dump is retried for a configured period and does not block the
   rollup. An unavailable archive pauses currency retention and statistics dumps, while writes, projection and
   rollups continue.
@@ -173,12 +173,13 @@ It costs these:
   posting up to its boundary, since a checkpoint is cumulative and earlier boundaries are kept. Daily statements grow
   with per-user activity and rollups with the number of distinct attribution keys per day. These tables do not have
   a retention of their own.
-- The archive budget is the only cap on the archive. Currency objects are exempt from eviction, so once the currency
-  tier would exceed the budget, currency retention stops until the budget is raised.
-- Per-job statistic detail older than the window survives only in dumps that the budget has not evicted. Reading an
+- Each tier's budget is the only cap on that tier, and nothing is evicted automatically. Once a tier would exceed
+  its budget, the units that would write to it block until the budget is raised or, for statistics, an operator
+  evicts old dumps.
+- Per-job statistic detail older than the window survives only in dumps that an operator has not evicted. Reading an
   archived currency row means restoring an object into a scratch table.
 - Some decisions stay with the operator: what to do with a blocked unit, whether to waive a statistics dump that
-  keeps failing, and how large the archive budget is.
+  keeps failing, how large each tier's budget is, and when to evict statistics dumps.
 
 ## Diagnosing retention
 
@@ -189,8 +190,10 @@ It costs these:
 | --- | --- | --- |
 | Blocked, `unapplied rows` | The projector has not folded rows in an eligible unit | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
 | Blocked, `checkpoint chain gap` or `boundary already checkpointed` | The catalog or the partitions were changed outside the retention job | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
-| Blocked, `currency tier would exceed budget` | The currency export would pass the archive budget. Currency retention stops and statistics continue | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
+| Blocked, `currency tier would exceed budget` | The currency export would pass the currency budget. Currency retention stops and statistics continue | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
+| Blocked, `statistics tier would exceed budget` | The statistics dump would pass the statistics budget. Nothing is uploaded, and later statistics units continue | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
 | Blocked, `archive mismatch` | The object read back disagrees with its manifest | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
+| Blocked, `archive object missing` | A currency unit past its export has lost its archive object, so it is not dropped | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
 | Blocked, `online drift since export` or `late rows` | Rows in the unit changed after its replacement recorded them | [Recovering from a late-row or chain block](../how-to/kudos_ledger_operations.md#recovering-from-a-late-row-or-chain-block) |
 | `dump_failed`, or blocked with `dump retries exhausted` | Statistics dumps are failing, and the rollup is already committed | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
 | Held partitions | `KUDOS_RETENTION_HOLD_DROPS` keeps drop-ready partitions attached. Every other step runs | [Enabling retention](../how-to/kudos_ledger_operations.md#enabling-retention) |

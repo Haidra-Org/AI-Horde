@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from loguru import logger
 from sqlalchemy import CursorResult, Subquery, func, insert, literal, or_, select
@@ -20,6 +20,7 @@ from horde.classes.base.kudos import (
     KudosIdempotencyKey,
     KudosLedger,
     KudosLedgerCheckpoint,
+    KudosRetentionUnit,
     emit_kudos_ledger_entry,
     kudos_event,
     kudos_event_id,
@@ -27,7 +28,7 @@ from horde.classes.base.kudos import (
 from horde.classes.base.user import User
 from horde.database import kudos_retention
 from horde.database.kudos_db import acquire_reconciliation_lock, begin_repeatable_read
-from horde.enums import KudosAuditDetail, KudosEntryType, KudosIdempotencyKind
+from horde.enums import KudosAuditDetail, KudosEntryType, KudosIdempotencyKind, KudosRetentionDataset, KudosRetentionState
 from horde.flask import db
 
 
@@ -50,6 +51,57 @@ class KudosDrift:
     actual_balance: Decimal
     expected_escrow: Decimal
     actual_escrow: Decimal
+
+
+STALE_CHECKPOINT_REASONS: Final[frozenset[kudos_retention.RetentionBlockReason]] = frozenset(
+    {kudos_retention.RetentionBlockReason.LATE_ROWS, kudos_retention.RetentionBlockReason.ONLINE_DRIFT},
+)
+"""The block reasons of a currency unit whose rows changed after its checkpoint, so that checkpoint and every later one
+are stale until ``retention unblock --recheckpoint`` deletes and recomputes them."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class StaleCheckpointUnit:
+    """Represents a blocked currency unit whose checkpoint is known to be stale."""
+
+    unit_id: int
+    partition_name: str
+    boundary: datetime
+    reason: str
+
+
+class StaleCheckpointsError(ValueError):
+    """A currency unit is blocked for rows changed after its checkpoint, so repairs would compensate for false drift."""
+
+
+def stale_checkpoint_units() -> list[StaleCheckpointUnit]:
+    """Return the blocked currency units whose checkpoints are stale, in boundary order.
+
+    Reconciliation reads the latest checkpoint as the total of every posting below its boundary. A unit blocked with
+    one of ``STALE_CHECKPOINT_REASONS`` holds rows that its checkpoint and every later checkpoint omit, so drift
+    measured against them is not real.
+    """
+    rows = db.session.scalars(
+        select(KudosRetentionUnit)
+        .where(
+            KudosRetentionUnit.dataset == KudosRetentionDataset.CURRENCY,
+            KudosRetentionUnit.state == KudosRetentionState.BLOCKED,
+            KudosRetentionUnit.error.in_([str(reason) for reason in STALE_CHECKPOINT_REASONS]),
+        )
+        .order_by(KudosRetentionUnit.unit_upper),
+    ).all()
+    return [
+        StaleCheckpointUnit(unit_id=row.id, partition_name=row.partition_name, boundary=row.unit_upper, reason=str(row.error))
+        for row in rows
+    ]
+
+
+def _stale_checkpoints_message(stale_units: list[StaleCheckpointUnit]) -> str:
+    described = ", ".join(f"{stale_unit.unit_id} ({stale_unit.partition_name}, {stale_unit.reason})" for stale_unit in stale_units)
+    return (
+        f"Kudos ledger checkpoints are stale: currency retention units {described} are blocked. "
+        f"Run retention unblock --recheckpoint {stale_units[0].unit_id} before reconciling"
+    )
 
 
 def _applied_totals_subquery() -> Subquery:
@@ -179,8 +231,21 @@ def reconcile_balances(snapshot_id: uuid.UUID, *, apply_repairs: bool = False) -
 
     Repairs are new audit-visible postings; this function never overwrites a
     balance, deletes history, or changes an old posting.
+
+    While ``stale_checkpoint_units`` reports a unit, the checkpoints omit rows, so repairs are refused and a read-only
+    run logs a warning that its drift is not reliable.
+
+    Raises:
+        StaleCheckpointsError: ``apply_repairs`` is set while a checkpoint is known to be stale.
+        ValueError: ``apply_repairs`` is set and the snapshot is older than the key lifetime or does not exist.
     """
     _begin_repeatable_read()
+    stale_units = stale_checkpoint_units()
+    if stale_units and apply_repairs:
+        db.session.rollback()
+        raise StaleCheckpointsError(_stale_checkpoints_message(stale_units))
+    if stale_units:
+        logger.warning(f"{_stale_checkpoints_message(stale_units)}. This read-only reconciliation reports drift that may not exist")
     if apply_repairs:
         try:
             _refuse_snapshot_older_than_key_lifetime(snapshot_id)

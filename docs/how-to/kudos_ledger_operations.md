@@ -101,6 +101,11 @@ it serializes repair runs and emits one deterministic `RECONCILIATION` posting p
 before or after projection cannot duplicate a repair, so a repair has no reversal step and needs none. A repair that
 was itself wrong is corrected by a further compensating posting.
 
+`reconcile --apply` exits with an error while a currency retention unit is blocked with `late rows` or
+`online drift since export`, because the checkpoints then omit rows. The read-only `reconcile` output lists those
+units in `stale_checkpoint_units` and sets `drift_reliable` to `false`. Run
+`retention unblock <unit-id> --recheckpoint` on the first listed unit, then reconcile again.
+
 ### Stopped projector
 
 If the projector stops, leave writers in ledger mode, restore the projector, and drain. Unapplied rows are durable
@@ -168,6 +173,13 @@ the backfilled keys.
    psql "<database-url>" -v ON_ERROR_STOP=1 -f sql_statements/5.1.16.txt
    ```
 
+   When `KUDOS_RETENTION_CURRENCY_DAYS` or `KUDOS_RETENTION_STATISTICS_DAYS` is raised above 30, add
+   `-v key_lifetime_days=<days>` with the shorter of the two windows. Idempotency keys live for that shorter window,
+   and the file backfills keys only for transfers and repairs inside `key_lifetime_days`, 30 when the option is not
+   passed. A retry of an older transfer inside the key lifetime would otherwise find no key and post again. The file
+   prints `Backfilling the idempotency keys of the last <days> days`. Check that the number is the key lifetime.
+   The option needs psql 11 or later.
+
    The file uses `\gexec`, so only psql can run it. Do not pass `--single-transaction`, because
    `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block. The swap reads its timestamp from a temporary
    table and calls temporary functions, so the whole file must run in one session. Steps 2 and 3 happen while the file
@@ -223,12 +235,12 @@ the backfilled keys.
    timestamp.
 
 5. Deploy the application release in this order: stop every replica of the previous release, run the file again with
-   the same command, and only then let replicas of the new release take traffic. The conversion steps skip the
+   the same command, including any `-v key_lifetime_days`, and only then let replicas of the new release take traffic. The conversion steps skip the
    converted tables. The key backfill adds the keys of transfers and repairs made by the previous release since the
    first run. The new release looks up idempotency keys only in `kudos_idempotency_keys`, so a keyed transfer that
    the previous release committed after the last backfill would post a second time when its client retries against
    the new release. Verify: `SELECT kind, count(*) FROM kudos_idempotency_keys GROUP BY kind` returns rows when
-   transfers or repairs happened in the last 30 days.
+   transfers or repairs happened inside the backfill window.
 
 6. Check the cutover once the new release takes traffic. Verify:
    `uv run python tools/kudos_ledger_admin.py retention status` returns JSON with `"blocked_units": 0`, and the
@@ -244,7 +256,7 @@ the backfilled keys.
 ### Rerunning after a failure
 
 Every statement in the file is idempotent, so a failed run is repeated from the top in a new session once the cause
-is fixed. If the table is still unconverted and `<table>_legacy_range` exists from the earlier session, the rerun
+is fixed. Pass the same `-v key_lifetime_days` as the first run, so the rerun backfills the same window. If the table is still unconverted and `<table>_legacy_range` exists from the earlier session, the rerun
 reads `swap_ts` back from that CHECK, so the CHECK and the swap use the same timestamp. Without the CHECK, the new
 session computes a new `swap_ts`. If the CHECK has a form the file cannot read, the rerun stops with
 `cannot read swap_ts from <table>_legacy_range`. Drop the CHECK and rerun in a new session, which adds and validates
@@ -278,11 +290,15 @@ docker exec -w /app -e PYTHONPATH=/app <container> python tools/kudos_ledger_adm
 
 1. Configure the archive, if currency postings are to be removed. Set `KUDOS_ARCHIVE_ACCOUNT`,
    `KUDOS_ARCHIVE_BUCKET`, `KUDOS_ARCHIVE_AWS_ACCESS_KEY_ID` and `KUDOS_ARCHIVE_AWS_SECRET_ACCESS_KEY`, with
-   credentials limited to that bucket. `KUDOS_ARCHIVE_BUDGET_BYTES` is then required, and startup fails without it.
+   credentials limited to that bucket. Each tier has its own byte budget. `KUDOS_ARCHIVE_BUDGET_BYTES` is the
+   currency tier's budget, and it is then required, so startup fails without it.
+   `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES` is the statistics tier's budget, and unset means no limit. Retention does
+   not evict anything. A dump or export that would pass its tier's budget blocks the unit instead.
    Without an archive, statistics are still rolled up and dropped (as `dump_waived`, with one
    `Kudos retention dump failed ... archive not configured` warning per unit), but currency partitions stay online.
    Verify:
-   `retention status` reports `"archive_configured": true` and a byte count for each tier in `archive_tier_bytes`.
+   `retention status` reports `"archive_configured": true` and a byte count for each tier in `archive_tier_bytes`,
+   and `horde.kudos.archive.budget_bytes` has one series for each tier with a budget.
 2. Set `KUDOS_RETENTION_ENABLED=true`. Set `KUDOS_RETENTION_CURRENCY_DAYS` or `KUDOS_RETENTION_STATISTICS_DAYS` only
    to keep a dataset longer than 30 days. On a fresh production deployment, also set
    `KUDOS_RETENTION_HOLD_DROPS=true` for a soak, so every step runs but no partition is detached or dropped, and set
@@ -320,7 +336,7 @@ continues from there. To pause only the removal, set `KUDOS_RETENTION_HOLD_DROPS
 continue, and partitions already `detached` are kept past their `drop_due_at` until the hold ends. A dropped partition
 cannot be brought back online. Archived currency rows can be read with
 [restoring an archived partition](#restoring-an-archived-partition-into-a-scratch-table). Per-job statistic rows
-remain only in the statistics dumps that the budget has not evicted.
+remain only in the statistics dumps that an operator has not evicted.
 
 ### Rolling back a removed partition
 
@@ -337,7 +353,9 @@ units stay `blocked` until an operator releases them.
    The command attaches the table over the partition's recorded range and commits the catalog change with it. Each
    unit becomes `blocked` with `reattached by operator` and keeps `state_before_detach`, so later ticks do not detach
    the partition again. A blocked currency unit stops currency retention, and statistics retention continues past a
-   blocked statistics unit. The command refuses when the partition is not `detached` or its table no longer exists,
+   blocked statistics unit. A unit the drop recount blocked after the detach keeps its `late rows` reason, and a
+   partition whose units were all blocked that way is reattached the same way. The command refuses when no unit of
+   the partition has `detached_at` set or its table no longer exists,
    and exits with an error while a tick holds the retention lock, so run it again after the tick. Verify: the command
    prints the units with `"state": "blocked"`, `"error": "reattached by operator"` and a null `detached_at`, and the
    partition is listed by `SELECT inhrelid::regclass FROM pg_inherits WHERE inhparent = '<parent>'::regclass`.
@@ -425,6 +443,26 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
    - `currency tier would exceed budget`: the export would push the currency tier past `KUDOS_ARCHIVE_BUDGET_BYTES`.
      Currency objects are never evicted. Raise the budget and restart, or leave the unit blocked and let currency
      partitions stay online. Statistics retention continues meanwhile.
+   - `statistics tier would exceed budget`: the dump would push the statistics tier past
+     `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES`, so nothing was uploaded. Later statistics units continue, and each of
+     them blocks the same way until there is room. Raise the budget and restart, or free space by evicting the oldest
+     dumps:
+
+     ```sh
+     uv run python tools/kudos_ledger_admin.py archive evict --tier statistics --budget-bytes <bytes>
+     ```
+
+     The command prints the deleted keys. When a delete fails it prints the keys deleted before the failure and exits
+     1. The next tick clears the catalog keys of every deleted object. Then unblock the unit, which rolls it up again
+     and retries the dump. Verify: the unit reaches `dumped` and its `object_key` is set. To drop the unit without a
+     dump instead, run `retention unblock <unit-id> --waive-dump`.
+   - `archive object missing`: a currency unit past its export has no archive object. Either the tick's archive
+     listing does not hold the unit's key, or the drop found no key. Nothing was dropped, and the rows are still
+     online or in the detached table. Find out why the object is gone before going on. For a unit in an attached
+     partition, unblock it: it returns to `checkpointed`, and the next ticks export, verify and drop it again from
+     the online rows. For a unit of a detached partition, `retention unblock` refuses, so run
+     `retention reattach <unit-id>` first and then unblock. Verify: the unit reaches `verified` with a new
+     `object_key`, and `archive audit --tier currency` reports no `missing_object` line for it.
    - `archive mismatch`: the object read back does not match its manifest. The object is kept. The warning includes
      the mismatched fields. Check the object store, and restore the object into a scratch table if the rows need
      inspection.
@@ -445,7 +483,8 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
      uv run python tools/kudos_ledger_admin.py retention unblock <unit-id> --waive-dump
      ```
 
-     The unit moves to `dump_waived` and is dropped on the next tick with only its rollups kept.
+     The unit moves to `dump_waived` and is dropped on the next tick with only its rollups kept. The same command
+     waives a unit blocked with `statistics tier would exceed budget`.
 
 3. Return the unit to work:
 
@@ -524,8 +563,8 @@ object are in a scratch table in the application database. Qualify the scratch t
    FROM kudos_retention_catalog WHERE object_key IS NOT NULL ORDER BY unit_upper;
    ```
 
-   A statistics object evicted by the budget leaves its unit with a null `object_key`. A statistics unit in
-   `dump_failed` or `dump_waived` does not have an object.
+   A statistics object deleted by `archive evict`, or lost in any other way, leaves its unit with a null
+   `object_key` once a tick has run. A statistics unit in `dump_failed` or `dump_waived` does not have an object.
 2. Restore it into a table name that does not exist yet:
 
    ```sh
@@ -533,12 +572,35 @@ object are in a scratch table in the application database. Qualify the scratch t
    ```
 
    The command creates the table from the manifest's columns, with the types of the dataset's event table, and
-   copies the rows. When a table with that name exists, the rows are added to it. The copy commits only when the
+   copies the rows. A table with that name that exists already is refused, because a retried restore would hold
+   every row twice. To collect several objects in one table, pass `--append` for each restore after the first. The
+   output then has `"appended": true`, and the count check below covers the whole table. The copy commits only when the
    object's digest, its stored size and the copied row count equal the manifest and the compressed stream is
    complete. Otherwise the command fails with `does not match its manifest` and does not commit the rows.
    Verify: the printed `rows` equals the manifest's `row_count`, and
    `SELECT count(*) FROM public.kudos_restore_check` returns the same number.
 3. Query the scratch table, then drop it with `DROP TABLE public.kudos_restore_check`.
+
+## Auditing the archive
+
+Preconditions: every `KUDOS_ARCHIVE_*` variable is set where the command runs. End state: every archive object has
+been read back against its manifest, and the catalog has been compared with the listing. Nothing is changed.
+
+1. Run the audit, monthly from cron or by hand:
+
+   ```sh
+   uv run python tools/kudos_ledger_admin.py archive audit > kudos-archive-audit.jsonl
+   ```
+
+   Pass `--tier currency` or `--tier statistics` to audit one tier. Each object is downloaded in full, so the audit
+   takes as long as reading the whole tier.
+2. Read the result. The command exits 1 when any line reports a problem. A line with `"kind": "object"` and
+   `"matches_manifest": false` lists its `problems`: an unreadable manifest, an object that does not decompress, or a
+   field that differs from the manifest. A line with `"kind": "missing_object"` is a catalog unit whose object is
+   gone. For a currency unit that is lost history, because currency objects are never evicted. The last line is the
+   summary. Verify: the exit status is 0 and the summary has `"problems": 0`.
+3. Resume an interrupted audit from the summary's `last_key`, or from the last object line, with
+   `--since-key <key>`. The catalog comparison always covers the whole listing.
 
 ## Automated drill coverage
 

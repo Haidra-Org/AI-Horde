@@ -28,10 +28,17 @@ from horde.classes.base.kudos import (  # noqa: E402
     set_kudos_ledger_mode,
 )
 from horde.database.kudos_ledger import apply_pending_kudos, kudos_applier_health  # noqa: E402
-from horde.database.kudos_reconciliation import create_balance_snapshot, reconcile_balances  # noqa: E402
+from horde.database.kudos_reconciliation import (  # noqa: E402
+    StaleCheckpointsError,
+    create_balance_snapshot,
+    reconcile_balances,
+    stale_checkpoint_units,
+)
 from horde.database.kudos_retention import (  # noqa: E402
     KUDOS_RETENTION_POLICY,
+    MissingArchiveObject,
     RetentionLockBusyError,
+    audit_archive,
     daily_statement,
     load_catalog,
     parse_rehearsal_as_of,
@@ -45,7 +52,7 @@ from horde.database.kudos_retention import (  # noqa: E402
 )
 from horde.enums import KudosLedgerMode, KudosRetentionDataset, KudosRetentionState  # noqa: E402
 from horde.flask import create_app  # noqa: E402
-from horde.kudos_archive import ArchiveTier, KudosArchive, KudosArchiveError  # noqa: E402
+from horde.kudos_archive import ArchiveEvictionError, ArchiveTier, KudosArchive, KudosArchiveError  # noqa: E402
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -132,8 +139,68 @@ def _parser() -> argparse.ArgumentParser:
     archive_commands = archive.add_subparsers(dest="archive_command", required=True)
     restore = archive_commands.add_parser("restore", help="Copy an archive object into a scratch table")
     restore.add_argument("key")
-    restore.add_argument("--into", dest="table_name", required=True, help="Scratch table, created when missing")
+    restore.add_argument("--into", dest="table_name", required=True, help="Scratch table, created by the restore")
+    restore.add_argument(
+        "--append",
+        action="store_true",
+        help="Add the rows to an existing table. A repeated restore into the same table then holds every row twice",
+    )
+    evict = archive_commands.add_parser(
+        "evict",
+        help="Delete the oldest statistics dumps until the tier fits a byte budget. Currency objects are never evicted",
+    )
+    evict.add_argument("--tier", required=True, choices=[str(ArchiveTier.STATISTICS)])
+    evict.add_argument("--budget-bytes", dest="budget_bytes", type=int, required=True)
+    audit = archive_commands.add_parser(
+        "audit",
+        help=(
+            "Read every archive object back against its manifest and compare the catalog with the listing. Prints one "
+            "JSON line per object and per missing object, then a summary, and exits 1 on any problem"
+        ),
+    )
+    audit.add_argument("--tier", choices=[str(tier) for tier in ArchiveTier], help="Audit one tier (default: both)")
+    audit.add_argument("--since-key", dest="since_key", help="Audit only objects whose key sorts after this one")
     return parser
+
+
+def _archive_command(options: argparse.Namespace, archive_client: KudosArchive) -> None:
+    """Run one ``archive`` subcommand and print its output."""
+    if options.archive_command == "restore":
+        try:
+            restored = restore_archive_unit(archive_client, options.key, table_name=options.table_name, append=options.append)
+        except ValueError as err:
+            raise SystemExit(str(err)) from err
+        restore_output: dict[str, object] = {"key": options.key, "table": options.table_name, "rows": restored, "appended": options.append}
+        if options.append:
+            restore_output["note"] = "The rows were added to the table. Rows it held before are kept, so compare counts by hand"
+        print(json.dumps(restore_output))
+        return
+    if options.archive_command == "evict":
+        try:
+            deleted = archive_client.enforce_budget(budget_bytes=options.budget_bytes)
+        except ArchiveEvictionError as err:
+            print(json.dumps({"tier": options.tier, "budget_bytes": options.budget_bytes, "deleted": err.deleted_keys, "error": str(err)}))
+            raise SystemExit(1) from err
+        print(json.dumps({"tier": options.tier, "budget_bytes": options.budget_bytes, "deleted": deleted}))
+        return
+    tiers = list(ArchiveTier) if options.tier is None else [ArchiveTier(options.tier)]
+    audited_objects = 0
+    problems = 0
+    last_key = None
+    for record in audit_archive(archive_client, tiers=tiers, since_key=options.since_key):
+        if isinstance(record, MissingArchiveObject):
+            problems += 1
+            print(json.dumps({"kind": "missing_object", **asdict(record)}, default=str))
+            continue
+        audited_objects += 1
+        last_key = record.key
+        if not record.matches_manifest:
+            problems += 1
+        print(json.dumps({"kind": "object", "matches_manifest": record.matches_manifest, **asdict(record)}, default=str))
+    summary = {"objects": audited_objects, "problems": problems, "last_key": last_key, "tiers": [str(tier) for tier in tiers]}
+    print(json.dumps({"kind": "summary", **summary}))
+    if problems:
+        raise SystemExit(1)
 
 
 def _tier_bytes_or_error(archive: KudosArchive) -> dict[str, object]:
@@ -214,8 +281,23 @@ def main() -> None:
             print(json.dumps({"snapshot_id": str(create_balance_snapshot())}))
             return
         if options.command == "reconcile":
-            drifts = reconcile_balances(options.snapshot_id, apply_repairs=options.apply)
-            print(json.dumps({"drifts": [asdict(item) for item in drifts], "repairs_emitted": options.apply}, default=str, indent=2))
+            try:
+                drifts = reconcile_balances(options.snapshot_id, apply_repairs=options.apply)
+            except StaleCheckpointsError as err:
+                raise SystemExit(str(err)) from err
+            stale_units = [asdict(stale_unit) for stale_unit in stale_checkpoint_units()]
+            print(
+                json.dumps(
+                    {
+                        "drifts": [asdict(item) for item in drifts],
+                        "repairs_emitted": options.apply,
+                        "stale_checkpoint_units": stale_units,
+                        "drift_reliable": not stale_units,
+                    },
+                    default=str,
+                    indent=2,
+                ),
+            )
             return
         if options.command == "drain":
             total = 0
@@ -237,8 +319,7 @@ def main() -> None:
             archive_client = KudosArchive.from_environment()
             if archive_client is None:
                 raise SystemExit("The kudos archive is not configured; set every KUDOS_ARCHIVE_* variable")
-            restored = restore_archive_unit(archive_client, options.key, table_name=options.table_name)
-            print(json.dumps({"key": options.key, "table": options.table_name, "rows": restored}))
+            _archive_command(options, archive_client)
 
 
 if __name__ == "__main__":

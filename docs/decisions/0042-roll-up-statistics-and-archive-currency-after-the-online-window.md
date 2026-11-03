@@ -130,9 +130,8 @@ surface in this decision.
 The partition's rows are exported, compressed, to the archive bucket with a manifest that includes the schema version,
 the `created` range, the row count, per-user control totals and a content digest. The object is read back and checked
 against the manifest and the online partition before the drop. A failed export, verification or upload leaves the
-partition online and raises an alert. Currency archive objects are exempt from the budget eviction described below.
-When the currency tier alone would exceed the budget, currency retention stops and alerts, and statistics retention
-continues.
+partition online and raises an alert. When the currency tier would exceed its budget, currency retention stops and
+alerts, and statistics retention continues.
 
 ### Idempotency keys
 
@@ -147,10 +146,11 @@ the tables by `event_id`. Older keys would already have expired.
 
 ### Archive bucket and budget
 
-The archive is one S3-compatible bucket with dedicated least-privilege credentials and a configured byte budget.
-Objects are written once and are not modified afterwards. The budget is enforced by evicting the oldest statistic
-dumps first. Currency objects are exempt, as described above. The deployment's backup policy decides whether the
-bucket is copied elsewhere. This decision requires only that the policy be written down together with the bucket's
+The archive is one S3-compatible bucket with dedicated least-privilege credentials and a configured byte budget per
+tier. Objects are written once and are not modified afterwards. Nothing is evicted automatically: a tier whose next
+upload would exceed its budget stops that tier's retention and alerts, and an operator either raises the budget or
+evicts statistic dumps by hand, oldest first. The deployment's backup policy decides whether the bucket is copied
+elsewhere. This decision requires only that the policy be written down together with the bucket's
 restore procedure. An unavailable bucket pauses currency retention and statistic dumps. It does not pause writes,
 projection or statistic rollups.
 
