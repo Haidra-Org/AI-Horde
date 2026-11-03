@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+import threading
+import time as clock
+from collections.abc import Iterator, Mapping
 from datetime import time, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,10 @@ MIGRATION_PATH = Path(__file__).resolve().parents[2] / "sql_statements" / "5.1.1
 """The hand-applied migration under test."""
 GEXEC_LINE = re.compile(r"^\\gexec[ \t]*$", re.MULTILINE)
 """A psql ``\\gexec`` line, which ends the query whose result rows are run as statements."""
+PSQL_VARIABLE_DEFINED_TEST = re.compile(r"^\\if :\{\?(\w+)\}$")
+"""A psql ``\\if :{?name}`` line, which tests whether the variable is set."""
+PSQL_SET_COMMAND = re.compile(r"^\\set (\w+) (\S+)$")
+"""A psql ``\\set name value`` line."""
 USERS_STUB = "CREATE TABLE users (id INTEGER PRIMARY KEY)"
 """The key ``kudos_ledger.user_id`` and the new statement tables reference."""
 KUDOS_LEDGER_STUB = """
@@ -222,13 +228,14 @@ def _schema_engine(pg_dsn: str, schema_name: str) -> sqlalchemy.Engine:
     )
 
 
-def _apply_migration(connection: sqlalchemy.Connection) -> None:
-    """Run the migration as psql does, including its ``\\gexec`` statements.
+def _apply_migration(connection: sqlalchemy.Connection, *, variables: Mapping[str, str] | None = None) -> list[str]:
+    """Run the migration as psql does, including its ``\\gexec`` statements, and return its ``\\echo`` lines.
 
     psql sends the query that ends at a ``\\gexec`` line and then runs every value it returns as a statement of its
-    own, outside any transaction block.
+    own, outside any transaction block. ``variables`` are the ``-v name=value`` options of the psql command line.
     """
-    segments = GEXEC_LINE.split(MIGRATION_PATH.read_text())
+    script, echoed_lines = _expand_psql_variables(MIGRATION_PATH.read_text(), dict(variables or {}))
+    segments = GEXEC_LINE.split(script)
     for segment_index, segment in enumerate(segments):
         statements = [statement for statement in sqlparse.split(segment) if sqlparse.format(statement, strip_comments=True).strip()]
         generating_query = statements.pop() if segment_index < len(segments) - 1 else None
@@ -239,6 +246,50 @@ def _apply_migration(connection: sqlalchemy.Connection) -> None:
         for generated_row in connection.execute(sqlalchemy.text(generating_query)).all():
             for generated_statement in generated_row:
                 connection.execute(sqlalchemy.text(generated_statement))
+    return echoed_lines
+
+
+def _expand_psql_variables(script: str, variables: dict[str, str]) -> tuple[str, list[str]]:
+    """Apply the psql ``\\if :{?name}``, ``\\else``, ``\\endif``, ``\\set`` and ``\\echo`` lines of ``script``.
+
+    Returns the script without those lines and with every ``:name`` of a set variable replaced by its value, and the
+    ``\\echo`` output. Any other meta-command except ``\\gexec`` fails the test, so the migration cannot use one this
+    emulation does not run as psql would.
+    """
+
+    def interpolate(line: str) -> str:
+        for variable_name, variable_value in variables.items():
+            line = re.sub(rf"(?<![:\w]):{variable_name}\b", variable_value, line)
+        return line
+
+    kept_lines: list[str] = []
+    echoed_lines: list[str] = []
+    branch_taken: list[bool] = []
+    for line in script.splitlines():
+        stripped = line.strip()
+        defined_test = PSQL_VARIABLE_DEFINED_TEST.match(stripped)
+        if defined_test is not None:
+            branch_taken.append(defined_test.group(1) in variables)
+            continue
+        if stripped == "\\else":
+            branch_taken[-1] = not branch_taken[-1]
+            continue
+        if stripped == "\\endif":
+            branch_taken.pop()
+            continue
+        if not all(branch_taken):
+            continue
+        set_command = PSQL_SET_COMMAND.match(stripped)
+        if set_command is not None:
+            variables[set_command.group(1)] = set_command.group(2)
+            continue
+        if stripped.startswith("\\echo "):
+            echoed_lines.append(interpolate(stripped.removeprefix("\\echo ")))
+            continue
+        assert not stripped.startswith("\\") or GEXEC_LINE.match(stripped), f"unsupported psql meta-command: {stripped}"
+        kept_lines.append(line if stripped.startswith("--") else interpolate(line))
+    assert not branch_taken, "unterminated \\if"
+    return "\n".join(kept_lines) + "\n", echoed_lines
 
 
 def _build_tables(connection: sqlalchemy.Connection, shape: str) -> None:
@@ -415,6 +466,48 @@ def test_backfill_keys_the_transfers_and_repairs_inside_the_window(converted_sch
         ("00000000-0000-0000-0000-00000000000a", "transfer", 1, 2, 10, "OK"),
         ("00000000-0000-0000-0000-00000000000c", "repair", None, 1, 7, "OK"),
     ]
+
+
+OLDER_TRANSFER_EVENT_ID = "00000000-0000-0000-0000-0000000000e0"
+"""A transfer 60 days old: outside the default key window and inside a 90 day one."""
+
+
+@pytest.mark.parametrize(
+    ("variables", "expected_window_days", "older_transfer_keyed"),
+    [({}, "30", False), ({"key_lifetime_days": "90"}, "90", True)],
+    ids=["default_window", "key_lifetime_days_90"],
+)
+def test_backfill_window_follows_the_key_lifetime_variable(
+    pg_dsn: str,
+    variables: dict[str, str],
+    expected_window_days: str,
+    older_transfer_keyed: bool,
+) -> None:
+    """``-v key_lifetime_days`` widens the backfill, so a retry inside a longer key lifetime still finds its key."""
+    schema_name = new_test_schema_name("horde_kudos_retention_migration_keys")
+    create_schema(pg_dsn, schema_name)
+    engine = _schema_engine(pg_dsn, schema_name)
+    try:
+        with engine.connect() as connection:
+            _build_tables(connection, "production")
+            for statement in SEED_ROWS:
+                connection.execute(sqlalchemy.text(statement))
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO kudos_ledger (created, event_id, entry_type, user_id, escrow, amount, applied) VALUES "
+                    f"((now() AT TIME ZONE 'UTC') - interval '60 days', '{OLDER_TRANSFER_EVENT_ID}', 'TRANSFER', 1, false, -4, true), "
+                    f"((now() AT TIME ZONE 'UTC') - interval '60 days', '{OLDER_TRANSFER_EVENT_ID}', 'TRANSFER', 2, false, 4, true)",
+                ),
+            )
+            echoed_lines = _apply_migration(connection, variables=variables)
+            keyed_event_ids = set(connection.execute(sqlalchemy.text("SELECT event_id::text FROM kudos_idempotency_keys")).scalars())
+    finally:
+        engine.dispose()
+        drop_schema(pg_dsn, schema_name)
+    assert f"Backfilling the idempotency keys of the last {expected_window_days} days" in echoed_lines
+    assert (OLDER_TRANSFER_EVENT_ID in keyed_event_ids) is older_transfer_keyed
+    # The 40 day old seed transfer follows the same window.
+    assert ("00000000-0000-0000-0000-00000000000b" in keyed_event_ids) is older_transfer_keyed
 
 
 def test_conversion_stops_before_committing_when_a_legacy_index_does_not_match(pg_dsn: str) -> None:
@@ -762,3 +855,195 @@ def test_partition_maintenance_restores_the_current_week_and_leaves_older_gaps(a
             assert ensure_kudos_event_partitions(until=real_now + 2 * width, width=width) == []
         finally:
             db.session.rollback()
+
+
+def _partition_shape(connection: sqlalchemy.Connection, partition: str) -> dict[str, Any]:
+    """Return a partition's columns, constraints, indexes and storage parameters, with its name as ``<partition>``.
+
+    Each index is listed with the parent index it is attached to, so an index ``ATTACH PARTITION`` created because no
+    copied index matched, or a copied index left unattached, shows as a difference.
+    """
+
+    def normalized(definition: str) -> str:
+        return definition.replace(partition, "<partition>")
+
+    columns = connection.execute(
+        sqlalchemy.text(
+            "SELECT a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull, pg_get_expr(d.adbin, d.adrelid) "
+            "FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum "
+            "WHERE a.attrelid = CAST(:partition AS regclass) AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
+        ),
+        {"partition": partition},
+    ).all()
+    constraints = connection.execute(
+        sqlalchemy.text(
+            "SELECT contype, pg_get_constraintdef(oid), conparentid <> 0 FROM pg_constraint "
+            "WHERE conrelid = CAST(:partition AS regclass) AND contype <> 'n' ORDER BY 1, 2",
+        ),
+        {"partition": partition},
+    ).all()
+    indexes = connection.execute(
+        sqlalchemy.text(
+            "SELECT parent_index.relname, pg_get_indexdef(x.indexrelid) FROM pg_index x "
+            "LEFT JOIN pg_inherits i ON i.inhrelid = x.indexrelid LEFT JOIN pg_class parent_index ON parent_index.oid = i.inhparent "
+            "WHERE x.indrelid = CAST(:partition AS regclass)",
+        ),
+        {"partition": partition},
+    ).all()
+    return {
+        "columns": [tuple(column) for column in columns],
+        "constraints": [tuple(constraint) for constraint in constraints],
+        "indexes": sorted(
+            (parent_index, re.sub(r"INDEX \S+ ON", "INDEX ON", normalized(definition))) for parent_index, definition in indexes
+        ),
+        "storage_parameters": _storage_parameters(connection, partition),
+    }
+
+
+@pytest.mark.parametrize("table", EVENT_TABLES)
+def test_created_partition_matches_one_created_with_partition_of(app: Any, model_schema: str, table: str) -> None:
+    """A partition built standalone and attached has what ``CREATE TABLE ... PARTITION OF`` gives, and the expected bound."""
+    from datetime import datetime
+
+    from horde.classes.base.kudos import KudosPartitioning, ensure_kudos_event_partitions
+    from horde.flask import db
+
+    width = KudosPartitioning.DEFAULT_WIDTH
+    storage_parameters = ", ".join(
+        f"{parameter} = {setting}" for parameter, setting in KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS[table].items()
+    )
+    with app.app_context():
+        try:
+            db.session.execute(sqlalchemy.text(f"SET LOCAL search_path TO {model_schema}"))
+            connection = db.session.connection()
+            real_now = _scalar(connection, "SELECT now() AT TIME ZONE 'UTC'")
+            week_start = datetime(real_now.year, real_now.month, real_now.day) - timedelta(days=real_now.weekday())
+            created = [
+                name for name in ensure_kudos_event_partitions(until=real_now + 2 * width, width=width) if name.startswith(f"{table}_p_")
+            ]
+            reference_lower = week_start + 52 * width
+            connection.execute(
+                sqlalchemy.text(
+                    f"CREATE TABLE {table}_reference PARTITION OF {table} FOR VALUES FROM ('{reference_lower.isoformat(sep=' ')}') "
+                    f"TO ('{(reference_lower + width).isoformat(sep=' ')}') WITH ({storage_parameters})",
+                ),
+            )
+            reference_shape = _partition_shape(connection, f"{table}_reference")
+            created_shapes = {name: _partition_shape(connection, name) for name in created}
+            bounds = _partition_bounds(connection, table)
+        finally:
+            db.session.rollback()
+    assert created[0] == f"{table}_p_legacy"
+    assert f"{table}_p_{week_start:%Y%m%d}" in created
+    assert len(reference_shape["indexes"]) == len(PARENT_INDEXES[table]) + 1
+    assert all(parent_index is not None for parent_index, _ in reference_shape["indexes"])
+    if table == "kudos_ledger":
+        assert ("f", "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT", True) in reference_shape["constraints"]
+    for created_name, created_shape in created_shapes.items():
+        assert created_shape == reference_shape, created_name
+    assert bounds[f"{table}_p_legacy"] == f"FOR VALUES FROM (MINVALUE) TO ('{week_start}')"
+    for created_name in created[1:]:
+        lower = datetime.strptime(created_name[-8:], KudosPartitioning.NAME_FORMAT)
+        assert bounds[created_name] == f"FOR VALUES FROM ('{lower}') TO ('{lower + width}')"
+
+
+def _insert_through_parent(connection: sqlalchemy.Connection, table: str) -> str:
+    """Insert a row created now through the parent with a short ``lock_timeout`` and return the partition it landed in."""
+    connection.execute(sqlalchemy.text("SET lock_timeout = '1s'"))
+    return _insert_now_partition(connection, table)
+
+
+def test_partition_creation_does_not_wait_for_a_reader_of_the_parent(app: Any, model_schema: str, pg_dsn: str) -> None:
+    """A long repeatable-read transaction that read the parent holds ``ACCESS SHARE``, which the attach does not wait for."""
+    from horde.classes.base.kudos import KudosPartitioning, ensure_kudos_event_partitions
+    from horde.flask import db
+
+    width = KudosPartitioning.DEFAULT_WIDTH
+    reader_engine = _schema_engine(pg_dsn, model_schema).execution_options(isolation_level="REPEATABLE READ")
+    try:
+        with reader_engine.connect() as reader, app.app_context():
+            for table in EVENT_TABLES:
+                reader.execute(sqlalchemy.text(f"SELECT count(*) FROM {table}")).scalar_one()
+            try:
+                db.session.execute(sqlalchemy.text(f"SET LOCAL search_path TO {model_schema}"))
+                real_now = _scalar(db.session.connection(), "SELECT now() AT TIME ZONE 'UTC'")
+                started = clock.monotonic()
+                created = ensure_kudos_event_partitions(until=real_now + 2 * width, width=width)
+                elapsed = clock.monotonic() - started
+            finally:
+                db.session.rollback()
+            reader.rollback()
+    finally:
+        reader_engine.dispose()
+    assert {f"{table}_p_legacy" for table in EVENT_TABLES} <= set(created)
+    assert elapsed < 1.0
+
+
+def test_partition_creation_defers_on_lock_timeout_and_retries(
+    app: Any, model_schema: str, pg_dsn: str, log_records: list[tuple[str, str]]
+) -> None:
+    """A lock the attach cannot get within the timeout defers that partition to the next call without blocking inserts.
+
+    An open transaction that wrote to ``users`` holds ``ROW EXCLUSIVE`` on it, which conflicts with the
+    ``SHARE ROW EXCLUSIVE`` the attach of a ``kudos_ledger`` partition takes for the foreign key. Inserts into an
+    existing partition through the parent proceed while the attach waits.
+    """
+    from horde.classes.base.kudos import KudosPartitioning, ensure_kudos_event_partitions
+    from horde.flask import db
+
+    width = KudosPartitioning.DEFAULT_WIDTH
+    lock_timeout_seconds = float(KudosPartitioning.CREATE_LOCK_TIMEOUT.removesuffix("s"))
+    schema_engine = _schema_engine(pg_dsn, model_schema)
+    holder_engine = schema_engine.execution_options(isolation_level="READ COMMITTED")
+    inserted_partitions: list[str] = []
+    inserter_errors: list[BaseException] = []
+
+    def insert_while_the_attach_waits() -> None:
+        try:
+            with schema_engine.connect() as inserter:
+                deadline = clock.monotonic() + lock_timeout_seconds
+                while clock.monotonic() < deadline:
+                    waiting_attaches = _scalar(
+                        inserter,
+                        "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                        "AND wait_event_type = 'Lock' AND query LIKE '%ATTACH PARTITION%'",
+                    )
+                    if waiting_attaches:
+                        inserted_partitions.append(_insert_through_parent(inserter, "kudos_ledger"))
+                        return
+                    clock.sleep(0.05)
+        except BaseException as err:  # noqa: BLE001 - re-raised in the test thread below
+            inserter_errors.append(err)
+
+    try:
+        with app.app_context(), holder_engine.connect() as holder:
+            try:
+                db.session.execute(sqlalchemy.text(f"SET LOCAL search_path TO {model_schema}"))
+                real_now = _scalar(db.session.connection(), "SELECT now() AT TIME ZONE 'UTC'")
+                ensure_kudos_event_partitions(until=real_now + 2 * width, width=width)
+                db.session.commit()
+                holder.execute(sqlalchemy.text("INSERT INTO users (id) VALUES (2)"))
+                inserter_thread = threading.Thread(target=insert_while_the_attach_waits)
+                inserter_thread.start()
+                db.session.execute(sqlalchemy.text(f"SET LOCAL search_path TO {model_schema}"))
+                started = clock.monotonic()
+                deferred_call = ensure_kudos_event_partitions(until=real_now + 3 * width, width=width)
+                elapsed = clock.monotonic() - started
+                inserter_thread.join()
+                assert not inserter_errors, inserter_errors
+                assert len(deferred_call) == 1 and deferred_call[0].startswith("kudos_stat_events_p_")
+                deferred_partition = deferred_call[0].replace("kudos_stat_events_p_", "kudos_ledger_p_")
+                standalone_left = _scalar(db.session.connection(), "SELECT to_regclass(:name) IS NOT NULL", name=deferred_partition)
+                holder.rollback()
+                retried_call = ensure_kudos_event_partitions(until=real_now + 3 * width, width=width)
+                retried_bounds = _partition_bounds(db.session.connection(), "kudos_ledger")
+            finally:
+                db.session.rollback()
+    finally:
+        schema_engine.dispose()
+    assert lock_timeout_seconds <= elapsed < lock_timeout_seconds + 2
+    assert inserted_partitions and inserted_partitions[0].startswith("kudos_ledger_p_")
+    assert any(level == "WARNING" and deferred_partition in message for level, message in log_records)
+    assert standalone_left is False
+    assert retried_call == [deferred_partition]
+    assert deferred_partition in retried_bounds

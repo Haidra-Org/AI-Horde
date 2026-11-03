@@ -48,6 +48,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import and_, column, false, true
 
@@ -724,13 +725,22 @@ class KudosPartitioning:
 
     The applier updates every row once, so autovacuum triggers on a fixed number of dead rows rather than on a fraction
     of the partition, as sql_statements/5.1.10.txt set on the unpartitioned tables. Storage parameters are per table
-    and a partition does not inherit them from its parent, so each ``CREATE TABLE ... PARTITION OF`` sets them, and
+    and a partition does not inherit them from its parent, so each new partition is created with them, and
     sql_statements/5.1.16.txt sets the same values on the first weekly partition.
+    """
+    CREATE_LOCK_TIMEOUT: str = "3s"
+    """The ``lock_timeout`` of each lock a partition creation waits for.
+
+    Attaching a ``kudos_ledger`` partition takes ``SHARE ROW EXCLUSIVE`` on ``users`` for the foreign key, and every
+    write to ``users`` queues behind that request until it is granted or times out, so the wait is kept short. A
+    creation that times out is retried by the next call.
     """
 
 
 KUDOS_PARTITIONED_TABLES: Final[tuple[str, ...]] = (KudosLedger.__tablename__, KudosStatEvent.__tablename__)
 """The event tables ranged on ``created``."""
+_LOCK_NOT_AVAILABLE_SQLSTATE: Final[str] = "55P03"
+"""The SQLSTATE PostgreSQL reports when ``lock_timeout`` expires."""
 _PARTITION_RANGE_BOUNDS = re.compile(r"FROM \((MINVALUE|'[^']+')\) TO \((MAXVALUE|'[^']+')\)")
 
 
@@ -745,7 +755,8 @@ def ensure_kudos_event_partitions(*, until: datetime, width: timedelta) -> list[
     partitions first gets the legacy partition, from ``MINVALUE`` to that Monday, so a fresh database has the same
     layout as a converted one and a row with an older ``created`` still has a partition. A table that is not
     partitioned yet is skipped with a warning, since inserts into it need no partition. Every partition is created
-    with ``KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS``.
+    with ``KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS``. A range whose partition name is already taken by a
+    table outside the partitioning, such as a detached partition, is skipped with a warning.
 
     Args:
         until: Create partitions until the coverage reaches this naive UTC time.
@@ -760,7 +771,12 @@ def ensure_kudos_event_partitions(*, until: datetime, width: timedelta) -> list[
 
     Concurrency:
         Takes ``SHARE UPDATE EXCLUSIVE`` on a parent before reading its bounds again, so concurrent callers create
-        each partition once. Inserts are not blocked by that lock.
+        each partition once. Each partition is built as a standalone table with a validated CHECK on its range and
+        then attached, which takes ``SHARE UPDATE EXCLUSIVE`` on the parent and scans nothing, so reads and inserts
+        through the parent are not blocked. ``CREATE TABLE ... PARTITION OF`` would take ``ACCESS EXCLUSIVE`` on the
+        parent instead, and every insert would queue behind that request while a long reader holds the parent.
+        Every lock wait ends after ``KudosPartitioning.CREATE_LOCK_TIMEOUT``. On a timeout the table's remaining
+        partitions are left for the next call, with a warning, and the partitions created before it are kept.
 
     Performance:
         When coverage is already complete, each table costs one ``pg_inherits`` listing and takes no lock, so the
@@ -782,32 +798,92 @@ def _ensure_table_partitions(*, table_name: str, until: datetime, width: timedel
     existing_ranges = _partition_ranges(table_name)
     if existing_ranges and not _uncovered_ranges(existing_ranges, start=coverage_start, until=until, width=width):
         return []
-    db.session.execute(text(f"LOCK TABLE {table_name} IN SHARE UPDATE EXCLUSIVE MODE"))
+    try:
+        with _bounded_lock_wait():
+            db.session.execute(text(f"LOCK TABLE {table_name} IN SHARE UPDATE EXCLUSIVE MODE"))
+    except OperationalError as err:
+        if not _is_lock_timeout(err):
+            raise
+        logger.warning(f"Deferred the partitions of {table_name} to the next call: lock_timeout expired on {table_name}: {err.orig}")
+        return []
     existing_ranges = _partition_ranges(table_name)
-    storage_parameters = _storage_parameters_clause(table_name)
-    created_names: list[str] = []
+    pending_partitions: list[tuple[str, _PartitionRange]] = []
     if not existing_ranges:
-        legacy_name = f"{table_name}{KudosPartitioning.LEGACY_SUFFIX}"
-        db.session.execute(
-            text(
-                f"CREATE TABLE IF NOT EXISTS {legacy_name} PARTITION OF {table_name} "
-                f"FOR VALUES FROM (MINVALUE) TO ('{coverage_start.isoformat(sep=' ')}') {storage_parameters}",
-            ),
-        )
-        created_names.append(legacy_name)
-        existing_ranges = [_PartitionRange(lower=None, upper=coverage_start)]
+        legacy_range = _PartitionRange(lower=None, upper=coverage_start)
+        pending_partitions.append((f"{table_name}{KudosPartitioning.LEGACY_SUFFIX}", legacy_range))
+        existing_ranges = [legacy_range]
     for missing_range in _uncovered_ranges(existing_ranges, start=coverage_start, until=until, width=width):
-        lower = missing_range.lower_or_minimum
-        upper = missing_range.upper_or_maximum
-        partition_name = f"{table_name}_p_{lower.strftime(KudosPartitioning.NAME_FORMAT)}"
-        db.session.execute(
-            text(
-                f"CREATE TABLE IF NOT EXISTS {partition_name} PARTITION OF {table_name} "
-                f"FOR VALUES FROM ('{lower.isoformat(sep=' ')}') TO ('{upper.isoformat(sep=' ')}') {storage_parameters}",
-            ),
-        )
+        partition_name = f"{table_name}_p_{missing_range.lower_or_minimum.strftime(KudosPartitioning.NAME_FORMAT)}"
+        pending_partitions.append((partition_name, missing_range))
+    created_names: list[str] = []
+    for partition_name, partition_range in pending_partitions:
+        if _relation_exists(partition_name):
+            logger.warning(f"Skipped partition {partition_name} of {table_name}: a table outside the partitioning has the name.")
+            continue
+        try:
+            with _bounded_lock_wait():
+                _attach_new_partition(table_name=table_name, partition_name=partition_name, partition_range=partition_range)
+        except OperationalError as err:
+            if not _is_lock_timeout(err):
+                raise
+            logger.warning(f"Deferred partition {partition_name} of {table_name} to the next call: lock_timeout expired: {err.orig}")
+            break
         created_names.append(partition_name)
     return created_names
+
+
+@contextlib.contextmanager
+def _bounded_lock_wait() -> Iterator[None]:
+    """Context manager for a savepoint whose lock waits end after ``KudosPartitioning.CREATE_LOCK_TIMEOUT``.
+
+    The setting is transaction-local, so it is set back before the savepoint is released, and a rollback to the
+    savepoint, which also undoes any table created inside it, restores it as well.
+    """
+    with db.session.begin_nested():
+        previous_lock_timeout = db.session.execute(text("SELECT current_setting('lock_timeout')")).scalar_one()
+        db.session.execute(
+            text("SELECT set_config('lock_timeout', :lock_timeout, true)"),
+            {"lock_timeout": KudosPartitioning.CREATE_LOCK_TIMEOUT},
+        )
+        yield
+        db.session.execute(text("SELECT set_config('lock_timeout', :lock_timeout, true)"), {"lock_timeout": previous_lock_timeout})
+
+
+def _is_lock_timeout(err: OperationalError) -> bool:
+    return getattr(err.orig, "pgcode", None) == _LOCK_NOT_AVAILABLE_SQLSTATE
+
+
+def _relation_exists(relation_name: str) -> bool:
+    return db.session.execute(text("SELECT to_regclass(:relation_name) IS NOT NULL"), {"relation_name": relation_name}).scalar_one() is True
+
+
+def _attach_new_partition(*, table_name: str, partition_name: str, partition_range: _PartitionRange) -> None:
+    """Create ``partition_name`` as a standalone copy of ``table_name`` and attach it for ``partition_range``.
+
+    ``LIKE`` copies the columns, NOT NULLs, CHECKs, defaults, the primary key and every index, partial ones included,
+    and ``ATTACH PARTITION`` attaches each index to the parent's matching partitioned index and clones the foreign
+    keys. The range CHECK lets the attach skip its validation scan. It is dropped afterwards, since the partition
+    bound enforces the same range.
+    """
+    lower_bound = "MINVALUE" if partition_range.lower is None else f"'{partition_range.lower.isoformat(sep=' ')}'"
+    upper_bound = "MAXVALUE" if partition_range.upper is None else f"'{partition_range.upper.isoformat(sep=' ')}'"
+    range_conditions = [
+        *([] if partition_range.lower is None else [f"created >= {lower_bound}"]),
+        *([] if partition_range.upper is None else [f"created < {upper_bound}"]),
+    ]
+    range_check_name = f"{partition_name}_bounds"
+    range_check = f", CONSTRAINT {range_check_name} CHECK ({' AND '.join(range_conditions)})" if range_conditions else ""
+    db.session.execute(
+        text(
+            f"CREATE TABLE {partition_name} (LIKE {table_name} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES"
+            f"{range_check}) {_storage_parameters_clause(table_name)}",
+        ),
+    )
+    db.session.execute(
+        text(f"ALTER TABLE {table_name} ATTACH PARTITION {partition_name} FOR VALUES FROM ({lower_bound}) TO ({upper_bound})"),
+    )
+    if range_check:
+        db.session.execute(text(f"ALTER TABLE {partition_name} DROP CONSTRAINT {range_check_name}"))
 
 
 def _storage_parameters_clause(table_name: str) -> str:

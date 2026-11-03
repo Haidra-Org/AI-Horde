@@ -7,6 +7,7 @@
 -- the swap reads its timestamps from a temporary table and calls temporary helper functions, both of
 -- which end with the session. Every statement is idempotent, so a failed run is rerun from the top in a
 -- new session once the cause is fixed. A failed concurrent build leaves an INVALID index to drop first.
+-- When either retention window is above 30 days, also pass -v key_lifetime_days, as section 2 describes.
 --
 -- Apply before deploying the application that maps the partitioned tables. db.create_all() builds
 -- partitioned tables on a fresh database but does not convert an existing one.
@@ -132,10 +133,19 @@ ALTER TABLE kudos_retention_catalog ADD COLUMN IF NOT EXISTS detached_at TIMESTA
 ALTER TABLE kudos_retention_catalog ADD COLUMN IF NOT EXISTS state_before_detach VARCHAR(32);
 
 
--- 2. Idempotency keys for the transfers and repairs inside the online window. Older keys would already
--- have expired. created is naive UTC, so the window is computed in UTC whatever the session time zone.
--- Rerunning this section after the deploy adds the keys of transfers made by the previous application
--- version in between.
+-- 2. Idempotency keys for the transfers and repairs inside the key lifetime. Older keys would already
+-- have expired. The key lifetime is the shorter of KUDOS_RETENTION_CURRENCY_DAYS and
+-- KUDOS_RETENTION_STATISTICS_DAYS. When either is above 30, pass that shorter window as
+-- -v key_lifetime_days=<days>. Without it the window is 30 days, the default of both. A window shorter
+-- than the key lifetime would leave a retried older transfer without a key, so it would post again.
+-- created is naive UTC, so the window is computed in UTC whatever the session time zone. Rerunning
+-- this section after the deploy adds the keys of transfers made by the previous application version in
+-- between. \if needs psql 11 or later.
+\if :{?key_lifetime_days}
+\else
+\set key_lifetime_days 30
+\endif
+\echo Backfilling the idempotency keys of the last :key_lifetime_days days
 INSERT INTO kudos_idempotency_keys (event_id, kind, source_user_id, dest_user_id, amount, outcome, created)
 SELECT
     event_id,
@@ -146,7 +156,7 @@ SELECT
     'OK',
     min(created)
 FROM kudos_ledger
-WHERE entry_type = 'TRANSFER' AND created >= (now() AT TIME ZONE 'UTC') - interval '30 days'
+WHERE entry_type = 'TRANSFER' AND created >= (now() AT TIME ZONE 'UTC') - :key_lifetime_days * interval '1 day'
 GROUP BY event_id
 ON CONFLICT (event_id) DO NOTHING;
 
@@ -154,7 +164,7 @@ ON CONFLICT (event_id) DO NOTHING;
 INSERT INTO kudos_idempotency_keys (event_id, kind, source_user_id, dest_user_id, amount, outcome, created)
 SELECT event_id, 'repair', NULL, max(user_id), sum(amount), 'OK', min(created)
 FROM kudos_ledger
-WHERE entry_type = 'RECONCILIATION' AND created >= (now() AT TIME ZONE 'UTC') - interval '30 days'
+WHERE entry_type = 'RECONCILIATION' AND created >= (now() AT TIME ZONE 'UTC') - :key_lifetime_days * interval '1 day'
 GROUP BY event_id
 ON CONFLICT (event_id) DO NOTHING;
 
