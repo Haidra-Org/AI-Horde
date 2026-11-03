@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import logfire
@@ -25,7 +26,7 @@ from horde.bridge_reference import (
 )
 from horde.chat_contract import ChatImpossibleReason
 from horde.classes.base.detection import Filter
-from horde.classes.base.kudos import KudosLedger, kudos_event
+from horde.classes.base.kudos import KudosIdempotencyKey, kudos_event
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
@@ -64,7 +65,7 @@ from horde.consts import (
 from horde.database.classes import FakeWPRow
 from horde.database.kudos_legacy_projection import consume_user_reservation
 from horde.database.kudos_reservations import reserve_kudos
-from horde.enums import KudosAuditDetail, KudosEntryType, State
+from horde.enums import KudosAuditDetail, KudosEntryType, KudosIdempotencyKind, State
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -840,6 +841,20 @@ def retrieve_available_models(model_type=None, min_count=None, max_count=None, m
     return models_ret
 
 
+def _transfer_key_amount(amount: float) -> Decimal:
+    """Return the transfer amount as ``kudos_idempotency_keys.amount`` stores it, rounded to cents as PostgreSQL rounds."""
+    return Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _is_same_transfer(prior_key: KudosIdempotencyKey, *, source_user: User, dest_user: User, amount: float) -> bool:
+    """Return whether a retry repeats the parties and amount the key recorded."""
+    return (
+        prior_key.source_user_id == source_user.id
+        and prior_key.dest_user_id == dest_user.id
+        and prior_key.amount == _transfer_key_amount(amount)
+    )
+
+
 def transfer_kudos(
     source_user: User,
     dest_user: User,
@@ -895,12 +910,10 @@ def transfer_kudos(
     # projection owns writes and at fold time when the applier does.
     scoped_retry_key = None if idempotency_key is None else f"transfer:{source_user.id}:{idempotency_key}"
     with kudos_event(idempotency_key=scoped_retry_key) as event:
-        prior_postings = db.session.query(KudosLedger).filter(KudosLedger.event_id == event.event_id).all()
-        if prior_postings:
-            same_request = any(row.user_id == source_user.id and row.amount == -amount for row in prior_postings) and any(
-                row.user_id == dest_user.id and row.amount == amount for row in prior_postings
-            )
-            if not same_request:
+        # Keys expire with the online window, so a retry after expiry is a new transfer.
+        prior_key = db.session.get(KudosIdempotencyKey, event.event_id)
+        if prior_key is not None:
+            if not _is_same_transfer(prior_key, source_user=source_user, dest_user=dest_user, amount=amount):
                 return [0, "Idempotency key was already used with different transfer parameters.", "IdempotencyKeyConflict"]
             kudos_transfers_idempotent_replays.add(1)
             return [amount, "OK", None, True]
@@ -915,12 +928,10 @@ def transfer_kudos(
             return [0, "Not enough kudos.", "KudosTransferNotEnough"]
         # The payer lock acquired by reserve_kudos closes the concurrent retry
         # race between the optimistic check above and the first commit.
-        prior_postings = db.session.query(KudosLedger).filter(KudosLedger.event_id == event.event_id).all()
-        if prior_postings:
+        prior_key = db.session.get(KudosIdempotencyKey, event.event_id, populate_existing=True)
+        if prior_key is not None:
+            same_request = _is_same_transfer(prior_key, source_user=source_user, dest_user=dest_user, amount=amount)
             db.session.rollback()
-            same_request = any(row.user_id == source_user.id and row.amount == -amount for row in prior_postings) and any(
-                row.user_id == dest_user.id and row.amount == amount for row in prior_postings
-            )
             if not same_request:
                 return [0, "Idempotency key was already used with different transfer parameters.", "IdempotencyKeyConflict"]
             kudos_transfers_idempotent_replays.add(1)
@@ -939,6 +950,18 @@ def transfer_kudos(
             detail={KudosAuditDetail.RESERVATION_ID: reservation.business_id},
         )
         dest_user.modify_kudos(amount, "received", commit=False, entry_type=KudosEntryType.TRANSFER)
+        # Only a client-supplied key can be retried, so only those transfers record an outcome.
+        if scoped_retry_key is not None:
+            db.session.add(
+                KudosIdempotencyKey(
+                    event_id=event.event_id,
+                    kind=KudosIdempotencyKind.TRANSFER,
+                    source_user_id=source_user.id,
+                    dest_user_id=dest_user.id,
+                    amount=_transfer_key_amount(amount),
+                    outcome="OK",
+                ),
+            )
         # When the debit above was materialized inline its ledger row is born
         # applied, so the applier's fold-time consumption never sees this hold;
         # consume it here in that case (no-op while projection is async).

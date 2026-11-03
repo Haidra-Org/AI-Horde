@@ -11,14 +11,16 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
+import pytest
 import sqlparse
-from sqlalchemy import inspect, text
+from sqlalchemy import Engine, create_engine, inspect, text
 
 from horde.classes.base.kudos import (
     KudosBalanceSnapshot,
+    KudosIdempotencyKey,
     KudosLedger,
+    KudosLedgerCheckpoint,
     KudosReservation,
     KudosStatEvent,
     emit_kudos_ledger_entry,
@@ -31,8 +33,10 @@ from horde.database.functions import transfer_kudos
 from horde.database.kudos_ledger import apply_pending_kudos
 from horde.database.kudos_reconciliation import create_balance_snapshot, reconcile_balances
 from horde.database.kudos_reservations import available_kudos, effective_kudos, release_reservation, reserve_kudos
-from horde.enums import KudosAuditDetail, KudosEntryType, KudosLedgerMode, UserRoleTypes
+from horde.database.kudos_retention import KUDOS_RETENTION_POLICY, expire_idempotency_keys
+from horde.enums import KudosAuditDetail, KudosEntryType, KudosIdempotencyKind, KudosLedgerMode, UserRoleTypes
 from horde.flask import db
+from tests.dependency_runtime import create_schema, drop_schema, new_test_schema_name
 
 
 def test_accounting_schema_separates_currency_from_stats_and_declares_ownership() -> None:
@@ -91,17 +95,50 @@ def test_kudos_schema_migration_is_idempotent_on_the_mapped_schema(db_session) -
     db_session.commit()
 
 
-def test_kudos_quarantine_migration_is_idempotent_on_the_mapped_schema(db_session: Any) -> None:
-    """Exercise the additive poison-event migration against the mapped schema."""
+KUDOS_STAT_EVENTS_5_1_8_STUB = """
+CREATE TABLE kudos_stat_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    created TIMESTAMP NOT NULL DEFAULT now(),
+    event_id UUID NOT NULL,
+    entry_type VARCHAR(32) NOT NULL,
+    user_id INTEGER NULL,
+    worker_user_id INTEGER NULL,
+    worker_id UUID NULL,
+    team_id UUID NULL,
+    job_id UUID NULL,
+    wp_type VARCHAR(20) NULL,
+    amount NUMERIC(20, 2) NOT NULL CHECK (amount <> 'NaN'),
+    unit VARCHAR(16) NOT NULL,
+    stat_action VARCHAR(32) NULL,
+    record VARCHAR(32) NULL,
+    detail JSONB NULL,
+    applied BOOLEAN NOT NULL DEFAULT FALSE
+)
+"""
+"""The unpartitioned ``kudos_stat_events`` as sql_statements/5.1.0.txt built it, before 5.1.9 added quarantine."""
+
+
+def test_kudos_quarantine_migration_is_idempotent_on_the_unpartitioned_table(_pg_dsn: str) -> None:
+    """Exercise the additive poison-event migration against the table it was written for.
+
+    The mapped table is partitioned, and 5.1.9 builds its index concurrently, which PostgreSQL refuses on a
+    partitioned table. The migration ran before partitioning, so a throwaway schema holds the table as it was then.
+    """
     repository_root = Path(__file__).parents[2]
     migration = (repository_root / "sql_statements/5.1.9.txt").read_text(encoding="utf-8")
-    db_session.commit()
-    engine = db_session.get_bind()
-    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
-        # Recreate the 5.1.8 production index state instead of relying on
-        # create_all(), which already reflects the post-migration model.
-        connection.exec_driver_sql("DROP INDEX IF EXISTS ix_kudos_stat_events_drainable")
-        connection.exec_driver_sql("DROP INDEX IF EXISTS ix_kudos_stat_events_unapplied")
+    schema_name = new_test_schema_name("horde_kudos_quarantine_migration")
+    create_schema(_pg_dsn, schema_name)
+    engine = create_engine(_pg_dsn, isolation_level="AUTOCOMMIT", connect_args={"options": f"-c search_path={schema_name}"})
+    try:
+        _assert_quarantine_migration_is_idempotent(engine, migration)
+    finally:
+        engine.dispose()
+        drop_schema(_pg_dsn, schema_name)
+
+
+def _assert_quarantine_migration_is_idempotent(engine: Engine, migration: str) -> None:
+    with engine.connect() as connection:
+        connection.exec_driver_sql(KUDOS_STAT_EVENTS_5_1_8_STUB)
         connection.exec_driver_sql(
             "CREATE INDEX ix_kudos_stat_events_unapplied ON kudos_stat_events (id) WHERE applied IS FALSE",
         )
@@ -284,6 +321,61 @@ def test_transfer_idempotency_key_rejects_changed_parameters(db_session, make_us
 
     assert conflict[0] == 0
     assert conflict[2] == "IdempotencyKeyConflict"
+
+
+def _expire_every_idempotency_key() -> None:
+    expire_idempotency_keys(before=datetime.utcnow() + timedelta(seconds=1), batch_size=1000)
+
+
+def test_transfer_records_its_idempotency_key(db_session, make_user, fake_redis):
+    source = make_user(kudos=100)
+    destination = make_user(kudos=25)
+    db_session.commit()
+
+    assert transfer_kudos(source, destination, 20, idempotency_key="client-request-1")[0] == 20
+
+    key = db_session.query(KudosIdempotencyKey).one()
+    assert (key.kind, key.source_user_id, key.dest_user_id, key.amount, key.outcome) == (
+        KudosIdempotencyKind.TRANSFER,
+        source.id,
+        destination.id,
+        20,
+        "OK",
+    )
+
+
+def test_transfer_replayed_after_its_key_expired_is_a_new_transfer(db_session, make_user, fake_redis):
+    source = make_user(kudos=100)
+    destination = make_user(kudos=25)
+    db_session.commit()
+
+    assert transfer_kudos(source, destination, 20, idempotency_key="client-request-1")[3] is False
+    _expire_every_idempotency_key()
+    replay = transfer_kudos(source, destination, 20, idempotency_key="client-request-1")
+
+    assert replay[0] == 20
+    assert replay[3] is False
+    assert db_session.query(KudosTransferLog).count() == 2
+    _settle_all()
+    db_session.refresh(source)
+    assert source.kudos == 60
+
+
+def test_changed_parameters_after_the_key_expired_are_a_new_transfer(db_session, make_user, fake_redis):
+    source = make_user(kudos=100)
+    first_destination = make_user(kudos=25)
+    second_destination = make_user(kudos=25)
+    db_session.commit()
+
+    assert transfer_kudos(source, first_destination, 20, idempotency_key="client-request-1")[0] == 20
+    _expire_every_idempotency_key()
+    second = transfer_kudos(source, second_destination, 30, idempotency_key="client-request-1")
+
+    assert second[0] == 30
+    assert second[2] is None
+    _settle_all()
+    db_session.refresh(second_destination)
+    assert second_destination.kudos == 55
 
 
 def test_final_escrow_crossing_promotes_without_another_request(db_session, make_user, monkeypatch):
@@ -563,3 +655,124 @@ def test_expired_interrogation_cleanup_releases_form_holds(db_session, make_user
         db_session.query(KudosReservation).filter(KudosReservation.released_at.is_(None), KudosReservation.remaining_amount > 0).count()
     )
     assert active_holds == 0
+
+
+def _post_applied(user_id: int, amount: int, *, created: datetime, escrow: bool = False) -> None:
+    emit_kudos_ledger_entry(KudosEntryType.AWARD, amount, user_id=user_id, escrow=escrow)
+    db.session.commit()
+    _settle_all()
+    db.session.query(KudosLedger).filter(KudosLedger.created > created).filter(KudosLedger.amount == amount).filter(
+        KudosLedger.user_id == user_id,
+    ).update({KudosLedger.created: created}, synchronize_session=False)
+    db.session.commit()
+
+
+def _all_time_applied_totals() -> dict[int, tuple[object, object]]:
+    rows = db.session.execute(
+        text(
+            "SELECT user_id, coalesce(sum(amount) FILTER (WHERE NOT escrow), 0), coalesce(sum(amount) FILTER (WHERE escrow), 0) "
+            "FROM kudos_ledger WHERE applied AND entry_type <> 'RECONCILIATION' GROUP BY user_id",
+        ),
+    ).all()
+    return {user_id: (balance, escrow) for user_id, balance, escrow in rows}
+
+
+def _snapshot_applied_totals(snapshot_id: uuid.UUID, user_ids: list[int]) -> dict[int, tuple[object, object]]:
+    rows = (
+        db.session.query(KudosBalanceSnapshot)
+        .filter(KudosBalanceSnapshot.snapshot_id == snapshot_id, KudosBalanceSnapshot.user_id.in_(user_ids))
+        .all()
+    )
+    return {row.user_id: (row.applied_balance_total, row.applied_escrow_total) for row in rows}
+
+
+def test_checkpoint_plus_tail_equals_the_all_time_applied_sum(db_session, make_user):
+    """Users with history on both sides of the boundary, only before it, and only after it keep their totals.
+
+    The pre-boundary postings are deleted after the checkpoint is written, as dropping a partition does, and a
+    snapshot taken before the checkpoint still reconciles without drift.
+    """
+    boundary = datetime.utcnow() - timedelta(days=10)
+    both_sides = make_user(kudos=0)
+    before_only = make_user(kudos=0)
+    after_only = make_user(kudos=0)
+    db_session.commit()
+    _post_applied(both_sides.id, 50, created=boundary - timedelta(days=3))
+    _post_applied(both_sides.id, 7, created=boundary - timedelta(days=2), escrow=True)
+    _post_applied(both_sides.id, 11, created=boundary + timedelta(days=1))
+    _post_applied(before_only.id, 13, created=boundary - timedelta(days=1))
+    _post_applied(after_only.id, 17, created=boundary)
+    user_ids = [both_sides.id, before_only.id, after_only.id]
+    all_time = _all_time_applied_totals()
+    snapshot_before_checkpoint = create_balance_snapshot()
+
+    db_session.add_all(
+        [
+            KudosLedgerCheckpoint(boundary=boundary, user_id=both_sides.id, balance_total=50, escrow_total=7),
+            KudosLedgerCheckpoint(boundary=boundary, user_id=before_only.id, balance_total=13, escrow_total=0),
+        ],
+    )
+    db_session.commit()
+    db_session.query(KudosLedger).filter(KudosLedger.created < boundary).delete(synchronize_session=False)
+    db_session.commit()
+
+    snapshot_after_checkpoint = create_balance_snapshot()
+    assert _snapshot_applied_totals(snapshot_after_checkpoint, user_ids) == {user_id: all_time[user_id] for user_id in user_ids}
+    assert _snapshot_applied_totals(snapshot_before_checkpoint, user_ids) == {user_id: all_time[user_id] for user_id in user_ids}
+    assert reconcile_balances(snapshot_before_checkpoint) == []
+    assert reconcile_balances(snapshot_after_checkpoint) == []
+
+
+def test_drift_present_at_checkpoint_time_is_still_reported(db_session, make_user):
+    boundary = datetime.utcnow() - timedelta(days=10)
+    user = make_user(kudos=0)
+    db_session.commit()
+    _post_applied(user.id, 40, created=boundary - timedelta(days=1))
+    snapshot_id = create_balance_snapshot()
+    user.kudos = 999
+    db_session.commit()
+    db_session.add(KudosLedgerCheckpoint(boundary=boundary, user_id=user.id, balance_total=40, escrow_total=0))
+    db_session.commit()
+    db_session.query(KudosLedger).filter(KudosLedger.created < boundary).delete(synchronize_session=False)
+    db_session.commit()
+
+    drifts = reconcile_balances(snapshot_id)
+
+    assert [(drift.user_id, drift.expected_balance, drift.actual_balance) for drift in drifts] == [(user.id, 40, 999)]
+
+
+def test_repair_refuses_a_snapshot_older_than_the_key_lifetime(db_session, make_user):
+    user = make_user(kudos=100)
+    db_session.commit()
+    snapshot_id = create_balance_snapshot(now=datetime.utcnow() - KUDOS_RETENTION_POLICY.key_lifetime - timedelta(days=1))
+    user.kudos = 999
+    db_session.commit()
+
+    with pytest.raises(ValueError, match=f"older than the repair key lifetime of {KUDOS_RETENTION_POLICY.key_lifetime.days} days"):
+        reconcile_balances(snapshot_id, apply_repairs=True)
+
+    assert db_session.query(KudosLedger).filter(KudosLedger.entry_type == KudosEntryType.RECONCILIATION).count() == 0
+    # Detection needs no key, so a read-only reconcile still reports the drift.
+    assert len(reconcile_balances(snapshot_id)) == 1
+
+
+def test_repair_records_its_key_and_a_second_apply_does_not_repeat_it(db_session, make_user):
+    user = make_user(kudos=100, evaluating_kudos=0)
+    db_session.commit()
+    snapshot_id = create_balance_snapshot()
+    user.kudos = 90
+    user.evaluating_kudos = 4
+    db_session.commit()
+
+    reconcile_balances(snapshot_id, apply_repairs=True)
+    reconcile_balances(snapshot_id, apply_repairs=True)
+
+    key = db_session.query(KudosIdempotencyKey).one()
+    assert (key.kind, key.source_user_id, key.dest_user_id, key.amount, key.outcome) == (
+        KudosIdempotencyKind.REPAIR,
+        None,
+        user.id,
+        6,
+        "OK",
+    )
+    assert db_session.query(KudosLedger).filter(KudosLedger.entry_type == KudosEntryType.RECONCILIATION).count() == 2

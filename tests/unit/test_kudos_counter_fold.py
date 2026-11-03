@@ -305,13 +305,13 @@ class TestPoisonEventIsolation:
         db_session.expire_all()
         assert user.kudos == 1025
         assert _user_stat(db_session, user.id, "awarded") == 25
-        quarantined = db_session.get(KudosStatEvent, malformed.id)
+        quarantined = db_session.query(KudosStatEvent).filter_by(id=malformed.id).one_or_none()
         assert quarantined is not None
         assert quarantined.applied is False
         assert quarantined.quarantined is True
         assert quarantined.quarantine_reason == KudosStatEventQuarantineReason.UNKNOWN_PROJECTION
         assert quarantined.quarantined_at is not None
-        quarantined_peer = db_session.get(KudosStatEvent, valid_peer.id)
+        quarantined_peer = db_session.query(KudosStatEvent).filter_by(id=valid_peer.id).one_or_none()
         assert quarantined_peer is not None
         assert quarantined_peer.quarantined is True
         assert quarantined_peer.quarantine_reason == KudosStatEventQuarantineReason.UNKNOWN_PROJECTION
@@ -338,7 +338,7 @@ class TestPoisonEventIsolation:
 
         assert apply_pending_kudos() == 1
         db_session.expire_all()
-        quarantined = db_session.get(KudosStatEvent, event_id)
+        quarantined = db_session.query(KudosStatEvent).filter_by(id=event_id).one_or_none()
         assert quarantined is not None
         assert quarantined.quarantined is True
         assert quarantined.quarantine_reason == KudosStatEventQuarantineReason.MISSING_USER

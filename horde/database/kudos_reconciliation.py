@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
 
@@ -17,14 +17,17 @@ from sqlalchemy import CursorResult, Subquery, func, insert, literal, or_, selec
 
 from horde.classes.base.kudos import (
     KudosBalanceSnapshot,
+    KudosIdempotencyKey,
     KudosLedger,
+    KudosLedgerCheckpoint,
     emit_kudos_ledger_entry,
     kudos_event,
     kudos_event_id,
 )
 from horde.classes.base.user import User
+from horde.database import kudos_retention
 from horde.database.kudos_db import acquire_reconciliation_lock, begin_repeatable_read
-from horde.enums import KudosAuditDetail, KudosEntryType
+from horde.enums import KudosAuditDetail, KudosEntryType, KudosIdempotencyKind
 from horde.flask import db
 
 
@@ -50,16 +53,26 @@ class KudosDrift:
 
 
 def _applied_totals_subquery() -> Subquery:
-    """Aggregate applied ledger movements per user, split by target balance.
+    """Aggregate each user's all-time applied ledger movements, split by target balance.
+
+    Retention removes postings older than the online window after summing them into
+    ``kudos_ledger_checkpoints``, so the all-time total is the latest checkpoint plus the
+    applied postings at or above its boundary. With no checkpoint the tail is every applied
+    posting. The boundary is read once, so the tail predicate is a constant that prunes the
+    scan to the partitions at or above it.
 
     ``escrow`` is a per-row boolean, so one grouped scan cannot emit the
     spendable and escrow sums as separate columns without conditional
     aggregation. The ``FILTER`` clauses partition each user's applied rows into
     the two totals the snapshot baseline stores independently. Reconciliation
     postings are excluded so replay measures the projection against its inputs
-    rather than against prior repairs.
+    rather than against prior repairs; checkpoints exclude them the same way.
     """
-    return (
+    boundary: datetime | None = db.session.execute(select(func.max(KudosLedgerCheckpoint.boundary))).scalar_one()
+    tail_filters = [KudosLedger.applied.is_(True), KudosLedger.entry_type != KudosEntryType.RECONCILIATION]
+    if boundary is not None:
+        tail_filters.append(KudosLedger.created >= boundary)
+    tail = (
         select(
             KudosLedger.user_id.label("user_id"),
             func.coalesce(
@@ -71,13 +84,54 @@ def _applied_totals_subquery() -> Subquery:
                 Decimal("0"),
             ).label("escrow_total"),
         )
-        .where(
-            KudosLedger.applied.is_(True),
-            KudosLedger.entry_type != KudosEntryType.RECONCILIATION,
-        )
+        .where(*tail_filters)
         .group_by(KudosLedger.user_id)
         .subquery()
     )
+    if boundary is None:
+        return tail
+    checkpoint = (
+        select(KudosLedgerCheckpoint.user_id, KudosLedgerCheckpoint.balance_total, KudosLedgerCheckpoint.escrow_total)
+        .where(KudosLedgerCheckpoint.boundary == boundary)
+        .subquery()
+    )
+    # A user can appear only in the checkpoint (no recent postings) or only in the tail (first
+    # posting after the boundary), so both sides are kept.
+    return (
+        select(
+            func.coalesce(checkpoint.c.user_id, tail.c.user_id).label("user_id"),
+            (func.coalesce(checkpoint.c.balance_total, Decimal("0")) + func.coalesce(tail.c.balance_total, Decimal("0"))).label(
+                "balance_total",
+            ),
+            (func.coalesce(checkpoint.c.escrow_total, Decimal("0")) + func.coalesce(tail.c.escrow_total, Decimal("0"))).label(
+                "escrow_total",
+            ),
+        )
+        .select_from(checkpoint.outerjoin(tail, checkpoint.c.user_id == tail.c.user_id, full=True))
+        .subquery()
+    )
+
+
+def _refuse_snapshot_older_than_key_lifetime(snapshot_id: uuid.UUID) -> None:
+    """Raise when a repair from ``snapshot_id`` could outlive its idempotency key.
+
+    Repair keys expire after the key lifetime. A repair from an older snapshot could find its key
+    gone and post a second compensation for drift it already repaired.
+
+    Raises:
+        ValueError: The snapshot is older than the key lifetime, or does not exist.
+    """
+    key_lifetime: timedelta = kudos_retention.KUDOS_RETENTION_POLICY.key_lifetime
+    snapshot_created: datetime | None = db.session.execute(
+        select(func.min(KudosBalanceSnapshot.created)).where(KudosBalanceSnapshot.snapshot_id == snapshot_id),
+    ).scalar_one()
+    if snapshot_created is None:
+        raise ValueError(f"Kudos balance snapshot {snapshot_id} does not exist")
+    if snapshot_created < datetime.utcnow() - key_lifetime:
+        raise ValueError(
+            f"Kudos balance snapshot {snapshot_id} is older than the repair key lifetime of {key_lifetime.days} days; "
+            "take a new snapshot to repair",
+        )
 
 
 def create_balance_snapshot(now: datetime | None = None) -> uuid.UUID:
@@ -128,6 +182,11 @@ def reconcile_balances(snapshot_id: uuid.UUID, *, apply_repairs: bool = False) -
     """
     _begin_repeatable_read()
     if apply_repairs:
+        try:
+            _refuse_snapshot_older_than_key_lifetime(snapshot_id)
+        except ValueError:
+            db.session.rollback()
+            raise
         _lock_reconciliation()
     applied_totals = _applied_totals_subquery()
     # expected = snapshot balance + movements applied since the snapshot; the
@@ -171,8 +230,7 @@ def reconcile_balances(snapshot_id: uuid.UUID, *, apply_repairs: bool = False) -
         for drift in drifts:
             repair_key = f"reconcile:{snapshot_id}:{drift.user_id}"
             event_id = kudos_event_id(repair_key)
-            already_emitted = db.session.query(KudosLedger.id).filter(KudosLedger.event_id == event_id).first()
-            if already_emitted is not None:
+            if db.session.get(KudosIdempotencyKey, event_id) is not None:
                 continue
             repaired += 1
             with kudos_event(idempotency_key=repair_key):
@@ -199,6 +257,17 @@ def reconcile_balances(snapshot_id: uuid.UUID, *, apply_repairs: bool = False) -
                         },
                         force_projection=True,
                     )
+            # Committed with the postings below, so a second run finds the key and skips this user.
+            db.session.add(
+                KudosIdempotencyKey(
+                    event_id=event_id,
+                    kind=KudosIdempotencyKind.REPAIR,
+                    source_user_id=None,
+                    dest_user_id=drift.user_id,
+                    amount=(drift.expected_balance - drift.actual_balance) + (drift.expected_escrow - drift.actual_escrow),
+                    outcome="OK",
+                ),
+            )
     total_absolute_drift = sum(
         (abs(drift.expected_balance - drift.actual_balance) + abs(drift.expected_escrow - drift.actual_escrow) for drift in drifts),
         Decimal("0"),

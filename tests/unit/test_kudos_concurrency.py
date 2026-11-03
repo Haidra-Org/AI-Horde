@@ -330,7 +330,7 @@ def test_worker_delete_waits_for_claimed_projection_without_fk_failure(
     assert errors == []
 
     with app.app_context():  # type: ignore[attr-defined]
-        event = db.session.get(KudosStatEvent, event_id)
+        event = db.session.query(KudosStatEvent).filter_by(id=event_id).one_or_none()
         assert event is not None
         assert event.applied is True
         assert db.session.get(WorkerTemplate, worker_id) is None

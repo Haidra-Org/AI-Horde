@@ -44,7 +44,6 @@ from horde.classes.base.worker import WorkerTemplate
 from horde.database.kudos_ledger import (
     apply_pending_kudos,
     kudos_applier_lag,
-    prune_applied_kudos_ledger,
 )
 from horde.enums import KudosEntryType, KudosStatRecord, KudosUnit, UserRecordTypes, UserRoleTypes
 from horde.flask import db
@@ -831,72 +830,6 @@ class TestCatchUp:
 
 # --------------------------------------------------------------------------- #
 # Retention pruning                                                           #
-# --------------------------------------------------------------------------- #
-
-
-class TestRetention:
-    def test_applied_rows_are_permanent_after_the_old_retention_window(self, db_session, make_user):
-        user = make_user(kudos=100)
-        emit_kudos_ledger_entry(KudosEntryType.AWARD, 10, user_id=user.id)
-        db_session.commit()
-        _settle(db_session)
-        row = _ledger_rows(db_session)[0]
-        row.created = datetime.utcnow() - timedelta(days=40)
-        db_session.commit()
-
-        pruned = prune_applied_kudos_ledger(now=datetime.utcnow(), retention=timedelta(days=30))
-
-        assert pruned == 0
-        assert len(_ledger_rows(db_session)) == 1
-
-    def test_unapplied_rows_are_never_pruned(self, db_session, make_user):
-        user = make_user(kudos=100)
-        emit_kudos_ledger_entry(KudosEntryType.AWARD, 10, user_id=user.id)
-        db_session.commit()
-        row = _ledger_rows(db_session)[0]
-        row.created = datetime.utcnow() - timedelta(days=40)
-        db_session.commit()
-
-        pruned = prune_applied_kudos_ledger(now=datetime.utcnow(), retention=timedelta(days=30))
-
-        assert pruned == 0
-        assert len(_ledger_rows(db_session)) == 1
-
-    def test_compatibility_pruner_never_deletes_a_batch(self, db_session, make_user):
-        user = make_user(kudos=100)
-        for _ in range(5):
-            emit_kudos_ledger_entry(KudosEntryType.AWARD, 1, user_id=user.id)
-        db_session.commit()
-        _settle(db_session)
-        for row in _ledger_rows(db_session):
-            row.created = datetime.utcnow() - timedelta(days=40)
-        db_session.commit()
-
-        pruned = prune_applied_kudos_ledger(now=datetime.utcnow(), retention=timedelta(days=30), batch_size=2)
-
-        assert pruned == 0
-        assert len(_ledger_rows(db_session)) == 5
-
-    def test_old_applied_and_unapplied_rows_are_both_kept(self, db_session, make_user):
-        user = make_user(kudos=100)
-        emit_kudos_ledger_entry(KudosEntryType.AWARD, 10, user_id=user.id)
-        db_session.commit()
-        _settle(db_session)  # applied
-        emit_kudos_ledger_entry(KudosEntryType.AWARD, 10, user_id=user.id)  # unapplied
-        db_session.commit()
-        for row in _ledger_rows(db_session):
-            row.created = datetime.utcnow() - timedelta(days=40)
-        db_session.commit()
-
-        pruned = prune_applied_kudos_ledger(now=datetime.utcnow(), retention=timedelta(days=30))
-
-        assert pruned == 0
-        assert _applied_count(db_session, applied=False) == 1
-        assert _applied_count(db_session, applied=True) == 1
-
-
-# --------------------------------------------------------------------------- #
-# Applier lag metric                                                          #
 # --------------------------------------------------------------------------- #
 
 

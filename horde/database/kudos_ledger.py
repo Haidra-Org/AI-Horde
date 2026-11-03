@@ -87,9 +87,6 @@ KUDOS_APPLIER_BATCH_SIZE = max(int(os.getenv("KUDOS_APPLIER_BATCH_SIZE", "1000")
 # bound keeps a tick from monopolizing the projector while each cycle remains its
 # own small transaction.
 KUDOS_APPLIER_MAX_CATCHUP_CYCLES = 10
-# Applied rows are audit history; keep a rolling window and prune the rest.
-KUDOS_LEDGER_RETENTION = timedelta(days=30)
-KUDOS_PRUNE_BATCH_SIZE = 5000
 _APPLIER_STATE_ID = 1
 # A database-scoped ownership key. Redis quorum decides which replica should
 # try the work; this lock decides which transaction is allowed to do it.
@@ -946,20 +943,6 @@ def _apply_team_deltas(
             ),
         ),
     )
-
-
-def prune_applied_kudos_ledger(
-    now: datetime | None = None,
-    retention: timedelta = KUDOS_LEDGER_RETENTION,
-    batch_size: int = KUDOS_PRUNE_BATCH_SIZE,
-) -> int:
-    """Retain the permanent ledger archive (compatibility no-op).
-
-    The function and its parameters exist so a scheduled caller of the former
-    pruning job stays harmless; the archive itself is never pruned.
-    """
-    del now, retention, batch_size
-    return 0
 
 
 def kudos_applier_lag(now: datetime | None = None) -> float | None:
