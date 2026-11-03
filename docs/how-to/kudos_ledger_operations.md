@@ -453,7 +453,9 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
      ```
 
      The command prints the deleted keys. When a delete fails it prints the keys deleted before the failure and exits
-     1. The next tick clears the catalog keys of every deleted object. Then unblock the unit, which rolls it up again
+     1. On a bucket with versioning, a deleted object stays stored as a noncurrent version that the tier listing does
+     not count, so free the space by the deployment's own procedure as well. The next tick clears the catalog keys of
+     every deleted object. Then unblock the unit, which rolls it up again
      and retries the dump. Verify: the unit reaches `dumped` and its `object_key` is set. To drop the unit without a
      dump instead, run `retention unblock <unit-id> --waive-dump`.
    - `archive object missing`: a currency unit past its export has no archive object. Either the tick's archive
