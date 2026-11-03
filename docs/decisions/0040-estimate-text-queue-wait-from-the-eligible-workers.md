@@ -50,7 +50,7 @@ availability is measured when the request is created and cached for a short time
 polls that follow.
 
 A queued request ahead of this one counts as competing when at least one of the eligible workers could take it,
-judged per worker from the fields the stored queue carries: its models, whether it is a chat request, and its
+judged per worker from the stored queue's fields: its models, whether it is a chat request, and its
 `max_length` and `max_context_length` against that worker's text or chat limits. A chat request therefore does not
 count against a plain text request whose eligible workers do not take chat jobs.
 
@@ -99,7 +99,7 @@ wait a request had from creation to assignment, give the data for revisiting bot
 
 - Good, because it counts only work that competes for the same threads, at the speed of those threads.
 - Good, because the allowance and the status route share it.
-- Bad, because the per-worker check reads more fields from the stored queue, which the queue cache carries for it.
+- Bad, because the per-worker check reads more fields from the stored queue, which the queue cache must include.
 
 ## Confirmation
 

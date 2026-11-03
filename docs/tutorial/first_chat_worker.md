@@ -1,6 +1,6 @@
 ---
 title: "Serve your first chat job with koboldcpp"
-summary: "Start koboldcpp as a Horde chat worker, see it register in the chat model list, send it a chat request and a tool request on the native route, and read the structured replies."
+summary: "Start koboldcpp as a Horde chat worker, verify registration and complete a chat request followed by a tool request."
 topics: [chat, workers]
 order: 20
 ---
@@ -29,7 +29,7 @@ To send chat requests through the OpenAI-compatible front instead of the native 
 
 - koboldcpp 1.124 or later. Its embedded Horde worker serves chat jobs beside text jobs, and pops from
   `https://aihorde.net`, so this tutorial runs there.
-- An instruction-tuned GGUF model whose file carries a chat template. A small one (a few billion parameters) is
+- An instruction-tuned GGUF model whose file includes a chat template. A small one (a few billion parameters) is
   enough.
 - A registered AI Horde API key, written `<api-key>`. The worker needs one, and the same key can send the requests.
 - `curl` and `jq`.
@@ -69,14 +69,14 @@ popping for 20 seconds after each local generation request.
 
 ## 2. Watch the worker register as a chat worker
 
-Every pop the worker sends carries its chat declaration. Ask the horde which models chat workers serve:
+Every worker pop includes the chat declaration. Query the Horde's list of models served by chat workers:
 
 ```bash
 curl -s "$HORDE_URL/api/v2/status/models?type=text&chat=true" \
   | jq --arg name "$MODEL_NAME" '.[] | select(.name == $name) | .chat'
 ```
 
-The model list refreshes every few seconds; repeat the command until it prints:
+The model list refreshes every few seconds. Repeat the command until it prints:
 
 ```json
 {
@@ -119,7 +119,7 @@ REQUEST_ID=$(curl -s "$HORDE_URL/api/v2/generate/chat/async" \
   }" | tee /dev/stderr | jq -r .id)
 ```
 
-The horde answers `202` with a body that carries the request id and the request's kudos cost:
+The Horde returns `202` with the request id and kudos cost:
 
 ```json
 {"id": "<request-id>", "kudos": <kudos>}
@@ -166,8 +166,8 @@ When `done` is true, the output looks like:
 
 While `done` is false, run the command again. Each field came from the worker's submit:
 
-- `message` is the reply as an assistant message, the shape an OpenAI client expects.
-- `finish_reason` is `stop` because the model ended the reply; `length` would mean it used all 64 tokens.
+- `message` is the reply as an assistant message, the format used by OpenAI clients.
+- `finish_reason` is `stop` because the model ended the reply. `length` would mean it used all 64 tokens.
 - `prompt_tokens` and `completion_tokens` are the counts koboldcpp reported.
 - `charge_basis` `output_estimate` says the kudos were computed from the length of the reply text, as for any text
   request, and the token counts did not enter the charge.
@@ -209,7 +209,7 @@ curl -s "$HORDE_URL/api/v2/generate/chat/status/$TOOL_REQUEST_ID" -H "apikey: $H
   | jq '{done, generations: [.generations[] | {message, finish_reason}]}'
 ```
 
-When `done` is true, the reply carries the call in place of text:
+When `done` is true and the model produced a tool call, the reply looks like this:
 
 ```json
 {
@@ -236,7 +236,7 @@ message above and a `tool` message whose `tool_call_id` is `<call-id>`, and the 
 ## What you built
 
 A text worker that also serves chat jobs. The horde routed both requests to it because its pop declared chat jobs,
-the model, the limits and the features the requests needed, and it read back structured replies the worker submitted.
+the model, the limits and the required features. You read the worker's structured replies through the status route.
 The worker still serves ordinary text requests for the same model.
 
 Next:

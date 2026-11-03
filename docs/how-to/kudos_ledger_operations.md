@@ -28,12 +28,12 @@ folded.
 
 The kudos ledger has two online modes:
 
-- `shadow`: inline balances and counters are authoritative; matching ledger rows are retained as already-applied
+- `shadow`: inline balances and counters are authoritative. Matching ledger rows are retained as already-applied
   audit history.
 - `ledger`: request transactions append postings and the database-serialized projector materializes them
   asynchronously.
 
-Fresh installations and the migration SQL default to `shadow`; moving to `ledger` is always an explicit operator
+Fresh installations and the migration SQL default to `shadow`. Moving to `ledger` is always an explicit operator
 action. Both currency postings and non-currency statistic events are permanent archives. The projector is serialized
 by a PostgreSQL transaction advisory lock, independent of Redis quorum selection, and claims bounded batches with
 `FOR UPDATE SKIP LOCKED`.
@@ -44,9 +44,9 @@ Accounting tables, their foreign-key lifetimes, and the typed enums are specifie
 [data model](../reference/kudos_accounting.md#data-model). Two boundaries matter while operating the system:
 
 - Currency history cannot be orphaned. `kudos_ledger.user_id` is `ON DELETE RESTRICT`, so a user wipe that would
-  strand postings fails rather than deleting them. `kudos_stat_events` carries immutable audit IDs instead of
+  strand postings fails rather than deleting them. `kudos_stat_events` stores immutable audit IDs instead of
   ownership foreign keys, so hard-deleting a worker or team leaves its counter history intact.
-- Mode-specific behavior lives in `horde/database/kudos_legacy_projection.py`; business methods emit the same events
+- Mode-specific behavior lives in `horde/database/kudos_legacy_projection.py`. Business methods emit the same events
   in both modes. Advisory locks and repeatable-read setup are confined to `horde/database/kudos_db.py`, and counter
   upserts to `horde/database/kudos_counters.py`. A final cutover deletes the compatibility module and its call sites
   without rewriting the accounting flow.
@@ -58,12 +58,12 @@ Accounting tables, their foreign-key lifetimes, and the typed enums are specifie
    non-null `heartbeat_seconds`, which shows the projector process is running.
 2. Run through a representative peak-load window. Exercise transfers, upfront image/text/interrogation admission,
    cancellations, trust promotion, monthly awards, and admin adjustments. Verify: `kudos_ledger` and
-   `kudos_stat_events` both gain rows for each exercised path, and every row carries `applied = true`, which is what
+   `kudos_stat_events` both gain rows for each exercised path, and every row has `applied = true`, which is what
    shadow mode writes.
 3. Inspect `uv run python tools/kudos_ledger_admin.py status`. Investigate any non-zero pending queue, applier
    heartbeat gap, or `oldest_pending_seconds` above 30 seconds before continuing.
 4. Capture a transaction-consistent baseline with `uv run python tools/kudos_ledger_admin.py snapshot`. Verify: the
-   command prints `snapshot_id`; use that value as `<snapshot-id>` below.
+   command prints `snapshot_id`. Use that value as `<snapshot-id>` below.
 5. Run `uv run python tools/kudos_ledger_admin.py reconcile <snapshot-id>`. Verify: the `drifts` array is empty.
    Investigate every drift entry before continuing.
 6. Switch with `uv run python tools/kudos_ledger_admin.py mode ledger`. The exclusive mode-gate advisory lock waits
@@ -74,7 +74,7 @@ Accounting tables, their foreign-key lifetimes, and the typed enums are specifie
 Monitor pending row count, oldest pending age, heartbeat age, database deadlocks, reservation age and count,
 transfer rejection rate, and balance-floor adjustments throughout rollout, using the quorum node's applier
 telemetry (`horde.kudos.*` metrics) or `tools/kudos_ledger_admin.py status`. The per-node
-`/api/v2/status/heartbeat` response reports only node-local health; it deliberately carries no applier-queue
+`/api/v2/status/heartbeat` response reports only node-local health. It does not include an applier-queue
 signal, since load balancer health checks consume it and a shared-database signal would fail every node at once.
 
 ## Online rollback
@@ -100,13 +100,21 @@ it serializes repair runs and emits one deterministic `RECONCILIATION` posting p
 before or after projection cannot duplicate a repair, so a repair has no reversal step and needs none. A repair that
 was itself wrong is corrected by a further compensating posting.
 
-If the projector stops, leave writers in ledger mode, restore the projector, and drain; unapplied rows are durable
+### Stopped projector
+
+If the projector stops, leave writers in ledger mode, restore the projector, and drain. Unapplied rows are durable
 and the database advisory lock prevents two replicas from applying them. Verify: `pending_rows` returns to zero and
-`heartbeat_seconds` stays within the projector interval. If projection is corrupt, take a fresh snapshot for
+`heartbeat_seconds` stays within the projector interval.
+
+### Incorrect projection
+
+If projection is corrupt, take a fresh snapshot for
 evidence, reconcile against the last known-good baseline, review the complete drift list, apply compensating
 postings, drain, and reconcile again. Verify: the second `reconcile` returns an empty `drifts` array. Do not edit
-`applied`, delete postings, or directly overwrite balances; none of those can be undone, and they destroy the
+`applied`, delete postings, or directly overwrite balances. These changes cannot be undone and destroy the
 evidence a later reconciliation needs.
+
+### Quarantined events
 
 Treat every new `horde.kudos.applier.quarantined` alert as an incident even when `pending_rows` is draining normally.
 `quarantined_rows` is the total retained evidence, not an unresolved-incident gauge, so it remains non-zero after
@@ -124,9 +132,11 @@ ORDER BY id;
 
 Determine whether the producer emitted an invalid shape or a referenced user disappeared. Fix the producer/projector
 first. Then repair any missing materialized counters with an explicit, reviewed compensating event or reconciliation
-procedure appropriate to that counter. Retain the quarantined rows and their reason as evidence; do not merely clear
+procedure appropriate to that counter. Retain the quarantined rows and their reason as evidence. Do not merely clear
 `quarantined` or set `applied`, because either action can duplicate a partially repaired business event or silently
 discard it.
+
+### Database recovery
 
 For database disaster recovery, restore PostgreSQL to the selected PITR/WAL point, retain the permanent ledger and
 stat archives and the balance snapshots, start in shadow mode, reconcile, then repeat the cutover proof. Ledger

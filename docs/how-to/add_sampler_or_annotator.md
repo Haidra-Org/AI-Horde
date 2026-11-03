@@ -21,6 +21,10 @@ Each of these vocabularies is a fixed set defined in four repositories. This gui
 repository owns which part, the order the changes have to land in, and what else needs updating
 alongside the value itself.
 
+Before starting, have development checkouts of the affected repositories and identify the backend implementation
+and first bridge release that support the addition. After integration, the published contract includes the new
+value and dispatch sends it only to compatible workers.
+
 The [samplers and schedulers reference](../reference/samplers_and_schedulers.md) covers what the
 existing values mean and cost. [ADR 12](../decisions/0012-publish-versioned-sampler-contracts.md)
 records why the SDK holds the single registry rather than each consumer keeping its own table.
@@ -73,7 +77,7 @@ extended samplers, solver options, sigma generators, and flow shift.
 Schedulers split by how the backend produces the sigmas, and the split decides the gating.
 
 1. **hordelib.** A schedule ComfyUI's `calculate_sigmas` accepts by name goes in `SCHEDULERS`. A
-   schedule produced by a node goes in `SigmaGeneratorSchedule` and is carried by
+   schedule produced by a node goes in `SigmaGeneratorSchedule` and is implemented in
    `hordelib/execution/sigma_schedules.py` instead, because the graphs take a schedule by name.
 2. **horde_sdk.** Add it to `KNOWN_IMAGE_SCHEDULERS`, and to `SCHEDULER_BASELINE_APPLICABILITY` when it
    only works for some model baselines.
@@ -117,7 +121,7 @@ and the payload of the Alchemy `annotation` form.
    automatically extended rather than classic.
 3. **AI-Horde.** Add it to `KNOWN_CONTROL_TYPES` in `horde/consts.py`. `IMAGE_CONTROL_TYPES` and the
    Swagger enums follow. Do not add it to `LEGACY_IMAGE_CONTROL_TYPES`, which is the set old bridges
-   can render; a new type there would be dispatched to workers that cannot produce it.
+   can render. A new type there would be dispatched to workers that cannot produce it.
 4. **AI-Horde pricing.** Add it to `ANNOTATION_DETECTOR_KUDOS_BUCKETS` in the cost class that matches
    what the detector loads: weightless for pure OpenCV or numpy, weighted for a small checkpoint, hub for
    a large transformers-hub model. An unlisted type falls back to the weighted class, so a heavy detector
@@ -175,9 +179,19 @@ Rules that follow from those being separate:
   pre-existing requests, and `tests/unit/test_bridge_reference.py` pins capability gating. The Locust
   sampler requester in `tests/stress/locustsuite/users/image.py` derives its cases from the SDK, so a new
   sampler enters load coverage without an edit.
-- **Reference documentation.** `docs/reference/samplers_and_schedulers.md` carries the measured cost
+- **Reference documentation.** `docs/reference/samplers_and_schedulers.md` records the measured cost
   groupings. Where a sampler's marginal cost was not measured, record that rather than reusing a
   neighbouring sampler's number.
 - **Frontends.** `extended_image_frontend.md` describes how a frontend builds controls from the
   published contract. An addition that fits the published shape needs no frontend change. One that does
   not fit is a sign the contract shape needs revisiting.
+
+## Verification and reversal
+
+Run the vocabulary, published-contract, pricing and bridge-gating tests listed above. Verify that the new value
+appears in the served contract, is refused or withheld from unsupported bridges, and reaches a compatible worker
+with the expected payload. Verify solver controls at their bounds and with an inapplicable sampler.
+
+To withdraw dispatch support, remove the new service or bridge-gating entry and check that existing values still
+pass their tests. Keep published identifiers and execution-contract meanings stable. A released contract with
+changed semantics requires the version change described above. Jobs already assigned retain their original payloads.

@@ -18,6 +18,7 @@ koboldcpp caps the temperature at 1.0 when tools are present, its Jinja tool str
 every `tool_choice` and ignores `parallel_tool_calls`, a JSON Schema it cannot compile to a grammar falls back to
 unconstrained text, and a prompt over the context length is trimmed, which the contract refuses. Each is a
 reasonable choice for a local user who can see the backend. Over the Horde the requester sees only the reply.
+
 [ADR 0022](0022-declare-chat-capabilities-by-pop-fields.md) declares capabilities (the worker accepts an input) and
 does not address fidelity (the reply follows the contract). How does the Horde route a request that depends on
 fidelity, and how does a client ask for less than full fidelity?
@@ -29,7 +30,7 @@ fidelity, and how does a client ask for less than full fidelity?
 - Backends keep their deliberate behaviours, so the Horde has to record which ones a worker avoids.
 - Every routing decision must be derivable from the request on the server, and the default path must not need an
   added request field.
-- Worker reports are claims. Routing may trust a claim; cost and reward may not.
+- Worker reports are claims. Routing may trust a claim. Cost and reward may not.
 - The vocabulary is shared by the server and workers, so it belongs in the SDK beside the image sampler contracts.
 
 ## Considered Options
@@ -62,7 +63,7 @@ since a backend that ignores the key reasons anyway. A request that omits it doe
 that declares the capability receives `medium`, OpenAI's default, as [ADR
 0033](0033-fill-openai-sampling-defaults-and-map-the-developer-role.md) describes.
 
-Each request carries a conformance mode, `horde.conformance`, which is `strict` by default. The server derives the
+Each request has a conformance mode, `horde.conformance`, which is `strict` by default. The server derives the
 request's requirements once at submit (`required_chat_features` in `horde/classes/kobold/chat_request.py`), stores
 the guarantees beside the capabilities, and compares both with the worker's declaration in eligibility. A `strict`
 request requires:
@@ -112,7 +113,7 @@ Pricing follows [ADR 0027](0027-price-chat-generations-by-the-text-output-estima
 
 - Good: A plain client gets its request honoured or a refusal with a return code, and a Horde-aware client can opt
   into best effort.
-- Good: A backend joins by declaring what it enforces; a strategy that enforces less declares less and keeps its
+- Good: A backend joins by declaring what it enforces. A strategy that enforces less declares less and keeps its
   local behaviour.
 - Good: A false declaration costs the worker refused submits, and the requester does not receive a nonconformant
   reply under `strict`.
@@ -153,7 +154,7 @@ Pricing follows [ADR 0027](0027-price-chat-generations-by-the-text-output-estima
 `TestRequiredFeatures`, `TestWorkerChatExtras`, `TestToolsTemperature`, `TestReplyVerification`) fixes the
 conformance default, the derived requirements, narrowing and the submit checks.
 `tests/unit/test_text_worker_eligibility.py` fixes eligibility against the declarations. `tests/unit/oai/test_errors.py`
-fixes the 404 and 400 answers to a gap, and `tests/integration/test_chat.py` covers both modes end to end.
+checks the 404 and 400 responses to a gap, and `tests/integration/test_chat.py` covers both modes end to end.
 `docs/reference/chat_requests.md` (Chat declaration on pop, Guarantees, Tool temperature limit, Eligibility, Reply
 verification, Reasoning) and `docs/how-to/serve_chat_jobs.md` record the public behaviour.
 

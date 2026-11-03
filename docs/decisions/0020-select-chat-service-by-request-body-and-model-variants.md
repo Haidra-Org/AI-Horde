@@ -15,7 +15,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 A chat client must be able to choose Horde service behaviour, such as trusted workers, validated backends or a
 worker allow list, without a Horde-specific client. OpenAI clients expose three places such a choice can travel: the
-model id, extra request body fields, and the base URL. Which of these carries service selection?
+model id, extra request body fields, and the base URL. Which of these specifies service selection?
 
 ## Decision Drivers
 
@@ -24,7 +24,7 @@ model id, extra request body fields, and the base URL. Which of these carries se
 - One handler stack, without a profile resolver, revisions or saved configurations.
 - The closest comparable service, OpenRouter, uses a body object and `:suffix` model variants, and clients written
   for it send both.
-- A path can carry a configuration without any request change, which suits a client that can set only the base URL.
+- A path can select a configuration without any request change, which suits a client that can set only the base URL.
 
 ## Considered Options
 
@@ -38,10 +38,10 @@ model id, extra request body fields, and the base URL. Which of these carries se
 
 Chosen option: "A `horde` body object, with the colon reserved in model ids".
 
-A chat request carries Horde options in a `horde` object in the body. `horde/chat_contract.py`, `ChatHordeOptions`,
+A chat request includes Horde options in a `horde` object in the body. `horde/chat_contract.py`, `ChatHordeOptions`,
 defines it for both the front and the native route, and an unknown key is refused. The fields are:
 
-- `only` and `ignore`: worker ids the request is limited to or excludes; the two cannot be combined.
+- `only` and `ignore`: worker ids the request is limited to or excludes. The two cannot be combined.
 - `trusted_workers`, `validated_backends` and `slow_workers`: the native worker filters.
 - `max_context_length` and `context_fit`: an explicit context length, and what to do when the messages do not fit.
   The default fit is `truncate_oldest`: clients that keep a long history expect the oldest turns to be dropped, and
@@ -61,14 +61,14 @@ routing names.
 
 The model id is the exact native model name. The front reserves the colon (`horde/oai/app.py`,
 `MODEL_VARIANT_SEPARATOR`): a requested model id containing one is refused as unknown with 404 `model_not_found`.
-The front does not route by base URL; it serves `/v1/chat/completions` and `/v1/models` only.
+The front does not route by base URL. It serves `/v1/chat/completions` and `/v1/models` only.
 
 ### Consequences
 
 - Good: Works through extra body fields in every SDK, with one validated vocabulary on both sides.
 - Good: Reserving the colon keeps OpenRouter-style variant suffixes from being read as part of a Horde model name.
 - Bad: A client that can set only the base URL, key and model cannot select service behaviour.
-- Bad: A model picker built from `/v1/models` shows only the base models; a preset cannot be picked there.
+- Bad: A model picker built from `/v1/models` shows only the base models. A preset cannot be picked there.
 - Bad: The pop route accepts a model name containing a colon, and `/v1/models` lists it. The front then answers a
   request for that model with 404, so such a model is reachable only through the native route.
 
@@ -84,13 +84,13 @@ The front does not route by base URL; it serves `/v1/chat/completions` and `/v1/
 
 - Good: Reaches model pickers, so a preset can be chosen in a client that cannot send fields.
 - Bad: Variant names are a second public vocabulary to document, keep small and keep in step with the body object.
-- Bad: A variant is a set of defaults; a hard constraint for a credential cannot be expressed through it.
+- Bad: A variant is a set of defaults. A hard constraint for a credential cannot be expressed through it.
 
 ### Base-URL service profiles
 
 - Good: A client configured once gets the behaviour for everything it sends, including a client without a picker
   or extra fields.
-- Good: A path can carry an authorised private configuration without any request change.
+- Good: A path can select an authorised private configuration without any request change.
 - Bad: Invisible to model pickers, and lost by clients that hardcode `/v1`.
 - Bad: Needs a profile resolver, revision pinning per request, native authorisation and a binding into the operation
   key, which is the most infrastructure for the least client reach.

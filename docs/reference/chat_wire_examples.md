@@ -1,6 +1,6 @@
 ---
 title: "Chat wire examples"
-summary: "Annotated JSON for the chat bodies of native requesters, OpenAI-compatible front clients and text workers: requests, statuses, completions, stream chunks, refusals, model lists and jobs."
+summary: "Checked JSON examples for native chat requests, OpenAI-compatible responses and worker pop, progress and submit routes."
 topics: [chat, requests, workers]
 order: 105
 ---
@@ -17,17 +17,18 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [chat](../topics.md#chat), [requests](../topics.md#requests), [workers](../topics.md#workers)
 <!-- END GENERATED: topics -->
 
-This page holds full JSON bodies for the three chat parties: a requester on the native routes, a client of the
-OpenAI-compatible front, and a text worker serving chat jobs. The native fields and rules are specified in the
-[chat requests reference](chat_requests.md), the front's in the [chat front reference](chat_front.md). Each example
-links to the section that specifies it. Ids, keys and kudos values are placeholders such as `"<job-id>"`. Limits and
-token counts are realistic values. Every example is checked against the running code. A response body has the
-server's key set. Its `rc`, `code`, `type`, `object`, `state`, `finish_reason`, `kind` and `reason` strings and its
-booleans are the live values, and every other value that is not a placeholder has the live value's JSON type. Each
-request body shown is posted and gets the status shown, and each worker request holds only keys read by its route.
-`tests/integration/test_chat_wire_examples.py` checks the native requester and worker examples, and
-`tests/integration/test_chat_front_wire_examples.py` checks the front's examples against a front running over the
-in-process horde.
+These JSON examples cover native chat requests, OpenAI-compatible clients and text workers serving chat jobs.
+Each example links to the corresponding field definitions in the [chat requests reference](chat_requests.md)
+or [chat front reference](chat_front.md).
+
+Ids, keys and kudos values use placeholders such as `"<job-id>"`. Limits and token counts use realistic values.
+Response bodies have the server's complete key set. The `rc`, `code`, `type`, `object`, `state`,
+`finish_reason`, `kind` and `reason` strings, and all booleans, match the running code.
+Other values retain the runtime JSON types unless replaced by placeholders.
+
+The integration tests post each request body and check the stated status. Worker requests include only keys read
+by the route. `tests/integration/test_chat_wire_examples.py` checks the native requester and worker examples.
+`tests/integration/test_chat_front_wire_examples.py` checks the front examples against the front and in-process Horde.
 
 One chat job across the native routes, with the worker's three ways of ending it:
 
@@ -615,7 +616,7 @@ features and two guarantees together. The chat fields are specified in
 
 #### Chat job
 
-The pop returns `200` with `chat: true` and the conversation in `payload.messages`. The top-level `messages` holds
+The pop returns `200` with `chat: true` and the conversation in `payload.messages`. The top-level `messages` field contains
 horde messages for the worker's owner. The payload is specified in
 [Chat job pop response](chat_requests.md#chat-job-pop-response).
 
@@ -823,7 +824,7 @@ it is in [Recognise a chat job](../how-to/serve_chat_jobs.md#2-recognise-a-chat-
 
 #### Reply
 
-`POST /api/v2/generate/text/submit` with a structured reply and the counts the backend reported. The fields are
+`POST /api/v2/generate/text/submit` with a structured reply and the backend's reported counts. The fields are
 specified in [Structured submit](chat_requests.md#structured-submit) and built as in
 [Submit the reply](../how-to/serve_chat_jobs.md#6-submit-the-reply).
 
@@ -895,7 +896,7 @@ in `reasoning_tokens`. Both are specified in [Reasoning](chat_requests.md#reason
 
 #### Reply response
 
-Each of the three replies above returns `200` with the kudos the worker earned. The reward is priced as in
+Each of the three replies above returns `200` with the worker's earned kudos. The reward is priced as in
 [Pricing](chat_requests.md#pricing).
 
 <!-- wire-example: submit-reply-response -->
@@ -907,7 +908,7 @@ Each of the three replies above returns `200` with the kudos the worker earned. 
 
 #### Fault
 
-A job the worker cannot serve is submitted with `state` `faulted`, neither `generation` nor `message`, and here a
+A job that the worker cannot serve is submitted with `state` `faulted`, neither `generation` nor `message`, and here a
 `fault_reason`. The values are listed in [Worker fault reasons](chat_requests.md#worker-fault-reasons) and their use in
 [Fault a job](../how-to/serve_chat_jobs.md#7-fault-a-job).
 

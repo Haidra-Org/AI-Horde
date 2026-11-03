@@ -20,7 +20,7 @@ Topics: [generation](../topics.md#generation), [requests](../topics.md#requests)
 A request status draws on several parts of the scheduler. Check `done`, `faulted`, and `processing` first. While work
 is waiting, use `is_possible` to check whether the request can currently be served, the eligible-worker counts to
 understand how much compatible capacity exists, and `might_stall` to decide whether the delay needs additional
-explanation. `queue_position` and `wait_time` describe the queue ahead of the request: the whole horde's for an image
+explanation. `queue_position` and `wait_time` describe queued work: the whole Horde's for an image
 request, and the part its eligible workers could take for a text request.
 
 For the surrounding lifecycle, see [Job lifecycle](../haidra-assets/docs/job_lifecycle.md). The
@@ -74,12 +74,15 @@ estimates delay from the work queued ahead and the throughput of the horde's act
 supported by only a few workers may wait longer than this estimate. It may also start sooner when its compatible
 workers have little competing work.
 
-For a text or chat request, both values count only the requests ahead that at least one of its eligible workers could
-take, judged by their models, chat opt-in and length limits. `wait_time` divides that work by the eligible workers'
+For a text or chat request, both values use the work that at least one eligible worker could take, based on models,
+chat opt-in and length limits. `queue_position` counts competing requests ahead. `wait_time` includes queued work
+through the current request and divides that work by the eligible workers'
 measured speed over `eligible_worker_threads`, capped at the number of generations counted. A request for a lightly
 queued model therefore reads a short estimate however long the horde's queue is. The free output allowance reads the
-same estimate for a request being created. With zero eligible threads there is no throughput to divide
-by, so both values keep the horde-wide calculation; `is_possible` and the thread count report that case.
+same calculation for a request being created, excluding its own output because it is not queued yet.
+
+With zero eligible threads there is not a throughput value to divide by, so both values keep the Horde-wide
+calculation. `is_possible` and the thread count report that case.
 
 Both are estimates, and clients should label `wait_time` as one. Each eligible worker sees its own candidate queue, and
 an exact compatibility-specific position would require a separate scheduling calculation for every eligible worker.
@@ -99,17 +102,19 @@ Incoming work is measured in the same normalized work units as completed batches
 remainder of recent compatible arrivals with their batches already assigned to eligible workers. Consequently,
 cancelled unassigned work is not treated as continuing pressure. The observation window and event retention are
 finite. Missing events, capability changes, and transient bridge priorities that have not yet produced an observable
-pop all make the signal fail clear. Every candidate inside the observation window is evaluated; the scan is not
+pop all make the signal fail clear. Every candidate inside the observation window is evaluated. The scan is not
 truncated by a fixed request count.
 
 A true value is a reason to set expectations with the user or offer alternatives. The request may still start on the
 next worker cycle. A false value can mean either that arrival demand is not persistently exceeding clearance or that
-the service has not yet observed enough comparable work; it is not a promise of prompt assignment. History from a
+the service has not yet observed enough comparable work. It does not promise prompt assignment. History from a
 worker's old model, bridge, or softprompt state is ignored. The signal remains false while a generation is processing
 because active progress is more relevant at that point.
 
-OpenTelemetry exports one assignment-pressure sample when the shared 60-second availability cache is populated, not
-on every client poll. `horde.request.assignment_pressure.samples` carries only the bounded generation type, evidence,
+## Availability and pressure telemetry
+
+OpenTelemetry exports one assignment-pressure sample when the shared 60-second availability cache is populated.
+It does not export a sample on every client poll. `horde.request.assignment_pressure.samples` includes only the bounded generation type, evidence,
 and `might_stall` labels. Companion histograms expose dispatch opportunities, lost opportunities, returned capacity,
 active preceding dispatches, and arriving versus returned normalized work. Request, worker, model, and prompt
 identifiers are deliberately excluded, keeping both cardinality and client influence bounded.
@@ -171,6 +176,8 @@ requests whose `wait_time` counts only the compatible part of it, because compat
 candidate queue. The validation loop measures whether later empirical calibration can
 support real percentile fields.
 
+#### Event delivery and retention
+
 Forecast and outcome events pass through a bounded local queue before a background thread stores them in Redis. This
 keeps Redis latency and failures away from status, worker-submit, cancellation, and cleanup responses. If the queue is
 full or an event cannot be processed, the event is dropped and a monitoring counter records the reason.
@@ -182,8 +189,10 @@ record's lifetime far enough to include the current expiry time.
 
 Cancelled requests are excluded from completion and stall validation because cancellation prevents those outcomes
 from being observed. A start estimate can still be evaluated when assignment was observed before cancellation.
-Monitoring receives durations and bounded labels; request and worker identifiers remain in Redis until the temporary
+Monitoring receives durations and bounded labels. Request and worker identifiers remain in Redis until the temporary
 record expires.
+
+#### Forecast validation
 
 Accuracy is calculated separately for image and text requests, and separately for first assignment and completion.
 Each of those four series uses a rolling 24-hour window with at least 10,000 paired forecasts. At least 80% of p50
@@ -191,6 +200,8 @@ values must fall within 60 seconds or 50% of the observed duration, whichever is
 absolute p50 error must remain within 120 seconds, and p90 coverage must remain between 85% and 95%. Monitoring reports
 `HordeRequestEstimatorPromotionApproved` after all four series hold those levels for 24 hours. A changed estimator name
 collects a separate series and is evaluated on its own results.
+
+#### Stall prediction validation
 
 The shadow stall calculation uses the same request snapshot. It predicts an unstarted expiry when compatible capacity
 is unavailable or the p90 first-assignment forecast reaches the request expiry. An observed stall is an expiry before

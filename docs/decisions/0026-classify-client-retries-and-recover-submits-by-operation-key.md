@@ -39,11 +39,11 @@ Chosen option: "Retry classification with `x-should-retry: false` plus a front-g
 activation".
 
 The front distinguishes three states: not submitted, submitted with an id, and outcome unknown. Once the Horde holds a
-request, or may hold one, every response carries `x-should-retry: false`, including a successful stream, a timeout
+request, or may hold one, every response includes `x-should-retry: false`, including a successful stream, a timeout
 after submission and a transport failure after the request was sent. A response sent before submission, such as a
 refused connection or the 408 for a slow request body, stays retriable.
 
-The front generates a UUID for each client HTTP request and sends it as `horde.operation_key`. When a submit's answer
+The front generates a UUID for each client HTTP request and sends it as `horde.operation_key`. When a submit's response
 is lost, the front sends the same body and key again, up to `submit_recovery_attempts` times (default 2) within the
 request's budget.
 
@@ -53,7 +53,7 @@ The native chat route claims the key for the submitting user, or for the owner o
   200 with the first request's `id` and `kudos` and does not queue or charge anything. A repeat with a different
   fingerprint returns 400 `OperationKeyConflict`.
 - An unclaimed key is written in `TextWaitingPrompt._activate` (`horde/classes/kobold/waiting_prompt.py`) before the
-  first commit, which also carries the activation and the horde tax. The partial unique index on
+  first commit, which also includes the activation and the horde tax. The partial unique index on
   `(user_id, operation_key)` lets one of two concurrent submissions commit. The other rolls back, its inactive row and
   upfront kudos hold are deleted, and it returns the winning request or the conflict.
 - The claim is held by the request row and lasts as long as the row. The same key from another user is a separate
@@ -89,7 +89,7 @@ supplies its own. The chat routes do not read an `Idempotency-Key` header.
 ### Classification alone
 
 - Good: Small.
-- Bad: Does not help with a lost submit answer or a client that ignores the header.
+- Bad: Does not help with a lost submit response or a client that ignores the header.
 
 ### Caller keys only
 
@@ -104,8 +104,8 @@ supplies its own. The chat routes do not read an `Idempotency-Key` header.
 ## Confirmation
 
 `tests/integration/test_chat.py` pins the operation key: a repeat returns the first request, also while admission is
-off and after its model went offline; a changed request is refused; reordered models are the same operation; two users
-make two requests; a dry run does not claim; and two concurrent submits with one key make one activation, one tax and
+off and after its model went offline. A changed request is refused. Reordered models are the same operation. Two users
+make two requests. A dry run does not claim. Two concurrent submits with one key make one activation, one tax and
 one job. `tests/unit/oai/test_submit_recovery.py` pins the front's recovery, its bounds, a fresh key per client request
 and the retry-hint metric. `tests/unit/oai/test_errors.py` and `tests/unit/oai/test_chat_front.py` pin the
 `x-should-retry` header. `docs/reference/chat_requests.md` records the operation key and its fingerprint.

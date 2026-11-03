@@ -49,14 +49,14 @@ Each table gets the policy its contents' lifetime requires.
   restriction does not block a supported operation.
 - `kudos_reservations.user_id` and `kudos_balance_snapshots.user_id` are ownership foreign keys with
   `ON DELETE CASCADE`. A hold and a per-user reconciliation baseline only have meaning while the user exists.
-- `kudos_stat_events` carries `user_id`, `worker_id`, `worker_user_id`, and `team_id` as immutable audit
+- `kudos_stat_events` stores `user_id`, `worker_id`, `worker_user_id`, and `team_id` as immutable audit
   references with no foreign key. Workers and teams are hard-deletable while their counter history must
   survive them, and neither cascade nor restrict can deliver both. The exception is documented on the mapped
   model so it reads as a decision rather than an omission.
 
 ### Consequences
 
-- Good: A `kudos_ledger` row always names a real user, so reconciliation never has to reason about a posting
+- Good: A `kudos_ledger` row always references a real user, so reconciliation does not have to account for a posting
   whose account is gone.
 - Good: Deleting a worker or a team stays a supported, unblocked operation, and the totals its work
   contributed to keep their explanation in `kudos_stat_events`.
@@ -84,7 +84,7 @@ Each table gets the policy its contents' lifetime requires.
 
 ### No foreign keys on any accounting table
 
-- Bad: It gives up the guarantee that a currency posting always names a real user, which is the one
+- Bad: It gives up the guarantee that a currency posting always references a real user, which is the one
   referential guarantee reconciliation depends on.
 
 ## More Information

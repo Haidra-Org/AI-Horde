@@ -69,7 +69,7 @@ columns inside request transactions. Spend admission is protected by payer reser
 
 Impose a global acquisition order on the inline design.
 
-- Bad: Every future kudos-touching change would need to know and preserve the order, the audit/replay gap
+- Bad: Every future kudos change would need to preserve the order, the audit/replay gap
   remains, and multi-account transfers still couple two hot rows in one transaction.
 
 ### Synchronous double-write, permanently

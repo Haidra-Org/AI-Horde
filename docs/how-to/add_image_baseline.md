@@ -25,6 +25,10 @@ and a row in `horde/bridge_reference.py` only once a bridge release renders some
 An uncatalogued baseline is priced at par and accepted for plain txt2img requests, so the models can
 land before the record does.
 
+Before starting, have access to publish baseline records on the model reference and a checkout of this
+repository for any bridge-gating changes. After publication and refresh, the API uses the baseline's capabilities
+and policy. New bridge features remain gated by the release that implements them.
+
 ## 1. Publish the baseline record
 
 Submit the record through the model reference's baseline resource. Its `capabilities` state what
@@ -52,12 +56,16 @@ exists for the family:
 }
 ```
 
-Answer each capability from what has been published for the architecture, not from the model card.
-`horde_policy` states only what departs from par; the fields are described in the
+Set each capability from the weights and mechanisms published for the architecture.
+`horde_policy` states only what departs from par. The fields are described in the
 [reference page](../reference/baseline_policy.md#the-horde-policy-on-a-baseline).
 
 The record is served to every replica, so a pricing change reaches the API within the hour without a
 deployment.
+
+Verification: after refresh, `model_reference.baseline_record("<baseline>")` on an API instance returns the
+published capabilities and policy. To reverse a policy change, republish the previous values and verify them
+after refresh. Keep a baseline record while published models reference it.
 
 ## 2. Add the bridge row when a release renders a feature
 
@@ -71,13 +79,18 @@ that release's version in `BRIDGE_BASELINE_FEATURES`:
 },
 ```
 
-Land the bridge release first. Until the row exists the four features are refused for the baseline,
-which is the correct answer: a bridge that ignores the field renders something the request did not ask
-for rather than reporting an error.
+Land the bridge release first. Until the row exists, these bridge-gated features are refused for the baseline.
+A bridge that ignores a requested field can otherwise generate an incorrect result without an error.
+
+Verification: extend `TestBridgeSupport` in `tests/unit/test_baseline_policy.py` to check the feature below and
+at the supported version. Reverse the gate by removing the new entry. This affects new assignments and does not
+recall jobs already dispatched.
 
 ## 3. Update the reference page
 
 Add the release row to the bridge table in [the reference page](../reference/baseline_policy.md).
+
+Verification: the documented version, feature and baseline match `BRIDGE_BASELINE_FEATURES`.
 
 ## 4. Verify
 
@@ -85,5 +98,5 @@ Add the release row to the bridge table in [the reference page](../reference/bas
 pytest tests/unit/test_baseline_policy.py tests/unit/parity
 ```
 
-The parity suite compares every request shape against the rules this design replaced, so a capability
-answered wrongly shows up as an unadjudicated difference rather than as silence.
+Verification: both suites pass. The parity suite compares request shapes against the previous rules and reports
+differences that require review, including incorrectly declared capabilities.

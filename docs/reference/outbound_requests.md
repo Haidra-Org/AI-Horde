@@ -41,14 +41,16 @@ Each hop resolves its host once and is refused, before any connection, when:
 - its scheme is not one the caller allows (http or https for images, https only for webhooks), or it has no host;
 - its host does not resolve;
 - any resolved address is private, loopback, link-local, multicast, reserved, shared or unspecified. An IPv6 address
-  that carries an IPv4 address (IPv4-mapped `::ffff:0:0/96`, IPv4-compatible `::/96` or NAT64 `64:ff9b::/96`) is
+  containing an IPv4 address (IPv4-mapped `::ffff:0:0/96`, IPv4-compatible `::/96` or NAT64 `64:ff9b::/96`) is
   checked as that IPv4 address;
 - it is a redirect past the caller's limit.
 
 The connection tries the checked addresses in resolver order, with the URL's host as the `Host` header and, over https,
 as the TLS server name the certificate is verified against. Only a connection-establishment failure tries the next
 address. A read or protocol failure does not replay a request that may already have been sent. Every attempt shares
-the total deadline. The connection uses the checked IP without resolving the hostname again, preventing DNS rebinding
+the total deadline.
+
+The connection uses the checked IP without resolving the hostname again, preventing DNS rebinding
 between validation and connection. Each followed redirect passes the same checks and uses the same method and body.
 
 URL credentials supply HTTP Basic authentication, with percent-decoded user names and passwords, and override a
@@ -67,6 +69,7 @@ PycURL delegates connections and transfer deadlines to libcurl. `CONNECT_TO` pin
 a checked numeric address while retaining the original hostname for HTTP, TLS SNI and certificate verification.
 Automatic redirects and environment proxies are disabled. `TIMEOUT_MS` bounds each transfer with the remaining
 shared deadline, including TLS, status lines, headers, body, chunk framing and trailers.
+
 System DNS resolution is synchronous and cannot be interrupted by this client:
 resolver time counts against the deadline, and an overrun is rejected before connection, but the DNS call itself
 may exceed it. The ten-second image budget applies per URL, including source images and chat images.
@@ -91,10 +94,14 @@ Interrogation cleanup removes the stored image from R2.
 
 Generation and interrogation webhooks share one bounded queue (`WEBHOOK_QUEUE_MAXSIZE`) and a pool of
 `WEBHOOK_SENDER_THREADS` background sender threads per process, so delivery does not block the worker's submit request
-and one stalled subscriber does not hold back other deliveries. A delivery is POSTed as JSON, up to
+and one stalled subscriber does not hold back other deliveries.
+
+A delivery is POSTed as JSON, up to
 `WEBHOOK_ATTEMPTS` times while the subscriber returns 4xx or 5xx or the exchange fails. Redirects are not followed: a
 307 or 308 would re-send the payload to a target the subscriber did not register. A refused URL, including a redirect,
-is logged once and not retried. A 2xx response whose body exceeds the cap counts as delivered. The `horde.webhook.outcomes`
+is logged once and not retried. A 2xx response whose body exceeds the cap counts as delivered.
+
+The `horde.webhook.outcomes`
 counter records `ok`, `giveup`, `refused` or `dropped` for each delivery. The `horde.webhook.queue_wait.duration`
 histogram records how long each delivery waited for a sender. A rising wait shows the senders falling behind before the
 queue fills and drops begin.
@@ -103,3 +110,10 @@ queue fills and drops begin.
 
 PycURL requires libcurl. Source builds require libcurl development headers. HTTPS connections use the certifi CA
 bundle with certificate and hostname verification enabled.
+
+## Contract tests
+
+`tests/unit/test_outbound.py` checks address restrictions, redirect authorization, connection fallback and transfer
+limits. `test_dns_overrun_is_checked_before_connecting` covers synchronous DNS overruns, and
+`test_compressed_body_is_capped_after_decoding` covers decoded body limits.
+`tests/unit/test_generation_webhook.py` covers webhook delivery.

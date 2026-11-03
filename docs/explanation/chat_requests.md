@@ -1,6 +1,6 @@
 ---
 title: "Chat requests on the Horde"
-summary: "Why chat requests are a text request subtype served by declaring workers and an OpenAI-compatible front, which alternatives were weighed, and what a client can and cannot rely on."
+summary: "How chat requests use the text queue, worker capability declarations and a separate OpenAI-compatible front, with the design tradeoffs and client guarantees."
 topics: [chat, requests, workers]
 order: 30
 ---
@@ -17,36 +17,30 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [chat](../topics.md#chat), [requests](../topics.md#requests), [workers](../topics.md#workers)
 <!-- END GENERATED: topics -->
 
-In brief:
-
-- A chat request carries an OpenAI `messages` array to a worker, which renders it with the chat template of the model
-  it has loaded. Otherwise it is a text request, and shares the text queue, pricing and limits.
-- Workers opt in with fields on every text pop. The horde sends a chat request only to a worker that declared chat
-  jobs, the model, limits that fit, and every optional feature the request uses.
-- An OpenAI-compatible front, a separate process, speaks `/v1/chat/completions` to clients and the native chat routes
-  to the horde, waking on a Redis signal when a reply lands.
-- A parameter the service does not implement is refused with its key in the message, so a client receives the answer
-  it asked for or an error. Unknown keys inside messages, tool definitions and `tool_choice` are the exception: they
-  are dropped, as OpenAI does.
-- A streamed request without tools or structured output receives its text as the worker posts progress; any other
-  request receives its reply whole. One request yields one choice.
+- A chat request sends an OpenAI `messages` array to a worker. The worker renders the conversation with the loaded
+  model's chat template. Chat requests share the text queue, pricing and limits.
+- Workers opt in on every text pop. The Horde routes chat requests by the declared model, limits and required features.
+- A separate OpenAI-compatible front serves `/v1/chat/completions` through the native chat routes. Redis signals
+  notify the front when a reply is available.
+- Unsupported parameters are refused with the key in the error message. Unknown keys inside messages, tool
+  definitions and `tool_choice` are dropped, as OpenAI does.
+- Plain streamed requests receive text as the worker posts progress. Other requests receive the complete reply
+  after generation. Each request produces one choice.
 
 Every field is specified in the [chat requests reference](../reference/chat_requests.md) and the
-[chat front reference](../reference/chat_front.md). The decisions below are recorded as ADRs; each section links the
-record that holds the drivers and the rejected options.
+[chat front reference](../reference/chat_front.md). Each design choice below links to an ADR with the rationale
+and rejected alternatives.
 
-## The problem: one prompt string for many templates
+## Prompt strings and model templates {#the-problem-one-prompt-string-for-many-templates}
 
-A native text request carries one prompt string, and the worker feeds it to the model as written. Instruction-tuned
+A native text request contains one prompt string, which the worker sends to the model as written. Instruction-tuned
 models answer well only when a conversation is rendered in the chat template they were trained on, with that model's
-role markers and turn separators. Under a prompt string, the client has to render the template, which means knowing
-the template of whichever model and backend picks up the job. A client that guesses wrong gets a degraded answer and
-no error.
+role markers and turn separators. The client has to render the prompt with the correct template for the serving model and backend.
+An incorrect template can reduce reply quality without producing an error.
 
-A structured conversation moves rendering to the one party that knows the template: the worker, which has the model
-loaded. It also gives tools, tool results and images a place in the request, which a flat string does not have a
-shape for. The shape chosen is OpenAI's chat-completions body, since it is what client libraries, SDKs and agent
-frameworks already send.
+With a structured conversation, the worker renders the input using the loaded model's template. The request
+can also include tool definitions, tool results and images as separate fields. The shape chosen is OpenAI's
+chat-completions body, since it is what client libraries, SDKs and agent frameworks already send.
 
 A prompt string translated from the conversation at submit was the alternative, and is how the pilot proxy works.
 It does not need a native change, but the horde would then own every model's chat template and its maintenance, and
@@ -56,7 +50,7 @@ tools, images and reported usage would not have a path to the worker
 ## How a chat request travels
 
 A request passes through the front, the native API and a volunteer worker, with Postgres, Redis and object storage
-between them. The front does not hold a database connection. It answers from the native status route or, while a
+between them. The front does not hold a database connection. It returns results from the native status route or, while a
 stream is open, from the retained progress stream.
 
 ```mermaid
@@ -72,9 +66,8 @@ flowchart LR
     W -->|signed URL fetch| O
 ```
 
-One request, start to finish. The `opt` blocks run only for a streamed request without tools or structured output,
-and the loop only when the worker posts progress; every other request skips them and is answered from the final
-status.
+The sequence below shows one request. The `opt` blocks apply only to streamed requests without tools or structured
+output. The loop runs only when the worker posts progress. Other requests use the final status.
 
 ```mermaid
 sequenceDiagram
@@ -114,7 +107,7 @@ sequenceDiagram
 ```
 
 The front submits over HTTP, subscribes to the request's completion signal, reads the status once when woken, and
-answers in the OpenAI shape. A native client can call the chat routes directly and poll the status route.
+returns an OpenAI response. A native client can call the chat routes directly and poll the status route.
 
 ## Design choices
 
@@ -129,7 +122,7 @@ and the reverse.
 A separate request class and table would have given chat a single representation, at the price of a second branch
 in every text behaviour. The cost of the chosen option is a second representation: the row's `prompt` column holds
 the conversation flattened into a string, read by the token estimate, kudos and moderation and not sent to a
-worker, and every rewrite validation makes to that string has to be mirrored onto the messages
+worker, and every validation rewrite of that string has to be mirrored onto the messages
 ([Flattened prompt](../reference/chat_requests.md#flattened-prompt)).
 
 ### A separate front woken by Redis
@@ -142,11 +135,11 @@ a database connection: the outcome lives in Postgres and the front reads it thro
 
 The native side publishes a small event on `horde:chat:<request id>` when a generation lands and when a request
 ends ([Completion signal](../reference/chat_requests.md#completion-signal)). Publishing is best effort and a message
-does not carry text, so a lost message delays an answer until the front's fallback poll and does not change it. Polling
-alone was the alternative; its status load grows with the number of open waits.
+does not include text, so a lost message delays the response until the front's fallback poll and does not change it. Polling
+alone was the alternative. Its status load grows with the number of open waits.
 
-A request on the front moves through these states. An exit after the submit other than an answer or a fault cancels
-the horde request, so a request the client abandons does not keep its place in the queue
+A request on the front moves through the states below. After submission, any exit other than a completed reply or
+a fault cancels the Horde request. Abandoned requests therefore leave the queue
 ([Errors the front returns](../how-to/run_openai_chat_front.md#errors-the-front-returns)):
 
 ```mermaid
@@ -155,7 +148,7 @@ stateDiagram-v2
     [*] --> Refused: 503 FrontAtCapacity
     Admitted --> Validated: body read and checked
     Admitted --> Refused: 400, 401, 404, 408 or 413
-    Validated --> Submitted: native submit<br/>lost answers recovered by operation key
+    Validated --> Submitted: native submit<br/>lost responses recovered by operation key
     Validated --> Refused: native refusal or 502
     Submitted --> Waiting: first status read passes
     Submitted --> Cancelled: gap or fail_fast refusal<br/>HTTP error before any stream opens
@@ -169,9 +162,9 @@ stateDiagram-v2
     Faulted --> [*]
 ```
 
-Once a request reaches `Submitted`, every error the front returns carries `x-should-retry: false`, since a retry would
-be a second charged request. A submit whose answer was lost is the one case the front repeats on its own: it sends
-the identical body with the same operation key, and the horde returns the request it already holds
+Once a request reaches `Submitted`, every error the front returns includes `x-should-retry: false`, since a retry would
+be a second charged request. A submit with a lost response is the one case the front repeats on its own: it sends
+the identical body with the same operation key, and the Horde returns the existing request
 ([ADR 0026](../decisions/0026-classify-client-retries-and-recover-submits-by-operation-key.md)):
 
 ```mermaid
@@ -182,7 +175,7 @@ sequenceDiagram
     C->>F: POST /v1/chat/completions
     F->>H: submit, operation key K
     H->>H: request queued, K claimed for the user
-    H--xF: answer lost (timeout or reset)
+    H--xF: response lost (timeout or reset)
     F->>H: same body, same K, next root
     H-->>F: 200, the first request's id and kudos
     Note over H: nothing queued or charged again
@@ -204,17 +197,17 @@ A worker states what it serves on every text pop: `chat_jobs`, the `model_id`, `
 `image_transports` ([ADR 0022](../decisions/0022-declare-chat-capabilities-by-pop-fields.md)). A capability is a
 property of the loaded model and backend: whether a projector is loaded, whether the template renders tools, how much
 context the backend really has. A bridge version string cannot express those, which rules out the version table the
-horde uses for image features. The horde does not probe workers; server-side probes would turn claims into evidence,
+horde uses for image features. The horde does not probe workers. Server-side probes would turn claims into evidence,
 at the price of worker time before any job.
 
-The request side is computed once. `required_chat_features` derives the features a request needs when it is
+Request requirements are computed once. `required_chat_features` derives the request's required features when it is
 created, counting a field at its documented default as absent, and stores them on the row. Eligibility compares the
 worker's declaration with that stored list and does not load a candidate's messages
 ([Eligibility](../reference/chat_requests.md#eligibility)).
 
-Two properties follow. A worker that predates chat never sends `chat_jobs`, so it never receives a job without a
+Two properties follow. A worker that predates chat does not send `chat_jobs`, so it does not receive a job without a
 prompt. A worker that declares chat keeps receiving text jobs under its text limits, so opting in does not take
-text work away; a worker that wants chat jobs only says so with `prompt_jobs: false`. The cost is trust: a
+text work away. A chat-only worker sets `prompt_jobs: false`. The cost is trust: a
 misconfigured worker can declare a feature it does not honour.
 
 ### Guarantees and the conformance mode
@@ -222,18 +215,18 @@ misconfigured worker can declare a feature it does not honour.
 A backend can accept every field and still deviate from the contract on purpose: it may render the same prompt for
 every `tool_choice`, clamp the temperature when tools are present, or trim a prompt that does not fit. Each is a
 reasonable local choice, and over the horde the requester sees only the reply. A capability says the worker acts on an
-input; a guarantee says the reply follows that part of the contract exactly
+input. A guarantee says the reply follows that part of the contract exactly
 ([ADR 0036](../decisions/0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md)). Both share the
 `chat_features` list, and a numeric limit such as `tools_max_temperature` joins `chat_limits`.
 
 A request is `strict` unless its `horde` object selects `best_effort`, because the clients that cannot opt in are the
-plain OpenAI clients that expect OpenAI behaviour. Under `strict`, `required_chat_features` adds the guarantees the
-request relies on to the stored list, so eligibility compares them like features. Under `best_effort` the request does
+plain OpenAI clients using OpenAI behaviour. Under `strict`, `required_chat_features` adds the required guarantees
+to the stored list, so eligibility compares them like features. Under `best_effort` the request does
 not require a guarantee. Limits apply in both modes, since a clamped value changes the request, and a mode governs
 only how faithfully the reply follows the request.
 
-The contract is held in three layers, each independent of the others. Routing sends a request only to a worker
-whose declaration covers it. Dispatch narrows what a job carries where the contract allows: under `tool_choice: none`
+The contract is enforced at routing, dispatch and submission. Routing sends a request only to a worker
+whose declaration covers it. Dispatch narrows what a job includes where the contract allows: under `tool_choice: none`
 the worker does not receive tool definitions, so `none` does not need a guarantee, and a `tool_choice` that specifies
 a function reaches the worker as that one function under `required`. The stored request keeps the client's values,
 and the submit checks the reply against them.
@@ -242,24 +235,27 @@ and the submit checks the reply against them.
 flowchart TD
     A[Request created<br/>chat_required_features stored] --> B{Route: does an online<br/>worker's declaration cover<br/>features, guarantees, limits?}
     B -->|no worker declares it| G[404 declaration gap<br/>or 400 limits gap]
-    B -->|none online for the model| Q[Request waits<br/>the front answers 503 after its grace]
-    B -->|yes| D[Narrow: build the job<br/>tool_choice none sends no tools<br/>a named function goes as required]
+    B -->|model does not have an online worker| Q[503 at submission<br/>request is not queued]
+    B -->|yes| D[Narrow: build the job<br/>tool_choice none sends no tools<br/>a specified function goes as required]
     D --> S{Verify the submit against<br/>the stored request}
     S -->|conforms| OK[Generation stored,<br/>charged and rewarded]
     S -->|refused| RF[Job faulted on the worker<br/>request goes back to the queue]
     RF -->|another attempt| B
-    RF -->|repeated faults| X[Request faulted<br/>the front answers 502]
+    RF -->|repeated faults| X[Request faulted<br/>the front returns 502]
 ```
 
-The submit check does not trust declarations, so a false one costs the worker refused submissions and does not give
-the requester a wrong reply. It verifies only what the payload proves. Under `strict` a call under `none`, a missing
-or other call under a forced choice, and content that is not the requested JSON or does not match a `strict` schema
-are refused; several calls under `parallel_tool_calls: false` are cut to the first, since an OpenAI client would only ever see one.
-Because the cut holds whichever worker replied, routing does not require `single_tool_call_enforced`.
-Under either mode a call to a function the client did not offer, or two calls sharing an id, is refused, because no
-client can dispatch or answer such a reply. A refused submit faults the job on the worker and counts towards faulting
-the request, so the check refuses only what OpenAI would never return. A trimmed prompt or a hidden tool-selection pass
-does not show in the reply and is not verified.
+Reply verification rejects detectable contract violations even when the worker declares the required guarantees.
+It can verify only properties visible in the submitted payload.
+
+Under `strict`, verification refuses a tool call under `none`, a missing call or a call to another function under
+a forced choice, and content that is not the requested JSON or does not match a strict schema.
+Under `strict` with `parallel_tool_calls: false`, only the first call is retained.
+Because this reduction applies to every worker's reply, routing does not require `single_tool_call_enforced`.
+
+Under either mode a call to a function outside the client's tools, or two calls sharing an id, is refused,
+because a client cannot dispatch or respond to such a reply. A refused submit faults the job on the worker and
+counts towards faulting the request, so the check rejects only detectable violations of the response contract.
+A trimmed prompt or a hidden tool-selection pass does not show in the reply and is not verified.
 
 ### Prompt fit on the worker
 
@@ -277,7 +273,9 @@ short.
 
 A backend without a counter route can still back the guarantee with an upper bound. A byte-level BPE tokenizer emits
 at least one UTF-8 byte per token, so the byte length of the messages' JSON bounds the token count of the message
-text. The JSON keys around each message stand in for its role markup. The template's fixed part is the BOS token, any
+text. The JSON keys around each message stand in for its role markup.
+
+The template's fixed part is the BOS token, any
 system prompt injected by the template, and the generation prompt. The worker measures it once from the probe's
 `usage.prompt_tokens` and adds it to the bound. The probe does not include tools, so it does not measure a tool preamble, and
 the bound backs the guarantee for tool requests only when the operator adds the preamble's size with
@@ -285,30 +283,35 @@ the bound backs the guarantee for tool requests only when the operator adds the 
 
 The bound costs capacity. It counts one token per byte, which for ASCII text is about three times the horde's
 estimate of 3 characters per token, and more for text outside ASCII. The horde sends a worker conversations that fit
-by its own estimate, so a worker on the byte bound faults long conversations with `prompt_overflow`. A worker that
-aborts more than 20 jobs in an hour is put into maintenance. The alternative is to trim the prompt, which keeps the
+by its own estimate, so a worker on the byte bound faults long conversations with `prompt_overflow`.
+
+A worker that aborts more than 20 jobs in an hour is put into maintenance. The alternative is to trim the prompt, which keeps the
 job and breaks the guarantee, so a worker that trims does not declare it and serves only `best_effort` requests. The
 counters and the check script are in
 [Write a minimal chat worker](../how-to/write_a_minimal_chat_worker.md#fit-check-and-the-overflow-guarantee).
 
 ### Strict handling of unsupported parameters
 
-A key or value the service does not implement is refused with `400 UnsupportedChatParameter`, and the message states
+A key or value that is not implemented is refused with `400 UnsupportedChatParameter`, and the message states
 the key ([ADR 0029](../decisions/0029-route-unsupported-parameters-by-declared-support-refusing-by-default.md)). A
 field at its documented default counts as omitted, so stock clients that send defaults unprompted still work, and the
-front drops a short, fixed list of default no-ops. Capability fields (`tools`, `response_format`, image parts) are never
-dropped, since they change the answer. A value that is supported but cannot be served by any online worker is a
-different case. A request for a model that is not served by any online chat worker is refused at once with 503
+front drops a short, fixed list of default no-ops. Capability fields (`tools`, `response_format`, image parts) are not
+dropped, since they change the result.
+
+Worker availability is checked separately. A request for a model that is not served by any online chat worker is refused at once with 503
 `no_eligible_worker`. A `max_tokens` above every serving worker's declared length is lowered to the largest declared
-length. Any other request is accepted and waits, and the front returns 503 when the native status reports
-`is_possible` false after the front's grace.
+length. Other availability failures depend on the cause. A missing feature or guarantee produces an immediate
+404, and an exceeded size limit produces 400. When the status does not report such a declaration gap, the front
+returns 503 if `is_possible` remains false after the grace period. See
+[No eligible worker](../reference/chat_front.md#no-eligible-worker) for admission refusals and status checks.
 
 Where OpenAI refuses a request shape, the horde refuses it too, with OpenAI's message and `param`: a `tool_choice` or
 `parallel_tool_calls` without tools, a tool history whose calls are not answered right after the assistant message
 that made them, and a `strict` schema that leaves an object open or a property optional. A client written against
-OpenAI then fails the same way on both services. The rules live in `horde/chat_contract.py`, so the native route and
-the front cannot drift apart. A few OpenAI refusals protect only OpenAI's backend, such as a `json_object` request
-whose messages never mention JSON; the horde serves those, and a client that depends on the refusal sets
+OpenAI then fails the same way on both services. The native route and the front use the same rules from `horde/chat_contract.py`.
+
+Some OpenAI refusals apply only to OpenAI's backend, such as refusing a `json_object` request without a mention of JSON
+in the messages. The Horde accepts these requests. To enable those refusals, set
 `horde.openai_guards`.
 
 Messages and their nested objects, the `tools` definitions and the `tool_choice` object are the exception: an
@@ -320,10 +323,9 @@ SDK-specific fields, so refusing them would break the SDK's tool loop.
 
 Dropping unsupported fields by default, as OpenRouter does, was the alternative
 ([ADR 0030](../decisions/0030-route-unsupported-parameters-by-declared-support-ignoring-by-default.md)). It produces
-fewer errors and hides a changed answer in a field most clients never read.
+fewer errors and hides a changed answer in a field that most clients do not read.
 
-The consequence is that quirks get fixed in the client: a client that always sends a field the service does not
-serve stops sending it. A value that is a no-op at its default can be added to the front's default table, by key,
+Clients must stop sending unsupported fields. A value that is a no-op at its default can be added to the front's default table, by key,
 as a deliberate change.
 
 ### Pricing by the text output estimate
@@ -333,13 +335,14 @@ and each tool call's name and arguments) divided by four, floored at 20 tokens a
 ([ADR 0027](../decisions/0027-price-chat-generations-by-the-text-output-estimate.md),
 [Pricing](../reference/chat_requests.md#pricing)). A short reply to a large `max_tokens` is charged for the short
 reply. The basis is computed in one function and stored on every generation as `charge_basis: output_estimate`.
-A streamed generation the client cancels is settled on the same basis on the content its worker posted before the
+
+A streamed generation cancelled by the client is settled on the same basis on the content posted by the worker before the
 cancel, which the Horde measured, so a volunteer worker is paid for what it turned in.
 
 Pricing on the token counts workers report was the alternative
 ([ADR 0028](../decisions/0028-price-chat-generations-on-reported-completion-tokens.md)). It is fairer per reply and
 trusts volunteer reports that are not audited, which would give workers a reason to over-report. The counts are
-stored and shown on every generation and never enter the charge, so the alternative can be evaluated on real data.
+stored and shown on every generation and do not enter the charge, so the alternative can be evaluated on real data.
 The cost of the estimate is accuracy: characters approximate tokens poorly for code and
 non-English text, and the floor charges a near-empty reply as 20 tokens.
 
@@ -351,19 +354,23 @@ cost less
 
 ### Reasoning
 
-A reasoning model writes its thinking before the answer. The worker submits it in `reasoning_content`, separate
+A reasoning model generates reasoning before the answer. The worker submits it in `reasoning_content`, separate
 from `content`, so a client that does not expect reasoning receives a clean answer, and a block cut
 off by `max_tokens` cannot become the reply. The front returns it as `reasoning_content`, so a client that reads that
-field shows progress during a long reasoning phase. A request that sets `horde.include_reasoning` to false does not
-receive it. The native status shows it either way. Reasoning is output the worker generated, and OpenAI bills it as
+field shows progress while the model generates reasoning. A request that sets `horde.include_reasoning` to false does not
+receive it. The native status shows it either way.
+
+Reasoning is generated output, and OpenAI bills it as
 completion tokens, so its characters are counted with the content and tool calls, capped at the requested
 `max_length`. A reply whose whole budget went to reasoning is charged and rewarded for that budget, and the same count
-is the worker's speed sample. The worker's `reasoning_tokens` count is shown and never charged, as with every other
+is the worker's speed sample. The worker's `reasoning_tokens` count is shown and does not change the charge, as with every other
 reported count ([Reasoning](../reference/chat_requests.md#reasoning)).
 
-Reasoning and the answer share `max_tokens`, and the OpenAI API has no way to resume reasoning. A reply cut off while
-thinking cannot be continued, and in a follow-up request the earlier reasoning is a previous turn. The thinking and the
-answer therefore have to fit in one request. koboldcpp gives an absent `reasoning_effort` an unlimited thinking budget,
+Reasoning and the answer share `max_tokens`, and the OpenAI API cannot resume reasoning. A reply cut off while
+thinking cannot be continued. In a follow-up request, the earlier reasoning is a previous turn.
+The thinking and the answer therefore have to fit in one request.
+
+koboldcpp gives an absent `reasoning_effort` an unlimited thinking budget,
 so a small `max_tokens` could be spent on reasoning alone. For that reason a worker that declares the feature receives
 `medium`, OpenAI's default, when the client omits the value
 ([ADR 0033](../decisions/0033-fill-openai-sampling-defaults-and-map-the-developer-role.md)). On koboldcpp that caps the
@@ -374,15 +381,17 @@ answer.
 
 Workers are volunteers, and the models online change minute to minute. By default a request waits for a worker for
 the front's whole budget. A client that prefers an early answer sets `horde.availability_mode: "fail_fast"`, and the
-front decides at the first status read: zero eligible worker threads, or a `wait_time` over the budget left, refuses
+front checks the first status read: zero eligible worker threads, or a `wait_time` over the budget left, refuses
 the request with 503 `queue_unavailable` and a `Retry-After`, and cancels it. The refusal describes the pool at that
-moment and leaves the retry to the client; the same request may be served once workers come online. The estimate
+moment and leaves the retry to the client. The same request may be served once workers come online.
+
+The estimate
 counts the queued work ahead that the request's eligible workers could take and divides it by their throughput
 ([Queue position and wait time](request_feasibility_and_queue_pressure.md#queue-position-and-wait-time)), so it is
 an approximation, and a request may still start sooner or wait longer.
 
 A refusal at the first read arrives before a stream opens, as a plain HTTP error, so a streaming client handles it as
-it would any other refused request. The decision waits up to about 2 seconds for a status that carries queue
+it would any other refused request. The decision waits up to about 2 seconds for a status that includes queue
 information, since a request just submitted is absent from the horde's cached queue positions until they refresh
 ([No eligible worker](../reference/chat_front.md#no-eligible-worker)).
 
@@ -390,19 +399,19 @@ information, since a request just submitted is absent from the horde's cached qu
 
 The horde fetches, checks and normalises each image at submit, stores it as JPEG, and keeps only a reference in the
 row ([Images](../reference/chat_requests.md#images)). At pop, after the commits that release the queue's row lock,
-it sends the images by the transport the worker declares
+it sends the images using the worker's declared transport
 ([ADR 0032](../decisions/0032-send-chat-images-to-workers-as-signed-urls.md)). A worker that declares `url` receives
 a signed download URL per image and fetches it. A worker that declares only `base64` receives the bytes inline.
 
 Inlining base64 read from object storage under the row lock was the alternative: a network read inside the lock, and
 megabytes in a JSON response. The `base64` transport reads the store after the lock is released. Storing base64 in the
-row would load image bytes on every queue scan. The cost of URLs is that object
-storage reachability becomes the worker's concern, and a failed fetch is a faulted job.
+row would load image bytes on every queue scan. With URLs, the worker must be able to reach object storage, and a failed fetch is a faulted job.
 
-A deployment can also offload a large request whole: the messages, images inlined, are stored as one JSON object at
-submit, and a worker that declares `messages_url` receives one short-lived signed URL in place of `messages`
-([Messages offload](../reference/chat_requests.md#messages-offload)). The worker then makes one self-contained fetch
-and does not manage partial downloads, and large bodies stay off the pop response. The transport is chosen per generation, from what the request stored and what the popping worker declared:
+A deployment can also offload a large request whole: the messages, images inlined, are stored as one JSON
+object at submit, and a worker that declares `messages_url` receives one short-lived signed URL in place of
+`messages` ([Messages offload](../reference/chat_requests.md#messages-offload)). The worker then makes one
+self-contained fetch and does not manage partial downloads, and large bodies stay off the pop response. The
+transport is chosen per generation, from what the request stored and what the popping worker declared:
 
 ```mermaid
 flowchart TD
@@ -417,10 +426,10 @@ flowchart TD
 
 ### Sampling defaults and the developer role
 
-Every chat payload carries every sampling field, with OpenAI's default where the client left one out
+Every chat payload includes every sampling field, with OpenAI's default where the client left one out
 ([ADR 0033](../decisions/0033-fill-openai-sampling-defaults-and-map-the-developer-role.md)). An omission then means
 the same thing on every worker, which a worker's local defaults (koboldcpp's include a repetition penalty) would not
-give. The cost is that an operator's tuned defaults never apply to chat jobs.
+give. The cost is that an operator's tuned defaults do not apply to chat jobs.
 
 A `developer` message is stored and sent as `system`, so templates that predate the role can render it. The rewrite
 loses the role's precedence over `system`, and the horde does not advertise a developer-role feature while it holds.
@@ -431,25 +440,28 @@ The front returns every error as `{"error": {"message", "type", "param", "code",
 return code as `code`, and uses OpenRouter's status vocabulary where OpenAI does not define a status, such as 502
 for a worker or generation failure and 503 for no eligible worker
 ([ADR 0034](../decisions/0034-map-chat-errors-to-the-openai-envelope-with-openrouter-status-vocabulary.md)). An
-envelope mapped onto only 400 and 500 would have made capacity failures indistinguishable from server faults. After
-a stream's headers are sent the status is fixed, so a later error arrives as one SSE event carrying the envelope without a
+envelope mapped onto only 400 and 500 would have made capacity failures indistinguishable from server faults.
+
+After
+a stream's headers are sent the status is fixed, so a later error arrives as one SSE event with the envelope without a
 choice, and the front does not make up a finish reason. The full table is in
 [Errors the front returns](../how-to/run_openai_chat_front.md#errors-the-front-returns).
 
 ### Anonymous access
 
-A request without `Authorization` uses the anonymous key, as the native API allows
-([ADR 0035](../decisions/0035-keep-anonymous-access-on-the-chat-front.md)). Anonymous use is the service's proposition
-for most users; requiring a key would change what the service is. Abuse is bounded by the existing anonymous limits,
-the lowest kudos priority, and per-source caps on the front, which aggregate users behind one address.
+A request without `Authorization` uses the anonymous key, as the native API allows ([ADR
+0035](../decisions/0035-keep-anonymous-access-on-the-chat-front.md)). Anonymous access allows use without
+registration. Requiring a key would remove that access. Abuse is bounded by the existing anonymous limits, the
+lowest kudos priority, and per-source caps on the front, which aggregate users behind one address.
 
 ### Streaming
 
 A streamed request without tools whose `response_format` is absent or `text` gets its content as the worker posts
 progress, about one post a second. The front spreads each post's text evenly over the estimated interval until the
 next post, so the client sees a steady flow of text. Without pacing, each post would arrive as one lump. Pacing adds
-up to about one post interval of latency. More frequent worker posts would cost the Horde more progress writes. The
-batches are kept in a retained Redis stream per request. The stream is cheap, and it is lost on failover
+up to about one post interval of latency. More frequent worker posts would cost the Horde more progress writes.
+
+The batches are kept in a retained Redis stream per request. Redis avoids progress writes to the primary database, but progress can be lost on failover
 ([ADR 0024](../decisions/0024-stream-chat-deltas-through-a-retained-redis-stream.md)). Postgres progress rows were the
 alternative, durable and paid for in primary database writes on the connection pool pops and submits share
 ([ADR 0025](../decisions/0025-stream-chat-deltas-through-postgres-progress-rows.md)).
@@ -469,12 +481,12 @@ stateDiagram-v2
     PostsStopped --> Submitted: worker still submits
     Submitted --> [*]: lease deleted, stream left to expire
     Ended --> [*]: ended marker, lease deleted
-    Cancelled --> [*]: settled on the posted text<br/>next ack carries cancelled true<br/>worker stops and does not submit
+    Cancelled --> [*]: settled on the posted text<br/>next acknowledgement includes cancelled true<br/>worker stops and does not submit
 ```
 
-A cancel settles the generation on the content its worker posted before it, so the worker is paid for that text and
+A cancel settles the generation on the content posted by the worker before it, so the worker is paid for that text and
 the requester charged for it. The settlement does not count a dropped job, so a worker that stops on the flag is
-never penalised for a client leaving. The front relays entries as they arrive and reconciles them with the final
+not penalised for a client leaving. The front relays entries as they arrive and reconciles them with the final
 reply: a reply equal to or extending the relayed text completes the stream, and one that diverges ends it with an
 error event.
 
@@ -486,52 +498,67 @@ usage, and `[DONE]` ([Response shape](../reference/chat_front.md#response-shape)
 ### Service selection
 
 Horde behaviour without an OpenAI key (worker restrictions, trusted or validated workers, context sizing) travels in
-a `horde` object in the request body, which every SDK can send as extra body fields
+a `horde` object in the request body, sent through SDK extra body fields
 ([ADR 0020](../decisions/0020-select-chat-service-by-request-body-and-model-variants.md)). A request may list
-acceptable models in `models` in place of `model`; the Horde serves it with whichever listed model an online worker
-runs, as it serves a text request's model list, and the response reports that model. The list states what the client
-accepts, so it is the same operation in any order, and an unknown entry refuses the request. Under
+acceptable models in `models` in place of `model`. Any listed model may serve the request, and the response reports
+which model generated the reply. The list states what the client
+accepts, so reordering the list does not change the operation fingerprint. An unknown entry rejects the whole request.
+
+Under
 `context_fit: truncate_oldest` a history too long for any served context loses its oldest whole turns and keeps every
 system and developer message and the latest user turn. Moderation screens the full submitted messages before any
 message is dropped. For the request's lifetime its row stores the kept messages, which the worker receives, and, as on
-every request, the full flattened submission in `submitted_prompt`. The model id is the exact native model name. The front
-reserves the colon, so a model id that contains one is refused as unknown with 404 `model_not_found`. Base-URL profiles were the alternative
+every request, the full flattened submission in `submitted_prompt`.
+
+The model id is the exact native model name. The front reserves the colon, so a model id that contains one is refused
+as unknown with 404 `model_not_found`.
+
+Base-URL profiles were the alternative
 ([ADR 0021](../decisions/0021-select-chat-service-by-base-url-profiles.md)): one configuration per application, at the
 price of a resolver and revision store, invisible to model pickers, and lost by clients that hardcode `/v1`.
 
 ## What a client can rely on
 
-- **Identity.** A completion's `id` is `chatcmpl-` plus the horde request id, and `x_horde.request_id` carries the
-  id alone, so a support question or a native status read can find the request.
+- **Identity.** A completion's `id` is `chatcmpl-` plus the Horde request id, and `x_horde.request_id` includes the
+  id alone. Use it for support or a native status read.
 - **Charges.** A request costs what the same reply would cost as a text request, reported in `x_horde.kudos` with its
-  `charge_basis`. Reported token counts never change it. A lost submit inside the front is recovered by operation key
-  without a second charge ([ADR 0026](../decisions/0026-classify-client-retries-and-recover-submits-by-operation-key.md));
-  a retry by the client is a new, charged request.
-- **The answer asked for.** Every parameter was either honoured by a worker that declared it or refused before the
-  request was queued. Under `strict`, a reply's tool calls follow `tool_choice` and `parallel_tool_calls`, and its
+  `charge_basis`. Reported token counts do not change it. A lost submit inside the front is recovered by operation key
+  without a second charge ([ADR 0026](../decisions/0026-classify-client-retries-and-recover-submits-by-operation-key.md)).
+  A retry by the client is a new request and can create another charge.
+- **Request handling.** Required features are checked against worker declarations. Unsupported parameters are refused. Under `strict`, a reply's tool calls follow `tool_choice` and `parallel_tool_calls`, and its
   content follows `response_format`, whatever the worker declared.
 - **Stream order.** A stream's chunks arrive in the order above, and an error after the headers arrives as one error
   event followed by `[DONE]`.
-- **Failure behaviour.** A worker that cannot serve a job faults it and the job goes to another worker. A request that
-  cannot be served by any worker gets a 503 `no_eligible_worker`. The response comes at once when the model is
-  not served by any online worker. Otherwise it comes after the front's grace, and the request is also cancelled. A
-  request that faults gets a 502. Once the
-  horde may hold a request, every error carries `x-should-retry: false`, so SDKs do not retry into a second charged
-  job. Under `horde.availability_mode: "fail_fast"` a 503 `queue_unavailable` is a refusal about the online pool at
-  the first status read, and the same request may be served once workers come online.
+- **Retry control.** Once the Horde may hold a request, errors include `x-should-retry: false`, so SDKs do not
+  retry automatically. A later client retry can create a second charged job.
+- **Failure behaviour.** A worker that cannot serve a job faults it, and the job returns to the queue until the
+  request's fault limit is exceeded. A faulted request gets 502.
+
+Availability refusals depend on the cause:
+
+| Cause | Front response |
+| --- | --- |
+| Model without an online chat worker | Immediate 503 `no_eligible_worker` |
+| Missing required declaration | Immediate 404 `no_worker_supports_features` |
+| Only a context or output size limit exceeded | Immediate 400 `no_worker_supports_limit` |
+| Other lack of eligible workers after the grace | 503 `no_eligible_worker`, with cancellation |
+| Insufficient eligible threads or excessive estimated wait under `fail_fast` | 503 `queue_unavailable` at the first status check, with cancellation |
+
+See [availability errors](../reference/chat_front.md#no-eligible-worker) for precedence and request timing.
 
 ## What a client cannot rely on
 
-- **Delta streaming.** It covers plain text requests only; a request with tools or structured output streams the reply
+- **Delta streaming.** It covers plain text requests only. A request with tools or structured output streams the reply
   whole after generation, and a relayed stream is best effort, since a lost stream still ends with the full reply.
 - **Multiple choices.** `n` other than 1 is refused.
 - **Worker selection by quantisation or pinned model.** `horde.quantizations` and `horde.pinned_model` are unknown
   keys and return `400 UnsupportedChatParameter`.
-- **Identical answers across workers.** The defaults are the same everywhere; backends, quantisations and templates
+- **Identical answers across workers.** The defaults are the same everywhere. Backends, quantisations and templates
   are not.
 - **Verified capabilities.** A feature is honoured by a worker that declared it, and the declaration is the worker's
-  claim. Only what the reply itself shows is checked; a trimmed prompt or a clamped sampler is not.
-- **Token counts.** They are what the worker's backend reported, and null where it did not report them.
+  claim. Only what the reply itself shows is checked. A trimmed prompt or a clamped sampler is not.
+- **Token counts.** Native status returns the worker's reported counts, or null for missing counts. The front
+  estimates missing counts and marks them with `x_horde.estimated_usage`.
 
 ## Related
 

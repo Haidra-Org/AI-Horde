@@ -3,14 +3,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Static documentation site over docs/, built with Zensical (https://zensical.org).
-# Navigation is implicit from the directory structure; docs/README.md is the landing
-# page. Build with `uv run --only-group docs --locked zensical build`;
+# Navigation is curated below. docs/README.md is the landing page.
+# Build with `uv run --only-group docs --locked zensical build`.
 # preview with `uv run --only-group docs --locked zensical serve`.
 
 [project]
 site_name = "AI Horde"
 site_description = "Implementation and operation documentation for the AI Horde service."
 copyright = "AGPL-3.0-or-later"
+
+# Local working notes are excluded from builds and previews.
+exclude_docs = "/openai-chat-local/"
 
 # Top-level sections mirror the documentation classes. Decision records deliberately enter
 # navigation only through their generated index; the records are reached from the index,
@@ -21,12 +24,6 @@ copyright = "AGPL-3.0-or-later"
 # or if a generated record is listed individually.
 nav = [
     { "Home" = "README.md" },
-    { "Topics" = "topics.md" },
-    { "Tutorial" = [
-        { "Overview" = "tutorial/README.md" },
-        { "Your first chat completion" = "tutorial/first_chat_completion.md" },
-        { "Serve your first chat job" = "tutorial/first_chat_worker.md" },
-    ] },
     { "Explanation" = [
         { "Overview" = "explanation/README.md" },
         { "Kudos accounting" = "explanation/kudos_accounting.md" },
@@ -62,6 +59,12 @@ nav = [
         { "Write a minimal chat worker" = "how-to/write_a_minimal_chat_worker.md" },
         { "Serve chat jobs" = "how-to/serve_chat_jobs.md" },
     ] },
+    { "Tutorial" = [
+        { "Overview" = "tutorial/README.md" },
+        { "Your first chat completion" = "tutorial/first_chat_completion.md" },
+        { "Serve your first chat job" = "tutorial/first_chat_worker.md" },
+    ] },
+    { "Topics" = "topics.md" },
     { "Decisions" = "decisions/index.md" },
     { "Concepts" = [
         { "Introduction" = "haidra-assets/docs/intro.md" },

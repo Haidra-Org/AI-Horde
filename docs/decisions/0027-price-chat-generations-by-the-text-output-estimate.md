@@ -42,7 +42,9 @@ A chat generation is charged and rewarded as a text generation with the same rep
 ceil(output characters / 4), floored at 20 and capped at the requested `max_length`. The reply's characters are its
 content, its reasoning, and each tool call's function name and arguments (`chat_reply_characters`), so tool calls and
 reasoning are charged as output. `TextProcessingGeneration.get_charge_basis` returns the basis, `output_estimate`, for every text generation,
-and a submitted chat generation stores it in the `charge_basis` column. The reported prompt, completion and reasoning
+and a submitted chat generation stores it in the `charge_basis` column.
+
+The reported prompt, completion and reasoning
 token counts are optional, stored, and shown on the status route and in the OpenAI `usage` object. They do not change
 the charge or the reward.
 
@@ -53,6 +55,7 @@ When a streamed chat request is cancelled, including by the front when its clien
 in flight is settled on the output its worker had posted through the progress route, priced by the same estimate with
 the floor of 20 tokens: the requester is charged and the worker is paid for that output
 ([ADR 0024](0024-stream-chat-deltas-through-a-retained-redis-stream.md)).
+
 `TextProcessingGeneration.settle_cancelled` locks and reloads the generation first, so a submit or fault that lands
 during the cancel settles it once. The settlement records the priced character count in `settled_character_count` and
 leaves `charge_basis` null. A generation of a cancelled request that does not stream stays in flight and is settled
@@ -61,7 +64,7 @@ when its worker submits, as for text.
 ### Consequences
 
 - Good: Chat and text share one pricing policy, so a worker earns the same for the same reply on either route.
-- Good: A short reply to a large `max_tokens` is charged for the short reply; the requested length only caps the
+- Good: A short reply to a large `max_tokens` is charged for the short reply. The requested length only caps the
   charge.
 - Good: The stored basis and reported counts let the estimate be compared with reported usage per generation.
 - Bad: The estimate counts characters, so it diverges from the worker's token count for non-English text and code.

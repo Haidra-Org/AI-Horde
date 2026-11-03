@@ -44,11 +44,11 @@ a backend execution guarantee.
 Chosen option: "Represent trajectory steps, estimated work, and maximum work as distinct typed
 quantities".
 
-`TrajectoryStepCount` carries requested schedule progress. `SamplerWorkEstimate` carries
-first-order-equivalent marginal work for usage and operational planning. `SamplerWorkCeiling` carries a
+`TrajectoryStepCount` records requested schedule progress. `SamplerWorkEstimate` records
+first-order-equivalent marginal work for usage and operational planning. `SamplerWorkCeiling` records a
 finite maximum only when the sampler profile or an advertised execution contract proves one. Fixed
 samplers derive estimate and ceiling from their one-, two-, or three-unit marginal work rate.
-AI-Horde assigns `k_dpm_adaptive` a stable 40-work-unit estimate; its ceiling remains unavailable unless
+AI-Horde assigns `k_dpm_adaptive` a stable 40-work-unit estimate. Its ceiling remains unavailable unless
 the worker advertises a contract that bounds adaptive execution. Unknown sampler strings found in
 legacy stored payloads use the first-order compatibility profile.
 
@@ -63,7 +63,7 @@ sampler identity, so multiplying its result by operational work would count samp
 - Good: Worker workload limits fail closed when adaptive execution has no proven finite ceiling.
 - Good: Unit-bearing SDK types make accidental estimate/ceiling substitution visible in code review and
   static analysis.
-- Bad: Call sites must choose among three related values and carry their units explicitly.
+- Bad: Call sites must choose among three related values and specify their units explicitly.
 - Bad: Adaptive accounting intentionally accepts a gap between expected and maximum work.
 - Bad: The legacy unknown-sampler fallback is less strict than the SDK registry and must stay confined to
   payloads that passed validation when stored.

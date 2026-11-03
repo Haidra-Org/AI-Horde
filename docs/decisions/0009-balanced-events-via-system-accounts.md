@@ -15,8 +15,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 Currency events are not all two-sided. A settlement or a transfer posts a debit and a matching credit, so its
 postings already sum to zero. Mint events (uptime rewards, awards, monthly grants) post only a credit, and burn
-events (the activation tax, the cancellation burn) post only a debit; the counterparty exists in the economy but
-not in `kudos_ledger`. Without it there is no global arithmetic identity to check, so an emission bug that
+events (the activation tax, the cancellation burn) post only a debit. The counterparty exists in the economy but
+not in `kudos_ledger`.
+
+Without it there is no global arithmetic identity to check, so an emission bug that
 creates or destroys kudos on one side of an event has no cheap detector. Reconciliation against a snapshot finds
 drift between the ledger and a projection, and it does not find a ledger that is internally unbalanced.
 

@@ -45,14 +45,16 @@ Chosen option: "Use a conservative deterministic pop-to-submit lease based on es
 
 For estimated sampler work `W` and pixel ratio `P = width * height / 512^2`, an ordinary assignment
 starts with `30 + 2 * W * P` seconds. ControlNet multiplies that value by two. An assignment whose
-selected model has a Flux, Qwen Image, or Z-Image Turbo baseline multiplies it by three. The service then
+selected model has a Flux, Qwen Image, or Z-Image Turbo baseline multiplies it by three.
+
+The service then
 applies a 150-second minimum, then adds a fixed download allowance for each requested LoRA: the largest
 permitted file (400 MB) at an assumed 30 Mbps, about 107 seconds each. An explicitly extra-slow worker
 receives three times the resulting lease. The final value rounds upward to whole seconds for database
 and wire compatibility.
 
 The LoRA term is added after the minimum because five maximum-size LoRAs on an uncached worker take
-several times the floor to fetch; folded into the fixed or proportional terms it would either be swallowed
+several times the floor to fetch. Folded into the fixed or proportional terms it would either be swallowed
 by the minimum for short jobs or scale with resolution, which download time does not.
 
 The scalable term corresponds to 0.131072 megapixel-work units per second. Relative to the 0.5-MPS
@@ -79,7 +81,7 @@ bound rather than a runtime forecast and does not replace the TTL estimate.
   expensive tail.
 - Bad: The LoRA allowance assumes a cache miss on every file, so a worker that already holds them
   receives a longer lease than it needs.
-- Bad: Source processing, post-processing, and hires-fix have no independent factors; their ordinary
+- Bad: Source processing, post-processing, and hires-fix have no independent factors. Their ordinary
   setup cost relies on the shared fixed and queue allowances.
 
 ## Pros and Cons of the Options

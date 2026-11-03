@@ -22,7 +22,7 @@ maintenance window, so the change has to land on a running fleet and be reversib
 - The event schema, emission primitives, reservations, and projector need production exposure before any
   balance depends on them.
 - Rollback must not leave accepted postings unfolded behind a writer that has stopped reading them, and
-  whatever carries the transition has to be removable afterwards without unpicking the accounting flow.
+  the transition code must be removable afterwards without restructuring the accounting flow.
 
 ## Considered Options
 
@@ -51,7 +51,7 @@ cutover period is a deletion: the compatibility module, its direct calls, and th
 
 Every mutation transaction pins the mode it observed with the shared mode gate until commit.
 `set_kudos_ledger_mode` takes the applier advisory lock, then the exclusive mode gate that waits for
-those writers; returning to `shadow` folds the remaining ledger tail in the same transaction. The gate is
+those writers. Returning to `shadow` folds the remaining ledger tail in the same transaction. The gate is
 an advisory lock rather than a control-row lock so a waiting transition cannot be starved by new pins
 ([ADR 10](0010-advisory-lock-mode-gate.md)).
 

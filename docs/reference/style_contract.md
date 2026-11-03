@@ -17,26 +17,27 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [generation](../topics.md#generation), [requests](../topics.md#requests)
 <!-- END GENERATED: topics -->
 
-A style carries a prompt template, a params body and a model list, and a request that uses one
-generates under all three. A style of either type may also declare two things: a `parameter_policy`,
-setting out which params a request may still choose and the limits it may not exceed, and
-`template_fields`, declaring the placeholders its prompt accepts beyond `{p}`. A text request can
-separately use `context_fit` to have its `max_context_length` sized against the prompt the style
-produces, and a dry run of either type returns the request as the horde resolved it. Both style
-declarations are nullable, and a style declaring neither behaves exactly as every style did before
-they existed.
+A style supplies the prompt template, parameters and model list for a request. Optional `parameter_policy`
+and `template_fields` declarations control parameter overrides and additional prompt placeholders.
+
+Text requests can use `context_fit` to size context for the rendered prompt. A dry run returns the resolved
+request for either generation type. See [Use the style endpoints](../how-to/use_style_endpoints.md) for examples
+and [Add styles to a frontend](../how-to/add_styles_to_a_frontend.md) for client integration.
 
 ## Applying a style to a request
 
 `GenerateTemplate.apply_style` resolves the style by UUID or name. When that is a `StyleCollection`,
 `GenerateTemplate.draw_collection_style` draws one of its styles at random and counts a use of the
-collection, and the request runs under the drawn style from there on. The draw is only among the styles
-that declare every field the request supplies and require no field it leaves out
+collection, and the request runs under the drawn style from there on.
+
+The draw includes only styles that declare every supplied field and do not require an omitted field
 (`template_fields_fit`). A collection's styles can declare different fields, and drawing from all of
 them would make the same request succeed or fail by chance. A style whose stored declaration no longer
 validates is left out of the draw. When no style fits, the request is refused with
-`TemplateFieldsMatchNoCollectionStyle`. A collection carries no prompt, params or shared key, so
-`apply_style` then adopts the drawn style's shared key when it carries a valid one. Each gentype rejects a style of the other type (`StyleMismatch`), and:
+`TemplateFieldsMatchNoCollectionStyle`.
+
+A collection does not have a prompt, parameters or shared key. `apply_style` adopts a valid shared key from the
+drawn style. Each generation type rejects a style of the other type (`StyleMismatch`), then:
 
 - replaces the request's models with the style's;
 - fills the style's prompt template, which must contain `{p}` for the request's prompt, and for an
@@ -54,6 +55,8 @@ rules](#prompt-template-rules) below. An image request's prompt is split at `###
 and negative halves before formatting, and a template carrying `{np}` but no `###` gets one in front
 of the negative half.
 
+### Style surcharge and author reward
+
 Using someone else's style adds `STYLE_OWNER_REWARD` (2 kudos) to the request's quote, through the
 `kudos_adjustment` argument that `GenerateTemplate` passes to `WaitingPrompt.activate` and to
 `extrapolate_dry_run_kudos`, and credits the style's owner the part of that amount the requester's
@@ -67,20 +70,26 @@ a separate app context.
 
 The request path does not credit the owner itself. `GenerateTemplate.style_reward` builds a
 `StyleReward` (the author's id, the surcharge and the style type), which `WaitingPrompt.activate`
-carries onto the requester's activation debit. The minimum-balance floor can forgive part or all of
+attaches to the requester's activation debit.
+
+The minimum-balance floor can forgive part or all of
 that debit, as it does for the anonymous user and for any account at its minimum, so the owner is
 credited only the surcharge minus whatever part of it the floor forgave, with the forgiven amount
 taken from the surcharge first. In ledger mode the floor is applied when the kudos applier folds the
 debit, so the applier credits the owner from the debit's detail. In shadow mode the floor is applied
-inline, and `project_style_reward` credits the owner during activation. A dry run quotes the surcharge
-but credits nothing, and neither does a request refused at any point before activation.
+inline, and `project_style_reward` credits the owner during activation.
+
+A dry run quotes the surcharge without crediting the author. A request refused before activation does not
+credit the author either.
 
 The surcharge is not refunded when the request is cancelled, as the base horde tax is not, so the
 owner keeps whatever was collected.
 
-A style may carry a shared key. When it does and the key is valid, `GenerateTemplate.apply_style`
+### Shared keys and validation order
+
+A style may include a shared key. When the key is valid, `GenerateTemplate.apply_style`
 adopts it as the request's key, so the style's owner pays. The per-job limits on that key are then not
-enforced against the request, since its owner chose to attach the key to the style;
+enforced against the request, since its owner chose to attach the key to the style.
 `TextAsyncGenerate.initiate_waiting_prompt` skips the check only when the key in use is the style's own.
 
 `apply_style` runs inside each gentype's `validate`, before the shared `super().validate()` that
@@ -104,10 +113,14 @@ keeps working: `{{` is one literal brace. Only a bare name is filled. A format s
 conversion (`{p!r}`), attribute or index access (`{p.__class__}`, `{p[0]}`) and a positional field
 (`{}`, `{0}`) have no use in a prompt, and a format spec would let a template make every request build
 an arbitrarily large string. `validate_text_template_fields` refuses a style written with one, or with
-a lone brace that does not parse, with `StylePromptFieldInvalid`. A template stored before that check
+a lone brace that does not parse, with `StylePromptFieldInvalid`.
+
+A template stored before that check
 has such a field sent to the worker exactly as written, and one whose braces do not parse is refused
 at request time with `StyleDeclarationInvalid`. Patching any field of a style revalidates its stored
-prompt, so a style carrying such a field has to have its prompt corrected on its next edit. An image
+prompt, so a style with such a field must have its prompt corrected on its next edit.
+
+An image
 template has every brace doubled first and only `{p}`, `{np}` and
 its declared placeholders put back, so a wildcard or a workflow string in braces reaches the worker as
 written.
@@ -121,7 +134,7 @@ would turn `{{[INPUT]}}` into `{[INPUT]}` and strip it out of a template written
 (`\{\{\[[A-Z_]+\]\}\}`) with a marker before formatting and puts the original text back after it, so
 the token reaches the worker exactly as written.
 
-The marker carries a random part drawn per call, so a value supplied through `template_fields` cannot
+The marker includes a random part drawn per call, so a value supplied through `template_fields` cannot
 be written to land on one and be turned into a placeholder on the way out.
 
 The pattern is exactly as wide as the regular expression. A lowercase name (`{{[input]}}`) or a name
@@ -129,8 +142,7 @@ with anything but uppercase letters and underscores in it (`{{[IN PUT]}}`) is or
 and formats under the usual rule, collapsing to one brace each side. A doubled brace anywhere else in
 the template still becomes one brace.
 
-An image template protects nothing, because it needs nothing: every brace outside a filled placeholder
-is already literal.
+An image template does not need a protected pattern. Every brace outside a filled placeholder is already literal.
 
 The rule is stated in three places that have to move together: `format_text_style_prompt`, the
 published contract document, and this page. Changing it means raising the document's
@@ -165,7 +177,7 @@ restated here. `text_style_contract_vocabulary` in `horde/apis/v2/kobold.py` and
 model it reads, and reach the pydantic models through the validation context, so
 `horde/classes/base/style_contract.py` does not import the API layer. The style endpoints and the
 request path validate against the same vocabulary. A text style may cap `max_length`,
-`max_context_length` and `n`; an image style may cap `width`, `height`, `steps` and `n`.
+`max_context_length` and `n`. An image style may cap `width`, `height`, `steps` and `n`.
 
 Rejections at declaration time, all 400 with the return code shown:
 
@@ -182,12 +194,17 @@ Rejections at declaration time, all 400 with the return code shown:
 Repeated entries in `overridable` are collapsed and the given order is kept. An explicit `null` counts
 as absence, so it is accepted under any mode.
 
-A ceiling applies to every value the request ends up controlling, and to the request's value only, so
-a ceiling is only accepted on a param the mode hands to the request. `n` comes from the request under
-every mode and may be capped under every mode. Under `all` any param the style type can cap may carry
-a ceiling; under `listed` only the params also in `overridable` may; under `none` only `n` may. Any
-other ceiling would never be measured against anything, so it is rejected when the style is written,
-with a message naming the param and the mode. A value above a ceiling is rejected with
+A ceiling applies only to parameters controlled by the request. It is accepted only where the policy permits
+an override. `n` always comes from the request and can be capped in every mode.
+
+| Mode | Accepted ceilings |
+| --- | --- |
+| `all` | Any parameter supported for ceilings by the style type |
+| `listed` | `n` and supported parameters listed in `overridable` |
+| `none` | `n` only |
+
+Other ceilings are rejected when the style is written, with the parameter and mode in the message.
+A value above a ceiling is rejected with
 `StyleParameterAboveCeiling` rather than trimmed, because trimming would change what the request costs
 without reporting it. A value exactly at the ceiling is accepted, and the style's own params are never
 checked against a ceiling.
@@ -204,7 +221,7 @@ Rejections when a request is sent under a style, all 400 with the return code sh
 | The style's stored `parameter_policy` or `template_fields` no longer validates | `StyleDeclarationInvalid` |
 
 An image style that sets neither `width` nor `height` takes both from the request. That fallback
-applies only to a style with no policy; once a policy is declared, the policy settles every param.
+applies only to a style with no policy. Once a policy is declared, the policy settles every param.
 
 ## `template_fields`
 
@@ -232,7 +249,7 @@ being rewritten alongside.
 
 ## `context_fit`
 
-`context_fit` is a text request setting; an image request has no equivalent. A text request estimates
+`context_fit` is a text request setting. Image requests do not have an equivalent. A text request estimates
 its prompt at `ceil(len(prompt) / 3)` tokens (`CHARS_PER_TOKEN_ESTIMATE`), after any style templating.
 A prompt fits when `estimated_prompt_tokens + max_length <= max_context_length`, so the tokens to be
 generated count against the context alongside the prompt. `max_length` defaults to 80 and
@@ -273,17 +290,18 @@ A dry run of `/v2/generate/async` or `/v2/generate/text/async` returns 200 with 
 the request as the horde turned it into: `prompt` after templating, `params` after the style, its
 ceilings and any growth, `models`, and `style` (the applied style's `id` and `name`, or null). A text
 request adds `estimated_prompt_tokens` and the `context_fit` that was applied. An image request adds
-`negative_prompt`, the half of the prompt after the `###`, or null when the prompt carries no `###`. A
-null inside `resolved` is part of the answer, so the nesting does not skip nulls. The queued 202
+`negative_prompt`, the half of the prompt after the `###`, or null when the prompt does not contain `###`. A
+null inside `resolved` is part of the response, so the nesting does not skip nulls. The queued 202
 response marshals through the same model and leaves `resolved` unset, where the endpoint's `skip_none`
 drops it.
 
 Dry-run quotes are cached in Redis against a hash of the params, the model list, the extra-source-image
-count and whether the request names a style (`get_hashed_params_dict`). The hash is computed twice, at
+count and whether the request specifies a style (`get_hashed_params_dict`). The hash is computed twice, at
 the cache lookup before validation and at the store after it, so its keys read only what the request
 sent. The `styled` key reads the `style` argument, since the surcharge
 flag is only set during validation, and the text and image overrides read the model list from the
 request arguments, since applying a style replaces the resolved models.
+
 `GenerateTemplate.dry_run_answerable_from_cache` bypasses that cache whenever the request specifies a
 style or supplies template fields, and the text override bypasses it for a `context_fit` other than
 `ignore`, since the quote and the resolved body then depend on the prompt and on the outcome of
@@ -296,8 +314,8 @@ resolution.
 `1.2 + 2.2 ** log2(max_context_length / 1024)`, clamped to between 0.1 and 30, so each doubling of the
 context multiplies the factor by roughly 2.2. The rest is linear in `max_length`: a known model charges
 `max_length * parameter_bonus * model_multiplier * context_multiplier / 100`, where `parameter_bonus`
-is `(max(model_multiplier, 13) / 13) ** 0.20`; an unknown model charges
-`max_length * 0.027 * context_multiplier`; an empty model list is priced as a 13B model. Growing a
+is `(max(model_multiplier, 13) / 13) ** 0.20`. An unknown model charges
+`max_length * 0.027 * context_multiplier`. An empty model list is priced as a 13B model. Growing a
 context therefore costs more kudos, which is why growth is bounded and why a ceiling rejects rather
 than trims.
 
@@ -309,16 +327,18 @@ that move the price.
 
 Style routes of both types marshal without `skip_none`, so `parameter_policy` and `template_fields` are
 always present on a served style, null when the style declares neither. The `params` object keeps
-`skip_none`, so it carries only the params the style actually sets; for a text style that includes
+`skip_none`, so it includes only the style's explicitly set parameters. For a text style that includes
 `max_length` and `max_context_length`.
 
 `shared_key` is served only to the style's owner, and only on the single-style routes:
 `/v2/styles/text/{style_id}`, `/v2/styles/text_by_name/{style_name}`, `/v2/styles/image/{style_id}` and
 `/v2/styles/image_by_name/{style_name}`. These take an optional `apikey` header. When the key resolves
-to the style's owner, `shared_key` carries the shared key's details; for every other caller it is null.
-A request carrying a key other than the anonymous one bypasses the 30-second response cache those
+to the style's owner, `shared_key` includes the shared key's details. For every other caller it is null.
+A request with a key other than the anonymous one bypasses the 30-second response cache those
 routes share across
-callers, and its response carries `Cache-Control: private, no-store`. The list routes,
+callers, and its response includes `Cache-Control: private, no-store`.
+
+The list routes,
 `/v2/styles/text` and `/v2/styles/image`, serve `shared_key` as null to every caller, the owner
 included. `Style.get_details(include_shared_key=...)` is the switch, and it defaults to off.
 
@@ -328,18 +348,20 @@ read by id, by name, and by the name qualified with its owner's alias (`style_re
 spelling of the name, and the list and collection routes, which are cached per query string, can serve
 the earlier version for up to 30 seconds.
 
-The patch parser's arguments have no defaults, so a key a `PATCH` omits leaves the stored value alone.
+The patch parser's arguments do not have defaults, so an omitted `PATCH` key leaves the stored value alone.
 A key that is present replaces the whole JSON column.
 
 ## The published contract
 
-`GET /api/v2/status/style_contract` serves everything above that a client has to know before it can
-offer style authoring or send a request under someone else's style. It needs no API key and is exempt
+`GET /api/v2/status/style_contract` serves the rules needed for style authoring and styled requests.
+It does not require an API key and is exempt
 from the rate limiter. `horde/style_contract_document.py` compiles it from the same
 `StyleContractVocabulary` objects the style endpoints validate against and the same formatting
 constants the request path uses, so the published rule and the enforced one come from one place. The
 document is a pure function of the installed code, so it is compiled once per process and handed to
 every caller rather than cached between processes.
+
+### Response fields
 
 The body has three keys: `schema_version`, and one section each for `text` and `image`.
 
@@ -356,6 +378,8 @@ The body has three keys: `schema_version`, and one section each for `text` and `
 | `context_fit_modes` | How a request of this type may be sized against its prompt. Null for image, which cannot be sized. |
 | `style_create_rate_limits` | Every limit a client creating a style of this type is held to. All of them apply at once. A whitelisted service address is allowed more per second, but the hourly limit is the same for every address. |
 | `style_modify_rate_limits` | Every limit a client patching or deleting a style of this type is held to. All of them apply at once, counted separately for each style and for PATCH and DELETE, and a whitelisted service address is allowed more. |
+
+### Text contract example
 
 The `text` section as served:
 
@@ -382,7 +406,7 @@ The `text` section as served:
     ],
     "ceiling_parameters": {
       "max_context_length": { "minimum": 80, "maximum": 1048576 },
-      "max_length": { "minimum": 16, "maximum": 4096 },
+      "max_length": { "minimum": 16, "maximum": 16384 },
       "n": { "minimum": 1, "maximum": 20 }
     },
     "context_fit_modes": [
@@ -408,7 +432,9 @@ placeholders, `context_fit_modes` is null, `ceiling_parameters` covers `width` a
 and `overridable_parameters` is the 34 params of the image payload model, from `cfg_scale` through
 `workflow`.
 
-A client pins `schema_version` and re-reads the document when it moves. A version rise can add fields
+### Client version handling
+
+A client pins `schema_version` and re-reads the document when it changes. A version increase can add fields
 and can change what an existing field means, so a client that cannot make sense of a version it
 receives falls back to its own defaults rather than applying the document.
 
@@ -423,12 +449,12 @@ its owner and the requester go only to log lines and span attributes.
 | Line starts with | Level | Carries |
 | --- | --- | --- |
 | `Style applied:` | info for a queued request, debug for a dry run | Style id, name and type, owner, requester, client agent, collection id or `none`, policy mode or `undeclared`, template fields supplied and declared, `literal_template_fields` (fields of a stored text template sent as written), whether the surcharge applied, dry run |
-| `Style created:`, `Style patched:`, `Style deleted:` | info | Style id, name, type, policy mode, declared field count, visibility, and the account. A patch adds the fields it carried. |
+| `Style created:`, `Style patched:`, `Style deleted:` | info | Style id, name, type, policy mode, declared field count, visibility, and the account. A patch adds the supplied fields. |
 | `Collection created:`, `Collection patched:`, `Collection deleted:` | info | Collection id, name, type, style count, visibility, and the account |
 | `Style example added:`, `Style example patched:`, `Style example deleted:` | info | Style id, example id, the account, and whether the example is primary |
 | `Stored style declaration invalid:` | warning | The style and the declaration that no longer validates, with the reasons |
 | `Style ... left out of a collection draw` | info | A collection's style skipped because its stored template fields no longer validate |
-| `Context grown from` | debug | The requested and the grown context of a text request. The counter below carries the volume |
+| `Context grown from` | debug | The requested and the grown context of a text request. The counter below records the volume |
 
 A dry run is logged at debug because a client previews a styled request repeatedly while its inputs
 change. The counter still counts it.
@@ -448,7 +474,7 @@ outside a matched route as `unmatched`, so neither label grows with input.
 
 ### Span attributes
 
-The span that validates a styled generate request carries `horde.style.id`, `horde.style.owner_id`,
+The span that validates a styled generate request includes `horde.style.id`, `horde.style.owner_id`,
 `horde.style.collection_id`, `horde.style.policy` and `horde.style.surcharged`.
 
 ## Code map
@@ -522,7 +548,7 @@ The span that validates a styled generate request carries `horde.style.id`, `hor
 | A policy applied to a live image request, including the size fallback | `tests/integration/test_image_style_application.py`, `TestImageStyleParameterPolicy` |
 | Placeholders applied to a live image request | `tests/integration/test_image_style_application.py`, `TestImageStyleTemplateFields` |
 | The image dry-run `resolved` body and compatibility | `tests/integration/test_image_style_application.py`, `TestImageDryRunResolvedRequest` |
-| The quote cache key tells a styled request apart and is stable across validation | `tests/unit/test_dry_run_kudos_quote.py`, `TestQuoteCacheKey`, `TestTextQuoteCacheKey` |
+| The quote cache key distinguishes styled requests and is stable across validation | `tests/unit/test_dry_run_kudos_quote.py`, `TestQuoteCacheKey`, `TestTextQuoteCacheKey` |
 | `shared_key` served to the owner only, and never on the list | `tests/integration/test_text_styles.py`, `TestTextStyleSharedKeyVisibility`; `tests/integration/test_image_styles.py`, `TestImageStyleSharedKeyVisibility` |
 | A styled request is logged with its owner, requester and client agent, and counted with bounded labels | `tests/integration/test_text_style_application.py`, `TestStyleApplicationTelemetry` |
 | Context fit outcomes are counted | `tests/integration/test_text_style_application.py`, `TestContextFitTelemetry` |
@@ -556,7 +582,7 @@ The span that validates a styled generate request carries `horde.style.id`, `hor
   same request under `ignore` would be queued and wait for a worker to come online;
   under `grow` the client has to retry once one has checked in within the 300-second window.
 - A patch replaces a JSON column whole. Sending `parameter_policy` or `template_fields` on a `PATCH`
-  overwrites the stored value; there is no merge, and no way to clear one back to null through the
+  overwrites the stored value. There is no merge, and no way to clear one back to null through the
   endpoint.
 
 ## Schema

@@ -62,16 +62,16 @@ Insufficient kudos is the native 403 `KudosUpfront`, passed through with its sta
 message states the free output allowance the request exceeded.
 
 `Retry-After` is sent where waiting can help: a 503, the 408 for a request that timed out waiting, and a 429 whose
-native answer carries one. When a retry
-could create a second charged job, the response carries `x-should-retry: false`, which OpenAI SDKs honour by skipping
-their automatic retry. Every streamed response carries it, since a job exists once the stream opens. The front
+native response includes one. When a retry
+could create a second charged job, the response includes `x-should-retry: false`, which OpenAI SDKs honour by skipping
+their automatic retry. Every streamed response includes it, since a job exists once the stream opens. The front
 retries its own submit under an operation key, as
-[ADR 0026](0026-classify-client-retries-and-recover-submits-by-operation-key.md) describes; a client's retry is a new
+[ADR 0026](0026-classify-client-retries-and-recover-submits-by-operation-key.md) describes. A client's retry is a new
 request.
 
 After headers, an error is one SSE data event holding the same envelope at the top level, followed by `[DONE]`
 (`build_error_events` in `horde/oai/sse.py`). A completion chunk's `finish_reason` is one of `stop`, `length`,
-`tool_calls` and `content_filter`; a failure is reported only by the error event.
+`tool_calls` and `content_filter`. A failure is reported only by the error event.
 
 ### Consequences
 

@@ -30,30 +30,38 @@ revision over both. Replacing that key is atomic, so consumers cannot observe ha
 `REDIS_IP` is the authoritative read and lease endpoint. After its fenced transaction succeeds, the
 publisher copies the same immutable document to every reachable independent master in
 `REDIS_SERVERS`, preserving AI-Horde's active/passive failover topology. Redis key
-`image_model_reference:publish_sequence:v1` carries the monotonically increasing generation on each
-server; a delayed older publisher cannot regress a passive server. Consumers continue to read only
+`image_model_reference:publish_sequence:v1` stores the monotonically increasing generation on each
+server. A delayed older publisher cannot regress a passive server. Consumers continue to read only
 the current `REDIS_IP`, and the host-local db6 cache is never involved.
 
 At cold start, an instance first reads Redis. When the key is absent, contenders use a fenced Redis
-lease and exactly one fetches the remote sources; the others wait for its publication. After startup,
+lease, and exactly one fetches the remote sources. The others wait for its publication.
+
+After startup,
 the AI-Horde quorum owner checks once a minute whether the served snapshot is degraded or more than
-an hour old and, if so, performs the remote refresh; every instance polls Redis for a new revision. A
+an hour old and, if so, performs the remote refresh. Every instance polls Redis for a new revision. A
 newly elected owner therefore takes over publication within a minute rather than a full interval. The
 per-host Redis cache is deliberately bypassed for this control-plane value.
 
 A remote, validation, or pending-model failure never clears or replaces the Redis value. Running
 instances retain their in-memory snapshot during Redis failure. A process without central Redis
 fails startup rather than independently fetching a potentially divergent view. Cold-start losers
-continue contending until an abandoned publication lease can expire and one of them takes over; the
+continue contending until an abandoned publication lease can expire and one of them takes over. The
 effective bootstrap timeout is therefore never shorter than the lease plus five seconds.
 
-When the whole bootstrap window passes with no snapshot published (the PRIMARY is unreachable and
-Redis holds nothing), contenders get one further lease-long window in which a publication may be
+### Degraded bootstrap
+
+When the whole bootstrap window passes without a published snapshot (the PRIMARY is unreachable and
+Redis does not have a snapshot), contenders get one further lease-long window in which a publication may be
 **degraded**: HMR's GitHub fallback for the canonical models, the baseline catalog packaged with
-`horde_model_reference`, and no pending models. The document carries `degraded: true`, every process
+`horde_model_reference`, and no pending models.
+
+The document includes `degraded: true`. Every process
 that applies it logs an error, and the elected publisher treats a degraded document as always due, so
-it keeps retrying (every ten seconds on failure) until the PRIMARY answers and a healthy document
+it keeps retrying (every ten seconds on failure) until the PRIMARY responds and a healthy document
 replaces it. A degraded document is never published while any snapshot already exists.
+
+### Snapshot health
 
 Each process reports `horde.model_reference.snapshot_age` (seconds since the served document was
 published) and `horde.model_reference.snapshot_degraded` on every Redis poll, and warns hourly once
@@ -70,12 +78,14 @@ merged on every refresh:
   `HORDE_MODEL_REFERENCE_PRIMARY_API_URL`. HMR may obtain a GitHub fallback internally, but the
   publisher detects that outcome and refuses to replace the fleet's last-known-good Redis snapshot.
 - The **pending** source (`pending`): models sitting in the PRIMARY's pending queue. These are the
-  beta models. They carry no special restrictions; a pending model is a known model.
+  beta models. They do not have special restrictions. A pending model is a known model.
 
 Pending is listed ahead of canonical, so a pending record wins a name collision. That is how a model
 is revised while it is still in beta.
 
-The publisher constructs HMR with `PrefetchStrategy.NONE`; it does not run HMR's all-category
+### Fetch scope and validation
+
+The publisher constructs HMR with `PrefetchStrategy.NONE`. It does not run HMR's all-category
 prefetch. A publication reads only the image baseline export, canonical `image_generation` category,
 and (when enabled) pending `image_generation` category. `ASYNC` prefetch is intentionally not used:
 it warms every category and requires an asyncio event loop, while this publisher runs from the
@@ -84,14 +94,14 @@ importer previously constructed with a different strategy, rather than silently 
 
 Text models remain outside this pipeline. AI-Horde continues to read the legacy standalone
 AI-Horde-text-model-reference JSON into each process at startup and hourly, dropping any entry without
-a numeric parameter count rather than rejecting the payload; HMR's text categories are not queried by
+a numeric parameter count rather than rejecting the payload. HMR's text categories are not queried by
 the fleet image publisher.
 
 Adding a model to the PRIMARY needs no change here, and neither does adding a *baseline*: the baseline
 catalog is served alongside the models.
 
 The publisher rejects an empty model reference, an empty baseline catalog, or a document whose
-content does not match its revision before mutating Redis. If a model names a baseline missing from
+content does not match its revision before mutating Redis. If a model references a baseline missing from
 the first catalog read, it re-fetches the catalog after fixing the model view to cover PRIMARY's
 baseline-before-model publication race.
 
@@ -113,14 +123,14 @@ Records stay typed as `ImageGenerationModelRecord` in memory:
 | `reference` | `dict[str, ImageGenerationModelRecord]`, keyed by model name. Empty until a fleet snapshot is applied. |
 | `stable_diffusion_names` | Every image model name. No baseline allowlist is applied. |
 | `nsfw_models` | Image and text models flagged NSFW. |
-| `controlnet_models` | Always empty. The reference no longer carries a controlnet model type; the attribute is kept for callers. |
+| `controlnet_models` | Always empty. The reference does not include a ControlNet model type. The attribute is retained for callers. |
 | `get_model_baseline(name)` | The record's baseline, verbatim. |
 | `get_all_model_baselines(names)` | The set of baselines those names resolve to. |
 | `get_model_requirements(name)` | The record's requirements, or `{}`. |
 | `baseline_record(baseline)` | The served baseline record, or `None` where the catalog has no such name. |
 
-A model the reference has never heard of still resolves to a baseline, from the suffix its name
-declares: `[SDXL]`, `[Flux]`, `[Qwen]`, `[ZModel]` and `[ZImage]`, falling through to
+A model absent from the reference still resolves to a baseline using its name's suffix:
+`[SDXL]`, `[Flux]`, `[Qwen]`, `[ZModel]` and `[ZImage]`, falling through to
 `stable_diffusion_1`. Customizer-role users can request such a name, and it must still be priced. An
 uncatalogued baseline is accepted for plain generation but receives no baseline-dependent workflow
 capabilities by default.
@@ -150,3 +160,20 @@ PRIMARY revision with the fallback would violate the last-known-good contract.
 Columns the record leaves optional but the table declares non-nullable (`version`, `style`, `tags`)
 receive empty values, and `features_not_supported` has no counterpart in the record schema, so it is
 always cleared.
+
+## Code map
+
+| Concept | File | Symbol |
+| --- | --- | --- |
+| Process view and baseline lookup | `horde/model_reference.py` | `ModelReference`, `ModelReference.baseline_record`, `ModelReference.get_model_baseline` |
+| Redis snapshot reads | `horde/model_reference.py` | `ModelReference.refresh_from_redis` |
+| Fleet publication and refresh scheduling | `horde/model_reference.py` | `ModelReference.publish_fleet_snapshot`, `ModelReference.publish_fleet_snapshot_if_due` |
+| Remote sources and merged snapshot | `horde/model_reference.py` | `ModelReference._fetch_fleet_snapshot` |
+| Legacy text reference refresh | `horde/model_reference.py` | `ModelReference.refresh_text_reference` |
+
+## Contract tests
+
+`tests/unit/test_model_reference_loader.py` covers pending-model precedence, baseline suffixes and database
+mirroring. `tests/unit/test_model_reference_snapshot.py` covers coherent process views, publication fencing,
+failover replication and retention of the last valid snapshot. Redis integration coverage is in
+`tests/integration/test_model_reference_snapshot_redis.py`.

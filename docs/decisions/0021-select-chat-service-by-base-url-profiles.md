@@ -22,7 +22,7 @@ a Horde-specific client. This record evaluates the base URL as the primary place
 - A client configured with one base URL should get one consistent service for every request it sends.
 - The path is the one configuration every OpenAI client exposes, including those without a model picker or extra
   fields.
-- A path can carry an authorised private configuration without any request change.
+- A path can select an authorised private configuration without any request change.
 
 ## Considered Options
 

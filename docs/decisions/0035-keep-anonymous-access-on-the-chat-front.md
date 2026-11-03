@@ -42,7 +42,9 @@ allowance. The allowance is sized by the request's estimated wait, from 4096 tok
 idle down to 512, as
 [ADR 0037](0037-size-the-free-output-allowance-by-the-estimated-wait.md) (Size the free output allowance by the
 request's estimated wait) records. A request above the allowance is refused with 403 `KudosUpfront`, and the message
-states the allowance. Chat requests are submitted with `allow_downgrade` false, so a request is refused and is not
+states the allowance.
+
+Chat requests are submitted with `allow_downgrade` false, so a request is refused and is not
 lowered to the allowance. A requester with kudos to hold may ask for up to 16384 tokens (`MAX_LENGTH_LIMIT` in
 `horde/classes/kobold/request_fit.py`, and the front's token limit range).
 
@@ -55,7 +57,7 @@ The front bounds what one process and one source can hold open (`horde/oai/setti
 | Request body size, counted before parsing (`max_body_bytes`) | 36 MiB | 413 `RequestTooLarge`  |
 | Request body read time (`body_read_timeout_seconds`)   | 30 seconds | 408 `RequestBodyTimeout`  |
 
-With a proxy passkey configured, each Horde call carries the end-user address as `Proxied-For`, so the Horde's
+With a proxy passkey configured, each Horde call includes the end-user address as `Proxied-For`, so the Horde's
 per-address rate limits on the chat route (`HORDE_CHAT_REQUEST_2SEC_LIMIT_PER_IP`,
 `HORDE_CHAT_REQUEST_90MIN_LIMIT_PER_IP`) and its suspicion apply to the user and not to the front. The front does not
 otherwise distinguish anonymous requests.
@@ -73,7 +75,7 @@ otherwise distinguish anonymous requests.
 ### Keep anonymous access
 
 - Good: Keeps the service usable without registration.
-- Bad: Anyone can send requests, so the bounds carry the abuse control.
+- Bad: Anyone can send requests, so abuse control depends on the limits.
 
 ### Require a key
 

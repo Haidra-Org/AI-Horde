@@ -67,8 +67,8 @@ The output is the base URL you exported, with a trailing slash.
 
 ## 3. Pick a model with workers online
 
-`GET /v1/models` lists only models that at least one online chat worker serves. Each entry carries the Horde's
-details beside the OpenAI fields; the SDK exposes them through `model_extra`.
+`GET /v1/models` lists only models that at least one online chat worker serves. Each entry includes the Horde's
+details beside the OpenAI fields. The SDK exposes them through `model_extra`.
 
 ```python
 for card in client.models.list():
@@ -87,8 +87,11 @@ Each line looks like this:
 koboldcpp/Meta-Llama-3.1-8B-Instruct workers: 2 max_completion_tokens: 512 supported: ['max_tokens', 'temperature', 'top_p', 'stop', 'seed', 'tools', 'tool_choice', 'parallel_tool_calls', 'response_format']
 ```
 
-Choose a model whose `supported_parameters` include `tools` and `response_format`, so every later step has a worker
-that can serve it, and keep the reply length within its `max_completion_tokens`:
+Choose a model whose `supported_parameters` include `tools` and `response_format` for the later steps.
+These are the combined declarations of its online workers. They do not guarantee that one worker supports every
+combination, JSON Schema or the guarantees required by a strict request. See
+[Conformance](../how-to/send_chat_completions.md#conformance) if a later step reports missing declarations.
+Keep the reply length within the card's `max_completion_tokens`:
 
 ```python
 MODEL = "<a model id from the list>"
@@ -96,7 +99,7 @@ MAX_TOKENS = 200
 ```
 
 An empty list means no chat worker is online. The list changes as workers come and go, so a model can disappear
-between steps; list again and pick another.
+between steps. List again and pick another.
 
 ## 4. Send a completion
 
@@ -153,7 +156,7 @@ for chunk in stream:
         print("usage:", chunk.usage)
 ```
 
-The output has four chunks:
+For a buffered reply without reasoning, the output can look like this:
 
 ```text
 delta: assistant None finish: None
@@ -163,13 +166,14 @@ x_horde: ...
 usage: CompletionUsage(completion_tokens=3, prompt_tokens=21, total_tokens=24, ...)
 ```
 
-A reply this short arrives in one content chunk. A longer reply arrives in several when the worker posts progress,
-about one chunk a second. While the request waits, the front sends keepalive comments that the SDK reads and discards.
+A buffered reply arrives in one content chunk. When a worker posts live progress, the front can send several
+content chunks even for a short reply. Posts usually arrive about once a second and are paced into smaller chunks.
+The finish and usage chunks still appear at the end. While the request waits, the SDK reads and discards keepalive comments.
 
 ## 6. Complete a tool round
 
 A tool round has four parts: the request offers a tool, the model returns a call, your code runs the function,
-and a second request carries the result back for the model to answer in prose.
+and a second request sends the result back for the model to use in its reply.
 
 Define the tool and the local function:
 
@@ -207,10 +211,12 @@ call_... get_weather {"city":"Paris"}
 ```
 
 A model can answer in prose instead of calling the tool, with `finish_reason` `stop`. To require the call, send
-`tool_choice={"type": "function", "function": {"name": "get_weather"}}` with the same request.
+`tool_choice={"type": "function", "function": {"name": "get_weather"}}` with the same request, using a model whose
+card lists `tool_choice`. This requires the worker's `tool_choice_enforced` guarantee under default strict conformance.
 
-Run the function and send its result. The assistant message is appended as the SDK returned it, then one `tool`
-message per call, carrying the call's `id`:
+Continue below only if the reply includes a tool call. If it returned text instead, retry the tool request with the
+forced choice above on a supporting model. The assistant message is appended as returned by the SDK, followed by
+one `tool` message per call with the call's `id`:
 
 ```python
 messages.append(choice.message)
@@ -225,7 +231,7 @@ print(answering.choices[0].message.content)
 
 The output is `stop` and a sentence that uses the result, such as `It is 18C and clear in Paris.`
 
-A `tool` message carries `role`, `tool_call_id` and `content`. Any other key on it, such as `name`, is dropped and not
+A `tool` message includes `role`, `tool_call_id` and `content`. Any other key on it, such as `name`, is dropped and not
 forwarded, as OpenAI ignores it.
 
 ## 7. Ask for a JSON reply and parse it

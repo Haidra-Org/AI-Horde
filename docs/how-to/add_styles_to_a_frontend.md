@@ -46,7 +46,7 @@ GET <apiV2BaseUrl>/status/style_contract
 Client-Agent: <frontend-name>:<version>:<project-url>
 ```
 
-The endpoint is anonymous and has no rate limit. The body carries `schema_version` and one section per
+The endpoint is anonymous and has no rate limit. The body includes `schema_version` and one section per
 style type, `text` and `image`, each with:
 
 | Key | Drives |
@@ -151,7 +151,7 @@ Send the request with `dry_run: true` to show the user what will run and what it
 }
 ```
 
-The response carries `kudos` and `resolved`. `resolved` holds the prompt after templating, the params
+The response includes `kudos` and `resolved`. `resolved` holds the prompt after templating, the params
 after the policy, the models and the style that applied. A text request adds `estimated_prompt_tokens`
 and the `context_fit` applied, and an image request adds `negative_prompt`. Under someone else's
 style the quote includes a 2-kudo surcharge for the style's author.
@@ -166,14 +166,14 @@ style the user authored quotes the same as the unstyled request with the style's
 
 A collection groups styles of one type. A request with a collection's id in `style` draws one of its
 styles at random and runs under that style's declarations. The draw is only among the styles that
-declare every field the request sends and require no field it leaves out.
+declare every supplied field and do not require an omitted field.
 
 `/api/v2/collections/<collection-id>` lists the collection's style ids. To build the request form:
 
 1. Read each listed style's details.
 2. Offer the union of their template fields, each marked required only where every style requires it.
-3. Before sending, check that at least one style declares every field the user filled in and requires
-   none they left empty. When no style qualifies, the server refuses the request with
+3. Before sending, check that at least one style declares every supplied field and does not require an
+   omitted field. If every style fails this check, the server refuses the request with
    `TemplateFieldsMatchNoCollectionStyle`.
 4. Show `resolved.style` from the dry run, since the style drawn can differ between requests.
 
@@ -184,7 +184,7 @@ run without the field resolves to the second style every time, and with the fiel
 
 ## Show a style's shared key to its owner
 
-A style can carry a shared key that requests under the style run on. Its details are served only on the
+A style can include a shared key used by requests under the style. Its details are served only on the
 single-style routes, and only when the request's `apikey` header holds the style owner's key. Read it
 that way in the owner's editor, and keep that response out of shared caches, as its
 `Cache-Control: private, no-store` header requires. Everyone else, and every listing, gets
@@ -212,7 +212,7 @@ Exercise at least these cases:
 | --- | --- |
 | Policy `listed` with `max_length` overridable and capped at 512 | The request form offers `max_length` up to 512 and `n` |
 | Policy `none` | The request form offers only `n` |
-| A required template field left empty | The form blocks sending, since the server would return `TemplateFieldMissing` |
+| A required template field omitted | The form blocks sending, since the server would return `TemplateFieldMissing`. A supplied empty string is accepted by the server. |
 | A text template containing `{{[INPUT]}}` | The preview shows it unchanged |
 | A text template with `{p:>20}` | The editor flags it, since the server returns `StylePromptFieldInvalid` |
 | A collection whose styles declare different fields | The form offers the union, and the drawn style is shown |
@@ -234,7 +234,7 @@ to `http://localhost:7001/api/v2` and do not append `/api/v2` again.
 
 ## Recover from validation errors
 
-API errors carry a stable `rc` and display text in `message`. Branch on `rc` and show `message` without
+API errors include a stable `rc` and display text in `message`. Branch on `rc` and show `message` without
 parsing it.
 
 | `rc` | State change before resubmission |

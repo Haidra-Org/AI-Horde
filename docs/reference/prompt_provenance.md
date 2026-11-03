@@ -17,7 +17,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [moderation](../topics.md#moderation), [requests](../topics.md#requests)
 <!-- END GENERATED: topics -->
 
-A waiting request stores two prompts: the one the client sent and the one workers receive. They differ whenever a
+A waiting request stores two prompts: the client's submission and the worker input. They differ whenever a
 style is applied or the replacement filter rewrites the text.
 
 ## Code map
@@ -45,7 +45,7 @@ style is applied or the replacement filter rewrites the text.
 | `TextWaitingPrompt.messages`     | A chat request's worker input, after moderation                     | Generation and worker code                       |
 
 On a chat request, `prompt` and `submitted_prompt` hold the messages flattened into one string, after and before
-moderation. The flattened `prompt` is an estimate that sizing, kudos and moderation read; workers receive `messages`
+moderation. The flattened `prompt` is an estimate that sizing, kudos and moderation read. Workers receive `messages`
 instead, and every rewrite of `prompt` is mirrored onto them. Moderation evidence for a chat request records the
 flattened strings. See the [chat requests reference](chat_requests.md).
 
@@ -58,7 +58,7 @@ temporarily missing.
 
 The column is nullable, deferred, and configured with `raiseload=True`. Ordinary ORM queries, polymorphic loads, joins,
 and relationship loads omit it, and an accidental lazy attribute access raises instead of fetching the text. Reads go
-through `read_privileged_submitted_prompt(purpose=...)`, which names one of the two approved consumers in
+through `read_privileged_submitted_prompt(purpose=...)`, which specifies one of the two approved consumers in
 `SubmittedPromptPurpose`. The scalar read leaves the deferred attribute unloaded on the ORM instance.
 
 The purpose declares caller intent. It records which reviewed path reads the column, so a future consumer has to
@@ -75,7 +75,7 @@ filter rewrite, a row without provenance omits the prompt, and the response is n
 `GET /api/v2/generate/request/<id>` and `GET /api/v2/generate/text/request/<id>` return the original prompt alongside
 normalized parameters, under `Cache-Control: private, no-store`. Chat requests have no retrieval route, and the text
 route reports a chat request's id as not found. The response uses the generation input shape. It is
-an approximation: parameters carry defaults and any style's overrides, while the prompt is the pre-style submission. A
+an approximation: parameters include defaults and any style's overrides, while the prompt is the pre-style submission. A
 client reproducing a styled request needs the style it originally specified.
 
 ## Sharp edges
@@ -91,9 +91,9 @@ client reproducing a styled request needs the style it originally specified.
 - **Worker payloads and shared-image metadata keep the effective `prompt`.** Shared metadata already exposes the
   effective prompt. This contract leaves that open and must never add the original.
 - **Raw-submission logging is unchanged.** `CorruptPrompt` log lines and the object-storage rejection upload still
-  carry the rejected prompt, and database backups still contain originals.
+  include the rejected prompt, and database backups still contain originals.
 - **New copy or retry paths must capture their own submission.** Directly constructed waiting prompts without
-  provenance remain valid legacy rows; never copy one request's original onto another request's effective prompt.
+  provenance remain valid legacy rows. Never copy one request's original onto another request's effective prompt.
 
 ## Related
 

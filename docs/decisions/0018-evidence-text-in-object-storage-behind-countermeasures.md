@@ -16,7 +16,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 [ADR 0015](0015-tiered-moderation-evidence-retention.md) records every rejected prompt and every worker report as a
 `prompt_moderation_events` row holding up to three prompt stages of 16,000 characters each, never deleted by age. The
 database is kept small by constant cleanup of transient data, and a rejected submission costs the submitter nothing:
-no kudos are charged, no waiting request is created, and an anonymous key is accepted. The model-rejection path, which
+no kudos are charged, no waiting request is created, and an anonymous key is accepted.
+
+The model-rejection path, which
 refuses a prompt that the NSFW-model replacement emptied, deliberately applies no IP timeout so that a probe learns
 nothing about the filter, and the negative prompt after `###` is kept verbatim. A script can therefore write rejected
 prompts at the generate endpoint's rate limit, 90 a minute per address, each holding over 30 KB of text, and the rows
@@ -27,7 +29,7 @@ in the first place.
 
 ## Decision Drivers
 
-- The database holds identity, counts and state; bulk text belongs elsewhere.
+- The database holds identity, counts and state. Bulk text belongs elsewhere.
 - Nothing on the request path waits on an outside service.
 - A flood is bounded by countermeasures that act on the traffic, not by storage design.
 - Moderators keep enough evidence on an abuser to act, and a flood never erases evidence of other subjects.
@@ -49,13 +51,15 @@ countermeasures".
 of the canonical text object and its character count. The quorum node's applier (`upload_moderation_evidence_text`,
 every 5 seconds, under a session-level advisory lock) claims pending rows in batches of 50, puts each as
 `evidence/{id}.json` in a dedicated bucket, and then, in one conditional update, nulls the text columns and sets the
-state `stored`. A failed put leaves the row pending for the next tick. Rows the retention pass cleared between the
+state `stored`. A failed put leaves the row pending for the next tick.
+
+Rows cleared by the retention pass between the
 put and the update are not returned by the update, and the applier deletes their objects in the same cycle. The
 object key is derived from the event id, so retention can delete an object for any row without a column recording it.
 
 **Presigned reads.** The listing returns, for a stored event, a presigned GET link valid for ten minutes, signed
-locally without a network call, with `private, no-store` response headers; a pending event still returns its text
-inline. The client fetches the object and reads the digest beside it; on an expired link it refetches the event.
+locally without a network call, with `private, no-store` response headers. A pending event still returns its text
+inline. The client fetches the object and reads the digest beside it. On an expired link it refetches the event.
 
 **Retention.** The text window and the ceiling delete the object for every row in their batch in one bulk call,
 inside the row-locked transaction, and flag only the rows whose delete succeeded. A missing key counts as deleted. When
@@ -65,9 +69,9 @@ There is no bucket lifecycle rule, because a rule cannot see the moderation-acti
 
 **Per-subject countermeasures.** The filter path times out the address on its first rejection. On the model path,
 one counter per IP subject per hour counts model rejections only. Past `HORDE_MODEL_REJECTION_TIMEOUT_THRESHOLD`
-(default 5) of them, the subject's address enters the same escalating timeout the filter path applies; in raid mode
+(default 5) of them, the subject's address enters the same escalating timeout the filter path applies. In raid mode
 every model rejection does. Moderators are exempt on both paths, since they probe the filter on purpose. The first
-timeout of a subject in an hour sends moderators one Discord notice naming the subject by its pseudonym prefix, never
+timeout of a subject in an hour sends moderators one Discord notice identifying the subject by its pseudonym prefix, never
 by prompt or address. Every event keeps its text until retention removes it.
 
 **Detection and levers.** The applier samples the capture rate and the number of distinct rejecting subjects over the
@@ -77,19 +81,19 @@ timeout endpoints, rate limits at the deployment's edge, and maintenance mode.
 
 ### Consequences
 
-- Good: Rejection text leaves the database within seconds under normal operation; a row keeps about 1 KB with its
+- Good: Rejection text leaves the database within seconds under normal operation. A row keeps about 1 KB with its
   index entries.
 - Good: No request waits on the object store, and an outage delays uploads without losing text.
 - Good: A single abuser is timed out after five model rejections, or on the first filter rejection, and the evidence
   of every attempt remains.
-- Good: The listing stays one query; signing is local and costs under a millisecond an event.
-- Bad: Every rejected prompt is still written to Postgres and its write-ahead log once; the countermeasures, not the
+- Good: The listing stays one query. Signing is local and costs under a millisecond an event.
+- Bad: Every rejected prompt is still written to Postgres and its write-ahead log once. The countermeasures, not the
   store, bound a flood.
-- Bad: Text sits in the database for as long as the store is unreachable; past the shortest text window retention
+- Bad: Text sits in the database for as long as the store is unreachable. Past the shortest text window retention
   clears it without an upload, which the stalled-upload alert exists to prevent.
-- Bad: Rows and objects are two stores; a crash between the put and the state update leaves an object that retention
+- Bad: Rows and objects are two stores. A crash between the put and the state update leaves an object that retention
   deletes by id on schedule but that nothing lists until then.
-- Bad: A presigned link is a bearer capability for ten minutes; the signing token is scoped to the evidence bucket
+- Bad: A presigned link is a bearer capability for ten minutes. The signing token is scoped to the evidence bucket
   alone.
 
 ## Pros and Cons of the Options
@@ -97,7 +101,7 @@ timeout endpoints, rate limits at the deployment's edge, and maintenance mode.
 ### Keep text in the row and cap it harder
 
 - Good: No second store.
-- Bad: A row per flood request still carries kilobytes, and the table is the one place the horde keeps light.
+- Bad: A row per flood request still contains kilobytes, and the table is the one place the horde keeps light.
 
 ### Upload text from the request and serve it through the API
 
@@ -109,11 +113,11 @@ timeout endpoints, rate limits at the deployment's edge, and maintenance mode.
 
 `tests/unit/test_evidence_upload.py` covers the applier cycle, the orphan delete and the store against Garage;
 `tests/integration/test_prompt_moderation.py` and `tests/integration/test_moderation_migration.py` cover the states,
-the retention deletes and the schema; `tests/integration/test_rejection_countermeasures.py` covers the model-path
+the retention deletes and the schema. `tests/integration/test_rejection_countermeasures.py` covers the model-path
 timeout, raid mode, the moderator exemption and the notice.
 
 ## More Information
 
-The threshold is an env var read at startup, like the retention windows. The detection instruments are listed in `docs/reference/moderation_operations.md`; alert thresholds and edge
+The threshold is an env var read at startup, like the retention windows. The detection instruments are listed in `docs/reference/moderation_operations.md`. Alert thresholds and edge
 rate limits belong to each deployment. The disclosure in the privacy document states that prompt text in
 moderation records is held with the object storage provider.

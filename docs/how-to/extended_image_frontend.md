@@ -21,10 +21,13 @@ This procedure assumes the frontend already submits image requests, polls reques
 model-reference metadata, and generates API types from `/api/swagger.json` or maintains equivalent
 request types.
 
+After integration, the frontend builds controls from the published sampler contract, filters incompatible
+settings before submission, and can generate ControlNet maps through the interrogation API.
+
 The examples below illustrate data ownership, compatibility rules, and serialization boundaries. They
 are not drop-in UI components: adapt parsing, local validation, accessibility, error presentation, and
-reactive state handling to the frontend's framework and design system. The invariants described around
-the examples are normative; incidental TypeScript structure is not.
+reactive state handling to the frontend's framework and design system. Preserve the documented request rules
+when adapting the TypeScript examples.
 
 In this guide, `apiOrigin` means the URL origin without an API path, for example
 `https://aihorde.net` or `http://localhost:7001`. `apiV2BaseUrl` means
@@ -51,6 +54,8 @@ Fetch the anonymous contract once per API origin during application startup:
 GET <horde-base-url>/api/v2/status/sampler_constraints
 Client-Agent: <frontend-name>:<version>:<project-url>
 ```
+
+### Contract fields
 
 Version 1.0 has this shape. The values shown are just a representative subset, so get the response
 rather than copying the following:
@@ -94,6 +99,8 @@ rather than copying the following:
 }
 ```
 
+### Client types
+
 Keep the generated API model when one is available. A hand-written adapter only needs the fields used
 by the UI:
 
@@ -125,8 +132,10 @@ type SamplerContractV1 = {
 };
 ```
 
+### Contract cache
+
 Accept a document only when its major schema version is supported. Cache each accepted response by API
-origin and full `schema_version`; the origin matters because self-hosted deployments can differ.
+origin and full `schema_version`. The origin matters because self-hosted deployments can differ.
 
 ```ts
 const supportedSamplerContractMajor = "1";
@@ -188,7 +197,7 @@ async function loadSamplerContract(apiOrigin: string): Promise<SamplerContractV1
 If no compatible cache exists, retain the frontend's existing sampler picker and omit `scheduler`,
 `flow_shift`, and every `sampler_*` field.
 
-Verify this stage in browser developer tools: the request succeeds without an `apikey`, the chosen
+Verification: in browser developer tools, the request succeeds without an `apikey`, the chosen
 document has a supported `schema_version`, and the sampler picker contains the keys of `samplers`.
 
 ## Render controls from the selected sampler
@@ -198,21 +207,25 @@ remaining records according to their record-level `presentation_tier`, placing `
 behind the frontend's advanced-controls affordance. If the two representations disagree, keep every
 sampler available, prefer the explicit recommended ordering for placement, and record the
 inconsistency as telemetry rather than treating it as a request-construction error. Tiers affect
-presentation only; every record in `samplers` is accepted.
+presentation only. Every record in `samplers` is accepted.
+
+### Numeric inputs
 
 Render one numeric input for each entry in `accepted_settings`:
 
 - `minimum` and a non-null `maximum` become input bounds.
 - `integer_only: true` uses integer parsing and an integer step such as `step="1"`.
-- `integer_only: false` must accept finite fractional values; a native HTML number input normally
+- `integer_only: false` must accept finite fractional values. A native HTML number input normally
   needs `step="any"` or an appropriate fractional step.
-- `maximum: null` means that the API publishes no upper bound; do not invent one for request
+- `maximum: null` means that the API publishes no upper bound. Do not invent one for request
   validation.
 - `default: null` means that leaving the field absent delegates the limit or value to the solver.
 - `solver_type_choices` becomes a select only when the array is non-empty.
 
 Parse and validate according to the frontend's normal form conventions. The submission serializer
 remains the final defensive boundary.
+
+### Setting labels
 
 Use frontend labels as presentation data while retaining the API field as the form-state key:
 
@@ -237,18 +250,19 @@ function labelForSamplerSetting(field: string): string {
 ```
 
 Labels are presentation overrides, not a setting allowlist. Render every key in
-`accepted_settings`; use a generated fallback label when the frontend has no curated label yet.
+`accepted_settings`. Use a generated fallback label when the frontend does not have a curated label yet.
 Serialization continues to use the original API key.
+
+### Submission serialization
 
 Do not serialize a displayed default until the user changes it. This lets the backend retain ownership
 of defaults and gives Reset a simple meaning: delete the value from form state. Keep drafts per sampler
 if restoring a user's previous tuning is useful, but filter the draft at submission time. A user can
-select `k_euler`, set churn, and then select `dpmpp_2m_sde`; the hidden churn value must not survive that
+select `k_euler`, set churn, and then select `dpmpp_2m_sde`. The hidden churn value must not survive that
 change.
 
 The serializer is deliberately fail-closed: it omits malformed, non-finite, out-of-range, or
-inapplicable values rather than sending a request it already knows to be invalid. It is not the
-user-feedback layer. Validate edits when they occur and show an error beside the control; use
+inapplicable values. Validate edits when they occur and show an error beside the control. Use
 submission-time omission only as protection against stale state, restored drafts, and programming
 errors.
 
@@ -473,12 +487,12 @@ The request rules are unchanged:
 Submit through `POST /api/v2/generate/async` and poll the ordinary generation status endpoint. Less
 common detectors require newer workers and can wait longer in the queue. Verify that the async response
 contains an `id` and the request completes. Restrict the picker to the previous enum subset to reverse
-expanded choices; remove `control_type`, `image_is_control`, `return_control_map`, and `source_image` to
+expanded choices. Remove `control_type`, `image_is_control`, `return_control_map`, and `source_image` to
 return to text-to-image.
 
 `control_strength` weights the control map against the prompt. Put it in `params` alongside
 `control_type`, in the range 0.01 to 3.0. Leave it out unless the user has changed it: only AI Horde
-Worker reGen 18 and newer read the field, so a request that carries it waits for one of those workers,
+Worker reGen 18 and newer read the field, so a request with it waits for one of those workers,
 and an absent field leaves the worker's own default of 1.0 in place. The `qr_code` workflow builds its
 control map from `extra_texts` and so accepts `control_strength` without a `control_type`. Every other
 request needs the control type first, or the server rejects it with `ControlStrengthWithoutControlType`.
@@ -490,7 +504,7 @@ a generation prompt, sampler, or model. Generate its choices from the `control_t
 `ModelInterrogationFormPayloadStable` in `/api/swagger.json`.
 
 The two control-type enums are intentionally almost identical. Image generation retains the legacy
-`hough` spelling; direct annotation uses the detector's `mlsd` name. Do not feed the generation enum
+`hough` spelling. Direct annotation uses the detector's `mlsd` name. Do not feed the generation enum
 unchanged into the annotation form.
 
 ```json
@@ -535,14 +549,14 @@ The completed payload identifies the form independently and returns a temporary 
 }
 ```
 
-Match the result by `form === "annotation"`; do not assume it is the first entry when the request also
+Match the result by `form === "annotation"`. Do not assume it is the first entry when the request also
 contains caption or post-processing forms. Display or download `result.annotation` promptly because it
 is a presigned result URL rather than permanent frontend storage.
 
-One request may carry several `annotation` forms, one per `control_type`, and each comes back as its own
+One request may include several `annotation` forms, one per `control_type`, and each comes back as its own
 entry. A form's status entry echoes the `payload` it was requested with, so match a map to its detector
 by `payload.control_type` rather than by position. Identical name and payload pairs are queued once. A
-server older than this guide omits `payload`; when a request carried a single annotation form the
+server without payload echoes omits `payload`. When a request included a single annotation form, the
 detector is the one you sent, so fall back to that rather than failing.
 
 Cancel an unfinished request with:
@@ -569,7 +583,7 @@ Before considering the integration complete, verify that:
 - Styles and presets are resolved before final compatibility filtering.
 - Every effective model satisfies scheduler and flow-shift applicability.
 - Unknown model baselines fail closed for baseline-restricted features.
-- An explicit `scheduler` removes legacy `karras`; otherwise legacy behavior is preserved.
+- An explicit `scheduler` removes legacy `karras`. Otherwise legacy behavior is preserved.
 - Generation and annotation use their distinct `control_type` enums.
 - `control_strength` is sent only alongside a control type or the `qr_code` workflow.
 - Annotation results are matched by form and payload, not array position.
@@ -595,7 +609,7 @@ Exercise at least these state transitions:
 
 Point the frontend's local configuration at the API branch being tested. Determine whether the
 frontend stores an origin or a versioned API base URL. For these examples, configure `apiOrigin` as
-`http://localhost:7001`; `apiV2BaseUrl(apiOrigin)` then becomes
+`http://localhost:7001`. `apiV2BaseUrl(apiOrigin)` then becomes
 `http://localhost:7001/api/v2`. If the existing frontend stores the latter directly, do not append
 `/api/v2` again. A local frontend that still points at `https://aihorde.net/api/v2` can look correct
 while reading the production contract and submitting production work.
@@ -626,7 +640,7 @@ API errors have a stable machine-readable `rc` and display text in `message`:
 }
 ```
 
-Branch on `rc`; show `message` to the user without parsing it. On a sampler-related rejection, refresh
+Branch on `rc`. Show `message` to the user without parsing it. On a sampler-related rejection, refresh
 the sampler contract once, rebuild the affected controls, and require an explicit second submission.
 An automatic retry can silently alter an image request and can loop when cached model metadata is also
 stale.

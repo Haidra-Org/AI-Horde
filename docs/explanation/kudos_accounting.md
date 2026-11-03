@@ -18,23 +18,27 @@ Topics: [accounting](../topics.md#accounting), [kudos](../topics.md#kudos)
 <!-- END GENERATED: topics -->
 
 A kudos-changing business transaction records signed, typed events instead of treating the balance columns as the
-complete history of what happened. Currency movements go to the append-only `kudos_ledger`; display totals and
+complete history of what happened. Currency movements go to the append-only `kudos_ledger`. Display totals and
 non-currency statistics go to `kudos_stat_events`. In `ledger` mode, a database-serialized projector folds those
 events into the familiar user, worker, team, and statistics columns. Spend admission uses single-payer reservations
 so it remains safe while the visible balance is catching up.
 
-In brief:
+For field definitions and implementation symbols, see the
+[kudos accounting reference](../reference/kudos_accounting.md). For cutover and recovery procedures, see
+[kudos ledger operations](../how-to/kudos_ledger_operations.md).
+
+## Accounting overview
 
 - The balance and aggregate columns (`users.kudos`, `workers.kudos`, team totals, stats) remain what ordinary read
   sites consume. They are projections of the event history, and in `ledger` mode they can lag by a projector
   interval.
-- Currency movements are permanent rows in `kudos_ledger`; display totals and counters are permanent rows in
+- Currency movements are permanent rows in `kudos_ledger`. Display totals and counters are permanent rows in
   `kudos_stat_events`. Rows from one business event share one `event_id`.
 - Spend admission never trusts the raw balance column. It takes a payer lock and checks `available_kudos`,
   which subtracts active reservations and queued debits and deliberately ignores queued credits.
 - One database-serialized projector folds unapplied events into the materialized columns. `applied = false` is
-  the work queue; there is no watermark that can skip a row.
-- `shadow` mode is a temporary mode that changes no balance the inline implementation would not have changed.
+  the work queue. A watermark cannot skip a row.
+- `shadow` mode is a temporary mode that preserves inline balance behavior.
   `ledger` mode is an explicit, online-reversible operator cutover.
 
 To dive into code, start with `horde/classes/base/kudos.py` (the models and the emission primitives every
@@ -43,7 +47,9 @@ producer uses) and `horde/database/kudos_ledger.py` (the projector). The
 
 Under inline mutation, request activation, settlement, transfers, uptime rewards, trust promotion, awards, and
 administrative adjustments change the materialized rows directly inside their request transactions, which makes the
-balance columns both the mutation mechanism and the only practical accounting record. Frequently used user rows then
+balance columns both the mutation mechanism and the only practical accounting record.
+
+Frequently used user rows then
 belong to many otherwise unrelated transaction lock graphs, multi-account operations become sensitive to lock order,
 and no detailed audit trail exists. Recording the movement as an event separates the durable fact that it occurred
 from the eventually updated read models ([ADR 0001](../decisions/0001-event-sourced-kudos-accounting.md)). The
@@ -55,14 +61,14 @@ consumer inventory are in the [kudos accounting reference](../reference/kudos_ac
 for cutover, rollback, and repair is in [kudos ledger operations](../how-to/kudos_ledger_operations.md). For the
 user-facing purpose of kudos, see [What are kudos?](../haidra-assets/docs/kudos.md).
 
-## The problem: shared mutable rows
+## Shared mutable rows {#the-problem-shared-mutable-rows}
 
 A kudos settlement sounds like simple addition and subtraction, but one completed job updates a connected set of state:
 
 - the requester's spendable balance, usage totals, records, and last-active time;
 - the worker owner's spendable or evaluation balance;
 - the worker's display kudos, contribution total, fulfilment count, and action buckets;
-- the worker's team aggregates, using the team membership at settlement time; and
+- the worker's team aggregates, using the team membership at settlement time;
 - the waiting prompt, processing generation, reservation, and transfer metadata that make the business event valid.
 
 Inline mutation performs much of that work inside the request transaction. Concurrent activation and settlement
@@ -80,9 +86,11 @@ fact.
 ### Pre-ledger lock contention
 
 Lock-chain and `pg_stat_statements` captures taken on the production primary on 2026-07-20 measured the cost. The
-anonymous requester row (`users.id = 0`) carried `Lock:tuple` queues 15 waiters deep even during quiet periods, with a
+anonymous requester row (`users.id = 0`) had `Lock:tuple` queues 15 waiters deep even during quiet periods, with a
 mean lock acquisition around one second, maxima in minutes, and single-row balance updates observed blocked for hours
-during incidents; the `FOR NO KEY UPDATE` acquisition sat among the top `pg_stat_statements` offenders. Removing the
+during incidents. The `FOR NO KEY UPDATE` acquisition was among the slowest operations in `pg_stat_statements`.
+
+Removing the
 users-row serialization moved the queue one level down rather than dissolving it: with balances appended instead of
 updated inline, load testing found the anonymous user's `user_stats` row queued 10 to 12 deep behind multi-second
 idle-in-transaction holders. Folding the statistics counters into the same event stream, so request transactions
@@ -92,10 +100,10 @@ The design therefore addresses four related problems:
 
 1. shrink and standardize the lock graph for kudos mutations;
 2. make currency movement durable, typed, correlated, and replayable;
-3. preserve spend safety while projection is asynchronous; and
+3. preserve spend safety while projection is asynchronous;
 4. make cutover, rollback, diagnosis, and repair explicit operations rather than improvised database edits.
 
-## The mental model: facts, holds, and projections
+## Facts, holds and projections {#the-mental-model-facts-holds-and-projections}
 
 There are three different kinds of state. Treating them as interchangeable is the easiest way to introduce an
 accounting bug.
@@ -137,7 +145,7 @@ projector interval. They are not discarded because queueing, API responses, lead
 need inexpensive reads.
 
 This separation also explains why worker "kudos" do not belong in the currency ledger. `workers.kudos` is a display
-total attributed to a worker; the actual currency credit belongs to the worker owner in `users.kudos`. Likewise,
+total attributed to a worker. The actual currency credit belongs to the worker owner in `users.kudos`. Likewise,
 contributions and fulfilments are measured in things or counts. Mixing them into one table would make conservation,
 reconciliation, and future reporting ambiguous
 ([ADR 0002](../decisions/0002-separate-currency-and-statistic-event-tables.md)).
@@ -162,12 +170,12 @@ flowchart TD
 ```
 
 The exact set varies with trust, cancellation, fake generations, shared keys, and job type. The invariant is that the
-business transaction commits its job state and emitted facts together. The event UUID supplies correlation;
+business transaction commits its job state and emitted facts together. The event UUID supplies correlation.
 it does not by itself make every producer retry idempotent. Transfers accept a caller idempotency key and validate a
 replay. Other producers still depend on their existing job-state transaction to prevent duplicate settlement.
 
-A streamed chat generation that its requester cancels is settled through the same event, on the content its worker
-posted before the cancel, which the Horde measured. The worker owner is credited and the requester debited for that
+A streamed chat generation cancelled by its requester is settled through the same event, using the worker's
+posted content measured by the Horde before cancellation. The worker owner is credited and the requester debited for that
 content, and the cancel does not count as a dropped job for the worker. A later submit for the settled generation is
 refused, so the generation settles once. The Horde does not measure part of a non-streamed generation, so it settles
 on submit
@@ -182,17 +190,17 @@ In ledger mode, rows start with `applied = false`. The periodic projector:
 3. groups deltas by target and visits materialized targets in stable primary-key order;
 4. updates balances, counters, records, worker totals, and team totals;
 5. consumes or releases the matching reservations;
-6. marks the exact claimed row IDs applied; and
+6. marks the exact claimed row IDs applied;
 7. commits all those changes in the same database transaction.
 
 If the process dies before commit, neither the projection nor the applied flags commit. A later cycle sees the rows
 again. If a lower numeric ID commits after a later row was already processed, it remains `applied = false` and is
-claimed by a later cycle; there is no high-water mark that can skip it. "Exactly once" here means exactly one
+claimed by a later cycle. A high-water mark cannot skip it. "Exactly once" here means exactly one
 committed fold of an accepted row, not exactly-once creation of arbitrary business events.
 
 The applier heartbeat is deliberately not a correctness watermark. It only makes a stopped or delayed projector
 observable. Applied currency and statistic events are retained permanently
-([ADR 0006](../decisions/0006-permanent-archive-compensation-only-repair.md)); `prune_applied_kudos_ledger` is a
+([ADR 0006](../decisions/0006-permanent-archive-compensation-only-repair.md)). `prune_applied_kudos_ledger` is a
 compatibility no-op.
 
 ## Deadlock mitigation
@@ -242,13 +250,19 @@ producer:         shared mode-gate advisory lock -> optional payer advisory lock
 reconciliation:  repeatable-read snapshot; repair emission also takes the reconciliation advisory lock
 ```
 
+### Mode transitions
+
 Every mutation transaction pins the observed mode by holding the shared mode gate, a transaction-scoped advisory
 lock, until commit. An exclusive mode change therefore waits for old-mode writers to finish before the changed
 ownership rule becomes visible. The gate is an advisory lock rather than a lock on the control row because
 heavyweight locks queue fairly: a pin requested while a transition is waiting queues behind it, so transition latency
-is bounded by the longest in-flight mutation. A row-level `FOR KEY SHARE` taken against a queued `FOR UPDATE` instead
+is bounded by the longest in-flight mutation.
+
+A row-level `FOR KEY SHARE` taken against a queued `FOR UPDATE` instead
 uses the no-conflict fast path, and sustained writer traffic with overlapping pins starves the transition
-indefinitely ([ADR 0010](../decisions/0010-advisory-lock-mode-gate.md)). The transition back to shadow takes the
+indefinitely ([ADR 0010](../decisions/0010-advisory-lock-mode-gate.md)).
+
+The transition back to shadow takes the
 applier lock first, waits for those writers, and folds the final ledger tail in the same transaction, so no
 ledger-mode posting can appear after inline projection resumes.
 
@@ -267,16 +281,22 @@ the complete event has folded, including a transfer split across batches.
 This is conservative by design: a queued credit cannot fund a new spend until it is projected. Conservatism can delay
 work during projector lag, but it cannot authorize an overspend on the strength of unmaterialized income.
 
-Not every request takes a hold. A text or chat request that asks for no more tokens than its free output allowance is
+### Free output allowance
+
+Not every request takes a hold. A text or chat request within its free output allowance is
 admitted without one and charged when its generations settle, so a requester with little or no balance can still use
 idle capacity. The allowance follows the request's estimated wait on the workers eligible for it, the same estimate
 the status route reports as `wait_time`: 4096 tokens up to a minute of queue ahead, falling linearly to 512 at five
 minutes. Free output is therefore generous while those workers keep up with their queue, however deep it is, and
-modest when they fall behind ([reference](../reference/chat_requests.md#free-output-allowance)). A free request's charge can take the requester
-below the account floor; projection then forgives the shortfall with a `FLOOR_ADJUSTMENT`, which is how free output is
+modest when they fall behind ([free output allowance](../reference/chat_requests.md#free-output-allowance)).
+
+A free request's charge can take the requester
+below the account floor. Projection then forgives the shortfall with a `FLOOR_ADJUSTMENT`, which is how free output is
 paid for.
 
-`effective_kudos` serves a different purpose. It adds all committed, unprojected currency deltas to the materialized
+### Effective balance reads
+
+`effective_kudos` adds all committed, unprojected currency deltas to the materialized
 balance and clamps the result to the account floor. It is appropriate for a "new balance" response or diagnosis, not
 for spend authorization, because it includes queued credits and does not represent holds.
 
@@ -297,8 +317,8 @@ The ledger changes mutation mechanics and leaves the established economic policy
   balances.
 
 Some ordinary reads intentionally remain eventually consistent. Queue priority is copied from the materialized user
-balance when a request or interrogation is activated; API and login display paths generally expose materialized
-balances; and the image-worker upfront eligibility recheck still reads the materialized balance even though initial
+balance when a request or interrogation is activated. API and login display paths generally expose materialized
+balances. The image-worker upfront eligibility recheck still reads the materialized balance even though initial
 admission is protected by a reservation. Those paths can be stale by the projector lag. They do not authorize a
 second spend, but they can temporarily show an old value or make a conservative/optimistic scheduling decision. The
 [consumer inventory](../reference/kudos_accounting.md#consumer-and-read-model-inventory) records these sites so a
@@ -310,15 +330,15 @@ replacing every `.kudos` read.
 Shadow mode is a migration mechanism, not a second architecture. Business methods always emit the typed events.
 A small compatibility projector applies the historical inline mutations and marks the emitted rows already applied.
 This provides permanent audit evidence without replaying a movement that already changed its target. The asynchronous
-projector's trust-promotion and escrow-drain duties run only in ledger mode; in shadow mode the compatibility projector
-owns them, so shadow observation changes no balance the previous code would not have changed.
+projector's trust-promotion and escrow-drain duties run only in ledger mode. In shadow mode the compatibility projector
+owns them, preserving inline balance behavior.
 
 The mode branch is confined to `horde/database/kudos_legacy_projection.py`, the control helpers, and the
 applied-flag choice inside the two emission primitives. Removing the cutover period is therefore a small deletion:
 remove the compatibility calls/module and the shadow mode transition, while leaving producers, event schemas,
 reservations, and the ledger projector intact.
 
-Shadow history is a forward audit beginning at deployment; it is not a reconstruction of all kudos ever created.
+Shadow history records movements from deployment onward. It does not reconstruct earlier kudos movements.
 The existing materialized balances form the opening position. A transaction-consistent snapshot records that opening
 position together with the applied-ledger totals visible at the same time.
 
@@ -340,7 +360,7 @@ stateDiagram-v2
 
 A snapshot uses repeatable-read isolation and records each user's materialized spendable/escrow values plus the
 applied ledger totals at that point. Reconciliation computes the expected current values from that baseline and later
-applied events. Read-only reconciliation reports drift. Repair mode emits deterministic `RECONCILIATION` postings;
+applied events. Read-only reconciliation reports drift. Repair mode emits deterministic `RECONCILIATION` postings.
 it never rewrites a balance, deletes a posting, or changes an old `applied` flag. Re-running the same repair cannot
 duplicate it.
 
@@ -359,11 +379,11 @@ This recovery model is why the archive is not pruned and why an operator must ne
 The architecture deliberately accepts several costs:
 
 - Normal balance and aggregate reads are only eventually consistent in ledger mode.
-- One projector limits write throughput; bounded batches, a small interval, and a bounded per-tick catch-up loop are
+- One projector limits write throughput. Bounded batches, a small interval, and a bounded per-tick catch-up loop are
   the scaling controls. Sharding it would require a new ordering and reservation design, not merely more threads.
 - The permanent archives grow without automatic pruning and need capacity planning.
 - PostgreSQL provides the production concurrency guarantees, and the unit suite runs against PostgreSQL. The SQLite
-  code branches serve the legacy `USE_SQLITE` runtime mode only; they short-circuit advisory locks and prove nothing
+  code branches serve the legacy `USE_SQLITE` runtime mode only. They short-circuit advisory locks and prove nothing
   about concurrent-projector behavior.
 - Projection exactly-once does not automatically make every producer idempotent. New externally retryable mutations
   need a stable idempotency key and parameter-conflict behavior.

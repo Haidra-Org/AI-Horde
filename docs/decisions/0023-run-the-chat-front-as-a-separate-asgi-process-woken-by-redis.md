@@ -23,7 +23,7 @@ finished?
 - Thousands of open waits must not consume request threads of the Horde instances.
 - The status route is limited to 60 reads per minute per address, method and path (`horde/apis/v2/kobold.py`,
   `horde/apis/limiter_api.py`, `get_request_path`).
-- The outcome must not depend on a notification arriving; it lives in Postgres.
+- The outcome must not depend on a notification arriving. It lives in Postgres.
 - The front must not need a database connection or the Flask stack.
 
 ## Considered Options
@@ -41,10 +41,14 @@ polls as a fallback".
 The front is the `horde/oai` package, run as `python -m horde.oai` under uvicorn with one event loop. It submits to
 `POST /v2/generate/chat/async` and holds one pattern subscription to `horde:chat:*` (`horde/oai/waiter.py`). The
 native side publishes on `horde:chat:<request id>` (`horde/chat_signal.py`) when a generation lands, when the request
-is done, and when it is cancelled or faulted. A message carries the event and a generation count, and does not carry
-generated text. On each wake the front reads the status once. Publishing is best effort, and a poll stretched by the
-wait estimate covers a lost message. The signal channel uses logical database 7 on the Redis host the cache treats as
-primary; the native cache in `horde/horde_redis.py` fans writes out to every configured server, and the chat signal
+is done, and when it is cancelled or faulted. A message includes the event and a generation count, without
+generated text.
+
+On each wake the front reads the status once. Publishing is best effort, and a poll stretched by the
+wait estimate covers a lost message.
+
+The signal channel uses logical database 7 on the cache's primary Redis host.
+The native cache in `horde/horde_redis.py` fans writes out to every configured server, and the chat signal
 and stream keys are kept only on that host.
 
 Outside `horde.oai`, the front imports only `horde.chat_contract`, `horde.consts`, `horde.metrics` and
@@ -66,7 +70,7 @@ its deadline and at shutdown.
 - Bad: Polling continues while subscribed. Status load is the initial and final reads, the fallback polls and a
   bounded number of rechecks after a signal.
 - Bad: A process to deploy, drain and monitor, and a request is pinned to the process that accepted it.
-- Bad: Every front process receives every chat event, so the channel carries only per-generation and terminal events.
+- Bad: Every front process receives every chat event, so the channel includes only per-generation and terminal events.
 - Bad: A front process that exits without its shutdown drain leaves its requests to run and be charged, with no
   client to deliver them to.
 
@@ -87,7 +91,7 @@ its deadline and at shutdown.
 ### Waiting inside Flask
 
 - Good: Does not add a process to deploy.
-- Bad: Each wait pins a waitress thread shared with pops and submits; a few hundred waits starve the workers.
+- Bad: Each wait pins a waitress thread shared with pops and submits. A few hundred waits starve the workers.
 
 ## Confirmation
 

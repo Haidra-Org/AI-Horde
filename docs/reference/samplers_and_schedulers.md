@@ -39,18 +39,17 @@ inject fresh noise at each step, so they have no fixed point to converge to and 
 different output at any step count. This is why they look distinct in side-by-side comparisons while the
 deterministic ones do not.
 
-## Trajectory steps, estimated work, and execution ceilings are different units
+## Work estimates and execution ceilings {#trajectory-steps-estimated-work-and-execution-ceilings-are-different-units}
 
 The unit boundary is an architectural constraint recorded in
 [ADR 11](../decisions/0011-separate-sampler-trajectory-estimate-and-ceiling.md). The versioned registry
 and HTTP projection are recorded in [ADR 12](../decisions/0012-publish-versioned-sampler-contracts.md).
 
-A second-order sampler evaluates the model twice per step, so comparing samplers at equal step counts
-charges them unequally. The correct comparison is at equal wall time: published guidance puts it as
-comparing Heun at 30 steps against Euler at 15
+Heun evaluates the model twice per step, while Euler evaluates it once. Compare their render time as well as
+step counts. Under the SDK's marginal work rates, 15 Heun steps and 30 Euler steps each cost 30 work units.
 
 The SDK calls this relationship **sampler work**: one work unit approximates the marginal inference work
-of an ordinary first-order model evaluation at the same payload. Fixed samplers carry a one-, two-, or
+of an ordinary first-order model evaluation at the same payload. Fixed samplers have a one-, two-, or
 three-unit marginal rate. This is intentionally not called an exact evaluation count because terminal
 steps and solver reuse make exact NFE differ slightly, and it is not wall time because hardware and
 payload overhead still matter.
@@ -65,10 +64,10 @@ different questions and are never substituted for one another.
 
 The public sampler-constraints document is self-describing. Its `schema_version` identifies the JSON
 shape, while `execution_contracts` publishes each worker conformance version and the complete formulas
-behind its atomic guarantees. A worker reports only `sampler_execution_contract_version`; it does not
+behind its atomic guarantees. A worker reports only `sampler_execution_contract_version`. It does not
 need to assemble or interpret a list of individual guarantees.
 
-## Measured: cost per step and how quickly each sampler settles
+## Measured cost and convergence {#measured-cost-per-step-and-how-quickly-each-sampler-settles}
 
 Wall time per render is fixed overhead (text encode, VAE decode, model juggling) plus steps times
 per-step cost. Fitting time against step count separates the two, which matters because comparing raw
@@ -76,7 +75,9 @@ wall time at one step count understates a higher-order sampler's real cost by di
 part. The cost figures below come from renders taken through the production pipeline at 10, 20, 30 and
 40 steps, three repeats each with warmups discarded, seed and prompt and cfg scale held fixed, on both
 SD1.5 at 512x512 and SDXL at 1024x1024. Each ratio is that sampler's fitted slope over `k_euler`'s slope
-on the same model. The fixed overhead the fit sets aside is around 0.29s at 512x512 and 1.40s at
+on the same model.
+
+The fixed overhead excluded by the fit is around 0.29s at 512x512 and 1.40s at
 1024x1024.
 
 `settled` is the similarity between a pair's 24-step and 60-step renders. Higher means the sampler had
@@ -91,7 +92,7 @@ identity and is not multiplied by these work rates.
 The SDXL column is the one to read for what a sampler itself costs. At 1024x1024 the GPU work of a step
 swamps the host-side work of issuing it, and every sampler lands within a fifth of its evaluation count.
 At 512x512 a step takes around 50ms, so per-step host work is a visible fraction of it and inflates the
-one-evaluation samplers by up to a third; the same samplers are clean on SDXL, which is what identifies
+one-evaluation samplers by up to a third. The same samplers are clean on SDXL, which is what identifies
 the effect as overhead rather than solver cost. Within the one-evaluation family the ordering of the
 SDXL column is inside measurement noise and is not worth reading as a ranking.
 
@@ -132,7 +133,7 @@ belong to second-order solvers, which is the trade being made: they cost roughly
 reach their answer in fewer steps. Whether that is a net win depends on the step count, which is why the
 honest comparison is at equal time.
 
-### What this means for pricing
+### Pricing {#what-this-means-for-pricing}
 
 Kudos for an image request comes from a small trained model that predicts how long the job will take. It
 is given the raw requested step count and a one-hot slot for the sampler, so **per-sampler cost is
@@ -154,7 +155,7 @@ usage totals. A worker opting into `limit_max_steps` instead uses maximum work: 
 finite profile-derived ceiling, while adaptive work requires an explicitly advertised backend
 execution contract.
 
-### Why job TTL is longer than isolated inference
+### Job lease allowances {#why-job-ttl-is-longer-than-isolated-inference}
 
 The lease policy and its alternatives are recorded in
 [ADR 13](../decisions/0013-image-job-ttl-is-a-prefetch-lease.md).
@@ -179,7 +180,7 @@ is capacity for prefetching and runtime variance, not a claim that median hardwa
 for a 512-square first-order step.
 
 A 150-second minimum protects small jobs, for which fixed model and asset preparation can dominate.
-ControlNet doubles the computed lease; an assignment whose selected model has a Flux, Qwen Image, or
+ControlNet doubles the computed lease. An assignment whose selected model has a Flux, Qwen Image, or
 Z-Image Turbo baseline triples it. Those factors compound before the minimum is applied. Each requested
 LoRA then adds a fixed download allowance of about 107 seconds (a 400 MB file at 30 Mbps) on top of the
 floored lease. A worker explicitly marked extra-slow receives three times the resulting lease. Consequently,
@@ -200,9 +201,8 @@ A sampler takes tuning arguments beyond its name and schedule. They reach the so
 `comfy.samplers.ksampler(name, extra_options)`, which builds them into the `KSAMPLER` object the solver
 runs from. That is the mechanism the backend's own per-sampler nodes use: `SamplerDPMPP_2M_SDE` and its
 siblings each construct a sampler with its options already baked in. `SamplerCustom` is a different node
-that consumes an already-built sampler and passes no options of its own. The stock sampler node the
-horde's graphs are built around has no inputs for them, so they
-were therefore pinned at their defaults and unreachable from any horde request. hordelib now exposes them
+that consumes an already-built sampler and does not pass its own options. The stock sampler node used by the
+Horde's graphs does not have inputs for these options. Hordelib exposes them
 (`sampler_eta`, `sampler_s_noise`, `sampler_s_churn`, `sampler_solver_type`, `sampler_order`), all
 defaulting to unset so an existing request renders identically.
 
@@ -215,12 +215,12 @@ defaulting to unset so an existing request renders identically.
 | `order` | `deis`, `ipndm`, `k_lms`, `sa_solver` | Multistep order. | Order 1 raises inside `deis` and `ipndm`, so the accepted floor is 2. |
 
 Why this matters for the request vocabulary: `eta` is the only *controllable* variation dial the stack
-has. Changing the seed varies everything at once and cannot be dialled; `eta` moves continuously from
+has. Changing the seed varies everything at once and cannot be dialled. `eta` moves continuously from
 "give me exactly this image again" to "explore around this image". Options are filtered per sampler at the
 point the sampler is built, because handing `sample_euler` an `eta` raises `TypeError` from inside graph
 execution rather than being rejected as a bad argument.
 
-### Convergence is rarer than the folklore suggests
+## Convergence measurements {#convergence-is-rarer-than-the-folklore-suggests}
 
 A step ladder that stops once two consecutive step counts agree above 0.98 (hordelib's *extremely similar*
 band) was run across 27 samplers on two of the nine schedules. **8 of 54 pairs settled at all, and 6 of
@@ -271,8 +271,7 @@ These are measured locally on SD1.5 unless stated.
 
 ## Eliciting a specific effect
 
-Recipes, in the order a requester is likely to want them. Each names the axis that actually controls the
-effect rather than the one that is conventionally fiddled with.
+The settings below associate each effect with its sampler control.
 
 | Goal | Recipe | Why this axis |
 | --- | --- | --- |
@@ -290,7 +289,7 @@ effect rather than the one that is conventionally fiddled with.
 Two anti-recipes worth stating: do not reach for `karras` because the step count is low (it artefacts at 4
 steps on most solvers), and do not reach for `linear_quadratic` on a non-flow model at all.
 
-## Choosing
+## Sampler selection {#choosing}
 
 - **Default for quality**: `k_dpmpp_2m` with `karras`, 25-30 steps. Converges quickly and is stable
   across step counts.
@@ -305,3 +304,17 @@ steps on most solvers), and do not reach for `linear_quadratic` on a non-flow mo
   across workers regardless of sampler, since workers differ in GPU and driver.
 - **Schedule**: leave it alone unless you are working at low step counts, where `simple` and
   `sgm_uniform` were the most robust here. `karras` remains a good default at 20+ steps.
+
+## Code map
+
+| Concept | File | Symbol |
+| --- | --- | --- |
+| Sampler and scheduler vocabularies | `horde/consts.py` | `KNOWN_SAMPLERS`, `EXTENDED_SCHEDULERS`, `SIGMA_GENERATOR_SCHEDULERS` |
+| Published constraints and execution contracts | `horde/sampler_constraints.py` | `compile_sampler_constraints`, `published_sampler_constraints` |
+| Bridge capability and sampler support | `horde/bridge_reference.py` | `check_bridge_capability`, `get_supported_samplers` |
+| Learned pricing vocabulary | `horde/classes/stable/kudos.py` | `KudosModel`, `CANONICAL_KUDOS_SAMPLERS` |
+| Work rates and adaptive execution bounds | `horde_sdk.generation_parameters.image.sampler_work` | `SAMPLER_WORK_PROFILES`, `SamplerExecutionContractVersion` |
+
+`tests/unit/test_sampler_constraints.py` checks the published contract against the registry.
+`tests/unit/test_kudos_pricing.py` covers pricing, and `tests/unit/test_bridge_reference.py` covers bridge gating.
+These tests check service contracts, rather than reproducing the benchmark measurements above.

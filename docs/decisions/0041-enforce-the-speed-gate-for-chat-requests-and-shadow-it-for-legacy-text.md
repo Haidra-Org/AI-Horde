@@ -23,7 +23,7 @@ it was read, the gate would have this effect:
 
 | Effect | Per week | Per day | Share |
 | --- | --- | --- | --- |
-| No eligible worker; the request queues as `is_possible: false` and expires after 20 minutes | 859 | about 123 | 0.1% |
+| Without an eligible worker, the request queues as `is_possible: false` and expires after 20 minutes | 859 | about 123 | 0.1% |
 | One worker refuses the job, another can take it | 30,478 | about 4,350 | 3.2% |
 
 | Model | Refused / completed per week | Over 120 s per day | Over 150 s per day | p90 pop to submit | Workers (tokens/s, capacity, `max_length`) |
@@ -41,6 +41,7 @@ these workers: it is charged tokens per second of lease, depressed by preparatio
 bounded by the aborts the gate could prevent: a handful of over-capacity jobs a week run past 150 s, and stale aborts
 on all gated workers combined are a few dozen a day. An abort restarts the job, so it delays rather than loses it.
 The cost is about 123 requests a day with no eligible worker and up to about 1,400 a day moved off a slower worker.
+
 Jobs are attributed to workers by model, which is exact for single-worker models and approximate otherwise, and the
 capacities come from one reading of speeds that move a little between readings.
 
@@ -58,7 +59,7 @@ measured?
 - Legacy text requests should keep the service they receive in production.
 - The effect the gate would have on legacy text must be measurable from production, so the scope can be revisited
   on evidence.
-- Metric attributes stay bounded; request, worker and generation ids belong in logs.
+- Metric attributes stay bounded. Request, worker and generation ids belong in logs.
 
 ## Considered Options
 
@@ -74,14 +75,19 @@ Chosen option: "Prefer capable workers for chat requests and record every over-c
 A capable worker for a chat request is an online chat worker for one of the request's models, not in maintenance or
 paused, whose declared chat limits admit the request, which declares every chat feature the request requires and the
 `url` or `base64` image transport when the request requires `vision`, and whose capacity is at least its `max_length`
-(`capable_chat_worker_clauses`). `TextWorker.can_generate_with_eligibility_inputs` refuses a chat request over the
+(`capable_chat_worker_clauses`).
+
+`TextWorker.can_generate_with_eligibility_inputs` refuses a chat request over the
 worker's capacity with `lease_speed` while a capable worker is online, and admits it when none is. In the pop query,
 `text_wp_speed_gate_clause` applies the same rule through a correlated `NOT EXISTS` over the capable workers, and
 passes every legacy text request. The feature test is `TextArrayContainsAll`, which compiles to `@>` on PostgreSQL
-and to a `json_each` anti-join on SQLite. The status
+and to a `json_each` anti-join on SQLite.
+
+The status
 route, worker availability and the wait estimate of ADR 0040 read the same eligibility check. Slow workers count as
 capacity for legacy requests, and for chat requests that no capable worker can take. A chat request over every online
 chat worker's capacity is therefore possible and is not refused as `no_eligible_worker`.
+
 `horde.pop.lease_capacity_limited` counts only pops by a worker whose capacity is below the chat output it declares.
 
 When a legacy text or chat job is assigned to a worker whose capacity is below its `max_length`, the generation row
@@ -140,19 +146,25 @@ record at assignment, since the worker's measured speed moves between pop and su
 
 ## Confirmation
 
-`tests/unit/test_text_job_ttl.py` pins the pop clause and the eligibility check agreeing for chat and legacy
-requests with and without a capable worker online, an offline, unavailable or under-declared faster worker not
-holding a chat request back, a faster worker counting as capable only when it declares every required feature, a
-faster `vision` worker counting as capable only with the `url` or `base64` image transport, an unmeasured worker counting as capable at the assumed speed, a slow worker refused a
-chat request a capable worker can take and assigned a legacy one, the capacity-limited count reading only the chat
-declaration, and the shadow records: the marker and assignment count for legacy and chat jobs, the completed outcome
-with its service time, the faulted outcome counted once, the aborted outcome, and no record for an assignment within
-capacity, and the feature containment giving the same results on PostgreSQL and SQLite.
-`tests/unit/test_text_worker_eligibility.py` pins availability counting a slow worker for a legacy request,
-not for a chat request a capable worker takes, and for a chat request no online worker has the capacity for.
-`tests/integration/test_chat.py` pins a chat request over the only online worker's capacity being assigned to it, and
-a slower worker not receiving a chat request a capable worker can take. `docs/reference/chat_requests.md` records the
-rule and the counters under "Job lease".
+`tests/unit/test_text_job_ttl.py` checks:
+
+- Agreement between the pop clause and the eligibility check for chat and legacy requests, with and without a
+  capable worker online.
+- An offline, unavailable or under-declared faster worker does not block a chat request. A faster worker counts as
+  capable only with every required feature. Vision also requires the `url` or `base64` image transport.
+- An unmeasured worker uses the assumed speed. A slow worker is refused a chat request when a capable worker can
+  take it, and is assigned a legacy request. The capacity-limited count uses only the chat declaration.
+- Shadow records include assignment markers and counts for legacy and chat jobs, completed outcomes with service
+  time, faulted outcomes counted once, and aborted outcomes. Assignments within capacity are not recorded.
+- Feature containment produces the same results on PostgreSQL and SQLite.
+
+`tests/unit/test_text_worker_eligibility.py` checks that slow workers count toward availability for legacy
+requests and for chat requests beyond every online worker's capacity. They do not count for chat requests that a
+capable worker can take.
+
+`tests/integration/test_chat.py` checks assignment of a chat request beyond the only online worker's capacity,
+and refusal to assign a chat request to a slower worker when a capable worker can take it.
+`docs/reference/chat_requests.md` records the rule and the counters under "Job lease".
 
 ## More Information
 

@@ -61,6 +61,7 @@ native text route a client that set `allow_downgrade` gets the request lowered t
 workers allowed. A chat request is never downgraded to the allowance. The only change made to the `max_tokens` of a
 chat request is a lowering to the largest completion length declared by an online worker. The client sees that
 change in `context_adjustments`.
+
 A dry run over the allowance is refused the same way, so a quote never describes a request that would be refused.
 A request that disallows slow workers always holds its kudos, whatever the allowance.
 
@@ -70,11 +71,13 @@ The allowance's effect is exported from every non-dry-run text and chat request 
 `horde.text.free_allowance.decisions` counts each decision by requester (`anonymous`, `registered`, `shared_key`),
 outcome (`free`, `funded`, `refused`, `downgraded`), requested and allowance size bucket (`<=512`, `513-1024`,
 `1025-2048`, `2049-4096`, `>4096`) and whether the request is a chat request.
-`horde.text.free_allowance.estimated_wait_seconds` records the wait the allowance was sized by, and
+
+`horde.text.free_allowance.estimated_wait_seconds` records the wait used to size the allowance, and
 `horde.text.queue_wait_seconds` records each assignment's time from request creation to pop, so the ceiling and floor
-can be judged against the waits requesters see.
-The queue-wait histogram carries the requester kind and not whether kudos were held upfront, so the funded wait is
-read as the `registered` requester's wait, which overstates it because a registered request under the allowance is
+can be judged against the requesters' waits.
+
+The queue-wait histogram includes the requester kind. It does not record whether kudos were held upfront, so the
+funded wait is read as the `registered` requester's wait, which overstates it because a registered request under the allowance is
 free. The exact signal needs a per-request record of the allowance outcome, which is deferred until the first
 production week's data shows it is needed.
 
@@ -83,9 +86,9 @@ production week's data shows it is needed.
 - An idle model serves up to 4096 tokens to any user. A model with a five-minute backlog serves 512.
 - Fast workers raise the allowance for their models by shortening the wait, which rewards capacity where it is.
 - The allowance for one model is not affected by load on another.
-- Requests up to 16384 tokens are accepted on the text routes; everything above the allowance needs kudos, and a
+- Requests up to 16384 tokens are accepted on the text routes. Everything above the allowance needs kudos, and a
   worker still bounds what it serves through its advertised `max_length`.
-- Clients cannot know the allowance before sending; the refusal states it, and a dry run returns the same refusal.
+- Clients cannot determine the allowance before sending. The refusal states it, and a dry run returns the same refusal.
 
 ## Pros and Cons of the Options
 
@@ -98,7 +101,7 @@ production week's data shows it is needed.
 ### Competing jobs per eligible thread
 
 - Good, because it looks only at the workers that could serve the request.
-- Bad, because a count of jobs ignores how fast those workers clear them; two queued jobs on a fast worker and two on
+- Bad, because a count of jobs ignores how fast those workers clear them. Two queued jobs on a fast worker and two on
   a slow one give the same allowance.
 - Bad, because with most models served by one or two workers, a slope that reaches the floor at a few jobs per thread
   keeps nearly every popular model at the floor.
@@ -107,7 +110,7 @@ production week's data shows it is needed.
 
 - Good, because it measures what the user experiences: time until their request starts.
 - Good, because it reuses the status estimate, so the allowance and `wait_time` agree.
-- Bad, because the estimate depends on measured worker speed, which a new worker lacks until it completes jobs; such a
+- Bad, because the estimate depends on measured worker speed, which a new worker lacks until it completes jobs. Such a
   worker is counted at an assumed 10 tokens per second.
 
 ## Confirmation
@@ -116,8 +119,8 @@ production week's data shows it is needed.
 eligible worker, the configured thresholds, the upfront decision, each allowance outcome counted once with its
 attributes and the queue wait recorded at assignment. `tests/unit/test_text_worker_eligibility.py` pins
 the competing work and the eligible speed the estimate reads. `tests/integration/test_chat.py` pins that a quote cached
-for a funded requester does not answer an anonymous dry run above the allowance on the text route; chat dry runs are
-not answered from the quote cache, since no chat context fit is `ignore`.
+for a funded requester is not returned for an anonymous dry run above the allowance on the text route. Chat dry runs
+do not use the quote cache, since chat context fitting does not support `ignore`.
 `docs/reference/chat_requests.md` records the public rule under "Free output allowance" and
 `docs/explanation/kudos_accounting.md` explains it.
 

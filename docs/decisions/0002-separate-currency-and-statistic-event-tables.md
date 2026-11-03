@@ -25,10 +25,10 @@ that nobody can spend.
 - Reconciliation has to answer whether user currency is conserved. That question only has an answer if every
   row in the table it reads is a signed delta against one user balance in one unit.
 - Worker and team rows are hard-deletable, while user rows are soft-deleted and wiped. A single table cannot
-  carry both the `ON DELETE RESTRICT` currency history requires and the deletion tolerance counter history
+  support both the `ON DELETE RESTRICT` required for currency history and the deletion tolerance counter history
   requires ([ADR 7](0007-accounting-foreign-key-policy.md)).
-- Consumers of the two classes differ. Balance readers, spend admission, and snapshots want currency.
-  Leaderboards, worker detail, team rankings, and user records want counters.
+- Consumers of the two classes differ. Balance readers, spend admission, and snapshots use currency.
+  Leaderboards, worker detail, team rankings, and user records use counters.
 
 ## Considered Options
 
@@ -42,11 +42,11 @@ Chosen option: "Separate currency postings from statistic postings".
 
 Currency postings go to `kudos_ledger`. Every row is a signed `NUMERIC(20,2)` delta against exactly one
 `users.id`, with `escrow` selecting the spendable balance or the evaluation balance. Display and counter
-postings go to `kudos_stat_events`. Every row carries a `unit` of `kudos`, `things`, or `count`, targets
+postings go to `kudos_stat_events`. Every row has a `unit` of `kudos`, `things`, or `count`, targets
 exactly one of `user_id` or `worker_id`, and records `team_id` and `worker_user_id` as captured attribution.
 Rows produced by one business event share an `event_id` across both tables, so the pairing survives the split.
 
-Worker and team kudos are display attribution. `WorkerTemplate.modify_kudos` emits stat events; the matching
+Worker and team kudos are display attribution. `WorkerTemplate.modify_kudos` emits stat events. The matching
 currency credit reaches the owner through `User.modify_kudos`.
 
 ### Consequences

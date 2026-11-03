@@ -114,7 +114,7 @@ meaning as their currency counterparts. The remaining fields define a counter pr
 | `KudosAuditDetail` | `reason`, `reservation_id`, `snapshot_id`, `touch_last_active`, `style_author_id`, `style_surcharge`, `style_type` |
 
 The three `style_*` keys appear together on a waiting-prompt activation debit whose request runs under someone else's
-style. They carry the author's user id, the part of the debit that is the style surcharge (a decimal string), and the
+style. They contain the author's user id, the part of the debit that is the style surcharge (a decimal string), and the
 style type (`text` or `image`), which is the user-record dimension the author's style count is kept under. They are written and
 read through `StyleReward.audit_detail` and `StyleReward.from_audit_detail`.
 
@@ -145,7 +145,7 @@ An entry type answers “why did this posting exist?” The sign and target answ
 All new or modified kudos code must obey these rules.
 
 1. **Use the public producer surface.** User currency enters through `User.modify_kudos` or
-   `User.modify_evaluating_kudos`; derived events enter through `emit_kudos_stat_event`. Do not assign a materialized
+   `User.modify_evaluating_kudos`. Derived events enter through `emit_kudos_stat_event`. Do not assign a materialized
    accounting column in a business path. Narrow exceptions are listed under [excluded kudos-like state](#excluded-kudos-like-state).
 2. **Group a logical event.** Wrap a settlement, transfer, activation tax, or other multi-posting mutation in
    `kudos_event`. Include `job_id` and `wp_type` where available.
@@ -155,7 +155,7 @@ All new or modified kudos code must obey these rules.
 4. **Commit business state and postings together.** Do not commit part of an event, perform network work, and append
    the rest later. Emission helpers flush by default so the caller owns the transaction boundary.
 5. **One currency row, one user balance.** Worker/team IDs and counter units never belong in `KudosLedger`. Emit
-   separate debit and credit rows; do not encode a transfer as an opaque net amount.
+   separate debit and credit rows. Do not encode a transfer as an opaque net amount.
 6. **Reserve before authorizing eventual spend.** Under `acquire_payer_lock`, call `reserve_kudos` with a stable
    `business_id`. Attach that reservation ID to matching debit metadata. Never use `effective_kudos` to authorize a
    spend.
@@ -172,7 +172,7 @@ All new or modified kudos code must obey these rules.
 12. **Keep the archive immutable.** Do not update old amounts, retarget postings, delete applied history, or toggle
     `applied` as a repair. Emit a compensating posting.
 13. **Add producer, fold, retry, and recovery tests.** At minimum pin the emitted rows and materialized result. A new
-    spend path also needs concurrent overspend coverage; a new retryable path needs replay/conflict coverage.
+    spend path also needs concurrent overspend coverage. A new retryable path needs replay/conflict coverage.
 
 Direct materialized assignments are allowed only for initial data/bootstrap before an accounting movement exists,
 or inside the shadow/projector/reconciliation implementation described here. A test fixture that needs an opening
@@ -238,8 +238,8 @@ batch reduce what the floor forgives. In shadow mode the same attribution runs i
 adjustment `User.modify_kudos` returns. In ledger mode that return is zero and only the applier credits, so a request
 never credits its author twice.
 
-Currency rows and statistic rows are each claimed in a bounded batch. A single event may cross a batch boundary;
-therefore any event-wide side effect must query for remaining unapplied rows rather than assuming a batch contains the
+Currency rows and statistic rows are each claimed in a bounded batch. A single event may cross a batch boundary.
+Any event-wide side effect must query for remaining unapplied rows rather than assuming a batch contains the
 whole event.
 
 ## Consumer and read-model inventory
@@ -265,8 +265,8 @@ because account currency, queue priority, worker attribution, job price, and sha
 | Snapshot/reconciliation | materialized user columns plus applied ledger totals | Repeatable-read baseline; repair only through compensating postings |
 
 The two legacy materialized reads in worker scheduling are documented rather than hidden. If they are changed, the
-maintainer must decide the intended policy: `available_kudos` is conservative spend capacity; `effective_kudos`
-includes queued income; the materialized value is a cheap, lagging priority/display projection. They are not
+maintainer must decide the intended policy: `available_kudos` is conservative spend capacity. `effective_kudos`
+includes queued income. The materialized value is a cheap, lagging priority/display projection. They are not
 interchangeable.
 
 ### Derived-stat consumers
@@ -279,7 +279,7 @@ interchangeable.
 | `user_stats` | User per-action kudos breakdown returned by user detail paths |
 | `user_records` | User usage/contribution/request/fulfilment records, contributor queries, statistics endpoints |
 | `users.last_active` | Account activity and stale-account lifecycle logic |
-| Applier heartbeat and queue/reservation ages | Metrics, `/api/v2/status/heartbeat`, operator status command, cutover gates |
+| Applier heartbeat and queue/reservation ages | Quorum-node metrics, operator status command, cutover gates. Node-local `/api/v2/status/heartbeat` excludes these shared-database signals |
 
 All of these can lag in ledger mode. Consumers that need transaction-local proof of an accepted event should inspect
 the event/result they just created, not force the projector or assume a refreshed aggregate.
@@ -310,9 +310,9 @@ The following kudos-adjacent state is not a user currency projection and must no
 | Transfer | `transfer:<source-user-id>:<event-id>` | Before paired postings commit | Released only after no unapplied posting remains for the event |
 
 `business_id` uniqueness supplies retry stability. Reactivation may not change payer. Reservation mutation uses row
-locks only after payer-scoped admission serialization; release functions are idempotent and return zero when no active
-hold remains. `available_kudos` reads the balance, active holds, and queued debits in one statement so all terms come
-from a single database snapshot; a fold or release committing mid-read cannot hide a debit from every term.
+locks only after payer-scoped admission serialization. Release functions are idempotent and return zero when there
+is not an active hold. `available_kudos` reads the balance, active holds, and queued debits in one statement so all terms come
+from a single database snapshot. A fold or release committing mid-read cannot hide a debit from every term.
 
 ## Concurrency and lock reference
 
@@ -336,9 +336,9 @@ properties.
 ## Failure and recovery invariants
 
 - A projector cycle commits both target updates and exact applied flags, or neither.
-- Deterministically malformed statistic events are quarantined by business-event ID; unrelated events in the batch continue, while infrastructure failures still roll back the whole cycle.
+- Deterministically malformed statistic events are quarantined by business-event ID. Unrelated events in the batch continue, while infrastructure failures still roll back the whole cycle.
 - A row is selected by `applied = false`, never by `id > watermark`.
-- A stopped projector is a lag incident, not lost work; restore it and drain in ledger mode.
+- A stopped projector is a lag incident, not lost work. Restore it and drain in ledger mode.
 - A transfer hold remains active until both sides of the event are materialized, even when a batch splits the event.
 - A trusted user's positive escrow with no in-flight promotion pair is self-healed by a later projector cycle.
 - Minimum-balance flooring creates an explicit `FLOOR_ADJUSTMENT` so snapshot replay equals projection.
@@ -372,12 +372,16 @@ for the executable procedure.
 | `active_reservations` | Count of holds with positive remaining amount and no release time |
 | `oldest_reservation_seconds` | Age of the oldest active hold |
 
+### Projector cadence and health sampling
+
 The background task runs every three seconds and keeps folding within a tick while full batches drain, up to a bounded
 number of catch-up cycles, so a backlog clears at many batches per tick while each fold stays a small transaction.
 Health is sampled once per tick, before the fold loop, and exported as current-value gauges. The combined queue and
 oldest-age gauges have currency/stat splits, while the quarantine gauges distinguish permanent evidence from the age
 of the newest incident. Phase histograms, cycles-per-tick and configured batch/catch-up gauges explain capacity limits.
-These metrics are recorded on the quorum node only; the per-node
+### Alerting and node health
+
+These metrics are recorded on the quorum node only. The per-node
 `/api/v2/status/heartbeat` endpoint deliberately excludes them, because a load balancer health check fed a
 shared-database signal would remove every node from rotation at once. Operators should alert on queue age and
 reservation age from the quorum telemetry, not only row count: a steady queue can be healthy under load, while one
@@ -385,27 +389,28 @@ old row or hold can indicate a poisoned path.
 
 ## Code map
 
-| File | Responsibility |
-| --- | --- |
-| `horde/classes/base/kudos.py` | Typed models, event context, mode control, currency/stat emission primitives |
-| `horde/database/kudos_ledger.py` | Bounded claim/fold transaction, trust promotion, floor recording, health |
-| `horde/database/kudos_reservations.py` | Available/effective balance calculations and hold lifecycle |
-| `horde/database/kudos_reconciliation.py` | Repeatable-read snapshots, drift calculation, compensating repair emission |
-| `horde/database/kudos_db.py` | PostgreSQL advisory-lock and isolation primitives |
-| `horde/database/kudos_counters.py` | Dialect-specific typed atomic counter upsert |
-| `horde/database/kudos_legacy_projection.py` | Temporary shadow-mode inline projection; the intended cutover deletion boundary |
-| `horde/classes/base/user.py` | User currency, usage, contribution, uptime, style, and trust producer surface |
-| `horde/classes/base/worker.py` | Worker display/stat producer surface and uptime/contribution orchestration |
-| `horde/classes/base/processing_generation.py` | Generation settlement event boundary and reservation cleanup |
-| `horde/classes/base/waiting_prompt.py` | Activation tax, requester usage debit, queue-priority snapshot |
-| `horde/classes/stable/interrogation.py` | Interrogation reservation, settlement event, and cleanup |
-| `horde/database/functions.py` | Transfer admission, paired postings, idempotency validation |
-| `horde/database/threads.py` | Periodic projector invocation and health metric recording |
-| `horde/enums.py` | Stable accounting discriminators and metadata keys |
-| `sql_statements/5.1.0.txt` | Idempotent production schema migration and counter uniqueness preparation |
-| `sql_statements/5.1.9.txt` | Rolling-safe quarantine columns plus a concurrent drainable-queue partial-index replacement; run with psql autocommit |
-| `tools/kudos_ledger_admin.py` | Status, drain, snapshot, reconcile/repair, promotion-statistic backfill, and mode commands |
-| `docs/how-to/kudos_ledger_operations.md` | Cutover, rollback, disaster-recovery, and rehearsal how-to |
+| Responsibility | File | Symbols |
+| --- | --- | --- |
+| Models, event context, mode control and event emission | `horde/classes/base/kudos.py` | `KudosLedger`, `KudosStatEvent`, `kudos_event`, `set_kudos_ledger_mode`, `emit_kudos_ledger_entry`, `emit_kudos_stat_event` |
+| Bounded projection, trust promotion, floor recording and health | `horde/database/kudos_ledger.py` | `apply_pending_kudos`, `kudos_applier_health` |
+| Available/effective balances and hold lifecycle | `horde/database/kudos_reservations.py` | `available_kudos`, `effective_kudos`, `reserve_kudos`, `consume_reservation`, `release_reservation` |
+| Repeatable-read snapshots, drift and compensating repairs | `horde/database/kudos_reconciliation.py` | `create_balance_snapshot`, `reconcile_balances` |
+| Advisory locks and transaction isolation | `horde/database/kudos_db.py` | `acquire_applier_lock`, `acquire_payer_lock`, `acquire_mode_pin`, `acquire_mode_gate_exclusive`, `begin_repeatable_read` |
+| Atomic counter upserts by database dialect | `horde/database/kudos_counters.py` | `increment_counter`, `increment_counters` |
+| Temporary shadow-mode inline projection and cutover deletion boundary | `horde/database/kudos_legacy_projection.py` | `project_user_balance`, `project_user_escrow`, `project_trust_promotion`, `project_style_reward` |
+| User currency and statistic producers | `horde/classes/base/user.py` | `User.modify_kudos`, `User.record_usage`, `User.record_contributions`, `User.record_uptime`, `User.record_style` |
+| Worker display/stat producers and contribution orchestration | `horde/classes/base/worker.py` | `WorkerTemplate.modify_kudos`, `WorkerTemplate.record_contribution`, `WorkerTemplate.record_uptime` |
+| Generation settlement event boundary and reservation cleanup | `horde/classes/base/processing_generation.py` | `ProcessingGeneration.record` |
+| Activation tax, usage debit and queue-priority snapshot | `horde/classes/base/waiting_prompt.py` | `WaitingPrompt._activate`, `WaitingPrompt.record_usage` |
+| Interrogation reservation, settlement and cleanup | `horde/classes/stable/interrogation.py` | `InterrogationForms.record` |
+| Transfer admission, paired postings and idempotency | `horde/database/functions.py` | `transfer_kudos` |
+| Periodic projection and health metrics | `horde/database/threads.py` | `apply_kudos_ledger` |
+| Accounting discriminators and metadata keys | `horde/enums.py` | `KudosEntryType`, `KudosLedgerMode`, `KudosAuditDetail` |
+| Initial schema and counter uniqueness | `sql_statements/5.1.0.txt` | SQL migration |
+| Quarantine columns and concurrent drainable-queue index replacement | `sql_statements/5.1.9.txt` | SQL migration. Run with psql autocommit |
+| Status, drain, snapshot, reconciliation, repair, promotion-statistic backfill and mode commands | `tools/kudos_ledger_admin.py` | `main` |
+
+See [Kudos ledger operations](../how-to/kudos_ledger_operations.md) for cutover, rollback and recovery rehearsals.
 
 ## Regression-test map
 

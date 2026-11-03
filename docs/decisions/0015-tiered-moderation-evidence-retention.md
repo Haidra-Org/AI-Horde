@@ -20,10 +20,10 @@ Moderators review these rows and decide any action.
 
 The records exist to identify accounts attempting to generate illegal content and to enforce the restrictions that
 follow. A restriction cannot be enforced against an account or address whose record is gone, so any route that removes
-a record while the moderation purpose stands defeats it. The Horde is open source, so every deletion path is public; a
+a record while the moderation purpose stands defeats it. The Horde is open source, so every deletion path is public. A
 deployment must not offer a self-service route, such as an account wipe, to destroying evidence.
 
-Deleting a whole row at a fixed age removes every value at once. The prompt text and address carry most of the privacy
+Deleting a whole row at a fixed age removes every value at once. The prompt text and address account for most of the privacy
 cost and lose review value quickly, while the reason, outcome, models and capture time stay useful for counting
 rejections and reports long after. A single hard-coded window also leaves operators no way to match retention to their
 legal assessment, and the privacy policy has no authoritative value to disclose.
@@ -50,7 +50,9 @@ Chosen option: "Tiered decay under an anonymizing ceiling".
 Each event decays by age from capture. `HORDE_MODERATION_IPADDR_RETENTION_DAYS` (default 30) removes the address.
 `HORDE_MODERATION_TEXT_RETENTION_DAYS` removes the three prompt stages. It defaults to `none`, which keeps the text
 until the ceiling, so evidence no moderator has reviewed yet stays reviewable for the whole evidence period. Either
-window can be `none`, and an operator can set a shorter text window. `HORDE_MODERATION_EVIDENCE_CEILING_DAYS` (default
+window can be `none`, and an operator can set a shorter text window.
+
+`HORDE_MODERATION_EVIDENCE_CEILING_DAYS` (default
 365, at most 365, never disabled) anonymizes every event of every reason that is not under moderation action: it
 clears the account, proxied account, address, address pseudonym, request and job identifiers and prompt stages. The
 reason, outcome, models, capture time, truncation flag, reporting worker and notes remain. A window longer than the
@@ -59,7 +61,7 @@ ceiling, or any malformed value, stops startup.
 An event is under moderation action when it has at least one note, or its account is flagged, or its account is
 suspicious: not trusted and holding at least `User.SUSPICION_THRESHOLD` suspicions, as `User.is_suspicious` judges it.
 Every retention step skips such events, with no cap, for as long as the condition holds. `_under_moderation_action` in
-`horde/database/prompt_moderation.py` is the single definition; a worker report record uses the account part only.
+`horde/database/prompt_moderation.py` is the single definition. A worker report record uses the account part only.
 
 Capture also stores an address pseudonym, `ip_subject_key`: HMAC-SHA256 under the deployment's `secret_key` over a
 moderation label and the IP subject (the IPv4 address, or the IPv6 /64). It outlives the address window and is cleared
@@ -95,7 +97,7 @@ both reading it when they run, and the moderator listing reports that policy, so
 - Bad: Rows are never deleted by age, so the row count grows with rejection and report volume for as long as the
   table exists.
 - Bad: A backlog larger than the per-minute catch-up bound (20 passes of 1,000 rows per step) leaves values past
-  their windows until the tick catches up; a saturation counter reports each tick that used every pass.
+  their windows until the tick catches up. A saturation counter reports each tick that used every pass.
 - Bad: Records under moderation action never get a retention flag, so every pass rescans them.
 - Bad: Lengthening a window cannot restore values already removed.
 - Bad: The pseudonym keeps events of one address linkable until the ceiling, after the address itself is gone.
@@ -104,7 +106,7 @@ both reading it when they run, and the moderator listing reports that policy, so
 
 ### Delete each event after one configurable window
 
-- Good: Simplest schema and pass; storage is bounded by time.
+- Good: Simplest schema and pass. Storage is bounded by time.
 - Bad: The window must satisfy the least private value (text) and the most useful one (counts) at once.
 - Bad: Aggregate history disappears with the text.
 
@@ -116,18 +118,24 @@ both reading it when they run, and the moderator listing reports that policy, so
 ## Confirmation
 
 `tests/unit/test_moderation_retention_policy.py` fixes the parsing rules: defaults, `none`, malformed values, windows
-above the ceiling, and a ceiling above 365 or disabled. `tests/unit/test_ip_subject.py` fixes the IP subject and the
-pseudonym, including the refusal of a published secret. `tests/integration/test_prompt_moderation.py` fixes each
+above the ceiling, and a ceiling above 365 or disabled.
+
+`tests/unit/test_ip_subject.py` fixes the IP subject and the
+pseudonym, including the refusal of a published secret.
+
+`tests/integration/test_prompt_moderation.py` fixes each
 retention step, its batch bound and idempotence, notes surviving anonymization and a note stored on an anonymized
 event, the exemption from every step for an event with a note, of a flagged account or of a suspicious untrusted
 account (a trusted account at the threshold is not exempt), address filtering by pseudonym, the worker report records'
 window, ceiling and exemption, evidence surviving an account wipe, the listing's `retention` and flags, and the privacy
-document in both formats. `tests/integration/test_moderation_migration.py` verifies the nullable account
+document in both formats.
+
+`tests/integration/test_moderation_migration.py` verifies the nullable account
 and problem-job address columns, the flags and the partial indexes, and that the models build the same moderation
 tables as the migration.
 
 ## More Information
 
 The public privacy document states the windows, the exemption for moderation action, and that deleting an account
-does not remove these records; it links the source code at `HORDE_REPOSITORY`. [Moderation operations reference](../reference/moderation_operations.md) documents the variables and the
+does not remove these records. It links the source code at `HORDE_REPOSITORY`. [Moderation operations reference](../reference/moderation_operations.md) documents the variables and the
 pass.

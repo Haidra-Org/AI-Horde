@@ -22,7 +22,7 @@ already creates, reads or generates under styles keeps working, with these excep
 
 - Image style creation is limited to 20 an hour per address, and reads now fall under the app's default
   limit instead of the write limits.
-- A `PATCH` changes only the fields it carries.
+- A `PATCH` changes only its supplied fields.
 - `shared_key` is served only to the style's owner.
 - Style errors report their specific `rc` where they used to report `BadRequest`.
 - Text templates keep `{{[NAME]}}` placeholders, and a template field that is more than a bare name is
@@ -102,7 +102,7 @@ curl -s "$HORDE/styles/image/<style-id>" | jq '{info, prompt, public, nsfw}'
 Every read of a style used to include its shared key, which let any reader spend the key outside the
 style. Now the list routes serve `shared_key` as null to everyone, and the single-style routes
 (`/styles/<type>/<style-id>`, `/styles/<type>_by_name/<style-name>`) serve it only when the request
-carries the owner's API key in the `apikey` header. That response carries `Cache-Control: private,
+includes the owner's API key in the `apikey` header. That response includes `Cache-Control: private,
 no-store`.
 
 Action: a client that shows or edits a style's shared key reads the single style with the owner's key.

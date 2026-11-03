@@ -52,14 +52,16 @@ lease to 150 s after the post. The lease never extends beyond a cap measured fro
 `TRUSTED_TEXT_JOB_LEASE_CAP_SECONDS` (600 s) for a worker owned by a trusted user and
 `UNTRUSTED_TEXT_JOB_LEASE_CAP_SECONDS` (200 s) otherwise. A post that repeats the last one does not renew, and a post
 after the lease has lapsed does not revive it. Posts past the cap are accepted and relayed to the client but do not
-extend the lease. The lease state lives with the stream lease in Redis; a granted renewal writes the new `job_ttl` to
+extend the lease. The lease state lives with the stream lease in Redis. A granted renewal writes the new `job_ttl` to
 the generation row.
 
 The pop offers a chat job to a worker only when the worker's measured speed can produce the job's `max_length` inside
 the base lease after the preparation allowance, that is when `speed × 120 s` is at least `max_length`. ADR 0041
 scopes this gate: a chat job goes first to workers that pass it and to a slower worker when no capable chat worker is
 online, a legacy text job is offered whatever its length, and an assignment over the worker's capacity is recorded
-with its outcome. A worker that has
+with its outcome.
+
+A worker that has
 not recorded a speed yet is taken to run at `UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND` (10 tokens per second) until
 its completed jobs record a measured speed. The same rule
 is applied in the pop query and in the eligibility check that the status route and ADR 0040 use, so a worker that
@@ -85,8 +87,8 @@ whose speed caps the chat output it is offered below the length it declares).
 - A slow worker is offered shorter chat jobs than it declares while faster workers are online. The gap is visible in
   `horde.pop.lease_capacity_limited`.
 - A new worker is treated as running at 10 tokens per second and so is offered up to 1200 tokens until it records
-  its speed; the assumption is replaced after its first completed jobs.
-- A chat request asking for more than a worker's capacity waits for a faster worker; a worker measured at 10 tokens per
+  its speed. The assumption is replaced after its first completed jobs.
+- A chat request above a worker's capacity waits for a faster worker. A worker measured at 10 tokens per
   second is offered up to 1200 tokens, one at 40 tokens per second up to 4800.
 
 ## Pros and Cons of the Options
@@ -109,7 +111,7 @@ whose speed caps the chat output it is offered below the length it declares).
 - Good, because the cap bounds the exposure, and the bound is smaller for workers without a trust record.
 - Good, because long replies are routed to the workers that can finish them.
 - Bad, because renewal needs progress posts, so only streaming chat jobs can exceed the base lease.
-- Bad, because a job renewed to the cap is held longer than 150 s if the worker stalls late; the cap limits that.
+- Bad, because a job renewed to the cap is held longer than 150 s if the worker stalls late. The cap limits that.
 
 ## Confirmation
 
@@ -118,7 +120,7 @@ the database and Redis writes with their counters, the progress route (a retry d
 stale-abort counter and the speed gate for measured and unmeasured workers, including the agreement between the pop
 query and the eligibility check. `tests/unit/test_chat_progress.py` pins the stream lease fields and their extension.
 `docs/reference/chat_requests.md` records the public rule under "Job lease" and `docs/how-to/serve_chat_jobs.md`
-tells worker authors how progress posts renew it.
+describes progress-based renewal for worker authors.
 
 ## More Information
 

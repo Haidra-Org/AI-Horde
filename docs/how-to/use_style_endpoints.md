@@ -17,14 +17,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [generation](../topics.md#generation), [requests](../topics.md#requests)
 <!-- END GENERATED: topics -->
 
-Preconditions: an account that is trusted or holds the customizer role, since only those may create a
-style; that account's API key; and network access to a horde deployment's `/api/v2` endpoints. The
+Before starting, use an account that is trusted or holds the customizer role, since only those may create a
+style. Have that account's API key and network access to a Horde deployment's `/api/v2` endpoints. The
 procedures below use `/api/v2/status/style_contract`, `/api/v2/styles/text`, `/api/v2/styles/image`,
 `/api/v2/generate/text/async` and `/api/v2/generate/async`.
 
-End state: a text style and an image style that each declare a `parameter_policy` and, for the text
-style, `template_fields`; a dry run under each that returns the request as the horde resolved it; and
-both styles either kept or deleted again.
+The procedures create text and image styles with `parameter_policy`, plus `template_fields` on the text style.
+You verify the resolved request with a dry run under each style, then keep or delete the styles.
 
 The rules these procedures work within are in the [style contract
 reference](../reference/style_contract.md). A frontend building authoring controls and request forms
@@ -51,7 +50,7 @@ procedure from what it returns, rather than from values pasted from another depl
 curl -s "$HORDE/status/style_contract" | jq .
 ```
 
-Verification: the body carries `schema_version`, `text` and `image`. `jq '.text.overridable_parameters'`
+Verification: the body includes `schema_version`, `text` and `image`. `jq '.text.overridable_parameters'`
 lists the params a text policy may hand over and `jq '.text.ceiling_parameters'` the params it may cap
 with the range each ceiling may take. `jq -r '.text.protected_patterns[0].pattern'` is the regular
 expression a text template's protected placeholders have to match.
@@ -88,7 +87,7 @@ curl -s -X POST "$HORDE/styles/text" \
   }'
 ```
 
-Verification: the response carries the new style's `id`. Read it back and confirm both declarations
+Verification: the response includes the new style's `id`. Read it back and confirm both declarations
 were stored, since a style that declares neither returns them as null:
 
 ```bash
@@ -98,7 +97,7 @@ curl -s "$HORDE/styles/text/<style-id>" | jq '{parameter_policy, template_fields
 The `prompt` comes back with `{{[INPUT]}}` and `{{[OUTPUT]}}` exactly as sent.
 
 Reversal: `curl -s -X DELETE "$HORDE/styles/text/<style-id>" -H "apikey: $APIKEY"`, which returns 200
-with an `OK` message. Deleting a style is final; there is no undelete.
+with an `OK` message. Deleting a style is final. There is no undelete.
 
 ## 3. Create an image style with a policy
 
@@ -165,7 +164,7 @@ Verification: the response is 200 with `kudos` and `resolved`. In `resolved`:
 - `params.temperature` is 0.7 from the style, because the policy does not list it.
 - `params.n` is 2, which always comes from the request.
 - `models` is the style's model list.
-- `style` carries the applied style's `id` and `name`.
+- `style` includes the applied style's `id` and `name`.
 - `estimated_prompt_tokens` and `context_fit` report how the prompt was sized.
 
 The image equivalent posts the same `dry_run: true` to `$HORDE/generate/async`, and its `resolved`
@@ -205,7 +204,7 @@ cancels it.
 
 ## 6. Change a style with PATCH
 
-A `PATCH` changes only the fields the request carries. Anything left out keeps its stored value.
+A `PATCH` changes only the supplied fields. Anything left out keeps its stored value.
 
 ```bash
 curl -s -X PATCH "$HORDE/styles/text/<style-id>" \
@@ -273,7 +272,7 @@ Pin the `schema_version` the client was written against and compare it on every 
 
 - A higher version can add fields and can change what an existing field means. Read the reference page
   and the decision records for what moved before applying a version the client has not been updated
-  for; until then, fall back to the client's own defaults rather than applying the new document.
+  for. Until then, fall back to the client's own defaults rather than applying the new document.
 - Ignore keys the client does not recognise, at every level of the document. New keys are added inside
   the existing sections, and a client that rejects unknown keys breaks on an additive change it could
   have ignored.

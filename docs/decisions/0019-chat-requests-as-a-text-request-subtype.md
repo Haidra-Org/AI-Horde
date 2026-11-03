@@ -16,8 +16,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 An OpenAI chat request is a `messages` array with sampling fields. The native text request is a prompt string with
 the same sampling fields, queued in `waiting_prompts`, priced by `max_length`, matched to workers by
 `horde/database/text_functions.py`, `get_sorted_text_wp_filtered_to_worker`, and settled by
-`horde/classes/kobold/processing_generation.py`. Chat needs the messages carried to the worker and the structured
-reply, usage and finish reason carried back, with the existing queue and accounting reused. Where should a chat
+`horde/classes/kobold/processing_generation.py`. Chat requires messages sent to the worker and the structured
+reply, usage and finish reason returned, with the existing queue and accounting reused. Where should a chat
 request live?
 
 ## Decision Drivers
@@ -40,7 +40,7 @@ Chosen option: "A `TextWaitingPrompt` with a nullable `messages` column, chat to
 
 `POST /v2/generate/chat/async` creates a `TextWaitingPrompt` whose `messages` column holds the OpenAI array and whose
 `prompt` column holds a flattened rendering of the conversation. The flattened prompt feeds the token estimate,
-kudos, moderation and the request's record of what was submitted; workers receive the messages. A boolean `is_chat`
+kudos, moderation and the request's record of what was submitted. Workers receive the messages. A boolean `is_chat`
 column is the discriminator. Because chat-ness reads that column, `messages` and `chat_extras` (tools, tool choice,
 response format and the stream hint) are deferred and loaded only for the request a worker is assigned.
 
@@ -66,7 +66,7 @@ that output ([ADR 0024](0024-stream-chat-deltas-through-a-retained-redis-stream.
   (`sql_statements/5.1.15.txt`). The migration also adds three indexes: the partial unique index on
   `(user_id, operation_key)` for [ADR 0026](0026-classify-client-retries-and-recover-submits-by-operation-key.md), and
   `worker_id` indexes on `worker_blacklists` and `text_worker_softprompts` for the eligibility query.
-- Bad: A chat request carries a prompt column that is a rendering of the messages, and every validation rewrite of
+- Bad: A chat request has a prompt column containing a rendering of the messages, and every validation rewrite of
   that prompt has to be mirrored onto the messages.
 - Bad: Text-only tooling that reads `prompt` sees a flattened conversation.
 - Bad: The text pop query branches on the worker's chat declaration, so a change to text eligibility has to be
@@ -83,7 +83,7 @@ that output ([ADR 0024](0024-stream-chat-deltas-through-a-retained-redis-stream.
 
 ### A separate polymorphic request class and table
 
-- Good: Does not need a flattened prompt; the chat shape is the only shape.
+- Good: Does not need a flattened prompt. The chat shape is the only shape.
 - Bad: Every text behaviour that reads `TextWaitingPrompt` needs a second branch or a shared base.
 
 ### Translation to a prompt string at submit

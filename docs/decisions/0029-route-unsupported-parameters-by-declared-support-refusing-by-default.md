@@ -24,7 +24,7 @@ request field that the service or the eligible workers do not serve?
 - Capability fields (`tools`, `response_format`, image parts) change the answer whatever their value.
 - Stock clients send some fields at their default value unprompted.
 - Most OpenAI-compatible clients were written against services that ignore unknown sampling fields.
-- A refusal caused by the online workers should tell the client whether waiting can help.
+- A refusal caused by the online workers should state whether waiting can help.
 
 ## Considered Options
 
@@ -80,20 +80,22 @@ each penalty whose value is not 0, `vision` for an image part, `tools`, `json_ob
 format, and `tools_with_response_format` when both are forwarded. A penalty at 0 is not a requirement, so a request
 that sends the default is served by any chat worker. Only workers that declare every requirement are eligible, as
 [ADR 0022](0022-declare-chat-capabilities-by-pop-fields.md) describes. When the eligible workers do not cover the
-request, the front answers by the cause (`horde/oai/app.py`, `horde/oai/waiter.py`):
+request, the front responds according to the cause (`horde/oai/app.py`, `horde/oai/waiter.py`):
 
 | Cause                                                                                           | Answer                                                                 |
 | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| The online workers serving the model all lack a declaration the request needs, or all apply a `tools_max_temperature` it exceeds | 404 `no_worker_supports_features` at the status read that reports it; the answer does not carry `Retry-After` |
+| The online workers serving the model all lack a required declaration, or the request exceeds every worker's `tools_max_temperature` | 404 `no_worker_supports_features` at the status read that reports it. The response does not include `Retry-After` |
 | The request exceeds every online worker's `max_context_length` for the model, or its `max_length` exceeds every `max_length` declared by the workers online after submission | 400 `no_worker_supports_limit`, with `param` set to the token limit or context length key |
 | The model is not served by any online chat worker at submission | 503 `no_eligible_worker` with `Retry-After`. The Horde refuses the request before sizing |
 | No worker is eligible, nothing is processing, the status does not report a declaration gap, and the fail-fast grace has passed | 503 `no_eligible_worker` with `Retry-After` |
 
-A declaration gap does not close when a worker restarts, so the 404 is returned at once and does not carry a retry hint.
+A declaration gap does not close when a worker restarts, so the 404 is returned at once without a retry hint.
 The context limit comes from the request itself, so the request is refused as invalid.
+
 `max_tokens` is an upper bound in the OpenAI API. A value above every online worker's declared completion length is
 lowered at submission to the largest declared value. The change is reported in `context_adjustments`, and the request
 is not refused.
+
 A request for a model that is not served by any online chat worker is refused at submission. A worker counts as
 online for 300 seconds after its last check-in, so a restarting worker still counts as serving the model.
 The grace before the 503 (20 seconds by default) covers workers that go offline after submission.
@@ -111,7 +113,7 @@ The grace before the 503 (20 seconds by default) covers workers that go offline 
 
 - Good: The client learns of every field that would change the answer.
 - Good: Default values that stock clients send cost nothing.
-- Bad: A client cannot ask the service to drop a field; it has to remove the field itself.
+- Bad: A client cannot request that the service drop a field. The client has to remove the field before sending.
 
 ### Drop unsupported sampling values and report them
 
@@ -131,7 +133,7 @@ The grace before the 503 (20 seconds by default) covers workers that go offline 
 keys that are dropped. `tests/unit/oai/test_admission_and_table.py` fixes the default no-op table.
 `tests/unit/test_chat_request.py` (`TestUnsupportedParameters`, `TestRequiredFeatures`) fixes the native refusals and
 the requirements derived from a request. `tests/unit/oai/test_errors.py` and `tests/unit/oai/test_lifecycle.py` fix
-the 404, 400 and 503 answers to a worker gap. `docs/reference/chat_front.md` (Request keys, No eligible worker) and
+the 404, 400 and 503 responses to a worker gap. `docs/reference/chat_front.md` (Request keys, No eligible worker) and
 `docs/reference/chat_requests.md` (Refused keys and values, Impossible reason) record the public behaviour.
 
 ## More Information

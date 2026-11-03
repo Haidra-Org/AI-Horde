@@ -14,7 +14,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 ## Context and Problem Statement
 
 A text style's prompt template is filled with `str.format_map`, so every brace in the template is a
-format specifier. koboldcpp templates carry instruct placeholders of the form `{{[INPUT]}}` and
+format specifier. koboldcpp templates include instruct placeholders of the form `{{[INPUT]}}` and
 `{{[OUTPUT]}}`, which the text backend substitutes when it builds its own prompt. Under `format_map`
 those tokens collapse to `{[INPUT]}` and reach the worker as literal text the backend no longer
 recognises. Nothing rejects the template, so the style is created, the request succeeds, and the
@@ -83,7 +83,9 @@ is one literal brace. Image formatting is unchanged.
 
 An anonymous `GET /api/v2/status/style_contract` serves the document that
 `horde/style_contract_document.py` compiles from the per-type `StyleContractVocabulary` the style
-endpoints validate against and from the formatting constants the request path uses. It carries
+endpoints validate against and from the formatting constants the request path uses.
+
+It includes
 `schema_version`, starting at 1, and a section per style type holding the horde-filled placeholders,
 whether declared fields are placeholders, the protected patterns as regular expressions with a
 description each, one sentence of brace handling, the overridable params, the params a ceiling may
@@ -103,7 +105,9 @@ payload. There is no worker behaviour to make a claim about.
 The surcharge decision moves out of `apply_style` into `GenerateTemplate.decide_style_surcharge`,
 which both gentypes call after `super().validate()` has resolved the user. A request under a style its
 requester authored is neither charged the 2 kudos nor credits the author, and a request under someone
-else's style does both. The surcharge rides the requester's activation debit, and the author is credited
+else's style does both.
+
+The surcharge is included in the requester's activation debit, and the author is credited
 from that debit only the part of the surcharge it collected, so a dry run or a refused request pays
 no one and a surcharge the minimum-balance floor forgives is not credited. The kudos applier credits
 the author in ledger mode, and activation credits inline in shadow mode.
@@ -117,7 +121,7 @@ the author in ledger mode, and activation credits inline in shadow mode.
 - Good: `schema_version` gives a client one value to pin and to re-read the document on.
 - Good: A style author can use their own style at the unstyled price.
 - Bad: The two style types still handle braces differently, since the image rule escapes everything
-  and the text rule escapes nothing outside the protected pattern; a client has to read the
+  and the text rule escapes nothing outside the protected pattern. A client has to read the
   per-type `brace_handling` rather than assume one rule.
 - Bad: A lowercase or otherwise malformed instruct token is not protected and still collapses, so the
   protection is exactly as wide as the published regular expression.
@@ -199,5 +203,5 @@ author.
 The published projection follows [ADR 12](0012-publish-versioned-sampler-contracts.md) in shape and
 differs from it on registry ownership and worker conformance, for the reasons given above. The
 [style contract reference](../reference/style_contract.md) states the enforced rules and the fields of
-the published document; [Use the style endpoints](../how-to/use_style_endpoints.md) is the procedure
+the published document. [Use the style endpoints](../how-to/use_style_endpoints.md) is the procedure
 for declaring and using a style.

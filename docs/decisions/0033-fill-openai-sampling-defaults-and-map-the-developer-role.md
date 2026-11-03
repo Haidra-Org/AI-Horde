@@ -16,13 +16,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 OpenAI's defaults for an omitted sampling field are temperature 1.0, top_p 1.0 and penalties 0, and OpenAI does not
 apply a repetition penalty. A chat job that omits a field reaches the worker's KoboldAI defaults, which on koboldcpp
 include a repetition penalty and a different temperature. Some OpenAI-compatible clients send instruction messages
-with the role `developer`, which many chat templates do not know. What does an omitted field mean, and what does
+with the role `developer`, which many chat templates do not support. What does an omitted field mean, and what does
 `developer` mean?
 
 ## Decision Drivers
 
 - An omitted field must mean the same thing on every worker.
-- A template or worker should not have to know a role the model predates.
+- A template or worker should not have to support a role introduced after the model's training.
 - Clients that send `developer` must be served.
 
 ## Considered Options
@@ -52,19 +52,22 @@ into the job payload, with the client's value where it sent one:
 The first four are OpenAI's defaults. OpenAI does not have a key for `rep_pen`, `top_k` or `min_p`, so they are set
 to their neutral values. `stop_sequence` and `seed` are written only when the client sent them. KoboldAI samplers
 outside the table, such as `top_a`, `typical`, `tfs` and `rep_pen_range`, are not written, so the worker's own
-defaults apply to them. The table applies to chat jobs only; native text jobs do not use it.
+defaults apply to them. The table applies to chat jobs only. Native text jobs do not use it.
 
 An omitted `reasoning_effort` is sent as `medium`, OpenAI's default (`DEFAULT_CHAT_REASONING_EFFORT` in
 `horde/chat_contract.py`), to a worker that declares the `reasoning_effort` feature. koboldcpp gives an absent value
 an unlimited thinking budget, so a small `max_tokens` would be spent on reasoning alone and the reply would be empty.
+
 The default is added when the job is popped (`apply_worker_chat_defaults`, called from
 `TextWaitingPrompt.get_pop_payload`), since only then is the worker known. It does not add a requirement, so any chat
 worker may serve the request, and a worker that does not declare the feature receives no `reasoning_effort`. The
-stored request, its required features and its kudos estimate do not change. An explicit value, `none` included,
+stored request, its required features and its kudos estimate do not change.
+
+An explicit value, `none` included,
 requires a declaring worker and is passed unchanged.
 
 The front forwards a `developer` message to the native chat route unchanged. The native route stores it as `system`
-(`serialize_messages`), so a worker only meets roles every chat template knows. Since every request is normalised
+(`serialize_messages`), so a worker receives only roles supported by every chat template. Since every request is normalised
 this way, the chat features do not include one for preserving the `developer` role.
 
 ### Consequences

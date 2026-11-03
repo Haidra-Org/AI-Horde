@@ -13,8 +13,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Context and Problem Statement
 
-A chat request may carry images, as data URLs or as `http(s)` URLs. A worker serving the request needs the image
-bytes. Some workers fetch a URL; others parse only inline data URLs. A large request also makes a large pop
+A chat request may include images, as data URLs or as `http(s)` URLs. A worker serving the request needs the image
+bytes. Some workers fetch a URL. Others parse only inline data URLs. A large request also makes a large pop
 response, which the Horde builds on its hot path. How do image bytes reach the worker?
 
 ## Decision Drivers
@@ -40,7 +40,9 @@ Chosen option: "Store images as JPEG at submit and send each worker the transpor
 At submit each image is checked against the caps below, normalised (longest side at most 2048), encoded as JPEG at
 quality 90 and stored in the source image bucket under a key the request row references. The row does not hold image
 bytes or the submitted URL. JPEG is decoded by every chat worker's image loader: koboldcpp reads images with
-llama.cpp's multimodal loader, which decodes PNG and JPEG and does not decode WebP. An `http(s)` image URL is fetched
+llama.cpp's multimodal loader, which decodes PNG and JPEG and does not decode WebP.
+
+An `http(s)` image URL is fetched
 at submit by `fetch_public_image` in `horde/image.py`, following at most 3 redirects. A store failure deletes the row
 and returns 503 `ChatImageStorageUnavailable`, and the request is not charged.
 
@@ -69,13 +71,15 @@ the `url` or `base64` transport, since `messages_url` covers only offloaded requ
 | Condition                                                     | Transport      | The worker receives                                                                                    |
 | ------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------ |
 | The messages were offloaded and the worker declares `messages_url` | `messages_url` | One signed URL to the messages array, with each image inline as a JPEG data URL, valid for 120 seconds |
-| Otherwise, the request carries images and the worker declares `url` | `url`          | A signed download URL per image, valid for the job's TTL and at least 600 seconds                      |
+| Otherwise, the request includes images and the worker declares `url` | `url`          | A signed download URL per image, valid for the job's TTL and at least 600 seconds                      |
 | Otherwise, the worker declares `base64`                       | `base64`       | Each image inline as a `data:image/jpeg;base64,` URL read from object storage                          |
 
 Signing is local and does not make a request. The base64 read and the signing run while building the pop response, after
 the commits that assign the generation have released the queue row lock. An image URL lives at least as long as the
 job's TTL, with a floor of 600 seconds (`MIN_CHAT_IMAGE_URL_SECONDS`), so a worker that queues the job behind another
-still finds the URL valid. The messages URL lives 120 seconds (`CHAT_MESSAGES_URL_SECONDS`) because a worker fetches
+still finds the URL valid.
+
+The messages URL lives 120 seconds (`CHAT_MESSAGES_URL_SECONDS`) because a worker fetches
 it right after the pop, and a short lifetime limits how long a leaked URL can be replayed. A worker that cannot fetch
 a URL it was sent faults the job.
 
@@ -111,7 +115,7 @@ cleanup thread.
 
 ### Per-image signed URL for every worker
 
-- Good: The smallest pop response; image bytes do not pass through the Horde at pop.
+- Good: The smallest pop response. Image bytes do not pass through the Horde at pop.
 - Bad: Excludes workers that take images only inline, and needs one fetch per image.
 
 ### Base64 at pop under the lock

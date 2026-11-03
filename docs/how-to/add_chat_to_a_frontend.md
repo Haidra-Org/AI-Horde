@@ -1,6 +1,6 @@
 ---
 title: "Add chat completions to a web frontend"
-summary: "Call the Horde's chat front from a browser: bearer key over CORS, OpenAI-only request keys, a stream parser that reads content, tool calls and error events, the tool loop, and model card limits."
+summary: "Call the chat front from a browser, parse streamed replies, run tool calls and display model limits and errors."
 topics: [chat, requests]
 order: 61
 ---
@@ -17,9 +17,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [chat](../topics.md#chat), [requests](../topics.md#requests)
 <!-- END GENERATED: topics -->
 
-Preconditions: a browser or app frontend that can send `fetch` requests and read a streamed response body; the base
-URL of a Horde chat front, written here as `OAI_BASE_URL` (for the public horde, `https://oai.aihorde.net/v1`); and
-the user's Horde API key, or the anonymous key `0000000000`.
+Before starting, have:
+
+- A browser or app frontend that can send `fetch` requests and read a streamed response body.
+- A Horde chat front's base URL, used below as `OAI_BASE_URL`. The public service is `https://oai.aihorde.net/v1`.
+- The user's Horde API key, or the anonymous key `0000000000`.
 
 End state: the frontend sends chat completions straight from the browser, streams the reply, runs tool calls in a
 loop, keeps `max_tokens` within what the chosen model's workers serve, and shows the user the served model, the Horde
@@ -31,7 +33,7 @@ front, the section says so. The request contract itself is in
 
 ## Call the front from the browser
 
-The front answers CORS preflights for every origin and marks every response `Access-Control-Allow-Origin: *`, with
+The front responds to CORS preflights for every origin and marks every response `Access-Control-Allow-Origin: *`, with
 `Retry-After` and `x-should-retry` exposed to scripts. A frontend calls it directly with the user's key, without a
 proxy.
 
@@ -48,14 +50,14 @@ const response = await fetch(`${OAI_BASE_URL}/chat/completions`, {
 ```
 
 `X-Title` attributes the traffic to your frontend in Horde statistics. Without it the front uses the host of the
-`Referer` the browser sends.
+browser's `Referer` header.
 
 Fetch the model list the same way, from `GET ${OAI_BASE_URL}/models`.
 
 Verification: in the browser's network panel, the `OPTIONS` preflight returns 200 with
-`access-control-allow-origin: *`, and the `POST` that follows carries the same header.
+`access-control-allow-origin: *`, and the `POST` that follows includes the same header.
 
-Reversal: remove the endpoint from the frontend's configuration; the Horde does not store anything for it.
+Reversal: remove the endpoint from the frontend's configuration. The Horde does not store anything for it.
 
 ## Build the request from the user's settings
 
@@ -80,9 +82,11 @@ key in `error.param`.
 
 ## Parse the stream
 
+Check `response.ok` before parsing a stream. Refusals before the stream opens use an HTTP error status and a JSON
+body. After the stream opens, failures are SSE events under status 200. Both paths must display the error.
+
 A streamed reply is server-sent events: keepalive comment lines starting with `:` while the request waits, then
-`data:` lines carrying JSON chunks, ending with `data: [DONE]`. A parser has to handle three cases in every `data:`
-payload:
+`data:` lines with JSON chunks, ending with `data: [DONE]`. For each `data:` payload, check for:
 
 - A top-level `error`, `{"error": {"message", "type", "param", "code", "metadata"}}`. Show `error.message` to the user
   and end the turn. This is how the front reports a failure after the 200 headers went out, including a request no
@@ -95,6 +99,10 @@ other OpenAI-compatible services send both in one.
 
 ```javascript
 async function readChatStream(response) {
+  if (!response.ok) {
+    const body = await response.json();
+    throw new Error(body.error?.message ?? `Chat request failed (${response.status})`);
+  }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -104,7 +112,7 @@ async function readChatStream(response) {
 
   for (;;) {
     const { value, done } = await reader.read();
-    if (done) return { text, calls, served };
+    if (done) throw new Error("Chat stream ended before [DONE]");
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop();
@@ -128,12 +136,17 @@ async function readChatStream(response) {
 }
 ```
 
+This parser handles the front's single-line SSE data format and returns the assembled result after `[DONE]`.
+To display text during generation, update the UI as each `delta.content` arrives. Honor `x-should-retry: false`
+on HTTP errors as well as streams. The [retry rules](send_chat_completions.md#errors-and-retries) explain when
+a resend can create a second charged request.
+
 Lite's parser needs two changes for this: it has to show `data: {"error": ...}` events, without which Lite does not
-show anything for an ineligible request, and it has to read `delta.tool_calls` from chunks that also carry
+show anything for an ineligible request, and it has to read `delta.tool_calls` from chunks that also include
 `delta.content`.
 
-Verification: a plain turn yields text and no calls; a turn that needs a tool yields one call with a name and JSON
-arguments; a request for a model with no online worker shows the error message.
+Verification: a plain turn returns text without tool calls. A turn that needs a tool yields one call with a name and JSON
+arguments. A request for a model with no online worker shows the error message.
 
 ## Implement the tool loop
 
@@ -159,14 +172,14 @@ arguments; a request for a model with no online worker shows the error message.
    }
    ```
 
-4. Repeat until a reply does not carry calls, and show its text.
+4. Repeat until the reply contains text without further tool calls, then show that text.
 
-A `tool` message carries `role`, `tool_call_id` and `content`; the result is a string, so serialise structured
+A `tool` message includes `role`, `tool_call_id` and `content`. The result is a string, so serialise structured
 results as JSON. Any other key on it, such as the `name` Lite adds to tool messages, is dropped and not forwarded, as
 OpenAI ignores it. Each `tool_call_id` has to be the `id` of a call in an earlier assistant message of the same
 request.
 
-Verification: the follow-up request returns 200 and a reply with text that uses the tool result and no further calls.
+Verification: the follow-up request returns 200 and a reply with text using the tool result, without further calls.
 
 ## Keep max_tokens within what is served
 
@@ -184,24 +197,24 @@ const maxTokens = Math.max(16, Math.min(userMaxTokens, servedMax));
 if (maxTokens < userMaxTokens) notify(`This model's workers serve at most ${servedMax} tokens per reply.`);
 ```
 
-`max_completion_tokens` is the largest any of the model's workers declares, so a value at the maximum can still wait
+`max_completion_tokens` is the largest limit declared by any of the model's workers, so a value at the maximum can still wait
 for the one worker that serves it. A model absent from the list does not have a worker online. Lite's default output
 length is 768 tokens. On a model whose workers declare 512, every request from an unadjusted Lite is lowered to
 512. The user does not see why unless the frontend reads `x_horde.context_adjustments`.
 
 When the user selects images or tools, also check `architecture.input_modalities` for `image` and
-`supported_parameters` for `tools`, and tell the user before sending a request no worker can serve.
+`supported_parameters` for `tools`, and tell the user before sending a request that cannot be served by any worker.
 
 Verification: with the output length set above the card's maximum, the frontend sends the card's maximum and shows the
-notice; the request is served.
+notice. The request is served.
 
 ## Show the served model and the Horde details
 
-The response's `model`, on every chunk of a stream, is the model that generated the reply. Show it in place of the
-model the user picked, since a status line built from the selection can disagree with what served the request. Lite's
+The response's `model`, on every chunk of a stream, is the model that generated the reply. Show that value in place
+of the user's selected model, since a status line built from the selection can disagree with what served the request. Lite's
 OpenAI mode needs a change to read `model` for its status line.
 
-The finish chunk of a stream, and the body of a non-streamed reply, carry `x_horde`:
+The finish chunk of a stream, and the body of a non-streamed reply, include `x_horde`:
 
 | Field | Show as |
 | --- | --- |
@@ -209,23 +222,23 @@ The finish chunk of a stream, and the body of a non-streamed reply, carry `x_hor
 | `kudos` | What the request cost. |
 | `queue_wait_seconds` | Time spent queued, when present. |
 | `estimated_usage` | When true, label the token counts as estimates. |
-| `notice` | Present when the worker returned no visible text; show it in place of an empty reply. |
+| `notice` | Present when the worker did not return visible text. Show it in place of an empty reply. |
 
-Verification: the status line shows the response's `model` and the worker name; a reply the worker left empty shows
+Verification: the status line shows the response's `model` and the worker name. A reply the worker left empty shows
 the notice text.
 
 ## Check the integration
 
 | Case | Expected behavior |
 | --- | --- |
-| Plain streamed turn | Text appears; `[DONE]` ends the turn. |
+| Plain streamed turn | Text appears. `[DONE]` ends the turn. |
 | Output length above the card's maximum | The request is clamped and the user is told. |
 | Model with no online worker | The error message from the stream or the 503 body is shown. |
-| A sampler extra in the request | 400; the frontend sends OpenAI keys only. |
+| A sampler extra in the request | 400. The frontend sends OpenAI keys only. |
 | Turn that needs an MCP tool | One call collected by `index`, run, replayed with `content: null`, and answered. |
-| Tool result message | Carries only `role`, `tool_call_id` and `content`. |
+| Tool result message | Includes only `role`, `tool_call_id` and `content`. |
 | Empty reply | `x_horde.notice` is shown. |
-| Error with `x-should-retry: false` | Not retried automatically; the user decides, since a resend is a new charged request. |
+| Error with `x-should-retry: false` | Not retried automatically. The user decides, since a resend is a new charged request. |
 
 ## Related
 
