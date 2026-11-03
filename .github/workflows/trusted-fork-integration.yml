@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: resolve-and-validate-pr
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository }}
           ref: ${{ needs.resolve-and-validate-pr.outputs.merge_ref }}
@@ -101,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: resolve-and-validate-pr
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository }}
           ref: ${{ needs.resolve-and-validate-pr.outputs.merge_ref }}
@@ -125,7 +125,7 @@ jobs:
       AI_HORDE_DEV_URL: http://localhost:7001/api/
       HORDE_TEST_APIKEYS: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository }}
           ref: ${{ needs.resolve-and-validate-pr.outputs.merge_ref }}
@@ -151,7 +151,7 @@ jobs:
       PYROSCOPE_SPAN_PROFILES: 'true'
       PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE: '0.10'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository }}
           ref: ${{ needs.resolve-and-validate-pr.outputs.merge_ref }}

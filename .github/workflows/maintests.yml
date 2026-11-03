@@ -39,7 +39,7 @@ jobs:
     name: In-process pytest suite
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -51,7 +51,7 @@ jobs:
     name: Real Pyroscope/OpenTelemetry integration
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -69,7 +69,7 @@ jobs:
       AI_HORDE_DEV_URL: http://localhost:7001/api/
       HORDE_TEST_APIKEYS: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.12'
@@ -90,7 +90,7 @@ jobs:
       PYROSCOPE_SPAN_PROFILES: 'true'
       PYROSCOPE_SPAN_PROFILES_SAMPLE_RATE: '0.10'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -208,7 +208,7 @@ jobs:
       AI_HORDE_TELEMETRY_ENABLED: '1'
       HORDE_TEST_RATELIMIT_DISABLED: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -294,7 +294,7 @@ jobs:
       # never reached the interesting interleavings pass the zero-violation gate.
       HORDE_TEST_RATELIMIT_DISABLED: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -391,7 +391,7 @@ jobs:
       HORDE_TEST_APIKEYS: '1'
       AI_HORDE_TELEMETRY_ENABLED: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -496,7 +496,7 @@ jobs:
       matrix:
         python-version: ['3.12', '3.13']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: ${{ matrix.python-version }}
@@ -512,7 +512,7 @@ jobs:
   mypy-allowlist-job:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -537,7 +537,7 @@ jobs:
     # Soft job: never fails the build. Builds the dep-bump backlog over time.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -557,7 +557,7 @@ jobs:
     # Soft job: surfaces CVEs without breaking PRs while we work the backlog.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -567,7 +567,7 @@ jobs:
   lint-check-job:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-test-python
         with:
           python-version: '3.13'
@@ -577,6 +577,6 @@ jobs:
   reuse-lint-job:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: REUSE Compliance Check
         uses: fsfe/reuse-action@v4
