@@ -510,6 +510,16 @@ class ArchiveObjectAudit:
         return not self.problems
 
 
+@dataclass(frozen=True, kw_only=True)
+class ArchiveVersionUsage:
+    """The storage held under one tier's prefix by noncurrent object versions and delete markers."""
+
+    noncurrent_bytes: int
+    """The summed size of every noncurrent version, manifests included."""
+    delete_markers: int
+    """The number of delete markers."""
+
+
 class _CsvFold:
     """Fold the row count, amount sum and, for currency, per-user totals of a streamed ``COPY ... CSV HEADER``.
 
@@ -1033,6 +1043,32 @@ class KudosArchive:
         """
         return {listed.key: listed.size for listed in self._list_objects(tier)}
 
+    def version_usage(self, tier: ArchiveTier) -> ArchiveVersionUsage | None:
+        """Return the noncurrent bytes and delete markers under a tier's prefix, or None when they cannot be listed.
+
+        ``tier_bytes`` and ``object_sizes`` count current objects only. In a versioned bucket an evicted or re-exported
+        object stays behind as a noncurrent version and costs storage until a lifecycle rule expires it, so this
+        listing is the only place that storage shows up. Manifests are included because their old versions cost
+        storage as well.
+
+        A store that does not implement ``ListObjectVersions``, a key without permission to list versions, and an
+        unreachable store all return None after a warning. The figure is informational, so it does not stop an audit.
+        """
+        prefix = f"{self._prefix}{tier}/"
+        noncurrent_bytes = 0
+        delete_markers = 0
+        try:
+            paginator = self._client.get_paginator("list_object_versions")
+            for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+                for version in page.get("Versions", []):
+                    if not version.get("IsLatest", True):
+                        noncurrent_bytes += int(version["Size"])
+                delete_markers += len(page.get("DeleteMarkers", []))
+        except (BotoCoreError, ClientError) as err:
+            logger.warning(f"Kudos archive version listing of {prefix!r} failed, so its noncurrent bytes are unknown: {err}")
+            return None
+        return ArchiveVersionUsage(noncurrent_bytes=noncurrent_bytes, delete_markers=delete_markers)
+
     def enforce_budget(self, *, budget_bytes: int) -> list[str]:
         """Delete the oldest statistic objects, by unit upper bound, until the statistics tier fits ``budget_bytes``.
 
@@ -1291,6 +1327,7 @@ __all__ = [
     "ArchiveManifest",
     "ArchiveObjectAudit",
     "ArchiveTier",
+    "ArchiveVersionUsage",
     "GzipCodec",
     "KudosArchive",
     "KudosArchiveError",

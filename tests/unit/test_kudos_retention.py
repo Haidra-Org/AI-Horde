@@ -597,6 +597,9 @@ class _FakePaginator:
             ]
             yield {"Contents": contents}
             return
+        if self._operation_name == "list_object_versions":
+            yield self._store.list_versions(Prefix)
+            return
         uploads = [
             {"Key": key, "UploadId": upload_id, "Initiated": initiated}
             for upload_id, (key, initiated, _) in self._store.uploads.items()
@@ -612,6 +615,20 @@ class _FakeObjectStore:
         self.objects: dict[str, bytes] = {}
         self.uploads: dict[str, tuple[str, datetime, dict[int, bytes]]] = {}
         self.fail_uploads = False
+        # Unversioned by default, refusing version listings the way a store without versioning support does.
+        self.versioned = False
+        self.noncurrent_versions: list[tuple[str, int]] = []
+        self.delete_markers: list[str] = []
+
+    def list_versions(self, prefix: str) -> dict[str, Any]:
+        from botocore.exceptions import ClientError
+
+        if not self.versioned:
+            raise ClientError({"Error": {"Code": "NotImplemented", "Message": "simulated"}}, "ListObjectVersions")
+        current = [{"Key": key, "Size": len(payload), "IsLatest": True} for key, payload in self.objects.items() if key.startswith(prefix)]
+        noncurrent = [{"Key": key, "Size": size, "IsLatest": False} for key, size in self.noncurrent_versions if key.startswith(prefix)]
+        markers = [{"Key": key, "IsLatest": True} for key in self.delete_markers if key.startswith(prefix)]
+        return {"Versions": current + noncurrent, "DeleteMarkers": markers}
 
     def _refuse_when_failing(self, operation_name: str) -> None:
         from botocore.exceptions import ClientError
@@ -662,7 +679,11 @@ class _FakeObjectStore:
 
     def delete_objects(self, **kwargs: Any) -> dict[str, Any]:
         for entry in kwargs["Delete"]["Objects"]:
-            self.objects.pop(str(entry["Key"]), None)
+            key = str(entry["Key"])
+            if self.versioned and key in self.objects:
+                self.noncurrent_versions.append((key, len(self.objects[key])))
+                self.delete_markers.append(key)
+            self.objects.pop(key, None)
         return {}
 
     def get_paginator(self, operation_name: str) -> _FakePaginator:
@@ -2532,6 +2553,36 @@ def test_eviction_deletes_batch_by_batch_and_reports_the_keys_deleted_before_a_f
     # The budget covers the statistics tier alone: the newest object fits and stays.
     assert archive.enforce_budget(budget_bytes=10) == [keys[1]]
     assert keys[2] in store.objects
+
+
+def test_version_usage_counts_evicted_objects_as_noncurrent_bytes_and_delete_markers() -> None:
+    from horde.kudos_archive import ArchiveVersionUsage, manifest_key
+
+    store = _FakeObjectStore()
+    store.versioned = True
+    archive = _fake_archive(store)
+    keys = [
+        _store_statistics_object(archive, store, f"kudos_stat_events_p_2020010{day}/2020010{day}T000000_2020010{day + 1}T000000", b"x" * 10)
+        for day in (1, 2, 3)
+    ]
+    for key in keys:
+        store.objects[manifest_key(key)] = b"{}"
+    assert archive.version_usage(ArchiveTier.STATISTICS) == ArchiveVersionUsage(noncurrent_bytes=0, delete_markers=0)
+
+    assert archive.enforce_budget(budget_bytes=10) == keys[:2]
+    # The current listing omits the evicted objects while their versions still hold storage.
+    assert archive.tier_bytes(ArchiveTier.STATISTICS) == 10
+    assert archive.version_usage(ArchiveTier.STATISTICS) == ArchiveVersionUsage(noncurrent_bytes=2 * 10 + 2 * 2, delete_markers=4)
+    assert archive.version_usage(ArchiveTier.CURRENCY) == ArchiveVersionUsage(noncurrent_bytes=0, delete_markers=0)
+
+
+def test_version_usage_is_unknown_when_the_store_does_not_list_versions() -> None:
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    _store_statistics_object(archive, store, "kudos_stat_events_p_20200101/20200101T000000_20200102T000000", b"x" * 10)
+    assert archive.enforce_budget(budget_bytes=0) != []
+    assert archive.version_usage(ArchiveTier.STATISTICS) is None
+    assert archive.version_usage(ArchiveTier.CURRENCY) is None
 
 
 def test_archive_audit_reports_matching_corrupted_and_unmanifested_objects_and_missing_catalog_objects(

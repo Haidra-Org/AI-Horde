@@ -156,7 +156,8 @@ def _parser() -> argparse.ArgumentParser:
         "audit",
         help=(
             "Read every archive object back against its manifest and compare the catalog with the listing. Prints one "
-            "JSON line per object and per missing object, then a summary, and exits 1 on any problem"
+            "JSON line per object and per missing object, then a summary with each tier's noncurrent version bytes and "
+            "delete markers, and exits 1 on any problem"
         ),
     )
     audit.add_argument("--tier", choices=[str(tier) for tier in ArchiveTier], help="Audit one tier (default: both)")
@@ -202,7 +203,17 @@ def _archive_command(options: argparse.Namespace, archive_client: KudosArchive) 
         if not record.matches_manifest:
             problems += 1
         print(json.dumps({"kind": "object", "matches_manifest": record.matches_manifest, **asdict(record)}, default=str))
-    summary = {"objects": audited_objects, "problems": problems, "last_key": last_key, "tiers": [str(tier) for tier in tiers]}
+    version_usage = {str(tier): archive_client.version_usage(tier) for tier in tiers}
+    # A null figure means the store did not list its versions, which differs from a tier that does not hold old versions.
+    # Noncurrent storage is a cost to watch and never counts as a problem, so it does not affect the exit status.
+    summary: dict[str, object] = {
+        "objects": audited_objects,
+        "problems": problems,
+        "last_key": last_key,
+        "tiers": [str(tier) for tier in tiers],
+        "noncurrent_bytes": {tier: None if usage is None else usage.noncurrent_bytes for tier, usage in version_usage.items()},
+        "delete_markers": {tier: None if usage is None else usage.delete_markers for tier, usage in version_usage.items()},
+    }
     print(json.dumps({"kind": "summary", **summary}))
     if problems:
         raise SystemExit(1)

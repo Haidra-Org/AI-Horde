@@ -610,7 +610,11 @@ been read back against its manifest, and the catalog has been compared with the 
    `"matches_manifest": false` lists its `problems`: an unreadable manifest, an object that does not decompress, or a
    field that differs from the manifest. A line with `"kind": "missing_object"` is a catalog unit whose object is
    gone. For a currency unit that is lost history, because currency objects are never evicted. The last line is the
-   summary. Verify: the exit status is 0 and the summary has `"problems": 0`.
+   summary. Verify: the exit status is 0 and the summary has `"problems": 0`. The summary's `noncurrent_bytes` and
+   `delete_markers` map each tier to the storage still held by noncurrent object versions and to its delete markers.
+   They grow after an eviction or a re-export in a versioned bucket until a lifecycle rule expires the old versions.
+   A `null` value means the store did not list versions, so the figure is unknown. Neither figure affects the exit
+   status.
 3. Resume an interrupted audit from the summary's `last_key`, or from the last object line, with
    `--since-key <key>`. The catalog comparison always covers the whole listing.
 
