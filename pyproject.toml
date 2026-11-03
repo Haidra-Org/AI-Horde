@@ -37,6 +37,8 @@ dependencies = [
     "sqlalchemy~=2.0.35",
     "psycopg2-binary",
     "boto3>=1.33.7",
+    # Compresses kudos archive objects (horde.kudos_archive.ZstdCodec).
+    "zstandard>=0.23",
     "regex",
     "unidecode",
     "patreon @ git+https://github.com/Patreon/patreon-python.git",
@@ -226,6 +228,8 @@ module = [
     "horde.database.kudos_legacy_projection",
     "horde.database.kudos_reconciliation",
     "horde.database.kudos_reservations",
+    "horde.database.kudos_retention",
+    "horde.kudos_archive",
     "horde.sampler_constraints",
     "horde.sampler_work_policy",
 ]

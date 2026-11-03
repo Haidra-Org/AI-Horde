@@ -52,6 +52,8 @@ TEST_GARAGE_PERMANENT_BUCKET = "stable-horde"
 TEST_GARAGE_SOURCE_IMAGE_BUCKET = "stable-horde-source-images"
 TEST_GARAGE_PROMPTS_BUCKET = "prompts"
 TEST_GARAGE_EVIDENCE_BUCKET = "moderation-evidence"
+TEST_GARAGE_KUDOS_ARCHIVE_BUCKET = "kudos-archive"
+TEST_KUDOS_ARCHIVE_BUDGET_BYTES = "1073741824"
 REQUIRED_OBJECT_STORE_ENV = (
     "R2_TRANSIENT_ACCOUNT",
     "R2_PERMANENT_ACCOUNT",
@@ -467,6 +469,7 @@ def start_managed_object_store(runtime: HordeTestRuntime) -> None:
             TEST_GARAGE_SOURCE_IMAGE_BUCKET,
             TEST_GARAGE_PROMPTS_BUCKET,
             TEST_GARAGE_EVIDENCE_BUCKET,
+            TEST_GARAGE_KUDOS_ARCHIVE_BUCKET,
         },
     ):
         container_exec(garage, ["/garage", "-c", "/etc/garage.toml", "bucket", "create", bucket])
@@ -508,6 +511,12 @@ def start_managed_object_store(runtime: HordeTestRuntime) -> None:
     runtime.set_env("R2_EVIDENCE_REGION", "garage")
     runtime.set_env("EVIDENCE_AWS_ACCESS_KEY_ID", access_key_id)
     runtime.set_env("EVIDENCE_AWS_SECRET_ACCESS_KEY", secret_key)
+    runtime.set_env("KUDOS_ARCHIVE_ACCOUNT", f"http://{host}:{s3_port}")
+    runtime.set_env("KUDOS_ARCHIVE_BUCKET", TEST_GARAGE_KUDOS_ARCHIVE_BUCKET)
+    runtime.set_env("KUDOS_ARCHIVE_REGION", "garage")
+    runtime.set_env("KUDOS_ARCHIVE_AWS_ACCESS_KEY_ID", access_key_id)
+    runtime.set_env("KUDOS_ARCHIVE_AWS_SECRET_ACCESS_KEY", secret_key)
+    runtime.set_env("KUDOS_ARCHIVE_BUDGET_BYTES", TEST_KUDOS_ARCHIVE_BUDGET_BYTES)
     runtime.object_store_available = True
 
 

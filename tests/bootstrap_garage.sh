@@ -30,6 +30,9 @@ permanent_bucket="${AI_HORDE_TEST_R2_PERMANENT_BUCKET:-stable-horde}"
 source_image_bucket="${AI_HORDE_TEST_R2_SOURCE_IMAGE_BUCKET:-stable-horde-source-images}"
 prompts_bucket="${AI_HORDE_TEST_R2_PROMPTS_BUCKET:-prompts}"
 evidence_bucket="${AI_HORDE_TEST_R2_EVIDENCE_BUCKET:-moderation-evidence}"
+kudos_archive_bucket="${AI_HORDE_TEST_KUDOS_ARCHIVE_BUCKET:-kudos-archive}"
+# Importing the kudos retention module refuses a configured archive without a budget.
+kudos_archive_budget_bytes="${AI_HORDE_TEST_KUDOS_ARCHIVE_BUDGET_BYTES:-1073741824}"
 
 # MSYS runtimes (Git Bash, MSYS2) report a MINGW*/MSYS* kernel name; their bash
 # OSTYPE can read "cygwin" as well as "msys", so it does not identify them.
@@ -214,7 +217,7 @@ ensure_buckets() {
   local bucket
   local output
   local -A seen=()
-  local buckets=("$transient_bucket" "$permanent_bucket" "$source_image_bucket" "$prompts_bucket" "$evidence_bucket")
+  local buckets=("$transient_bucket" "$permanent_bucket" "$source_image_bucket" "$prompts_bucket" "$evidence_bucket" "$kudos_archive_bucket")
 
   for bucket in "${buckets[@]}"; do
     if [[ -n "${seen[$bucket]:-}" ]]; then
@@ -250,6 +253,12 @@ export R2_EVIDENCE_BUCKET="$evidence_bucket"
 export R2_EVIDENCE_REGION="garage"
 export EVIDENCE_AWS_ACCESS_KEY_ID="$garage_access_key_id"
 export EVIDENCE_AWS_SECRET_ACCESS_KEY="$garage_secret_key"
+export KUDOS_ARCHIVE_ACCOUNT="http://127.0.0.1:${garage_s3_port}"
+export KUDOS_ARCHIVE_BUCKET="$kudos_archive_bucket"
+export KUDOS_ARCHIVE_REGION="garage"
+export KUDOS_ARCHIVE_AWS_ACCESS_KEY_ID="$garage_access_key_id"
+export KUDOS_ARCHIVE_AWS_SECRET_ACCESS_KEY="$garage_secret_key"
+export KUDOS_ARCHIVE_BUDGET_BYTES="$kudos_archive_budget_bytes"
 export POSTGRES_URL="localhost:${postgres_port}/${AI_HORDE_TEST_POSTGRES_DB:-postgres}"
 export REDIS_IP="127.0.0.1"
 export REDIS_PORT="${redis_port}"
@@ -283,6 +292,12 @@ emit_powershell_exports() {
   emit_powershell_assignment R2_EVIDENCE_REGION "garage"
   emit_powershell_assignment EVIDENCE_AWS_ACCESS_KEY_ID "$garage_access_key_id"
   emit_powershell_assignment EVIDENCE_AWS_SECRET_ACCESS_KEY "$garage_secret_key"
+  emit_powershell_assignment KUDOS_ARCHIVE_ACCOUNT "http://127.0.0.1:${garage_s3_port}"
+  emit_powershell_assignment KUDOS_ARCHIVE_BUCKET "$kudos_archive_bucket"
+  emit_powershell_assignment KUDOS_ARCHIVE_REGION "garage"
+  emit_powershell_assignment KUDOS_ARCHIVE_AWS_ACCESS_KEY_ID "$garage_access_key_id"
+  emit_powershell_assignment KUDOS_ARCHIVE_AWS_SECRET_ACCESS_KEY "$garage_secret_key"
+  emit_powershell_assignment KUDOS_ARCHIVE_BUDGET_BYTES "$kudos_archive_budget_bytes"
   emit_powershell_assignment POSTGRES_URL "localhost:${postgres_port}/${AI_HORDE_TEST_POSTGRES_DB:-postgres}"
   emit_powershell_assignment REDIS_IP "127.0.0.1"
   emit_powershell_assignment REDIS_PORT "$redis_port"
@@ -306,9 +321,11 @@ EOF
   emit_exports
   cat <<EOF
 
-The Garage bootstrap also ensures the hard-coded prompt upload bucket and the evidence bucket exist:
+The Garage bootstrap also ensures the hard-coded prompt upload bucket, the evidence bucket and the kudos archive
+bucket exist:
   $prompts_bucket
   $evidence_bucket
+  $kudos_archive_bucket
 EOF
 }
 
