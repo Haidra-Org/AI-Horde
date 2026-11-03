@@ -127,6 +127,10 @@ class KudosArchiveError(Exception):
     """An archive object-store request failed, or an object could not be read as an archive object."""
 
 
+class ArchiveBudgetExceeded(KudosArchiveError):
+    """The measured compressed upload exceeds the remaining tier allowance, so the multipart upload is aborted."""
+
+
 class ArchiveEvictionError(KudosArchiveError):
     """An eviction stopped partway. ``deleted_keys`` holds the object keys whose deletes the store confirmed."""
 
@@ -618,7 +622,17 @@ class _MultipartSink:
     psycopg2 calls ``write`` with each chunk of the copy stream.
     """
 
-    def __init__(self, *, client: S3Client, bucket: str, key: str, upload_id: str, codec: ArchiveCodec, fold: _CsvFold) -> None:
+    def __init__(
+        self,
+        *,
+        client: S3Client,
+        bucket: str,
+        key: str,
+        upload_id: str,
+        codec: ArchiveCodec,
+        fold: _CsvFold,
+        max_compressed_bytes: int | None = None,
+    ) -> None:
         self._client = client
         self._bucket = bucket
         self._key = key
@@ -629,6 +643,7 @@ class _MultipartSink:
         self._buffer = bytearray()
         self._parts: list[dict[str, Any]] = []
         self.compressed_bytes = 0
+        self._max_compressed_bytes = max_compressed_bytes
 
     def write(self, chunk: bytes | str) -> int:
         """Consume one chunk of the copy stream; returns its length."""
@@ -648,6 +663,10 @@ class _MultipartSink:
     def _append_compressed(self, compressed: bytes) -> None:
         if not compressed:
             return
+        if self._max_compressed_bytes is not None and self.compressed_bytes + len(compressed) > self._max_compressed_bytes:
+            raise ArchiveBudgetExceeded(
+                f"compressed upload exceeds remaining allowance of {self._max_compressed_bytes} bytes",
+            )
         self._digest.update(compressed)
         self.compressed_bytes += len(compressed)
         self._buffer.extend(compressed)
@@ -781,6 +800,7 @@ class KudosArchive:
         source_range: str,
         copy_sql: str,
         connection: PsycopgConnection,
+        max_compressed_bytes: int | None = None,
     ) -> ArchiveManifest:
         """Stream a query's rows as compressed CSV into one object and return its manifest.
 
@@ -797,10 +817,13 @@ class KudosArchive:
             source_range: The unit's source range, which forms the key and the manifest's unit fields.
             copy_sql: A ``SELECT`` with every value inlined; ``COPY`` takes no bound parameters.
             connection: A psycopg2 connection; the copy runs in its current transaction, which the caller ends.
+            max_compressed_bytes: Maximum compressed bytes of the completed object, including the final flush.
+                An oversized upload is aborted without replacing any object already at the key.
 
         Raises:
             KudosArchiveError: An object-store request failed, or ``source_range`` is malformed. The multipart upload
                 is aborted.
+            ArchiveBudgetExceeded: The measured upload exceeds ``max_compressed_bytes``, and no object is published.
         """
         partition_name, unit_lower, unit_upper = parse_source_range(source_range)
         key = self.object_key(tier=tier, source_range=source_range)
@@ -809,7 +832,15 @@ class KudosArchive:
             upload_id = str(self._client.create_multipart_upload(Bucket=self._bucket, Key=key)["UploadId"])
         except (BotoCoreError, ClientError) as err:
             raise KudosArchiveError(f"Starting archive upload {key} failed: {err}") from err
-        sink = _MultipartSink(client=self._client, bucket=self._bucket, key=key, upload_id=upload_id, codec=self._codec, fold=fold)
+        sink = _MultipartSink(
+            client=self._client,
+            bucket=self._bucket,
+            key=key,
+            upload_id=upload_id,
+            codec=self._codec,
+            fold=fold,
+            max_compressed_bytes=max_compressed_bytes,
+        )
         try:
             with connection.cursor() as cursor:
                 cursor.copy_expert(f"COPY ({copy_sql}) TO STDOUT WITH (FORMAT csv, HEADER)", sink)
@@ -1183,6 +1214,7 @@ __all__ = [
     "ARCHIVE_REQUIRED_ENV",
     "ARCHIVE_SECRET_ACCESS_KEY_ENV",
     "ArchiveCodec",
+    "ArchiveBudgetExceeded",
     "ArchiveEvictionError",
     "ArchiveManifest",
     "ArchiveObjectAudit",

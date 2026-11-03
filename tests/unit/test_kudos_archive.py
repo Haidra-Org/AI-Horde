@@ -631,3 +631,43 @@ def test_object_size_and_stale_multipart_uploads_against_the_store(archive: Kudo
     finally:
         with contextlib.suppress(ClientError):
             archive._client.abort_multipart_upload(Bucket=archive.bucket, Key=stale_key, UploadId=upload_id)
+
+
+@pytest.mark.parametrize("limit_offset", [-1, 0, 1])
+def test_upload_enforces_measured_bytes_including_final_flush(limit_offset: int) -> None:
+    from horde.enums import KudosRetentionDataset
+    from horde.kudos_archive import ArchiveBudgetExceeded
+    from tests.unit.test_kudos_retention import _FakeObjectStore
+
+    class CopySource:
+        def cursor(self) -> CopySource:
+            return self
+
+        def __enter__(self) -> CopySource:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def copy_expert(self, sql: str, sink: Any) -> None:
+            sink.write(RESTORE_CSV.encode())
+
+    store = _FakeObjectStore()
+    archive = KudosArchive(client=store, bucket="test")
+    kwargs = dict(
+        tier=ArchiveTier.CURRENCY,
+        dataset=KudosRetentionDataset.CURRENCY,
+        source_range="kudos_ledger_p_test/min_20200106T000000",
+        copy_sql="SELECT ignored",
+        connection=CopySource(),
+    )
+    manifest = archive.put_unit(**kwargs)
+    key = archive.object_key(tier=kwargs["tier"], source_range=kwargs["source_range"])
+    previous = store.objects[key]
+    if limit_offset < 0:
+        with pytest.raises(ArchiveBudgetExceeded):
+            archive.put_unit(**kwargs, max_compressed_bytes=manifest.compressed_bytes + limit_offset)
+    else:
+        assert archive.put_unit(**kwargs, max_compressed_bytes=manifest.compressed_bytes + limit_offset).compressed_bytes == len(previous)
+    assert store.objects[key] == previous
+    assert store.uploads == {}

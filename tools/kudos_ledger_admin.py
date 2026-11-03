@@ -41,6 +41,7 @@ from horde.database.kudos_retention import (  # noqa: E402
     audit_archive,
     daily_statement,
     load_catalog,
+    operator_retention_lock,
     parse_rehearsal_as_of,
     reattach_partition,
     recheckpoint_from_unit,
@@ -177,7 +178,11 @@ def _archive_command(options: argparse.Namespace, archive_client: KudosArchive) 
         return
     if options.archive_command == "evict":
         try:
-            deleted = archive_client.enforce_budget(budget_bytes=options.budget_bytes)
+            # Eviction changes the tier size an export measures its allowance from, so it runs under the same lock.
+            with operator_retention_lock():
+                deleted = archive_client.enforce_budget(budget_bytes=options.budget_bytes)
+        except RetentionLockBusyError as err:
+            raise SystemExit(str(err)) from err
         except ArchiveEvictionError as err:
             print(json.dumps({"tier": options.tier, "budget_bytes": options.budget_bytes, "deleted": err.deleted_keys, "error": str(err)}))
             raise SystemExit(1) from err
@@ -278,7 +283,11 @@ def main() -> None:
             print(json.dumps({"mode": options.value}))
             return
         if options.command == "snapshot":
-            print(json.dumps({"snapshot_id": str(create_balance_snapshot())}))
+            try:
+                snapshot_id = create_balance_snapshot()
+            except (StaleCheckpointsError, RetentionLockBusyError) as err:
+                raise SystemExit(str(err)) from err
+            print(json.dumps({"snapshot_id": str(snapshot_id)}))
             return
         if options.command == "reconcile":
             try:

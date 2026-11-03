@@ -517,6 +517,9 @@ def test_reconciliation_refuses_repairs_while_a_currency_checkpoint_is_stale(db_
     from horde.enums import KudosRetentionDataset, KudosRetentionState
 
     user = make_user(kudos=100)
+    db_session.commit()
+    # The baseline predates the incident. Snapshot creation is refused once a checkpoint is known to be stale.
+    snapshot_id = create_balance_snapshot()
     now = datetime.utcnow()
     stale_unit = KudosRetentionUnit(
         dataset=KudosRetentionDataset.CURRENCY,
@@ -531,7 +534,6 @@ def test_reconciliation_refuses_repairs_while_a_currency_checkpoint_is_stale(db_
     )
     db_session.add(stale_unit)
     db_session.commit()
-    snapshot_id = create_balance_snapshot()
     user.kudos = 999
     db_session.commit()
 

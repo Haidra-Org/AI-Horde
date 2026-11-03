@@ -466,6 +466,19 @@ class KudosBalanceSnapshot(db.Model):  # type: ignore[name-defined,misc]
     created: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class KudosSnapshotInvalidation(db.Model):  # type: ignore[name-defined,misc]
+    """Time interval whose snapshot baselines may include subsequently rebuilt checkpoints.
+
+    Keep the original snapshot rows for evidence. Reconciliation refuses baselines captured in any such interval.
+    """
+
+    __tablename__ = "kudos_snapshot_invalidations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    invalid_from: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    invalid_until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class KudosStatQuarantine(KudosStatEventColumns, db.Model):  # type: ignore[name-defined,misc]
     """Represents a quarantined statistic event moved out of a retired ``kudos_stat_events`` partition.
 

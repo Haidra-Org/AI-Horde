@@ -59,6 +59,7 @@ from horde.classes.base.kudos import (
     KudosLedgerDailyStatement,
     KudosPartitioning,
     KudosRetentionUnit,
+    KudosSnapshotInvalidation,
     KudosStatEvent,
     KudosStatQuarantine,
     KudosStatRollup,
@@ -70,6 +71,7 @@ from horde.flask import SQLITE_MODE, db
 from horde.kudos_archive import (
     ARCHIVE_PREFIX_ENV,
     ARCHIVE_REQUIRED_ENV,
+    ArchiveBudgetExceeded,
     ArchiveObjectAudit,
     ArchiveTier,
     KudosArchive,
@@ -1242,10 +1244,15 @@ def _copy_unit_sql(context: _StepContext) -> str:
     return f"SELECT * FROM ONLY {context.partition_sql} WHERE {_range_predicate_literal(context.unit)} ORDER BY id"
 
 
-def _archive_unit(archive: KudosArchive, context: _StepContext, tier: ArchiveTier) -> str:
+def _archive_unit(archive: KudosArchive, context: _StepContext, tier: ArchiveTier, allowance: _TierAllowance | None) -> str:
     """Write the unit's rows and manifest to the archive outside any session transaction; returns the object key.
 
+    Args:
+        allowance: The tier's remaining bytes for this unit, which bounds the measured upload, or None without a
+            budget.
+
     Raises:
+        ArchiveBudgetExceeded: The compressed upload grew past ``allowance``. Nothing is published.
         KudosArchiveError: An object-store request failed.
     """
     db.session.commit()
@@ -1257,6 +1264,7 @@ def _archive_unit(archive: KudosArchive, context: _StepContext, tier: ArchiveTie
             source_range=context.unit.source_range,
             copy_sql=_copy_unit_sql(context),
             connection=raw_connection.driver_connection,
+            max_compressed_bytes=None if allowance is None else allowance.remaining,
         )
     finally:
         raw_connection.rollback()
@@ -1266,11 +1274,26 @@ def _archive_unit(archive: KudosArchive, context: _StepContext, tier: ArchiveTie
     return key
 
 
-def _budget_refusal(archive: KudosArchive, context: _StepContext, tier: ArchiveTier, estimate: int) -> str | None:
-    """Return the detail of a budget refusal when the unit's upload would take ``tier`` over its budget, else None.
+@dataclass(frozen=True)
+class _TierAllowance:
+    """What one tier can still take for one unit's upload, measured once before the upload."""
 
-    A retry after a crash between the upload and the catalog commit finds its own object at the key. The upload
-    replaces that object, so it is not counted twice.
+    budget: int
+    stored_bytes: int
+    """The tier's completed objects, as listed."""
+    replaced_bytes: int
+    """An object already at the unit's own key, which the upload replaces and so is not counted twice."""
+
+    @property
+    def remaining(self) -> int:
+        return self.budget - self.stored_bytes + self.replaced_bytes
+
+
+def _tier_allowance(archive: KudosArchive, context: _StepContext, tier: ArchiveTier) -> _TierAllowance | None:
+    """Measure the tier once for the unit's upload, or return None when the tier has no budget.
+
+    A retry after a crash between the upload and the catalog commit finds the earlier object at the key, which the
+    upload replaces.
 
     Raises:
         KudosArchiveError: The size check or the listing failed.
@@ -1279,11 +1302,18 @@ def _budget_refusal(archive: KudosArchive, context: _StepContext, tier: ArchiveT
     if budget is None:
         return None
     own_key = archive.object_key(tier=tier, source_range=context.unit.source_range)
-    replaced_bytes = archive.object_size(own_key) or 0
-    projected = archive.tier_bytes(tier) - replaced_bytes + estimate
-    if projected <= budget:
+    return _TierAllowance(
+        budget=budget,
+        stored_bytes=archive.tier_bytes(tier),
+        replaced_bytes=archive.object_size(own_key) or 0,
+    )
+
+
+def _budget_refusal(allowance: _TierAllowance | None, estimate: int) -> str | None:
+    """Return the detail of a budget refusal when the estimated upload exceeds ``allowance``, else None."""
+    if allowance is None or estimate <= allowance.remaining:
         return None
-    return f"estimate={estimate} replaced={replaced_bytes} budget={budget}"
+    return f"estimate={estimate} replaced={allowance.replaced_bytes} budget={allowance.budget}"
 
 
 def _stat_dump(context: _StepContext) -> RetentionTickResult:
@@ -1303,10 +1333,13 @@ def _stat_dump(context: _StepContext) -> RetentionTickResult:
     estimate = _estimated_archive_bytes(context)
     db.session.commit()
     try:
-        refusal = _budget_refusal(archive, context, ArchiveTier.STATISTICS, estimate)
+        allowance = _tier_allowance(archive, context, ArchiveTier.STATISTICS)
+        refusal = _budget_refusal(allowance, estimate)
         if refusal is not None:
             return _block(context, RetentionBlockReason.STATISTICS_BUDGET_EXCEEDED, refusal)
-        key = _archive_unit(archive, context, ArchiveTier.STATISTICS)
+        key = _archive_unit(archive, context, ArchiveTier.STATISTICS, allowance)
+    except ArchiveBudgetExceeded as err:
+        return _block(context, RetentionBlockReason.STATISTICS_BUDGET_EXCEEDED, str(err))
     except KudosArchiveError as err:
         return _stat_dump_failed(context, str(err))
     _set_state(context.unit, KudosRetentionState.DUMPED, object_key=key)
@@ -1436,10 +1469,13 @@ def _ledger_export(context: _StepContext) -> RetentionTickResult:
     estimate = _estimated_archive_bytes(context)
     db.session.commit()
     try:
-        refusal = _budget_refusal(archive, context, ArchiveTier.CURRENCY, estimate)
+        allowance = _tier_allowance(archive, context, ArchiveTier.CURRENCY)
+        refusal = _budget_refusal(allowance, estimate)
         if refusal is not None:
             return _block(context, RetentionBlockReason.CURRENCY_BUDGET_EXCEEDED, refusal)
-        key = _archive_unit(archive, context, ArchiveTier.CURRENCY)
+        key = _archive_unit(archive, context, ArchiveTier.CURRENCY, allowance)
+    except ArchiveBudgetExceeded as err:
+        return _block(context, RetentionBlockReason.CURRENCY_BUDGET_EXCEEDED, str(err))
     except KudosArchiveError as err:
         return _failed(context, str(err))
     _set_state(context.unit, KudosRetentionState.EXPORTED, object_key=key)
@@ -1537,6 +1573,35 @@ def _deferred(context: _StepContext, detail: str) -> RetentionTickResult:
     )
 
 
+def _check_currency_archive(context: _StepContext, siblings: Sequence[CatalogUnit]) -> RetentionTickResult | None:
+    """Return the outcome that stops the drop when a currency unit's object or manifest cannot be checked now, else None.
+
+    The check compares metadata only: the object's stored size against its manifest, and the manifest's row count
+    against the unit's recorded count. The digest was verified at the ``VERIFIED`` step, and re-reading a legacy week
+    before every drop would cost more than it proves.
+    """
+    # The siblings are detached value objects. Release the ORM transaction before object-store I/O.
+    db.session.commit()
+    for sibling in siblings:
+        if sibling.dataset != KudosRetentionDataset.CURRENCY or sibling.state == KudosRetentionState.DROPPED:
+            continue
+        current = replace(context, unit=sibling)
+        if sibling.object_key is None:
+            return _block(current, RetentionBlockReason.ARCHIVE_OBJECT_MISSING, "no object key is recorded")
+        if context.archive is None:
+            return _failed(current, ARCHIVE_NOT_CONFIGURED)
+        try:
+            size = context.archive.object_size(sibling.object_key)
+            if size is None:
+                return _block(current, RetentionBlockReason.ARCHIVE_OBJECT_MISSING, sibling.object_key)
+            manifest = context.archive.get_manifest(sibling.object_key)
+        except KudosArchiveError as err:
+            return _failed(current, f"archive unavailable before drop: {err}")
+        if size != manifest.compressed_bytes or manifest.row_count != sibling.row_count:
+            return _block(current, RetentionBlockReason.ARCHIVE_MISMATCH, "archive metadata changed before drop")
+    return None
+
+
 def _drop_partition(context: _StepContext) -> RetentionTickResult:
     """Detach and drop the unit's partition and mark all of its units ``DROPPED``.
 
@@ -1566,11 +1631,9 @@ def _drop_partition(context: _StepContext) -> RetentionTickResult:
     siblings = [sibling for sibling in load_catalog(context.unit.dataset) if sibling.partition_name == context.unit.partition_name]
     if not _partition_drop_ready(siblings):
         return _failed(context, "partition has units whose replacement is not committed")
-    for sibling in siblings:
-        currency_without_object = sibling.dataset == KudosRetentionDataset.CURRENCY and sibling.object_key is None
-        if currency_without_object and sibling.state != KudosRetentionState.DROPPED:
-            # The archive object is the only copy of the postings once the partition is gone.
-            return _block(replace(context, unit=sibling), RetentionBlockReason.ARCHIVE_OBJECT_MISSING, "no object key is recorded")
+    archive_problem = _check_currency_archive(context, siblings)
+    if archive_problem is not None:
+        return archive_problem
     partition_exists = _relation_exists(context.unit.partition_name)
     detach_times = [
         sibling.detached_at for sibling in siblings if sibling.state == KudosRetentionState.DETACHED and sibling.detached_at is not None
@@ -1612,6 +1675,10 @@ def _drop_partition(context: _StepContext) -> RetentionTickResult:
                         detail = f"{detached_late_unit[1]}. {_DETACHED_LATE_ROWS_HINT}"
                         return _block(replace(context, unit=detached_late_unit[0]), RetentionBlockReason.LATE_ROWS, detail)
                 if not keep_detached:
+                    # The recount can take a while, so the archive is checked again immediately before the removal.
+                    archive_problem = _check_currency_archive(context, siblings)
+                    if archive_problem is not None:
+                        return archive_problem
                     autocommit_connection.execute(text(f"DROP TABLE IF EXISTS {context.partition_sql}"))
             except OperationalError as err:
                 if getattr(err.orig, "pgcode", None) != LOCK_NOT_AVAILABLE_SQLSTATE:
@@ -1914,8 +1981,8 @@ class RetentionLockBusyError(Exception):
 
 
 @contextlib.contextmanager
-def _operator_retention_lock() -> Iterator[None]:
-    """Context manager that holds the retention lock for an operator catalog change.
+def operator_retention_lock() -> Iterator[None]:
+    """Hold the retention lock for an operator catalog change or baseline capture.
 
     Raises:
         RetentionLockBusyError: A tick or another operator command holds the lock.
@@ -2003,7 +2070,7 @@ def unblock_unit(unit_id: int) -> CatalogUnit:
         ValueError: No unit has that id, the unit is not ``BLOCKED``, or its partition is kept detached.
         RetentionLockBusyError: A tick holds the retention lock.
     """
-    with _operator_retention_lock():
+    with operator_retention_lock():
         row = db.session.get(KudosRetentionUnit, unit_id)
         if row is None:
             raise ValueError(f"No kudos retention unit {unit_id}")
@@ -2049,7 +2116,7 @@ def recheckpoint_from_unit(unit_id: int) -> list[CatalogUnit]:
             currency unit is dropped or kept detached.
         RetentionLockBusyError: A tick holds the retention lock.
     """
-    with _operator_retention_lock():
+    with operator_retention_lock():
         row = db.session.get(KudosRetentionUnit, unit_id)
         if row is None:
             raise ValueError(f"No kudos retention unit {unit_id}")
@@ -2079,6 +2146,15 @@ def recheckpoint_from_unit(unit_id: int) -> list[CatalogUnit]:
         # checkpoint may share its boundary with another partition's checkpoint, which stays.
         checkpointed_units = [_catalog_unit(reset_row) for reset_row in reset_rows if reset_row.row_count is not None]
         if checkpointed_units:
+            # Catalog creation precedes checkpoint publication. Conservatively invalidate every baseline taken
+            # since the earliest affected unit was catalogued. The retention lock excludes concurrent snapshots.
+            # Preserve the snapshot rows themselves as incident evidence.
+            db.session.add(
+                KudosSnapshotInvalidation(
+                    invalid_from=min(reset_row.created for reset_row in reset_rows if reset_row.row_count is not None),
+                    invalid_until=now,
+                ),
+            )
             stale_boundaries = [checkpointed_unit.upper for checkpointed_unit in checkpointed_units]
             stale_source_ranges = [checkpointed_unit.source_range for checkpointed_unit in checkpointed_units]
             db.session.execute(delete(KudosLedgerCheckpoint).where(KudosLedgerCheckpoint.boundary.in_(stale_boundaries)))
@@ -2115,7 +2191,7 @@ def waive_unit_dump(unit_id: int) -> CatalogUnit:
         ValueError: No unit has that id, it is not a statistics unit, or it is neither failed nor blocked for a waivable reason.
         RetentionLockBusyError: A tick holds the retention lock.
     """
-    with _operator_retention_lock():
+    with operator_retention_lock():
         row = db.session.get(KudosRetentionUnit, unit_id)
         if row is None:
             raise ValueError(f"No kudos retention unit {unit_id}")
@@ -2166,7 +2242,7 @@ def reattach_partition(unit_id: int) -> list[CatalogUnit]:
             table no longer exists.
         RetentionLockBusyError: A tick holds the retention lock.
     """
-    with _operator_retention_lock():
+    with operator_retention_lock():
         row = db.session.get(KudosRetentionUnit, unit_id)
         if row is None:
             raise ValueError(f"No kudos retention unit {unit_id}")

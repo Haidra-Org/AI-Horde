@@ -15,6 +15,12 @@
 
 -- 1. Retention tables. These match the models in horde/classes/base/kudos.py.
 
+CREATE TABLE IF NOT EXISTS kudos_snapshot_invalidations (
+    id BIGSERIAL NOT NULL PRIMARY KEY,
+    invalid_from TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    invalid_until TIMESTAMP WITHOUT TIME ZONE NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS kudos_stat_rollups (
     id BIGSERIAL NOT NULL,
     day DATE NOT NULL,

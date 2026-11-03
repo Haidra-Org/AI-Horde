@@ -498,6 +498,13 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
    run it again after the tick. Verify: the command prints the unit with `"state": "checkpointed"` or `"pending"`,
    the unit's `blocked_units` series drops, and later `retention status` output shows the unit advancing.
 
+`snapshot` holds the retention lock and exits with an error while a tick or a recovery command holds it, so run it
+again afterwards. It also exits with an error while a currency checkpoint is stale. After
+`retention unblock --recheckpoint`, `reconcile` refuses every snapshot created since the earliest reset unit entered
+the catalog, in read-only and `--apply` modes alike, because that baseline was computed from the deleted checkpoints.
+The rows of those snapshots stay in `kudos_balance_snapshots` for inspection. Take a fresh snapshot after the recovery
+and use it for later checks.
+
 ## Recovering from a late-row or chain block
 
 Preconditions: a currency unit is `blocked` with `late rows`, or with `online drift since export` because rows were

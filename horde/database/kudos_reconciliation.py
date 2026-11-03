@@ -21,6 +21,7 @@ from horde.classes.base.kudos import (
     KudosLedger,
     KudosLedgerCheckpoint,
     KudosRetentionUnit,
+    KudosSnapshotInvalidation,
     emit_kudos_ledger_entry,
     kudos_event,
     kudos_event_id,
@@ -71,7 +72,7 @@ class StaleCheckpointUnit:
 
 
 class StaleCheckpointsError(ValueError):
-    """A currency unit is blocked for rows changed after its checkpoint, so repairs would compensate for false drift."""
+    """A checkpoint or saved snapshot baseline is unsafe for accounting."""
 
 
 def stale_checkpoint_units() -> list[StaleCheckpointUnit]:
@@ -100,7 +101,7 @@ def _stale_checkpoints_message(stale_units: list[StaleCheckpointUnit]) -> str:
     described = ", ".join(f"{stale_unit.unit_id} ({stale_unit.partition_name}, {stale_unit.reason})" for stale_unit in stale_units)
     return (
         f"Kudos ledger checkpoints are stale: currency retention units {described} are blocked. "
-        f"Run retention unblock --recheckpoint {stale_units[0].unit_id} before reconciling"
+        f"Run retention unblock --recheckpoint {stale_units[0].unit_id} before taking snapshots or reconciling"
     )
 
 
@@ -186,9 +187,19 @@ def _refuse_snapshot_older_than_key_lifetime(snapshot_id: uuid.UUID) -> None:
         )
 
 
+@kudos_retention.operator_retention_lock()
 def create_balance_snapshot(now: datetime | None = None) -> uuid.UUID:
-    """Capture one transaction-consistent online replay baseline."""
+    """Capture one transaction-consistent online replay baseline under the retention lock.
+
+    Raises:
+        StaleCheckpointsError: A checkpoint is known to be stale. Recover it before taking a baseline.
+        kudos_retention.RetentionLockBusyError: A retention tick or recovery is running. Retry after it finishes.
+    """
     _begin_repeatable_read()
+    stale_units = stale_checkpoint_units()
+    if stale_units:
+        db.session.rollback()
+        raise StaleCheckpointsError(_stale_checkpoints_message(stale_units))
     snapshot_id = uuid.uuid4()
     created = now or datetime.utcnow()
     applied_totals = _applied_totals_subquery()
@@ -236,10 +247,26 @@ def reconcile_balances(snapshot_id: uuid.UUID, *, apply_repairs: bool = False) -
     run logs a warning that its drift is not reliable.
 
     Raises:
-        StaleCheckpointsError: ``apply_repairs`` is set while a checkpoint is known to be stale.
+        StaleCheckpointsError: The snapshot baseline was invalidated, or repairs were requested with stale checkpoints.
         ValueError: ``apply_repairs`` is set and the snapshot is older than the key lifetime or does not exist.
     """
     _begin_repeatable_read()
+    invalid_baseline = db.session.execute(
+        select(KudosBalanceSnapshot.id)
+        .join(
+            KudosSnapshotInvalidation,
+            (KudosBalanceSnapshot.created >= KudosSnapshotInvalidation.invalid_from)
+            & (KudosBalanceSnapshot.created <= KudosSnapshotInvalidation.invalid_until),
+        )
+        .where(KudosBalanceSnapshot.snapshot_id == snapshot_id)
+        .limit(1),
+    ).first()
+    if invalid_baseline is not None:
+        db.session.rollback()
+        raise StaleCheckpointsError(
+            f"Snapshot {snapshot_id} may contain rebuilt checkpoint totals and cannot be used for reconciliation. "
+            "Its rows are kept as evidence. Take a new snapshot after the checkpoint recovery",
+        )
     stale_units = stale_checkpoint_units()
     if stale_units and apply_repairs:
         db.session.rollback()

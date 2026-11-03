@@ -62,6 +62,7 @@ not a fabricated history of older movements.
 | `KudosStatEvent` / `kudos_stat_events` | Display and counter postings, range-partitioned by `created` | User, worker, and team IDs are immutable audit references, intentionally not ownership foreign keys because workers/teams may be hard-deleted | Exactly one of `user_id` and `worker_id`; typed unit; NaN rejected; invalid events are quarantined outside the drainable queue |
 | `KudosReservation` / `kudos_reservations` | Payer holds for upfront work and transfers | User ownership foreign key with `ON DELETE CASCADE` | Unique `business_id`; positive original amount; non-negative remaining amount; active-user partial index |
 | `KudosBalanceSnapshot` / `kudos_balance_snapshots` | User-currency reconciliation baseline | User ownership foreign key with `ON DELETE CASCADE` | One row per snapshot/user; records balance, escrow, and visible applied totals |
+| `KudosSnapshotInvalidation` / `kudos_snapshot_invalidations` | Interval of snapshot creation times whose baselines a checkpoint rebuild made unusable | Operational state | One row per recheckpoint that deleted checkpoints. Reconciliation refuses a snapshot created inside any interval |
 | `KudosLedgerControl` / `kudos_ledger_control` | Single-row mutation-mode control | Installation state | ID 1; `shadow` or `ledger`; non-null change time |
 | `KudosLedgerApplierState` / `kudos_ledger_applier_state` | Projector heartbeat | Operational state only | ID 1; not a watermark and not used for exactly-once folding |
 | `KudosStatRollup` / `kudos_stat_rollups` | Statistic events of retired partitions, summed per UTC day and attribution key | Authoritative history. User, worker and team IDs are audit references without foreign keys | Unique over day, attribution columns and `source_range`, with NULLs not distinct |
@@ -203,7 +204,7 @@ This is the current inventory of paths that create user currency or kudos-derive
 | Style-owner reward | `STYLE_REWARD` user credit and user style record, for the part of the surcharge the activation debit collected | `User.record_style`, called by `_credit_style_authors` in ledger mode and `project_style_reward` in shadow mode |
 | Administrator adjustment | `ADMIN_ADJUSTMENT` signed user delta | User administration API through `User.modify_kudos` |
 | Minimum-balance forgiveness | Already-applied `FLOOR_ADJUSTMENT` user credit | User projection helper in shadow mode; `_apply_user_deltas` in ledger mode |
-| Reconciliation repair | Deterministic `RECONCILIATION` user spendable/escrow delta and its idempotency key. Refused with `ValueError` when the snapshot is older than the key lifetime, and with `StaleCheckpointsError` while a currency retention unit is blocked with `late rows` or `online drift since export` | `reconcile_balances(..., apply_repairs=True)` |
+| Reconciliation repair | Deterministic `RECONCILIATION` user spendable/escrow delta and its idempotency key. Refused with `ValueError` when the snapshot is older than the key lifetime, and with `StaleCheckpointsError` while a currency retention unit is blocked with `late rows` or `online drift since export` or when the snapshot was created inside a `kudos_snapshot_invalidations` interval | `reconcile_balances(..., apply_repairs=True)` |
 
 `User.modify_kudos` also emits the matching per-action user-kudos statistics event. `WorkerTemplate.modify_kudos`
 emits worker display/stat events, not currency. Producer wrappers should retain that distinction.
@@ -572,6 +573,16 @@ first checkpoint, it sums every applied posting. Snapshots store cumulative appl
 a checkpoint stays comparable after it. A boundary without per-user rows occurs only when no contributing posting is
 older than it, so the latest boundary with rows, or none, still gives the right tail.
 
+`create_balance_snapshot` holds the retention lock, so a snapshot never crosses a tick or an operator recovery, and it
+raises `StaleCheckpointsError` while `stale_checkpoint_units` lists a unit. `retention unblock --recheckpoint` records,
+in the transaction that deletes the stale checkpoints, one `kudos_snapshot_invalidations` row from the earliest reset
+unit's catalog `created` time to the reset. A snapshot created inside such an interval stored applied totals from
+checkpoints that omitted late rows, so `reconcile_balances` refuses it with `StaleCheckpointsError` in read-only and
+repair modes alike. The snapshot's rows are kept as evidence. The interval is wider than the bad window. On a legacy
+sub-range unit it starts at the migration, so one legacy recheckpoint invalidates every snapshot taken since the
+cutover. Snapshots outside every interval stay usable, and a fresh snapshot after the recovery is the baseline for
+later checks.
+
 ### Idempotency key lifetime
 
 The key lifetime is the shorter of the two online windows (`KudosRetentionPolicy.key_lifetime`), which is 30 days by
@@ -648,7 +659,11 @@ of the unit's rows in `id` order, and a JSON manifest stored beside it. Objects 
 Each tier has its own budget, and a tick does not evict anything. The statistics dump and the currency export each
 admit an upload only when the tier's stored bytes, minus an object already stored at the unit's own key, plus the
 estimate fit the tier's budget. Otherwise the unit blocks with `statistics tier would exceed budget` or
-`currency tier would exceed budget`.
+`currency tier would exceed budget`. The estimate is an early admission check. The upload also counts the actual
+compressed bytes, including the compressor's final flush, against the same allowance, and an overrun aborts the
+multipart upload and blocks the unit with the same reason without replacing an object already at the key. Budgets
+count completed data objects and exclude manifests and incomplete multipart uploads. Every writer to a tier holds the
+retention lock, including `archive evict`.
 
 `archive evict --tier statistics --budget-bytes <n>` runs `KudosArchive.enforce_budget`, which deletes the oldest
 statistics objects and their manifests, ordered by unit upper bound, until the statistics tier fits `<n>`. Currency
@@ -660,8 +675,14 @@ A unit whose `object_key` is not in the listing gets a NULL `object_key`, and th
 `Kudos retention cleared object key <key> of <dataset> unit <id> (<source_range>, <state>)`. The unit keeps its
 state, except a currency unit in `exported`, `verified` or `detached`. That unit becomes `blocked` with
 `archive object missing`, and the line starts with `Kudos retention blocked` instead, because a drop would remove
-the only copy of its postings. As a last guard, the drop blocks a currency unit with no `object_key` with the same
-reason. The tier sizes from the same listing are the `horde.kudos.archive.tier_bytes` values.
+the only copy of its postings. Before the detach and again immediately before the drop, currency retention checks
+every currency unit of the partition against the archive: the object exists, its manifest is readable, the stored
+size equals the manifest's `compressed_bytes`, and the manifest's `row_count` equals the unit's recorded count. A
+missing key or object blocks the unit with `archive object missing`, a mismatch blocks it with `archive mismatch`,
+and an unreachable store or unreadable manifest fails the tick so that a later tick retries. The check compares
+metadata only. The digest was verified at the `verified` step, and `archive audit` re-reads objects. The post-step
+listing is housekeeping and does not gate the drop. The tier sizes from the same listing are the
+`horde.kudos.archive.tier_bytes` values.
 
 ### Retention metrics and log lines
 

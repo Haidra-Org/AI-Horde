@@ -1115,13 +1115,18 @@ def test_online_drift_since_export_blocks(
 
 def test_retention_lock_is_session_level_and_released_after_the_tick(db_session: scoped_session[Session]) -> None:
     from horde.database.kudos_db import release_retention_lock, try_acquire_retention_lock
+    from horde.database.kudos_reconciliation import create_balance_snapshot
+    from horde.database.kudos_retention import RetentionLockBusyError
     from horde.flask import db
 
     with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as holder:
         assert try_acquire_retention_lock(connection=holder)
         assert _tick(AFTER_WINDOW).outcome == RetentionTickOutcome.SKIPPED_LOCK
+        with pytest.raises(RetentionLockBusyError):
+            create_balance_snapshot()
         assert release_retention_lock(connection=holder)
     assert _tick(AFTER_WINDOW).outcome == RetentionTickOutcome.IDLE
+    create_balance_snapshot()
     with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as next_holder:
         # The tick released its lock, so another session takes it at once.
         assert try_acquire_retention_lock(connection=next_holder)
@@ -1843,11 +1848,14 @@ def _verified_currency_week(
     return partition, store, archive
 
 
+@pytest.mark.parametrize("hold_drops", [False, True])
 def test_verified_currency_unit_whose_object_vanishes_blocks_and_is_exported_again(
     db_session: scoped_session[Session],
     make_partition: Callable[..., str],
     make_user: MakeUser,
+    hold_drops: bool,
 ) -> None:
+    """The drop's archive check blocks the unit, and with drops held the post-step listing blocks it instead."""
     from horde.database.kudos_retention import unblock_unit
     from horde.kudos_archive import manifest_key
 
@@ -1855,7 +1863,7 @@ def test_verified_currency_unit_whose_object_vanishes_blocks_and_is_exported_aga
     key = _unit_of(db_session, partition).object_key
     del store.objects[key]
     del store.objects[manifest_key(key)]
-    _run(archive, hold_drops=True)
+    _run(archive, hold_drops=hold_drops)
     unit = _unit_of(db_session, partition)
     assert (unit.state, unit.error, unit.object_key) == (KudosRetentionState.BLOCKED, RetentionBlockReason.ARCHIVE_OBJECT_MISSING, None)
     assert _attached(db_session, partition)
@@ -1981,6 +1989,8 @@ def test_recheckpoint_cascade_recovers_a_late_row_through_the_later_units(
 
     db_session.add(_posting(MONDAY + timedelta(hours=2), user.id, "4"))
     db_session.commit()
+    # Simulate a baseline created before the late-row incident was detected (also covers old software snapshots).
+    snapshot_id = create_balance_snapshot()
     blocked = _run(archive)
     assert (blocked.outcome, _unit_of(db_session, unit_n).error) == (RetentionTickOutcome.BLOCKED, "late rows")
     assert _unit_of(db_session, unit_next).state == KudosRetentionState.CHECKPOINTED
@@ -1989,7 +1999,8 @@ def test_recheckpoint_cascade_recovers_a_late_row_through_the_later_units(
     assert applied_balance_total() == Decimal(10 + 5 + 2)
     assert [stale_unit.partition_name for stale_unit in stale_checkpoint_units()] == [unit_n]
     db_session.commit()
-    snapshot_id = create_balance_snapshot()
+    with pytest.raises(StaleCheckpointsError):
+        create_balance_snapshot()
     with pytest.raises(StaleCheckpointsError, match="retention unblock --recheckpoint"):
         reconcile_balances(snapshot_id, apply_repairs=True)
     reconcile_balances(snapshot_id)
@@ -2007,6 +2018,13 @@ def test_recheckpoint_cascade_recovers_a_late_row_through_the_later_units(
     db_session.commit()
     assert applied_balance_total() == Decimal(10 + 5 + 4 + 2)
     assert stale_checkpoint_units() == []
+    db_session.commit()
+    for apply_repairs in (False, True):
+        with pytest.raises(StaleCheckpointsError, match="rebuilt checkpoint"):
+            reconcile_balances(snapshot_id, apply_repairs=apply_repairs)
+    from horde.classes.base.kudos import KudosBalanceSnapshot
+
+    assert db_session.query(KudosBalanceSnapshot).filter_by(snapshot_id=snapshot_id).count() > 0
     db_session.commit()
     assert reconcile_balances(create_balance_snapshot(), apply_repairs=True) == []
 
@@ -2569,3 +2587,67 @@ def test_archive_audit_reports_matching_corrupted_and_unmanifested_objects_and_m
     assert [(record.dataset, record.object_key) for record in currency_only if isinstance(record, MissingArchiveObject)] == [
         (CURRENCY, None)
     ]
+
+
+@pytest.mark.parametrize("missing", ["manifest", "unavailable", "size"])
+def test_currency_drop_requires_readable_matching_archive_metadata(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+    make_user: MakeUser,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str,
+) -> None:
+    from horde.kudos_archive import KudosArchiveError, manifest_key
+
+    partition, store, archive = _verified_currency_week(db_session, make_partition, make_user)
+    key = _unit_of(db_session, partition).object_key
+    if missing == "manifest":
+        del store.objects[manifest_key(key)]
+    elif missing == "size":
+        store.objects[key] += b"changed"
+    else:
+
+        def unavailable(key: str) -> None:
+            raise KudosArchiveError("store unreachable")
+
+        monkeypatch.setattr(archive, "object_size", unavailable)
+    result = _run(archive)
+    assert result.outcome in (RetentionTickOutcome.FAILED, RetentionTickOutcome.BLOCKED)
+    assert _attached(db_session, partition)
+    assert _relation_present(db_session, partition)
+
+
+@pytest.mark.parametrize("dataset", [CURRENCY, STATISTICS])
+def test_underestimated_upload_blocks_without_publishing_or_deleting_existing_object(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+    make_user: MakeUser,
+    monkeypatch: pytest.MonkeyPatch,
+    dataset: KudosRetentionDataset,
+) -> None:
+    from horde.database import kudos_retention
+
+    parent = "kudos_ledger" if dataset == CURRENCY else "kudos_stat_events"
+    partition = make_partition(parent, MONDAY, MONDAY + WEEK)
+    if dataset == CURRENCY:
+        user = make_user()
+        _seed_checkpoint(db_session, MONDAY, {user.id: ("0", "0")})
+        db_session.add(_posting(MONDAY + timedelta(hours=1), user.id, "5"))
+    else:
+        db_session.add(_stat_event(MONDAY + timedelta(hours=1), "5"))
+    db_session.commit()
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    _run(archive)
+    source_range = format_source_range(partition_name=partition, lower=MONDAY, upper=MONDAY + WEEK)
+    tier = ArchiveTier.CURRENCY if dataset == CURRENCY else ArchiveTier.STATISTICS
+    key = archive.object_key(tier=tier, source_range=source_range)
+    store.objects[key] = b"old"
+    monkeypatch.setattr(kudos_retention, "_estimated_archive_bytes", lambda context: 0)
+    policy = {"currency_budget_bytes" if dataset == CURRENCY else "statistics_budget_bytes": 1}
+    result = _run(archive, **policy)
+    assert result.outcome == RetentionTickOutcome.BLOCKED
+    assert _unit_of(db_session, partition).error == f"{dataset} tier would exceed budget"
+    assert store.objects[key] == b"old"
+    assert store.uploads == {}
+    assert _attached(db_session, partition)

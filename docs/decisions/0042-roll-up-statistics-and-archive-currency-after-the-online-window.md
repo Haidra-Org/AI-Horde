@@ -223,6 +223,9 @@ Implementation acceptance requires PostgreSQL tests for:
 - identical and conflicting transfer retries before and after key expiry;
 - repair refusal on an expired snapshot;
 - archive export, verification failure and restore;
+- the drop refused while the archive object or its manifest cannot be checked, and an upload refused when its
+  measured size exceeds the tier's budget;
+- reconciliation refusing a snapshot baseline captured before its checkpoints were rebuilt;
 - bucket unavailability leaving writes, projection and rollups unaffected.
 
 A rehearsal on a restored production copy measures the swap lock duration, rollup and export throughput, checkpoint

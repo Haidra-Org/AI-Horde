@@ -208,6 +208,7 @@ SEED_ROWS = (
 EVENT_TABLES = ("kudos_ledger", "kudos_stat_events")
 """The tables the migration partitions."""
 NEW_TABLES = (
+    "kudos_snapshot_invalidations",
     "kudos_stat_rollups",
     "kudos_stat_quarantine",
     "kudos_ledger_checkpoints",
@@ -653,6 +654,7 @@ def _retention_catalogs(request: pytest.FixtureRequest, pg_dsn: str) -> Iterator
         KudosLedgerCheckpoint,
         KudosLedgerDailyStatement,
         KudosRetentionUnit,
+        KudosSnapshotInvalidation,
         KudosStatEvent,
         KudosStatQuarantine,
         KudosStatRollup,
@@ -673,6 +675,7 @@ def _retention_catalogs(request: pytest.FixtureRequest, pg_dsn: str) -> Iterator
         with orm_engine.connect() as connection:
             connection.execute(sqlalchemy.text(USERS_STUB))
             for model in (
+                KudosSnapshotInvalidation,
                 KudosLedger,
                 KudosStatEvent,
                 KudosStatRollup,
