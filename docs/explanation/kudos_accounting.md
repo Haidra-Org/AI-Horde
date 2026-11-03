@@ -32,8 +32,9 @@ For field definitions and implementation symbols, see the
 - The balance and aggregate columns (`users.kudos`, `workers.kudos`, team totals, stats) remain what ordinary read
   sites consume. They are projections of the event history, and in `ledger` mode they can lag by a projector
   interval.
-- Currency movements are permanent rows in `kudos_ledger`. Display totals and counters are permanent rows in
-  `kudos_stat_events`. Rows from one business event share one `event_id`.
+- Currency movements are rows in `kudos_ledger`. Display totals and counters are rows in `kudos_stat_events`. Rows
+  from one business event share one `event_id`. Both tables keep exact rows for an online window, after which
+  [retention](#event-retention) replaces them with summaries and an archive.
 - Spend admission never trusts the raw balance column. It takes a payer lock and checks `available_kudos`,
   which subtracts active reservations and queued debits and deliberately ignores queued credits.
 - One database-serialized projector folds unapplied events into the materialized columns. `applied = false` is
@@ -199,9 +200,18 @@ claimed by a later cycle. A high-water mark cannot skip it. "Exactly once" here 
 committed fold of an accepted row, not exactly-once creation of arbitrary business events.
 
 The applier heartbeat is deliberately not a correctness watermark. It only makes a stopped or delayed projector
-observable. Applied currency and statistic events are retained permanently
-([ADR 0006](../decisions/0006-permanent-archive-compensation-only-repair.md)). `prune_applied_kudos_ledger` is a
-compatibility no-op.
+observable.
+
+## Event retention
+
+Exact events stay in PostgreSQL for an online window of at least 30 days. After that, statistic events are replaced
+by daily rollups and currency postings by per-user checkpoints, daily statements and a verified archive object, and
+the partition holding them is dropped. Reconciliation reads the latest checkpoint plus the online tail, and transfer
+and repair retries are checked against a key table that lives as long as the window. The design, its lifecycle and
+its costs are in [kudos event retention](kudos_retention.md). The decision is
+[ADR 0042](../decisions/0042-roll-up-statistics-and-archive-currency-after-the-online-window.md), which amends the
+storage meaning of permanence in [ADR 0006](../decisions/0006-permanent-archive-compensation-only-repair.md) and
+keeps compensation-only repair.
 
 ## Deadlock mitigation
 
@@ -344,7 +354,7 @@ position together with the applied-ledger totals visible at the same time.
 
 ## Recovery
 
-The permanent event archive and balance snapshots make recovery demonstrable:
+The event history, its checkpoints and the balance snapshots make recovery demonstrable:
 
 ```mermaid
 stateDiagram-v2
@@ -370,9 +380,9 @@ again. If ledger ownership itself must be rolled back, switch to shadow through 
 is folded atomically. Rolling directly back to code that does not understand reservations and shadow audit events is
 unsafe.
 
-This recovery model is why the archive is not pruned and why an operator must never "fix" an incident by toggling
-`applied`, deleting events, or assigning balances directly. The operational commands and rehearsal checklist are in
-[kudos ledger operations](../how-to/kudos_ledger_operations.md).
+This recovery model is why only the retention job removes events, after their replacement is committed, and why an
+operator must not "fix" an incident by toggling `applied`, deleting events, or assigning balances directly. The
+operational commands and rehearsal checklist are in [kudos ledger operations](../how-to/kudos_ledger_operations.md).
 
 ## Costs and boundaries
 
@@ -381,7 +391,9 @@ The architecture deliberately accepts several costs:
 - Normal balance and aggregate reads are only eventually consistent in ledger mode.
 - One projector limits write throughput. Bounded batches, a small interval, and a bounded per-tick catch-up loop are
   the scaling controls. Sharding it would require a new ordering and reservation design, not merely more threads.
-- The permanent archives grow without automatic pruning and need capacity planning.
+- Statistic rows older than the window survive only as daily rollups and best-effort dumps. Reading archived currency
+  rows means restoring an object instead of running an indexed query, and the archive budget must be sized by the
+  operator.
 - PostgreSQL provides the production concurrency guarantees, and the unit suite runs against PostgreSQL. The SQLite
   code branches serve the legacy `USE_SQLITE` runtime mode only. They short-circuit advisory locks and prove nothing
   about concurrent-projector behavior.

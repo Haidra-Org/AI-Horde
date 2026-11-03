@@ -27,6 +27,7 @@ nav = [
     { "Explanation" = [
         { "Overview" = "explanation/README.md" },
         { "Kudos accounting" = "explanation/kudos_accounting.md" },
+        { "Kudos retention" = "explanation/kudos_retention.md" },
         { "Request feasibility" = "explanation/request_feasibility_and_queue_pressure.md" },
         { "Chat requests" = "explanation/chat_requests.md" },
     ] },

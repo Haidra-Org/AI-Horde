@@ -29,6 +29,7 @@ procedure for one subject sit together.
 ### accounting
 
 - Explanation: [Kudos accounting, projection, and concurrency](explanation/kudos_accounting.md)
+- Explanation: [Kudos event retention](explanation/kudos_retention.md)
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
 - Reference: [Kudos accounting reference](reference/kudos_accounting.md)
 
@@ -60,6 +61,7 @@ procedure for one subject sit together.
 ### kudos
 
 - Explanation: [Kudos accounting, projection, and concurrency](explanation/kudos_accounting.md)
+- Explanation: [Kudos event retention](explanation/kudos_retention.md)
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
 - How-to: [Add an image baseline](how-to/add_image_baseline.md)
 - Reference: [Kudos accounting reference](reference/kudos_accounting.md)
