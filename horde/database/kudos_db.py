@@ -11,7 +11,7 @@ SQL, dialect function names, or lock-key literals.
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import Connection, func, select
 
 from horde.flask import SQLITE_MODE, db
 
@@ -19,6 +19,7 @@ KUDOS_APPLIER_LOCK = 0x4B55444F  # "KUDO"
 KUDOS_PAYER_LOCK_NAMESPACE = 0x4B554452  # "KUDR"
 KUDOS_RECONCILIATION_LOCK = 0x4B55445245434F  # "KUDRECO"
 KUDOS_MODE_GATE_LOCK = 0x4B55444D  # "KUDM"
+KUDOS_RETENTION_LOCK = 0x4B5544524554  # "KUDRET"
 
 
 def try_acquire_applier_lock() -> bool:
@@ -27,6 +28,46 @@ def try_acquire_applier_lock() -> bool:
         return True
     statement = select(func.pg_try_advisory_xact_lock(KUDOS_APPLIER_LOCK))
     return bool(db.session.execute(statement).scalar_one())
+
+
+def try_acquire_retention_lock(*, connection: Connection | None = None) -> bool:
+    """Try to own the kudos retention job for the database session of ``connection``.
+
+    The lock is session-level, unlike the other kudos locks. A retention tick commits several transactions and can
+    spend minutes on one archive export, so a transaction-scoped lock would need a connection left idle in transaction
+    for that long, which ``idle_in_transaction_session_timeout`` terminates where it is set. The job takes this lock
+    on a dedicated autocommit connection and releases it with ``release_retention_lock``; closing the connection
+    releases it too.
+
+    Args:
+        connection: The connection whose database session holds the lock; the ORM session's connection when None.
+
+    Returns:
+        True when the session now holds the lock.
+    """
+    if SQLITE_MODE:
+        return True
+    statement = select(func.pg_try_advisory_lock(KUDOS_RETENTION_LOCK))
+    if connection is None:
+        return bool(db.session.execute(statement).scalar_one())
+    return bool(connection.execute(statement).scalar_one())
+
+
+def release_retention_lock(*, connection: Connection | None = None) -> bool:
+    """Release the session-level kudos retention lock taken by ``try_acquire_retention_lock``.
+
+    Args:
+        connection: The connection whose database session holds the lock; the ORM session's connection when None.
+
+    Returns:
+        True when the session held the lock.
+    """
+    if SQLITE_MODE:
+        return True
+    statement = select(func.pg_advisory_unlock(KUDOS_RETENTION_LOCK))
+    if connection is None:
+        return bool(db.session.execute(statement).scalar_one())
+    return bool(connection.execute(statement).scalar_one())
 
 
 def acquire_applier_lock() -> None:

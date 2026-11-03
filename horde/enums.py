@@ -111,6 +111,57 @@ class KudosAuditDetail(enum.StrEnum):
     """On an activation debit, the style's type, which is the record the author's style count is kept under."""
 
 
+class KudosIdempotencyKind(enum.StrEnum):
+    """Classifies the posting set an idempotency key protects."""
+
+    TRANSFER = "transfer"
+    REPAIR = "repair"
+
+
+class KudosRetentionDataset(enum.StrEnum):
+    """Names the event table a retention unit belongs to."""
+
+    CURRENCY = "currency"
+    """The ``kudos_ledger`` postings."""
+    STATISTICS = "statistics"
+    """The ``kudos_stat_events`` counter events."""
+
+
+class KudosRetentionState(enum.StrEnum):
+    """Tracks one retention unit through its removal steps.
+
+    Statistics units move ``PENDING``, ``ROLLED_UP``, ``DUMPED`` (or ``DUMP_FAILED`` while the dump is retried, and
+    ``DUMP_WAIVED`` when an operator gives up on it), then ``DROPPED``. Currency units move ``PENDING``,
+    ``CHECKPOINTED``, ``EXPORTED``, ``VERIFIED``, then ``DROPPED``. With a drop grace period, units of both datasets
+    pass through ``DETACHED`` between their drop-ready state and ``DROPPED``. Any state before ``DROPPED`` can become
+    ``BLOCKED``. An operator returns a blocked unit to ``PENDING``, or to ``CHECKPOINTED`` when its checkpoint is
+    already committed.
+    """
+
+    PENDING = "pending"
+    ROLLED_UP = "rolled_up"
+    """Statistics only. The unit's rows are folded into rollups and its quarantined rows moved."""
+    DUMPED = "dumped"
+    """Statistics only. The archive dump of the unit was written."""
+    DUMP_FAILED = "dump_failed"
+    """Statistics only. The last dump attempt failed. Later ticks retry the dump, and the unit is not removable yet."""
+    DUMP_WAIVED = "dump_waived"
+    """Statistics only. The unit is dropped without a dump, because an operator accepted the loss of the raw rows or no
+    archive is configured. The rollup alone replaces the unit."""
+    CHECKPOINTED = "checkpointed"
+    """Currency only. The per-user checkpoint and daily statements for the unit are committed."""
+    EXPORTED = "exported"
+    """Currency only. The unit's rows were written to the archive."""
+    VERIFIED = "verified"
+    """Currency only. The archive object was read back and matched its manifest and the online rows."""
+    DETACHED = "detached"
+    """The unit's partition is detached from its parent but not dropped, so an operator can still reattach it. The
+    drop follows once the drop grace period has passed since ``detached_at``. The unit is drop-ready, and its state
+    before the detach is kept in ``state_before_detach``."""
+    DROPPED = "dropped"
+    BLOCKED = "blocked"
+
+
 class State(enum.Enum):
     WAITING = 0
     PROCESSING = 1

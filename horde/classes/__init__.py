@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy.sql import text
@@ -14,8 +15,10 @@ from horde.classes.base.kudos import (  # noqa 401
     KudosLedger,
     KudosLedgerApplierState,
     KudosLedgerControl,
+    KudosPartitioning,
     KudosReservation,
     KudosStatEvent,
+    ensure_kudos_event_partitions,
 )
 from horde.classes.base.prompt_moderation import (  # noqa: F401
     PromptModerationEvent,
@@ -61,6 +64,11 @@ def init_db(app):
         lock_conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _INIT_DB_LOCK_KEY})
 
         db.create_all()
+        ensure_kudos_event_partitions(
+            until=datetime.utcnow() + 2 * KudosPartitioning.DEFAULT_WIDTH,
+            width=KudosPartitioning.DEFAULT_WIDTH,
+        )
+        db.session.commit()
 
         sql_statement_dir = Path(__file__).parent.parent.parent / "sql_statements"
 

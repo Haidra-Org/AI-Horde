@@ -1,0 +1,764 @@
+# SPDX-FileCopyrightText: 2026 Tazlin
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+"""Verify the kudos retention migration converts the production event tables and matches the ORM models."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterator
+from datetime import time, timedelta
+from pathlib import Path
+from typing import Any
+
+import pytest
+import sqlalchemy
+import sqlparse
+
+from tests.dependency_runtime import create_schema, drop_schema, new_test_schema_name
+
+MIGRATION_PATH = Path(__file__).resolve().parents[2] / "sql_statements" / "5.1.16.txt"
+"""The hand-applied migration under test."""
+GEXEC_LINE = re.compile(r"^\\gexec[ \t]*$", re.MULTILINE)
+"""A psql ``\\gexec`` line, which ends the query whose result rows are run as statements."""
+USERS_STUB = "CREATE TABLE users (id INTEGER PRIMARY KEY)"
+"""The key ``kudos_ledger.user_id`` and the new statement tables reference."""
+KUDOS_LEDGER_STUB = """
+CREATE TABLE kudos_ledger (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    created TIMESTAMP NOT NULL DEFAULT now(),
+    event_id UUID NOT NULL,
+    entry_type VARCHAR(32) NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    escrow BOOLEAN NOT NULL DEFAULT FALSE,
+    amount NUMERIC(20, 2) NOT NULL CHECK (amount <> 'NaN'),
+    applied BOOLEAN NOT NULL DEFAULT FALSE,
+    job_id UUID NULL,
+    wp_type VARCHAR(20) NULL,
+    detail JSONB NULL
+)
+"""
+"""``kudos_ledger`` as sql_statements/5.1.0.txt builds it."""
+KUDOS_LEDGER_INDEXES = (
+    "CREATE INDEX ix_kudos_ledger_created ON kudos_ledger (created)",
+    "CREATE INDEX ix_kudos_ledger_user_id ON kudos_ledger (user_id)",
+    "CREATE INDEX ix_kudos_ledger_unapplied ON kudos_ledger (id) WHERE NOT applied",
+    "CREATE INDEX ix_kudos_ledger_unapplied_users ON kudos_ledger (entry_type, user_id) WHERE applied IS FALSE",
+    "CREATE INDEX ix_kudos_ledger_unapplied_by_user ON kudos_ledger (user_id) WHERE applied IS FALSE",
+)
+"""The production indexes of ``kudos_ledger``, from 5.1.0, 5.1.10 and 5.1.11."""
+KUDOS_STAT_EVENTS_STUB = """
+CREATE TABLE kudos_stat_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    created TIMESTAMP NOT NULL DEFAULT now(),
+    event_id UUID NOT NULL,
+    entry_type VARCHAR(32) NOT NULL,
+    user_id INTEGER NULL,
+    worker_user_id INTEGER NULL,
+    worker_id UUID NULL,
+    team_id UUID NULL,
+    job_id UUID NULL,
+    wp_type VARCHAR(20) NULL,
+    amount NUMERIC(20, 2) NOT NULL CHECK (amount <> 'NaN'),
+    unit VARCHAR(16) NOT NULL,
+    stat_action VARCHAR(32) NULL,
+    record VARCHAR(32) NULL,
+    detail JSONB NULL,
+    applied BOOLEAN NOT NULL DEFAULT FALSE,
+    quarantined BOOLEAN NOT NULL DEFAULT FALSE,
+    quarantine_reason VARCHAR(64) NULL,
+    quarantined_at TIMESTAMP WITHOUT TIME ZONE NULL,
+    CONSTRAINT kudos_stat_event_exactly_one_target CHECK (
+        (user_id IS NOT NULL AND worker_id IS NULL)
+        OR (user_id IS NULL AND worker_id IS NOT NULL)
+    )
+)
+"""
+"""``kudos_stat_events`` as sql_statements/5.1.0.txt and 5.1.9.txt build it."""
+KUDOS_STAT_EVENTS_INDEXES = (
+    "CREATE INDEX ix_kudos_stat_events_drainable ON kudos_stat_events (id) WHERE applied IS FALSE AND quarantined IS FALSE",
+    "CREATE INDEX ix_kudos_stat_events_quarantined ON kudos_stat_events (created, quarantined_at) WHERE quarantined IS TRUE",
+    "CREATE INDEX ix_kudos_stat_events_event_id ON kudos_stat_events (event_id)",
+    "CREATE INDEX ix_kudos_stat_events_user_id ON kudos_stat_events (user_id) WHERE user_id IS NOT NULL",
+    "CREATE INDEX ix_kudos_stat_events_worker_id ON kudos_stat_events (worker_id) WHERE worker_id IS NOT NULL",
+    "CREATE INDEX ix_kudos_stat_events_team_id ON kudos_stat_events (team_id) WHERE team_id IS NOT NULL",
+)
+"""The production indexes of ``kudos_stat_events``, from 5.1.0, 5.1.9 and 5.1.10."""
+CREATE_ALL_KUDOS_LEDGER_STUB = """
+CREATE TABLE kudos_ledger (
+    id BIGSERIAL NOT NULL,
+    created TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    event_id UUID NOT NULL,
+    entry_type VARCHAR(20) NOT NULL,
+    user_id INTEGER NOT NULL,
+    escrow BOOLEAN NOT NULL,
+    amount NUMERIC(20, 2) NOT NULL,
+    applied BOOLEAN NOT NULL,
+    job_id UUID,
+    wp_type VARCHAR(20),
+    detail JSONB,
+    PRIMARY KEY (id),
+    CONSTRAINT kudos_ledger_amount_not_nan CHECK (amount <> 'NaN'),
+    FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE RESTRICT
+)
+"""
+"""``kudos_ledger`` as db.create_all() built it from the models before partitioning, which is how dev was built.
+
+The current models describe the partitioned table, so their metadata cannot build this shape and it is written out.
+"""
+CREATE_ALL_KUDOS_LEDGER_INDEXES = (
+    "CREATE INDEX ix_kudos_ledger_created ON kudos_ledger (created)",
+    "CREATE INDEX ix_kudos_ledger_event_id ON kudos_ledger (event_id)",
+    "CREATE INDEX ix_kudos_ledger_user_id ON kudos_ledger (user_id)",
+    "CREATE INDEX ix_kudos_ledger_unapplied ON kudos_ledger (id) WHERE applied IS false",
+    "CREATE INDEX ix_kudos_ledger_unapplied_users ON kudos_ledger (entry_type, user_id) WHERE applied IS false",
+    "CREATE INDEX ix_kudos_ledger_unapplied_by_user ON kudos_ledger (user_id) WHERE applied IS false",
+)
+"""The indexes db.create_all() built on ``kudos_ledger`` before partitioning."""
+CREATE_ALL_KUDOS_STAT_EVENTS_STUB = """
+CREATE TABLE kudos_stat_events (
+    id BIGSERIAL NOT NULL,
+    created TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    event_id UUID NOT NULL,
+    entry_type VARCHAR(20) NOT NULL,
+    user_id INTEGER,
+    worker_user_id INTEGER,
+    worker_id UUID,
+    team_id UUID,
+    job_id UUID,
+    wp_type VARCHAR(20),
+    amount NUMERIC(20, 2) NOT NULL,
+    unit VARCHAR(6) NOT NULL,
+    stat_action VARCHAR(32),
+    record VARCHAR(32),
+    detail JSONB,
+    applied BOOLEAN NOT NULL,
+    quarantined BOOLEAN NOT NULL,
+    quarantine_reason VARCHAR(64),
+    quarantined_at TIMESTAMP WITHOUT TIME ZONE,
+    PRIMARY KEY (id),
+    CONSTRAINT kudos_stat_event_exactly_one_target CHECK (
+        (user_id IS NOT NULL AND worker_id IS NULL) OR (user_id IS NULL AND worker_id IS NOT NULL)
+    ),
+    CONSTRAINT kudos_stat_event_amount_not_nan CHECK (amount <> 'NaN')
+)
+"""
+"""``kudos_stat_events`` as db.create_all() built it from the models before partitioning."""
+CREATE_ALL_KUDOS_STAT_EVENTS_INDEXES = (
+    "CREATE INDEX ix_kudos_stat_events_drainable ON kudos_stat_events (id) WHERE applied IS false AND quarantined IS false",
+    "CREATE INDEX ix_kudos_stat_events_quarantined ON kudos_stat_events (created, quarantined_at) WHERE quarantined IS true",
+    "CREATE INDEX ix_kudos_stat_events_event_id ON kudos_stat_events (event_id)",
+    "CREATE INDEX ix_kudos_stat_events_user_id ON kudos_stat_events (user_id)",
+    "CREATE INDEX ix_kudos_stat_events_worker_id ON kudos_stat_events (worker_id)",
+    "CREATE INDEX ix_kudos_stat_events_team_id ON kudos_stat_events (team_id)",
+)
+"""The indexes db.create_all() built on ``kudos_stat_events`` before partitioning."""
+TABLE_SHAPES = {
+    "production": (USERS_STUB, KUDOS_LEDGER_STUB, *KUDOS_LEDGER_INDEXES, KUDOS_STAT_EVENTS_STUB, *KUDOS_STAT_EVENTS_INDEXES),
+    "create_all": (
+        USERS_STUB,
+        CREATE_ALL_KUDOS_LEDGER_STUB,
+        *CREATE_ALL_KUDOS_LEDGER_INDEXES,
+        CREATE_ALL_KUDOS_STAT_EVENTS_STUB,
+        *CREATE_ALL_KUDOS_STAT_EVENTS_INDEXES,
+    ),
+}
+"""The DDL of each pre-partitioning shape the migration converts: the 5.1.0 shape and the create_all shape."""
+PARENT_INDEXES = {
+    "kudos_ledger": (
+        "ix_kudos_ledger_unapplied",
+        "ix_kudos_ledger_unapplied_users",
+        "ix_kudos_ledger_unapplied_by_user",
+        "ix_kudos_ledger_user_id",
+    ),
+    "kudos_stat_events": (
+        "ix_kudos_stat_events_drainable",
+        "ix_kudos_stat_events_quarantined",
+        "ix_kudos_stat_events_event_id",
+        "ix_kudos_stat_events_user_id",
+        "ix_kudos_stat_events_worker_id",
+        "ix_kudos_stat_events_team_id",
+    ),
+}
+"""The partitioned indexes of each parent besides its primary key."""
+SEED_ROWS = (
+    "INSERT INTO users (id) VALUES (1), (2)",
+    # A transfer inside the key window, one outside it, and a repair that posts to both balances.
+    "INSERT INTO kudos_ledger (created, event_id, entry_type, user_id, escrow, amount, applied) VALUES "
+    "((now() AT TIME ZONE 'UTC') - interval '1 day', '00000000-0000-0000-0000-00000000000a', 'TRANSFER', 1, false, -10, true), "
+    "((now() AT TIME ZONE 'UTC') - interval '1 day', '00000000-0000-0000-0000-00000000000a', 'TRANSFER', 2, false, 10, true), "
+    "((now() AT TIME ZONE 'UTC') - interval '40 days', '00000000-0000-0000-0000-00000000000b', 'TRANSFER', 1, false, -3, true), "
+    "((now() AT TIME ZONE 'UTC') - interval '40 days', '00000000-0000-0000-0000-00000000000b', 'TRANSFER', 2, false, 3, true), "
+    "((now() AT TIME ZONE 'UTC') - interval '2 days', '00000000-0000-0000-0000-00000000000c', 'RECONCILIATION', 1, false, 5, true), "
+    "((now() AT TIME ZONE 'UTC') - interval '2 days', '00000000-0000-0000-0000-00000000000c', 'RECONCILIATION', 1, true, 2, true), "
+    "((now() AT TIME ZONE 'UTC') - interval '1 hour', '00000000-0000-0000-0000-00000000000d', 'AWARD', 2, false, 7, false)",
+    "INSERT INTO kudos_stat_events (created, event_id, entry_type, user_id, amount, unit, applied, quarantined) VALUES "
+    "(now() AT TIME ZONE 'UTC', gen_random_uuid(), 'STAT_RECORD', 1, 1, 'count', true, false), "
+    "(now() AT TIME ZONE 'UTC', gen_random_uuid(), 'STAT_RECORD', 1, 1, 'count', false, false), "
+    "(now() AT TIME ZONE 'UTC', gen_random_uuid(), 'STAT_RECORD', 2, 1, 'count', false, true)",
+)
+"""Rows that exist before the migration: applied, unapplied and quarantined events, and keyed postings."""
+EVENT_TABLES = ("kudos_ledger", "kudos_stat_events")
+"""The tables the migration partitions."""
+NEW_TABLES = (
+    "kudos_stat_rollups",
+    "kudos_stat_quarantine",
+    "kudos_ledger_checkpoints",
+    "kudos_ledger_daily",
+    "kudos_idempotency_keys",
+    "kudos_retention_catalog",
+)
+"""The tables the migration creates."""
+ABSENT = "<absent>"
+"""The value reported for an item one schema has and the other lacks."""
+
+
+def _schema_engine(pg_dsn: str, schema_name: str) -> sqlalchemy.Engine:
+    return sqlalchemy.create_engine(
+        pg_dsn,
+        isolation_level="AUTOCOMMIT",
+        connect_args={"options": f"-c search_path={schema_name}"},
+    )
+
+
+def _apply_migration(connection: sqlalchemy.Connection) -> None:
+    """Run the migration as psql does, including its ``\\gexec`` statements.
+
+    psql sends the query that ends at a ``\\gexec`` line and then runs every value it returns as a statement of its
+    own, outside any transaction block.
+    """
+    segments = GEXEC_LINE.split(MIGRATION_PATH.read_text())
+    for segment_index, segment in enumerate(segments):
+        statements = [statement for statement in sqlparse.split(segment) if sqlparse.format(statement, strip_comments=True).strip()]
+        generating_query = statements.pop() if segment_index < len(segments) - 1 else None
+        for statement in statements:
+            connection.execute(sqlalchemy.text(statement))
+        if generating_query is None:
+            continue
+        for generated_row in connection.execute(sqlalchemy.text(generating_query)).all():
+            for generated_statement in generated_row:
+                connection.execute(sqlalchemy.text(generated_statement))
+
+
+def _build_tables(connection: sqlalchemy.Connection, shape: str) -> None:
+    for statement in TABLE_SHAPES[shape]:
+        connection.execute(sqlalchemy.text(statement))
+
+
+def _scalar(connection: sqlalchemy.Connection, query: str, **parameters: Any) -> Any:
+    return connection.execute(sqlalchemy.text(query), parameters).scalar_one()
+
+
+def _partition_bounds(connection: sqlalchemy.Connection, table: str) -> dict[str, str]:
+    rows = connection.execute(
+        sqlalchemy.text(
+            "SELECT c.relname, pg_get_expr(c.relpartbound, c.oid) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+            "WHERE i.inhparent = CAST(:table AS regclass)",
+        ),
+        {"table": table},
+    )
+    return {name: bound for name, bound in rows}
+
+
+@pytest.fixture(params=tuple(TABLE_SHAPES))
+def converted_schema(request: pytest.FixtureRequest, pg_dsn: str) -> Iterator[sqlalchemy.Connection]:
+    """Yield a connection to a throwaway schema holding one pre-partitioning shape after the migration ran twice.
+
+    Every test using it runs for both shapes, so the create_all shape is held to the same post-conditions. The
+    connection is the session the migration ran in, so its temporary ``kudos_swap_parameters`` is readable.
+    """
+    schema_name = new_test_schema_name("horde_kudos_retention_migration")
+    create_schema(pg_dsn, schema_name)
+    engine = _schema_engine(pg_dsn, schema_name)
+    try:
+        with engine.connect() as connection:
+            _build_tables(connection, request.param)
+            for statement in SEED_ROWS:
+                connection.execute(sqlalchemy.text(statement))
+            for _ in range(2):
+                _apply_migration(connection)
+            yield connection
+    finally:
+        engine.dispose()
+        drop_schema(pg_dsn, schema_name)
+
+
+@pytest.mark.parametrize("table", EVENT_TABLES)
+def test_conversion_ranges_the_table_on_created_around_the_swap_timestamp(converted_schema: sqlalchemy.Connection, table: str) -> None:
+    connection = converted_schema
+    assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST(:table AS regclass)", table=table) == "p"
+    assert _scalar(connection, "SELECT pg_get_partkeydef(CAST(:table AS regclass))", table=table) == "RANGE (created)"
+    swap_ts = _scalar(connection, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = :table", table=table)
+    # PostgreSQL renders a bound with trailing zeros of the fraction removed, so it renders the expected text too.
+    swap_text = _scalar(connection, "SELECT CAST(CAST(:swap_ts AS timestamp) AS text)", swap_ts=swap_ts)
+    first_upper = _scalar(connection, "SELECT CAST(CAST(:swap_ts AS timestamp) + interval '7 days' AS text)", swap_ts=swap_ts)
+    # A Monday 00:00 at least a day away leaves the validation and the swap a day or more before the CHECK bites.
+    assert swap_ts.weekday() == 0 and swap_ts.time() == time(0)
+    assert swap_ts - _scalar(connection, "SELECT now() AT TIME ZONE 'UTC'") >= timedelta(hours=23)
+    assert swap_ts - _scalar(connection, "SELECT now() AT TIME ZONE 'UTC'") <= timedelta(days=8)
+    assert _partition_bounds(connection, table) == {
+        f"{table}_p_legacy": f"FOR VALUES FROM (MINVALUE) TO ('{swap_text}')",
+        f"{table}_p_{swap_ts:%Y%m%d}": f"FOR VALUES FROM ('{swap_text}') TO ('{first_upper}')",
+    }
+    for relation in (table, f"{table}_p_legacy"):
+        primary_key = _scalar(
+            connection,
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = CAST(:relation AS regclass) AND contype = 'p'",
+            relation=relation,
+        )
+        assert primary_key == "PRIMARY KEY (id, created)", relation
+    # The scan-free attach relied on this CHECK. The parent must not keep it, or later partitions reject every row.
+    checks = set(
+        connection.execute(
+            sqlalchemy.text("SELECT conname FROM pg_constraint WHERE conrelid = CAST(:table AS regclass) AND contype = 'c'"),
+            {"table": table},
+        ).scalars(),
+    )
+    assert f"{table}_legacy_range" not in checks
+    amount_check = "kudos_ledger_amount_not_nan" if table == "kudos_ledger" else "kudos_stat_event_amount_not_nan"
+    assert amount_check in checks
+
+
+@pytest.mark.parametrize("table", EVENT_TABLES)
+def test_conversion_attaches_every_existing_index_to_a_partitioned_index(converted_schema: sqlalchemy.Connection, table: str) -> None:
+    connection = converted_schema
+    attached = dict(
+        connection.execute(
+            sqlalchemy.text(
+                "SELECT parent.relname, child.relname FROM pg_index pi JOIN pg_class parent ON parent.oid = pi.indexrelid "
+                "JOIN pg_inherits h ON h.inhparent = pi.indexrelid JOIN pg_class child ON child.oid = h.inhrelid "
+                "JOIN pg_index ci ON ci.indexrelid = child.oid "
+                "WHERE pi.indrelid = CAST(:table AS regclass) AND ci.indrelid = CAST(:legacy AS regclass)",
+            ),
+            {"table": table, "legacy": f"{table}_p_legacy"},
+        ).all(),
+    )
+    expected = {f"{table}_pkey": f"{table}_p_legacy_pkey"}
+    if table == "kudos_stat_events":
+        # Built for the retention job's created sub-ranges on the legacy partition, and attached to nothing.
+        legacy_created = _scalar(connection, "SELECT pg_get_indexdef(CAST('ix_kudos_stat_events_legacy_created' AS regclass))")
+        assert legacy_created.endswith(".kudos_stat_events_p_legacy USING btree (created)")
+        assert not _scalar(connection, "SELECT relispartition FROM pg_class WHERE relname = 'ix_kudos_stat_events_legacy_created'")
+    for index_name in PARENT_INDEXES[table]:
+        expected[index_name] = index_name.replace(f"ix_{table}_", f"ix_{table}_p_legacy_")
+    assert attached == expected
+    # Range pruning replaces ix_kudos_ledger_created on the parent. It stays on the legacy partition for the
+    # created sub-ranges. The create_all shape's event_id index is dropped, and no normalization index is left over.
+    legacy_indexes = set(
+        connection.execute(
+            sqlalchemy.text("SELECT indexrelid::regclass::text FROM pg_index WHERE indrelid = CAST(:legacy AS regclass)"),
+            {"legacy": f"{table}_p_legacy"},
+        ).scalars(),
+    )
+    local_indexes = {"ix_kudos_ledger_p_legacy_created"} if table == "kudos_ledger" else {"ix_kudos_stat_events_legacy_created"}
+    assert legacy_indexes == set(expected.values()) | local_indexes
+    invalid = connection.execute(
+        sqlalchemy.text("SELECT indexrelid::regclass::text FROM pg_index WHERE indrelid = CAST(:table AS regclass) AND NOT indisvalid"),
+        {"table": table},
+    ).all()
+    assert invalid == []
+    predicate = _scalar(connection, "SELECT pg_get_indexdef(CAST('ix_kudos_ledger_unapplied' AS regclass))")
+    assert predicate.endswith("WHERE (NOT applied)")
+
+
+def test_conversion_keeps_rows_and_their_queue_state(converted_schema: sqlalchemy.Connection) -> None:
+    connection = converted_schema
+    assert _scalar(connection, "SELECT count(*) FROM kudos_ledger") == 7
+    assert _scalar(connection, "SELECT count(*) FROM kudos_ledger WHERE NOT applied") == 1
+    assert _scalar(connection, "SELECT count(*) FROM ONLY kudos_ledger_p_legacy") == 7
+    assert _scalar(connection, "SELECT count(*) FROM kudos_stat_events WHERE applied IS FALSE AND quarantined IS FALSE") == 1
+    assert _scalar(connection, "SELECT count(*) FROM kudos_stat_events WHERE quarantined IS TRUE") == 1
+
+
+@pytest.mark.parametrize("table", EVENT_TABLES)
+def test_inserts_after_the_swap_route_by_created_and_continue_the_sequence(converted_schema: sqlalchemy.Connection, table: str) -> None:
+    connection = converted_schema
+    previous_maximum = _scalar(connection, f"SELECT max(id) FROM {table}")
+    swap_ts = _scalar(connection, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = :table", table=table)
+    if table == "kudos_ledger":
+        columns, values, defaulted_flag = "event_id, entry_type, user_id, amount", "gen_random_uuid(), 'AWARD', 1, 1", "escrow"
+    else:
+        columns = "event_id, entry_type, user_id, amount, unit"
+        values, defaulted_flag = "gen_random_uuid(), 'STAT_RECORD', 1, 1, 'count'", "quarantined"
+    landed = connection.execute(
+        sqlalchemy.text(
+            f"INSERT INTO {table} (created, {columns}) VALUES "
+            f"(CAST(:swap_ts AS timestamp) + interval '1 hour', {values}), "
+            f"(CAST(:swap_ts AS timestamp) - interval '400 days', {values}) "
+            f"RETURNING id, tableoid::regclass::text, {defaulted_flag} IS FALSE",
+        ),
+        {"swap_ts": swap_ts},
+    ).all()
+    assert [partition for _, partition, _ in landed] == [f"{table}_p_{swap_ts:%Y%m%d}", f"{table}_p_legacy"]
+    assert all(row_id > previous_maximum for row_id, _, _ in landed)
+    assert all(defaulted for _, _, defaulted in landed)
+    # The parent owns the sequence, so dropping the legacy partition does not take the parent's default with it.
+    assert _scalar(connection, "SELECT pg_get_serial_sequence(:table, 'id')", table=table) is not None
+
+
+def test_conversion_moves_the_user_key_to_the_parent(converted_schema: sqlalchemy.Connection) -> None:
+    definition = _scalar(
+        converted_schema,
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = CAST('kudos_ledger' AS regclass) AND contype = 'f'",
+    )
+    assert definition == "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT"
+
+
+def test_backfill_keys_the_transfers_and_repairs_inside_the_window(converted_schema: sqlalchemy.Connection) -> None:
+    keys = converted_schema.execute(
+        sqlalchemy.text(
+            "SELECT event_id::text, kind, source_user_id, dest_user_id, amount, outcome FROM kudos_idempotency_keys ORDER BY event_id"
+        ),
+    ).all()
+    assert [tuple(key) for key in keys] == [
+        ("00000000-0000-0000-0000-00000000000a", "transfer", 1, 2, 10, "OK"),
+        ("00000000-0000-0000-0000-00000000000c", "repair", None, 1, 7, "OK"),
+    ]
+
+
+def test_conversion_stops_before_committing_when_a_legacy_index_does_not_match(pg_dsn: str) -> None:
+    """An index the normalization does not cover still stops the swap with a clear error."""
+    schema_name = new_test_schema_name("horde_kudos_retention_mismatch")
+    create_schema(pg_dsn, schema_name)
+    engine = _schema_engine(pg_dsn, schema_name)
+    try:
+        with engine.connect() as connection:
+            _build_tables(connection, "production")
+            connection.execute(sqlalchemy.text("DROP INDEX ix_kudos_stat_events_quarantined"))
+            connection.execute(sqlalchemy.text("CREATE INDEX ix_kudos_stat_events_quarantined ON kudos_stat_events (created)"))
+            with pytest.raises(sqlalchemy.exc.InternalError, match="kudos_stat_events_p_legacy has no valid index matching"):
+                _apply_migration(connection)
+            connection.execute(sqlalchemy.text("ROLLBACK"))
+            assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_stat_events' AS regclass)") == "r"
+            assert _scalar(connection, "SELECT to_regclass('kudos_stat_events_p_legacy')") is None
+            assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_ledger' AS regclass)") == "p"
+    finally:
+        engine.dispose()
+        drop_schema(pg_dsn, schema_name)
+
+
+NEXT_SWAP_TS = "SELECT date_trunc('week', (now() AT TIME ZONE 'UTC') + interval '24 hours' + interval '7 days' - interval '1 microsecond')"
+"""The swap_ts a run of the migration computes now."""
+
+
+@pytest.fixture
+def unconverted_schema(pg_dsn: str) -> Iterator[sqlalchemy.Connection]:
+    """Yield a connection to a throwaway schema holding the production shape without seeded rows."""
+    schema_name = new_test_schema_name("horde_kudos_retention_rerun")
+    create_schema(pg_dsn, schema_name)
+    engine = _schema_engine(pg_dsn, schema_name)
+    try:
+        with engine.connect() as connection:
+            _build_tables(connection, "production")
+            yield connection
+    finally:
+        engine.dispose()
+        drop_schema(pg_dsn, schema_name)
+
+
+def _add_validated_legacy_range(connection: sqlalchemy.Connection, table: str, swap_ts: Any) -> None:
+    """Leave the table as a run that failed after validating its legacy range CHECK leaves it."""
+    connection.execute(
+        sqlalchemy.text(f"ALTER TABLE {table} ADD CONSTRAINT {table}_legacy_range CHECK (created < CAST(:swap_ts AS timestamp)) NOT VALID"),
+        {"swap_ts": swap_ts},
+    )
+    connection.execute(sqlalchemy.text(f"ALTER TABLE {table} VALIDATE CONSTRAINT {table}_legacy_range"))
+
+
+def test_rerun_takes_the_swap_timestamp_from_an_existing_legacy_range(unconverted_schema: sqlalchemy.Connection) -> None:
+    """A rerun in a new session attaches at the bound the existing CHECK enforces, not at a newly computed Monday.
+
+    The CHECK's bound is a week after the Monday a run computes now, so it differs from the computed one and stays in
+    the future whatever the day of the week.
+    """
+    connection = unconverted_schema
+    original_swap_ts = _scalar(connection, f"SELECT ({NEXT_SWAP_TS}) + interval '7 days'")
+    _add_validated_legacy_range(connection, "kudos_ledger", original_swap_ts)
+    for _ in range(2):
+        _apply_migration(connection)
+    assert _scalar(connection, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = 'kudos_ledger'") == original_swap_ts
+    swap_text = _scalar(connection, "SELECT CAST(CAST(:swap_ts AS timestamp) AS text)", swap_ts=original_swap_ts)
+    first_upper = _scalar(connection, "SELECT CAST(CAST(:swap_ts AS timestamp) + interval '7 days' AS text)", swap_ts=original_swap_ts)
+    assert _partition_bounds(connection, "kudos_ledger") == {
+        "kudos_ledger_p_legacy": f"FOR VALUES FROM (MINVALUE) TO ('{swap_text}')",
+        f"kudos_ledger_p_{original_swap_ts:%Y%m%d}": f"FOR VALUES FROM ('{swap_text}') TO ('{first_upper}')",
+    }
+    # The table without a leftover CHECK still takes the Monday computed now.
+    computed_swap_ts = _scalar(connection, NEXT_SWAP_TS)
+    assert _scalar(connection, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = 'kudos_stat_events'") == computed_swap_ts
+
+
+def test_rerun_refuses_a_swap_after_the_existing_legacy_range_has_passed(unconverted_schema: sqlalchemy.Connection) -> None:
+    """A leftover CHECK whose bound has passed already rejects new rows, so the swap refuses to run."""
+    connection = unconverted_schema
+    passed_swap_ts = _scalar(connection, f"SELECT ({NEXT_SWAP_TS}) - interval '14 days'")
+    _add_validated_legacy_range(connection, "kudos_ledger", passed_swap_ts)
+    with pytest.raises(sqlalchemy.exc.InternalError, match="swap_ts for kudos_ledger has passed"):
+        _apply_migration(connection)
+    connection.execute(sqlalchemy.text("ROLLBACK"))
+    assert _scalar(connection, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = 'kudos_ledger'") == passed_swap_ts
+    assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_ledger' AS regclass)") == "r"
+    assert _scalar(connection, "SELECT to_regclass('kudos_ledger_p_legacy')") is None
+
+
+def test_rerun_refuses_a_legacy_range_it_cannot_read(unconverted_schema: sqlalchemy.Connection) -> None:
+    """A constraint under the legacy range name with another expression stops the run before any swap."""
+    connection = unconverted_schema
+    connection.execute(sqlalchemy.text("ALTER TABLE kudos_ledger ADD CONSTRAINT kudos_ledger_legacy_range CHECK (amount IS NOT NULL)"))
+    with pytest.raises(sqlalchemy.exc.InternalError, match="cannot read swap_ts from kudos_ledger_legacy_range"):
+        _apply_migration(connection)
+    assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_ledger' AS regclass)") == "r"
+
+
+def _catalog(connection: sqlalchemy.Connection, schema_name: str) -> dict[str, Any]:
+    """Return every column attribute, constraint, index and partition key of the compared tables.
+
+    The catalog functions normalize how each DDL source spelled a type, default, constraint or predicate, so only the
+    schema qualifier differs between two schemas and is removed.
+    """
+    items: dict[str, Any] = {}
+    for table in (*EVENT_TABLES, *NEW_TABLES):
+        relation = {"table": table}
+        items[f"{table} partition key"] = connection.execute(
+            sqlalchemy.text("SELECT pg_get_partkeydef(CAST(:table AS regclass))"),
+            relation,
+        ).scalar_one()
+        for name, type_name, not_null, default in connection.execute(
+            sqlalchemy.text(
+                "SELECT a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull, pg_get_expr(d.adbin, d.adrelid) "
+                "FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum "
+                "WHERE a.attrelid = CAST(:table AS regclass) AND a.attnum > 0 AND NOT a.attisdropped",
+            ),
+            relation,
+        ):
+            items[f"{table} column {name} type"] = type_name
+            items[f"{table} column {name} not null"] = not_null
+            items[f"{table} column {name} server default"] = None if default is None else default.replace(f"{schema_name}.", "")
+        for name, definition in connection.execute(
+            sqlalchemy.text("SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = CAST(:table AS regclass)"),
+            relation,
+        ):
+            items[f"{table} constraint {name}"] = definition.replace(f"{schema_name}.", "")
+        for name, definition in connection.execute(
+            sqlalchemy.text(
+                "SELECT c.relname, pg_get_indexdef(i.indexrelid) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+                "WHERE i.indrelid = CAST(:table AS regclass)",
+            ),
+            relation,
+        ):
+            items[f"{table} index {name}"] = definition.replace(f"{schema_name}.", "")
+    return items
+
+
+@pytest.fixture(scope="module", params=tuple(TABLE_SHAPES))
+def _retention_catalogs(request: pytest.FixtureRequest, pg_dsn: str) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+    """Build the compared tables from the migration and from the ORM models in two schemas and return both catalogs."""
+    from horde.classes.base.kudos import (
+        KudosIdempotencyKey,
+        KudosLedger,
+        KudosLedgerCheckpoint,
+        KudosLedgerDailyStatement,
+        KudosRetentionUnit,
+        KudosStatEvent,
+        KudosStatQuarantine,
+        KudosStatRollup,
+    )
+
+    migration_schema = new_test_schema_name("horde_kudos_retention_parity_sql")
+    orm_schema = new_test_schema_name("horde_kudos_retention_parity_orm")
+    engines: list[sqlalchemy.Engine] = []
+    for schema_name in (migration_schema, orm_schema):
+        create_schema(pg_dsn, schema_name)
+        engines.append(_schema_engine(pg_dsn, schema_name))
+    migration_engine, orm_engine = engines
+    try:
+        with migration_engine.connect() as connection:
+            _build_tables(connection, request.param)
+            _apply_migration(connection)
+            migration_catalog = _catalog(connection, migration_schema)
+        with orm_engine.connect() as connection:
+            connection.execute(sqlalchemy.text(USERS_STUB))
+            for model in (
+                KudosLedger,
+                KudosStatEvent,
+                KudosStatRollup,
+                KudosStatQuarantine,
+                KudosLedgerCheckpoint,
+                KudosLedgerDailyStatement,
+                KudosIdempotencyKey,
+                KudosRetentionUnit,
+            ):
+                model.__table__.create(connection)
+            orm_catalog = _catalog(connection, orm_schema)
+        yield migration_catalog, orm_catalog
+    finally:
+        for engine in engines:
+            engine.dispose()
+        for schema_name in (migration_schema, orm_schema):
+            drop_schema(pg_dsn, schema_name)
+
+
+def test_orm_models_build_the_same_tables_as_the_migration(_retention_catalogs: tuple[dict[str, Any], dict[str, Any]]) -> None:
+    """Columns, types, nullability, server defaults, keys, constraints, indexes and partition keys agree.
+
+    Behavior tests build their schema from the models while production runs the migration over the tables
+    sql_statements/5.1.0.txt built, so a difference here means the tests exercise a schema production does not have.
+    """
+    migration_catalog, orm_catalog = _retention_catalogs
+    assert any(" index " in item for item in migration_catalog), "the catalog query found no indexes"
+    differences = [
+        f"{item}: migration {migration_catalog.get(item, ABSENT)!r}, ORM {orm_catalog.get(item, ABSENT)!r}"
+        for item in sorted(migration_catalog.keys() | orm_catalog.keys())
+        if migration_catalog.get(item, ABSENT) != orm_catalog.get(item, ABSENT)
+    ]
+    assert not differences, "\n".join(differences)
+
+
+def test_partition_bootstrap_continues_from_the_migrated_layout(app: Any, converted_schema: sqlalchemy.Connection) -> None:
+    """The application's weekly partitions start at the first weekly partition's upper bound and follow the Monday grid."""
+    from datetime import datetime
+
+    from horde.classes.base.kudos import KudosPartitioning, ensure_kudos_event_partitions
+    from horde.flask import db
+
+    schema_name = _scalar(converted_schema, "SELECT current_schema()")
+    first_upper = _scalar(
+        converted_schema,
+        "SELECT swap_ts + interval '7 days' FROM kudos_swap_parameters WHERE table_name = 'kudos_ledger'",
+    )
+    with app.app_context():
+        try:
+            db.session.execute(sqlalchemy.text(f"SET LOCAL search_path TO {schema_name}"))
+            created = ensure_kudos_event_partitions(
+                until=first_upper + 2 * KudosPartitioning.DEFAULT_WIDTH,
+                width=KudosPartitioning.DEFAULT_WIDTH,
+            )
+            bounds = _partition_bounds(db.session.connection(), "kudos_ledger")
+        finally:
+            db.session.rollback()
+    second_upper = first_upper + timedelta(days=7)
+    assert f"kudos_ledger_p_{first_upper:%Y%m%d}" in created
+    assert bounds[f"kudos_ledger_p_{first_upper:%Y%m%d}"] == f"FOR VALUES FROM ('{first_upper}') TO ('{second_upper}')"
+    assert all(datetime.fromisoformat(name[-8:]).weekday() == 0 for name in created if not name.endswith("_p_legacy"))
+
+
+def _storage_parameters(connection: sqlalchemy.Connection, relation: str) -> list[str]:
+    reloptions = _scalar(connection, "SELECT reloptions FROM pg_class WHERE oid = CAST(:relation AS regclass)", relation=relation)
+    return sorted(reloptions or [])
+
+
+def _expected_storage_parameters(table: str) -> list[str]:
+    from horde.classes.base.kudos import KudosPartitioning
+
+    return sorted(f"{parameter}={setting}" for parameter, setting in KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS[table].items())
+
+
+@pytest.mark.parametrize("table", EVENT_TABLES)
+def test_first_weekly_partition_keeps_the_autovacuum_storage_parameters(converted_schema: sqlalchemy.Connection, table: str) -> None:
+    """The migration's first weekly partition gets the fixed dead-row thresholds sql_statements/5.1.10.txt set on the table."""
+    swap_ts = _scalar(converted_schema, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = :table", table=table)
+    assert _storage_parameters(converted_schema, f"{table}_p_{swap_ts:%Y%m%d}") == _expected_storage_parameters(table)
+
+
+def test_rerun_after_retention_dropped_the_legacy_partition_leaves_the_tables_unchanged(converted_schema: sqlalchemy.Connection) -> None:
+    """Once retention dropped <table>_p_legacy, the whole file reruns in a new session without changing either parent."""
+    schema_name = _scalar(converted_schema, "SELECT current_schema()")
+    for table in EVENT_TABLES:
+        converted_schema.execute(sqlalchemy.text(f"ALTER TABLE {table} DETACH PARTITION {table}_p_legacy"))
+        converted_schema.execute(sqlalchemy.text(f"DROP TABLE {table}_p_legacy"))
+    catalog_before = _catalog(converted_schema, schema_name)
+    bounds_before = {table: _partition_bounds(converted_schema, table) for table in EVENT_TABLES}
+    with converted_schema.engine.connect() as new_session:
+        _apply_migration(new_session)
+        catalog_after = _catalog(new_session, schema_name)
+        bounds_after = {table: _partition_bounds(new_session, table) for table in EVENT_TABLES}
+    assert catalog_after == catalog_before
+    assert bounds_after == bounds_before
+    assert all(f"{table}_p_legacy" not in bounds_after[table] for table in EVENT_TABLES)
+
+
+@pytest.fixture
+def model_schema(pg_dsn: str) -> Iterator[str]:
+    """Yield a throwaway schema holding the event tables as the ORM models build them, without partitions."""
+    from horde.classes.base.kudos import KudosLedger, KudosStatEvent
+
+    schema_name = new_test_schema_name("horde_kudos_partition_maintenance")
+    create_schema(pg_dsn, schema_name)
+    engine = _schema_engine(pg_dsn, schema_name)
+    try:
+        with engine.connect() as connection:
+            connection.execute(sqlalchemy.text(USERS_STUB))
+            connection.execute(sqlalchemy.text("INSERT INTO users (id) VALUES (1)"))
+            for model in (KudosLedger, KudosStatEvent):
+                model.__table__.create(connection)
+        yield schema_name
+    finally:
+        engine.dispose()
+        drop_schema(pg_dsn, schema_name)
+
+
+def _insert_now_partition(connection: sqlalchemy.Connection, table: str) -> str:
+    if table == "kudos_ledger":
+        columns, values = "event_id, entry_type, user_id, amount", "gen_random_uuid(), 'AWARD', 1, 1"
+    else:
+        columns, values = "event_id, entry_type, user_id, amount, unit", "gen_random_uuid(), 'STAT_RECORD', 1, 1, 'count'"
+    return str(
+        connection.execute(
+            sqlalchemy.text(
+                f"INSERT INTO {table} (created, {columns}) VALUES (now() AT TIME ZONE 'UTC', {values}) RETURNING tableoid::regclass::text",
+            ),
+        ).scalar_one(),
+    )
+
+
+def test_partition_maintenance_restores_the_current_week_and_leaves_older_gaps(app: Any, model_schema: str) -> None:
+    """A dropped current week comes back with the storage parameters, and a gap before the current week stays open.
+
+    The older gap stands for a week retention dropped, which must not be recreated empty.
+    """
+    from datetime import datetime
+
+    from horde.classes.base.kudos import KudosPartitioning, ensure_kudos_event_partitions
+    from horde.flask import db
+
+    width = KudosPartitioning.DEFAULT_WIDTH
+    with app.app_context():
+        try:
+            db.session.execute(sqlalchemy.text(f"SET LOCAL search_path TO {model_schema}"))
+            connection = db.session.connection()
+            real_now = _scalar(connection, "SELECT now() AT TIME ZONE 'UTC'")
+            week_start = datetime(real_now.year, real_now.month, real_now.day) - timedelta(days=real_now.weekday())
+            bootstrapped = ensure_kudos_event_partitions(until=real_now + 2 * width, width=width)
+            for table in EVENT_TABLES:
+                current_week = f"{table}_p_{week_start:%Y%m%d}"
+                assert current_week in bootstrapped
+                for created_name in (name for name in bootstrapped if name.startswith(f"{table}_p_")):
+                    assert _storage_parameters(connection, created_name) == _expected_storage_parameters(table), created_name
+                # Replace the legacy partition with one surviving older week, leaving the week before the current one
+                # uncovered, then drop the current week.
+                connection.execute(sqlalchemy.text(f"DROP TABLE {table}_p_legacy"))
+                older_week = week_start - 2 * width
+                connection.execute(
+                    sqlalchemy.text(
+                        f"CREATE TABLE {table}_p_{older_week:%Y%m%d} PARTITION OF {table} "
+                        f"FOR VALUES FROM ('{older_week.isoformat(sep=' ')}') TO ('{(older_week + width).isoformat(sep=' ')}')",
+                    ),
+                )
+                connection.execute(sqlalchemy.text(f"DROP TABLE {current_week}"))
+                with pytest.raises(sqlalchemy.exc.IntegrityError, match="no partition"):
+                    with connection.begin_nested():
+                        _insert_now_partition(connection, table)
+            refilled = ensure_kudos_event_partitions(until=real_now + 2 * width, width=width)
+            assert refilled == [f"{table}_p_{week_start:%Y%m%d}" for table in EVENT_TABLES]
+            for table in EVENT_TABLES:
+                current_week = f"{table}_p_{week_start:%Y%m%d}"
+                assert _insert_now_partition(connection, table) == current_week
+                assert _storage_parameters(connection, current_week) == _expected_storage_parameters(table)
+                bounds = _partition_bounds(connection, table)
+                assert f"{table}_p_{week_start - width:%Y%m%d}" not in bounds
+                assert f"{table}_p_{week_start - 2 * width:%Y%m%d}" in bounds
+            # Complete coverage costs one listing and does not create anything.
+            assert ensure_kudos_event_partitions(until=real_now + 2 * width, width=width) == []
+        finally:
+            db.session.rollback()

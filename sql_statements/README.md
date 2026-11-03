@@ -8,6 +8,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 - postgresql >=15
 - [pg_cron](https://github.com/citusdata/pg_cron)
+- `5.1.16.txt` requires the `psql` client, because it uses `\gexec`. Apply it in one session with `-v ON_ERROR_STOP=1` and without `--single-transaction`, as described in [Kudos ledger operations](../docs/how-to/kudos_ledger_operations.md#converting-the-event-tables-to-partitions).
 
 
 ## `pg_cron` config

@@ -1,0 +1,673 @@
+-- Kudos retention (ADR 42): the retention tables, the idempotency-key backfill, and the conversion of
+-- kudos_ledger and kudos_stat_events into tables range-partitioned on created.
+--
+-- Run the whole file with psql (it uses \gexec) in ONE session with -v ON_ERROR_STOP=1, in file order. Do not pass
+-- --single-transaction: CREATE INDEX CONCURRENTLY cannot run inside a transaction block, and the
+-- statements marked "outside a transaction" below must run on their own. The session matters because
+-- the swap reads its timestamps from a temporary table and calls temporary helper functions, both of
+-- which end with the session. Every statement is idempotent, so a failed run is rerun from the top in a
+-- new session once the cause is fixed. A failed concurrent build leaves an INVALID index to drop first.
+--
+-- Apply before deploying the application that maps the partitioned tables. db.create_all() builds
+-- partitioned tables on a fresh database but does not convert an existing one.
+
+
+-- 1. Retention tables. These match the models in horde/classes/base/kudos.py.
+
+CREATE TABLE IF NOT EXISTS kudos_stat_rollups (
+    id BIGSERIAL NOT NULL,
+    day DATE NOT NULL,
+    entry_type VARCHAR(32) NOT NULL,
+    unit VARCHAR(16) NOT NULL,
+    stat_action VARCHAR(32),
+    record VARCHAR(32),
+    wp_type VARCHAR(20),
+    user_id INTEGER,
+    worker_id UUID,
+    worker_user_id INTEGER,
+    team_id UUID,
+    amount_sum NUMERIC(30, 2) NOT NULL,
+    row_count BIGINT NOT NULL,
+    amount_min NUMERIC(20, 2) NOT NULL,
+    amount_max NUMERIC(20, 2) NOT NULL,
+    created_max TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    source_range VARCHAR(128) NOT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uq_kudos_stat_rollups_key UNIQUE NULLS NOT DISTINCT
+        (day, entry_type, unit, stat_action, record, wp_type, user_id, worker_id, worker_user_id, team_id, source_range)
+);
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_rollups_user_day ON kudos_stat_rollups (user_id, day);
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_rollups_worker_day ON kudos_stat_rollups (worker_id, day);
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_rollups_source_range ON kudos_stat_rollups (source_range);
+
+-- id is the original event id, so it has no sequence.
+CREATE TABLE IF NOT EXISTS kudos_stat_quarantine (
+    id BIGINT NOT NULL,
+    created TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    source_range VARCHAR(128) NOT NULL,
+    event_id UUID NOT NULL,
+    entry_type VARCHAR(32) NOT NULL,
+    user_id INTEGER,
+    worker_user_id INTEGER,
+    worker_id UUID,
+    team_id UUID,
+    job_id UUID,
+    wp_type VARCHAR(20),
+    amount NUMERIC(20, 2) NOT NULL,
+    unit VARCHAR(16) NOT NULL,
+    stat_action VARCHAR(32),
+    record VARCHAR(32),
+    detail JSONB,
+    applied BOOLEAN DEFAULT false NOT NULL,
+    quarantined BOOLEAN DEFAULT false NOT NULL,
+    quarantine_reason VARCHAR(64),
+    quarantined_at TIMESTAMP WITHOUT TIME ZONE,
+    PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_quarantine_event_id ON kudos_stat_quarantine (event_id);
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_quarantine_source_range ON kudos_stat_quarantine (source_range);
+
+CREATE TABLE IF NOT EXISTS kudos_ledger_checkpoints (
+    id BIGSERIAL NOT NULL,
+    boundary TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    user_id INTEGER NOT NULL,
+    balance_total NUMERIC(30, 2) NOT NULL,
+    escrow_total NUMERIC(30, 2) NOT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uq_kudos_ledger_checkpoints_boundary_user UNIQUE (boundary, user_id),
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_checkpoints_boundary ON kudos_ledger_checkpoints (boundary);
+
+CREATE TABLE IF NOT EXISTS kudos_ledger_daily (
+    id BIGSERIAL NOT NULL,
+    user_id INTEGER NOT NULL,
+    escrow BOOLEAN NOT NULL,
+    entry_type VARCHAR(32) NOT NULL,
+    day DATE NOT NULL,
+    amount_sum NUMERIC(30, 2) NOT NULL,
+    row_count BIGINT NOT NULL,
+    source_range VARCHAR(128) NOT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uq_kudos_ledger_daily_key UNIQUE (user_id, escrow, entry_type, day, source_range),
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_daily_user_day ON kudos_ledger_daily (user_id, day);
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_daily_source_range ON kudos_ledger_daily (source_range);
+
+CREATE TABLE IF NOT EXISTS kudos_idempotency_keys (
+    event_id UUID NOT NULL,
+    kind VARCHAR(32) NOT NULL,
+    source_user_id INTEGER,
+    dest_user_id INTEGER,
+    amount NUMERIC(20, 2) NOT NULL,
+    outcome VARCHAR(32) NOT NULL,
+    created TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    PRIMARY KEY (event_id)
+);
+CREATE INDEX IF NOT EXISTS ix_kudos_idempotency_keys_created ON kudos_idempotency_keys (created);
+
+CREATE TABLE IF NOT EXISTS kudos_retention_catalog (
+    id BIGSERIAL NOT NULL,
+    dataset VARCHAR(32) NOT NULL,
+    partition_name VARCHAR(63) NOT NULL,
+    unit_lower TIMESTAMP WITHOUT TIME ZONE,
+    unit_upper TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    state VARCHAR(32) NOT NULL,
+    object_key VARCHAR(512),
+    error TEXT,
+    created TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    updated TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uq_kudos_retention_catalog_unit UNIQUE NULLS NOT DISTINCT (dataset, partition_name, unit_lower, unit_upper)
+);
+CREATE INDEX IF NOT EXISTS ix_kudos_retention_catalog_dataset_state ON kudos_retention_catalog (dataset, state);
+-- Separate statements, so a catalog created by an earlier revision of this file gains the columns on a rerun.
+ALTER TABLE kudos_retention_catalog ADD COLUMN IF NOT EXISTS row_count BIGINT;
+ALTER TABLE kudos_retention_catalog ADD COLUMN IF NOT EXISTS max_id BIGINT;
+ALTER TABLE kudos_retention_catalog ADD COLUMN IF NOT EXISTS first_failed_at TIMESTAMP WITHOUT TIME ZONE;
+ALTER TABLE kudos_retention_catalog ADD COLUMN IF NOT EXISTS consecutive_dump_failures INTEGER DEFAULT 0 NOT NULL;
+ALTER TABLE kudos_retention_catalog ADD COLUMN IF NOT EXISTS last_dump_attempt_at TIMESTAMP WITHOUT TIME ZONE;
+ALTER TABLE kudos_retention_catalog ADD COLUMN IF NOT EXISTS detached_at TIMESTAMP WITHOUT TIME ZONE;
+ALTER TABLE kudos_retention_catalog ADD COLUMN IF NOT EXISTS state_before_detach VARCHAR(32);
+
+
+-- 2. Idempotency keys for the transfers and repairs inside the online window. Older keys would already
+-- have expired. created is naive UTC, so the window is computed in UTC whatever the session time zone.
+-- Rerunning this section after the deploy adds the keys of transfers made by the previous application
+-- version in between.
+INSERT INTO kudos_idempotency_keys (event_id, kind, source_user_id, dest_user_id, amount, outcome, created)
+SELECT
+    event_id,
+    'transfer',
+    max(user_id) FILTER (WHERE amount < 0),
+    max(user_id) FILTER (WHERE amount > 0),
+    coalesce(max(amount) FILTER (WHERE amount > 0), 0),
+    'OK',
+    min(created)
+FROM kudos_ledger
+WHERE entry_type = 'TRANSFER' AND created >= (now() AT TIME ZONE 'UTC') - interval '30 days'
+GROUP BY event_id
+ON CONFLICT (event_id) DO NOTHING;
+
+-- One repair can post to both balances of its user, so the key records the net amount.
+INSERT INTO kudos_idempotency_keys (event_id, kind, source_user_id, dest_user_id, amount, outcome, created)
+SELECT event_id, 'repair', NULL, max(user_id), sum(amount), 'OK', min(created)
+FROM kudos_ledger
+WHERE entry_type = 'RECONCILIATION' AND created >= (now() AT TIME ZONE 'UTC') - interval '30 days'
+GROUP BY event_id
+ON CONFLICT (event_id) DO NOTHING;
+
+
+-- 3. Partition conversion.
+--
+-- Each table becomes the partition <table>_p_legacy of a new parent with the same name, covering
+-- created < swap_ts, and a first weekly partition starts at swap_ts. A validated CHECK (created <
+-- swap_ts) lets the existing table attach without a scan, and its existing indexes attach to the
+-- parent's partitioned indexes, so nothing is copied or rebuilt under the exclusive lock.
+--
+-- The CHECK rejects new rows from swap_ts onwards until the swap commits, so swap_ts must be later than
+-- the end of that table's swap. swap_ts is therefore the first UTC Monday 00:00 at least 24 hours after
+-- the parameter row is written, which leaves a day or more for VALIDATE CONSTRAINT and the swap whatever
+-- the table size and the clock skew between application hosts, which assign created. Rows written
+-- between the swap and swap_ts land in the legacy partition, which retains them at most one partition
+-- width longer. swap_ts is on the weekly grid, so the first weekly partition is an ordinary week. The
+-- rehearsal confirms that VALIDATE and the swap finish well inside the window. If the swap has not
+-- committed by swap_ts, writes to that table fail and the swap refuses to run: drop <table>_legacy_range
+-- at once, then rerun the file in a new session, which picks the next Monday. A rerun that finds
+-- <table>_legacy_range still in place reuses the swap_ts of that CHECK instead of picking a new one.
+-- A rerun after the conversion, including after retention dropped <table>_p_legacy, does not change the tables.
+
+CREATE TEMP TABLE IF NOT EXISTS kudos_swap_parameters (
+    table_name TEXT PRIMARY KEY,
+    swap_ts TIMESTAMP WITHOUT TIME ZONE NOT NULL
+);
+
+CREATE OR REPLACE FUNCTION pg_temp.kudos_swap_ts(target_table TEXT) RETURNS TIMESTAMP WITHOUT TIME ZONE
+LANGUAGE plpgsql AS $$
+DECLARE
+    configured_swap_ts TIMESTAMP WITHOUT TIME ZONE;
+BEGIN
+    SELECT swap_ts INTO configured_swap_ts FROM kudos_swap_parameters WHERE table_name = target_table;
+    IF configured_swap_ts IS NULL THEN
+        RAISE EXCEPTION 'no swap_ts for % in kudos_swap_parameters; rerun the file from the top in one session', target_table;
+    END IF;
+    RETURN configured_swap_ts;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pg_temp.kudos_is_unconverted(target_table TEXT) RETURNS BOOLEAN
+LANGUAGE sql AS $$
+    SELECT coalesce((SELECT relkind = 'r' FROM pg_class WHERE oid = to_regclass(target_table)), false)
+        AND to_regclass(target_table || '_p_legacy') IS NULL;
+$$;
+
+-- True once the table is partitioned and retention has dropped <table>_p_legacy. Every step that reads
+-- the legacy partition returns early then: to_regclass of the missing table is NULL, and a comparison
+-- with NULL would silently match nothing instead of recognizing the converted layout.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_legacy_is_retired(target_table TEXT) RETURNS BOOLEAN
+LANGUAGE sql AS $$
+    SELECT coalesce((SELECT relkind = 'p' FROM pg_class WHERE oid = to_regclass(target_table)), false)
+        AND to_regclass(target_table || '_p_legacy') IS NULL;
+$$;
+
+-- Records the swap_ts of the table: the first UTC Monday 00:00 at least 24 hours from now, as described
+-- at the top of this section. A run that failed after adding <table>_legacy_range leaves the CHECK in
+-- place, and the rerun skips adding it, so the rerun takes swap_ts from that CHECK. A newly computed
+-- swap_ts can fall in a later week, and the ATTACH and the first weekly partition would then start
+-- after the date from which the CHECK already rejects rows, which the refusal guard would not detect.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_record_swap_ts(target_table TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+DECLARE
+    range_definition TEXT;
+    existing_swap_ts TIMESTAMP WITHOUT TIME ZONE;
+BEGIN
+    IF pg_temp.kudos_is_unconverted(target_table) THEN
+        SELECT pg_get_constraintdef(oid) INTO range_definition FROM pg_constraint
+        WHERE conrelid = to_regclass(target_table) AND conname = target_table || '_legacy_range';
+    END IF;
+    IF range_definition IS NULL THEN
+        INSERT INTO kudos_swap_parameters (table_name, swap_ts)
+        VALUES (target_table, date_trunc('week', (now() AT TIME ZONE 'UTC') + interval '24 hours' + interval '7 days' - interval '1 microsecond'))
+        ON CONFLICT (table_name) DO NOTHING;
+        RETURN;
+    END IF;
+    -- pg_get_constraintdef renders the bound in the session's DateStyle, which the cast reads back.
+    BEGIN
+        existing_swap_ts := CAST(
+            substring(range_definition FROM '^CHECK \(\(created < ''([^'']+)''::timestamp without time zone\)\)$')
+            AS TIMESTAMP WITHOUT TIME ZONE
+        );
+    EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN
+        existing_swap_ts := NULL;
+    END;
+    IF existing_swap_ts IS NULL THEN
+        RAISE EXCEPTION 'cannot read swap_ts from %_legacy_range (%); drop %_legacy_range and rerun the file in a new session',
+            target_table, range_definition, target_table;
+    END IF;
+    INSERT INTO kudos_swap_parameters (table_name, swap_ts)
+    VALUES (target_table, existing_swap_ts)
+    ON CONFLICT (table_name) DO UPDATE SET swap_ts = EXCLUDED.swap_ts;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pg_temp.kudos_add_legacy_range(target_table TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT pg_temp.kudos_is_unconverted(target_table) OR EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = to_regclass(target_table) AND conname = target_table || '_legacy_range'
+    ) THEN
+        RETURN;
+    END IF;
+    EXECUTE format(
+        'ALTER TABLE %I ADD CONSTRAINT %I CHECK (created < %L) NOT VALID',
+        target_table, target_table || '_legacy_range', pg_temp.kudos_swap_ts(target_table)
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pg_temp.kudos_validate_legacy_range(target_table TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = to_regclass(target_table) AND conname = target_table || '_legacy_range' AND NOT convalidated
+    ) THEN
+        EXECUTE format('ALTER TABLE %I VALIDATE CONSTRAINT %I', target_table, target_table || '_legacy_range');
+    END IF;
+END;
+$$;
+
+-- Renames the table to its legacy name and prepares it to become a partition: its ix_ indexes (except
+-- the ix_<table>_legacy_ ones built for the legacy partition alone) and primary key free the names the
+-- parent takes, its amount CHECK takes the model's name, the concurrent
+-- (id, created) index replaces its (id) primary key (a partition cannot keep a second primary key), and
+-- an identity id becomes a plain column fed by an ordinary sequence that continues the identity's values,
+-- because the parent's default must draw from a sequence the parent can own.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_rename_to_legacy(target_table TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+DECLARE
+    legacy_table TEXT := target_table || '_p_legacy';
+    index_prefix TEXT := 'ix_' || target_table || '_';
+    amount_check_name TEXT := CASE target_table
+        WHEN 'kudos_ledger' THEN 'kudos_ledger_amount_not_nan'
+        ELSE 'kudos_stat_event_amount_not_nan'
+    END;
+    legacy_index RECORD;
+    amount_check RECORD;
+    old_primary_key TEXT;
+    id_sequence TEXT;
+    sequence_last_value BIGINT;
+    sequence_is_called BOOLEAN;
+BEGIN
+    IF NOT pg_temp.kudos_is_unconverted(target_table) THEN
+        RETURN;
+    END IF;
+    IF pg_temp.kudos_swap_ts(target_table) <= now() AT TIME ZONE 'UTC' THEN
+        RAISE EXCEPTION 'swap_ts for % has passed and the CHECK now rejects new rows; drop %_legacy_range and rerun the file in a new session',
+            target_table, target_table;
+    END IF;
+    IF to_regclass(legacy_table || '_pkey') IS NULL THEN
+        RAISE EXCEPTION 'build %_pkey on % (id, created) concurrently before the swap', legacy_table, target_table;
+    END IF;
+    EXECUTE format('ALTER TABLE %I RENAME TO %I', target_table, legacy_table);
+    FOR legacy_index IN
+        SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE i.indrelid = to_regclass(legacy_table) AND left(c.relname, length(index_prefix)) = index_prefix
+            AND left(c.relname, length(index_prefix || 'legacy_')) <> index_prefix || 'legacy_'
+    LOOP
+        EXECUTE format(
+            'ALTER INDEX %I RENAME TO %I',
+            legacy_index.relname, 'ix_' || legacy_table || '_' || substr(legacy_index.relname, length(index_prefix) + 1)
+        );
+    END LOOP;
+    FOR amount_check IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = to_regclass(legacy_table) AND contype = 'c'
+            AND pg_get_constraintdef(oid) = 'CHECK ((amount <> ''NaN''::numeric))'
+            AND conname <> amount_check_name
+    LOOP
+        EXECUTE format('ALTER TABLE %I RENAME CONSTRAINT %I TO %I', legacy_table, amount_check.conname, amount_check_name);
+    END LOOP;
+    SELECT conname INTO old_primary_key FROM pg_constraint WHERE conrelid = to_regclass(legacy_table) AND contype = 'p';
+    EXECUTE format(
+        'ALTER TABLE %I DROP CONSTRAINT %I, ADD CONSTRAINT %I PRIMARY KEY USING INDEX %I',
+        legacy_table, old_primary_key, legacy_table || '_pkey', legacy_table || '_pkey'
+    );
+    IF EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass(legacy_table) AND attname = 'id' AND attidentity <> ''
+    ) THEN
+        id_sequence := pg_get_serial_sequence(legacy_table, 'id');
+        EXECUTE format('SELECT last_value, is_called FROM %s', id_sequence) INTO sequence_last_value, sequence_is_called;
+        EXECUTE format('ALTER TABLE %I ALTER COLUMN id DROP IDENTITY', legacy_table);
+        EXECUTE format('CREATE SEQUENCE %I OWNED BY %I.id', target_table || '_id_seq', legacy_table);
+        PERFORM setval(to_regclass(target_table || '_id_seq'), sequence_last_value, sequence_is_called);
+    END IF;
+END;
+$$;
+
+-- LIKE copies the columns, NOT NULLs, CHECKs and defaults. The legacy range CHECK is dropped again, since
+-- on the parent it would reject every row of the later partitions. The defaults are set explicitly so a
+-- table built by db.create_all(), which had none, gets the model's defaults too. The parent owns the id
+-- sequence, so dropping the legacy partition later does not drop the sequence.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_create_parent(target_table TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+DECLARE
+    legacy_table TEXT := target_table || '_p_legacy';
+    id_sequence TEXT;
+    flag_column RECORD;
+BEGIN
+    IF to_regclass(target_table) IS NOT NULL THEN
+        RETURN;
+    END IF;
+    id_sequence := pg_get_serial_sequence(legacy_table, 'id');
+    IF id_sequence IS NULL THEN
+        RAISE EXCEPTION '%.id has no owned sequence', legacy_table;
+    END IF;
+    EXECUTE format(
+        'CREATE TABLE %I (LIKE %I INCLUDING DEFAULTS INCLUDING CONSTRAINTS) PARTITION BY RANGE (created)',
+        target_table, legacy_table
+    );
+    EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', target_table, target_table || '_legacy_range');
+    EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I PRIMARY KEY (id, created)', target_table, target_table || '_pkey');
+    EXECUTE format(
+        'ALTER TABLE %I ALTER COLUMN id SET DEFAULT nextval(%L::regclass), ALTER COLUMN created SET DEFAULT now()',
+        target_table, id_sequence
+    );
+    FOR flag_column IN
+        SELECT attname FROM pg_attribute
+        WHERE attrelid = to_regclass(target_table) AND attname IN ('escrow', 'applied', 'quarantined') AND NOT attisdropped
+    LOOP
+        EXECUTE format('ALTER TABLE %I ALTER COLUMN %I SET DEFAULT false', target_table, flag_column.attname);
+    END LOOP;
+    EXECUTE format('ALTER SEQUENCE %s OWNED BY %I.id', id_sequence, target_table);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pg_temp.kudos_attach_legacy(target_table TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF pg_temp.kudos_legacy_is_retired(target_table) THEN
+        RETURN;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_inherits
+        WHERE inhparent = to_regclass(target_table) AND inhrelid = to_regclass(target_table || '_p_legacy')
+    ) THEN
+        RETURN;
+    END IF;
+    EXECUTE format(
+        'ALTER TABLE %I ATTACH PARTITION %I FOR VALUES FROM (MINVALUE) TO (%L)',
+        target_table, target_table || '_p_legacy', pg_temp.kudos_swap_ts(target_table)
+    );
+END;
+$$;
+
+-- Attaches the legacy index whose definition matches the parent's partitioned index. An index the
+-- normalization does not cover can still differ; the swap then stops before anything is committed.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_attach_legacy_index(target_table TEXT, parent_index TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+DECLARE
+    legacy_table TEXT := target_table || '_p_legacy';
+    definition_prefix TEXT := '^CREATE (UNIQUE )?INDEX \S+ ON (ONLY )?\S+ ';
+    parent_definition TEXT;
+    matching_index TEXT;
+BEGIN
+    IF pg_temp.kudos_legacy_is_retired(target_table) THEN
+        RETURN;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_inherits h JOIN pg_index i ON i.indexrelid = h.inhrelid
+        WHERE h.inhparent = to_regclass(parent_index) AND i.indrelid = to_regclass(legacy_table)
+    ) THEN
+        RETURN;
+    END IF;
+    parent_definition := regexp_replace(pg_get_indexdef(to_regclass(parent_index)), definition_prefix, '\1');
+    SELECT c.relname INTO matching_index
+    FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE i.indrelid = to_regclass(legacy_table) AND i.indisvalid AND NOT c.relispartition
+        AND regexp_replace(pg_get_indexdef(i.indexrelid), definition_prefix, '\1') = parent_definition
+    ORDER BY c.relname
+    LIMIT 1;
+    IF matching_index IS NULL THEN
+        RAISE EXCEPTION '% has no valid index matching %', legacy_table, pg_get_indexdef(to_regclass(parent_index))
+            USING HINT = format('Build it on %s with CREATE INDEX CONCURRENTLY before the swap, then rerun the file.', target_table);
+    END IF;
+    EXECUTE format('ALTER INDEX %I ATTACH PARTITION %I', parent_index, matching_index);
+END;
+$$;
+
+-- swap_ts is a Monday 00:00, so the first weekly partition is the week starting at it and later
+-- partitions continue the grid. Any partition other than the legacy one means the first weekly
+-- partition, or the application's later ones, already exist. The check lists the partitions by name
+-- because the legacy partition may be gone once retention dropped it.
+--
+-- The storage parameters repeat the autovacuum settings sql_statements/5.1.10.txt gave the unpartitioned
+-- tables, because a partition does not inherit them from its parent. They match
+-- KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS, which the application applies to the partitions it creates.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_create_first_partition(target_table TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+DECLARE
+    first_lower TIMESTAMP WITHOUT TIME ZONE;
+    storage_parameters TEXT := CASE target_table
+        WHEN 'kudos_ledger' THEN 'autovacuum_vacuum_scale_factor = 0.0, autovacuum_vacuum_threshold = 100000, '
+            'autovacuum_analyze_scale_factor = 0.0, autovacuum_analyze_threshold = 200000'
+        ELSE 'autovacuum_vacuum_scale_factor = 0.0, autovacuum_vacuum_threshold = 250000, '
+            'autovacuum_analyze_scale_factor = 0.0, autovacuum_analyze_threshold = 500000'
+    END;
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_inherits h JOIN pg_class c ON c.oid = h.inhrelid
+        WHERE h.inhparent = to_regclass(target_table) AND c.relname <> target_table || '_p_legacy'
+    ) THEN
+        RETURN;
+    END IF;
+    first_lower := pg_temp.kudos_swap_ts(target_table);
+    EXECUTE format(
+        'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I FOR VALUES FROM (%L) TO (%L) WITH (%s)',
+        target_table || '_p_' || to_char(first_lower, 'YYYYMMDD'), target_table,
+        first_lower, first_lower + interval '7 days', storage_parameters
+    );
+END;
+$$;
+
+-- Normalization of a table built by db.create_all() instead of sql_statements/5.1.0.txt. Each step
+-- checks the object it changes and does nothing on the production shape.
+
+-- Returns the definition of an index without its name and table, as the parent and legacy indexes are
+-- compared, or NULL when the index does not exist.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_index_body(index_name TEXT) RETURNS TEXT
+LANGUAGE sql AS $$
+    SELECT regexp_replace(pg_get_indexdef(to_regclass(index_name)), '^CREATE (UNIQUE )?INDEX \S+ ON (ONLY )?\S+ ', '\1');
+$$;
+
+-- True while the table is unconverted and holds the index in a form other than the 5.1.0 one, which
+-- would not attach to the parent's partitioned index.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_index_needs_normalizing(target_table TEXT, index_name TEXT, production_body TEXT)
+RETURNS BOOLEAN
+LANGUAGE sql AS $$
+    SELECT pg_temp.kudos_is_unconverted(target_table)
+        AND pg_temp.kudos_index_body(index_name) IS DISTINCT FROM production_body
+        AND pg_temp.kudos_index_body(index_name) IS NOT NULL;
+$$;
+
+-- Replaces an index with its production form, built concurrently as <index>_normalized beforehand.
+-- Called inside the swap transaction before the rename, so dropping the old index waits for no extra lock.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_swap_normalized_index(target_table TEXT, index_name TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT pg_temp.kudos_is_unconverted(target_table) OR to_regclass(index_name || '_normalized') IS NULL THEN
+        RETURN;
+    END IF;
+    EXECUTE format('DROP INDEX IF EXISTS %I', index_name);
+    EXECUTE format('ALTER INDEX %I RENAME TO %I', index_name || '_normalized', index_name);
+END;
+$$;
+
+-- Widens entry_type and unit to the 5.1.0 lengths and adds the 5.1.0 server defaults. Widening a
+-- varchar is a catalog change that rewrites neither the table nor its indexes, and the parent copies
+-- these columns, which must match the legacy partition's exactly.
+CREATE OR REPLACE FUNCTION pg_temp.kudos_normalize_columns(target_table TEXT) RETURNS VOID
+LANGUAGE plpgsql AS $$
+DECLARE
+    widened_column RECORD;
+    flag_column RECORD;
+BEGIN
+    IF NOT pg_temp.kudos_is_unconverted(target_table) THEN
+        RETURN;
+    END IF;
+    FOR widened_column IN
+        SELECT attname, CASE attname WHEN 'entry_type' THEN 32 ELSE 16 END AS production_length
+        FROM pg_attribute
+        WHERE attrelid = to_regclass(target_table) AND attname IN ('entry_type', 'unit') AND NOT attisdropped
+            AND atttypmod - 4 < CASE attname WHEN 'entry_type' THEN 32 ELSE 16 END
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN %I TYPE VARCHAR(%s)',
+            target_table, widened_column.attname, widened_column.production_length
+        );
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+        WHERE d.adrelid = to_regclass(target_table) AND a.attname = 'created'
+    ) THEN
+        EXECUTE format('ALTER TABLE %I ALTER COLUMN created SET DEFAULT now()', target_table);
+    END IF;
+    FOR flag_column IN
+        SELECT a.attname FROM pg_attribute a
+        WHERE a.attrelid = to_regclass(target_table) AND a.attname IN ('escrow', 'applied', 'quarantined') AND NOT a.attisdropped
+            AND NOT EXISTS (SELECT 1 FROM pg_attrdef d WHERE d.adrelid = a.attrelid AND d.adnum = a.attnum)
+    LOOP
+        EXECUTE format('ALTER TABLE %I ALTER COLUMN %I SET DEFAULT false', target_table, flag_column.attname);
+    END LOOP;
+END;
+$$;
+
+SET lock_timeout = '5s';
+
+-- 3a. kudos_ledger
+
+-- Outside a transaction. One online build over the whole table. PostgreSQL refuses CONCURRENTLY on the
+-- partitioned parent before it checks IF NOT EXISTS, so \gexec issues the build only while the table is
+-- unconverted, which keeps the file repeatable.
+SELECT 'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS kudos_ledger_p_legacy_pkey ON kudos_ledger (id, created)'
+WHERE pg_temp.kudos_is_unconverted('kudos_ledger')
+\gexec
+
+-- Normalization, outside a transaction. Each statement is issued only for a table built by
+-- db.create_all(): its event_id index is dropped (no reader needs it, and a 5.1.0 table has none) and its
+-- unapplied index is rebuilt online with the 5.1.0 predicate.
+SELECT 'DROP INDEX CONCURRENTLY IF EXISTS ix_kudos_ledger_event_id'
+WHERE pg_temp.kudos_is_unconverted('kudos_ledger') AND to_regclass('ix_kudos_ledger_event_id') IS NOT NULL
+\gexec
+SELECT 'CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_ledger_unapplied_normalized ON kudos_ledger (id) WHERE NOT applied'
+WHERE pg_temp.kudos_index_needs_normalizing('kudos_ledger', 'ix_kudos_ledger_unapplied', 'USING btree (id) WHERE (NOT applied)')
+\gexec
+
+SELECT pg_temp.kudos_record_swap_ts('kudos_ledger');
+SELECT pg_temp.kudos_add_legacy_range('kudos_ledger');
+-- One scan under SHARE UPDATE EXCLUSIVE, which does not block writes.
+SELECT pg_temp.kudos_validate_legacy_range('kudos_ledger');
+
+START TRANSACTION;
+SET LOCAL lock_timeout = '5s';
+-- The application locks a users row and then inserts into kudos_ledger, whose foreign key check locks that users
+-- row again. The swap takes ACCESS EXCLUSIVE on kudos_ledger at the rename and SHARE ROW EXCLUSIVE on users when it
+-- adds the foreign key to the new parent. Taking the users lock first follows the application's order, so an
+-- application transaction waits for the swap or the swap waits for it, and the two cannot deadlock.
+LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE;
+SELECT pg_temp.kudos_normalize_columns('kudos_ledger');
+SELECT pg_temp.kudos_swap_normalized_index('kudos_ledger', 'ix_kudos_ledger_unapplied');
+SELECT pg_temp.kudos_rename_to_legacy('kudos_ledger');
+SELECT pg_temp.kudos_create_parent('kudos_ledger');
+-- Added before ATTACH so the legacy table's identical key attaches to it without validation.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conrelid = to_regclass('kudos_ledger') AND conname = 'kudos_ledger_user_id_fkey'
+    ) THEN
+        ALTER TABLE kudos_ledger
+            ADD CONSTRAINT kudos_ledger_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE RESTRICT;
+    END IF;
+END;
+$$;
+SELECT pg_temp.kudos_attach_legacy('kudos_ledger');
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_unapplied ON ONLY kudos_ledger (id) WHERE NOT applied;
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_unapplied_users ON ONLY kudos_ledger (entry_type, user_id) WHERE applied IS FALSE;
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_unapplied_by_user ON ONLY kudos_ledger (user_id) WHERE applied IS FALSE;
+CREATE INDEX IF NOT EXISTS ix_kudos_ledger_user_id ON ONLY kudos_ledger (user_id);
+SELECT pg_temp.kudos_attach_legacy_index('kudos_ledger', 'ix_kudos_ledger_unapplied');
+SELECT pg_temp.kudos_attach_legacy_index('kudos_ledger', 'ix_kudos_ledger_unapplied_users');
+SELECT pg_temp.kudos_attach_legacy_index('kudos_ledger', 'ix_kudos_ledger_unapplied_by_user');
+SELECT pg_temp.kudos_attach_legacy_index('kudos_ledger', 'ix_kudos_ledger_user_id');
+-- Created last, so it inherits every partitioned index and the foreign key.
+SELECT pg_temp.kudos_create_first_partition('kudos_ledger');
+COMMIT;
+
+-- 3b. kudos_stat_events
+
+-- Outside a transaction. One online build over the whole table. PostgreSQL refuses CONCURRENTLY on the
+-- partitioned parent before it checks IF NOT EXISTS, so \gexec issues the build only while the table is
+-- unconverted, which keeps the file repeatable.
+SELECT 'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS kudos_stat_events_p_legacy_pkey ON kudos_stat_events (id, created)'
+WHERE pg_temp.kudos_is_unconverted('kudos_stat_events')
+\gexec
+
+-- Outside a transaction. A long-running online build over the largest table. The retention job reads
+-- the legacy partition in created sub-ranges, which without this index would each scan the whole
+-- partition. It stays local to the legacy partition and attaches to nothing, because range pruning
+-- serves created on the weekly partitions.
+SELECT 'CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_stat_events_legacy_created ON kudos_stat_events (created)'
+WHERE pg_temp.kudos_is_unconverted('kudos_stat_events')
+\gexec
+
+-- Normalization, outside a transaction. Each build is issued only for a table built by db.create_all(),
+-- whose attribution indexes are plain, where the 5.1.0 ones are partial.
+SELECT 'CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_stat_events_user_id_normalized ON kudos_stat_events (user_id) WHERE user_id IS NOT NULL'
+WHERE pg_temp.kudos_index_needs_normalizing('kudos_stat_events', 'ix_kudos_stat_events_user_id', 'USING btree (user_id) WHERE (user_id IS NOT NULL)')
+\gexec
+SELECT 'CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_stat_events_worker_id_normalized ON kudos_stat_events (worker_id) WHERE worker_id IS NOT NULL'
+WHERE pg_temp.kudos_index_needs_normalizing('kudos_stat_events', 'ix_kudos_stat_events_worker_id', 'USING btree (worker_id) WHERE (worker_id IS NOT NULL)')
+\gexec
+SELECT 'CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_kudos_stat_events_team_id_normalized ON kudos_stat_events (team_id) WHERE team_id IS NOT NULL'
+WHERE pg_temp.kudos_index_needs_normalizing('kudos_stat_events', 'ix_kudos_stat_events_team_id', 'USING btree (team_id) WHERE (team_id IS NOT NULL)')
+\gexec
+
+SELECT pg_temp.kudos_record_swap_ts('kudos_stat_events');
+SELECT pg_temp.kudos_add_legacy_range('kudos_stat_events');
+-- One scan under SHARE UPDATE EXCLUSIVE, which does not block writes.
+SELECT pg_temp.kudos_validate_legacy_range('kudos_stat_events');
+
+START TRANSACTION;
+SET LOCAL lock_timeout = '5s';
+SELECT pg_temp.kudos_normalize_columns('kudos_stat_events');
+SELECT pg_temp.kudos_swap_normalized_index('kudos_stat_events', 'ix_kudos_stat_events_user_id');
+SELECT pg_temp.kudos_swap_normalized_index('kudos_stat_events', 'ix_kudos_stat_events_worker_id');
+SELECT pg_temp.kudos_swap_normalized_index('kudos_stat_events', 'ix_kudos_stat_events_team_id');
+SELECT pg_temp.kudos_rename_to_legacy('kudos_stat_events');
+SELECT pg_temp.kudos_create_parent('kudos_stat_events');
+SELECT pg_temp.kudos_attach_legacy('kudos_stat_events');
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_drainable ON ONLY kudos_stat_events (id)
+    WHERE applied IS FALSE AND quarantined IS FALSE;
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_quarantined ON ONLY kudos_stat_events (created, quarantined_at)
+    WHERE quarantined IS TRUE;
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_event_id ON ONLY kudos_stat_events (event_id);
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_user_id ON ONLY kudos_stat_events (user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_worker_id ON ONLY kudos_stat_events (worker_id) WHERE worker_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_kudos_stat_events_team_id ON ONLY kudos_stat_events (team_id) WHERE team_id IS NOT NULL;
+SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_events_drainable');
+SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_events_quarantined');
+SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_events_event_id');
+SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_events_user_id');
+SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_events_worker_id');
+SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_events_team_id');
+-- Created last, so it inherits every partitioned index.
+SELECT pg_temp.kudos_create_first_partition('kudos_stat_events');
+COMMIT;
+
+RESET lock_timeout;
+
+-- 4. kudos_retention_catalog starts empty. The retention job discovers the partitions from pg_catalog,
+-- and the application creates the weekly partitions ahead of time from then on.

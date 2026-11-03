@@ -15,6 +15,7 @@ import contextlib
 import ssl
 import uuid
 from collections.abc import Callable, Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -78,6 +79,7 @@ def _pg_schema(_pg_dsn: str) -> Iterator[str]:
 @pytest.fixture(scope="session")
 def app(_pg_dsn: str, _pg_schema: str) -> Iterator[Flask]:
     """Flask app pointed at test Postgres with an isolated schema."""
+    from horde.classes.base.kudos import KudosPartitioning, ensure_kudos_event_partitions
     from horde.flask import create_app, db
 
     app = create_app(
@@ -99,6 +101,11 @@ def app(_pg_dsn: str, _pg_schema: str) -> Iterator[Flask]:
             raise RuntimeError(f"Test fixture safety check failed: expected current schema {_pg_schema!r}, got {current_schema!r}.")
 
         db.create_all()
+        ensure_kudos_event_partitions(
+            until=datetime.utcnow() + 2 * KudosPartitioning.DEFAULT_WIDTH,
+            width=KudosPartitioning.DEFAULT_WIDTH,
+        )
+        db.session.commit()
         try:
             yield app
         finally:

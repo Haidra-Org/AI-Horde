@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -103,6 +104,7 @@ def _pg_schema(pg_dsn: str) -> Iterator[str]:
 
 @pytest.fixture(scope="module")
 def app(pg_dsn: str, _pg_schema: str) -> Iterator[Flask]:
+    from horde.classes.base.kudos import KudosPartitioning, ensure_kudos_event_partitions
     from horde.flask import create_app, db
 
     app = create_app(
@@ -125,6 +127,11 @@ def app(pg_dsn: str, _pg_schema: str) -> Iterator[Flask]:
             )
 
         db.create_all()
+        ensure_kudos_event_partitions(
+            until=datetime.utcnow() + 2 * KudosPartitioning.DEFAULT_WIDTH,
+            width=KudosPartitioning.DEFAULT_WIDTH,
+        )
+        db.session.commit()
         _seed_core_rows()
         try:
             yield app
