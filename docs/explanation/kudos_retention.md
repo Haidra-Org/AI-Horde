@@ -25,8 +25,8 @@ Topics: [accounting](../topics.md#accounting), [kudos](../topics.md#kudos)
 - Currency postings are replaced by per-user checkpoints and daily statements, and the rows themselves go to an
   archive object that is read back and verified before the drop.
 - A drop is irreversible. It waits until the replacement is committed, the archive object is verified for currency,
-  and a recount shows the partition still holds what the replacement recorded. An optional grace period keeps the
-  detached table for a rollback.
+  and a recount shows the partition still holds what the replacement recorded. A grace period, seven days unless
+  configured otherwise, keeps the detached table for a rollback.
 - The ledger model this sits on is in [kudos accounting](kudos_accounting.md). The states, settings and metrics are
   in the [event retention reference](../reference/kudos_accounting.md#event-retention). The operator procedures are
   in [kudos ledger operations](../how-to/kudos_ledger_operations.md#enabling-retention).
@@ -89,8 +89,8 @@ A unit that cannot proceed safely becomes `blocked` with a reason, and only an o
 `dropped` can become `blocked`. The diagrams show the edges where blocking is expected. The full transition rules are
 in [retention states](../reference/kudos_accounting.md#retention-states).
 
-`detached` appears only when a drop grace period is configured. Without one, the drop-ready state goes straight to
-`dropped`.
+`detached` appears only while the drop grace period is above zero, as it is by default. With the grace set to zero,
+the drop-ready state goes straight to `dropped`.
 
 ### Statistics units
 
@@ -159,8 +159,9 @@ The design buys these properties:
 - Proven drops. A partition is dropped only after its replacement is committed and checked, and a recount before
   and after the detach matches the counts the replacement recorded. A partition with an unapplied row is not
   removed.
-- A reattach window. With a drop grace period, a detached partition stays as a standalone table and can be attached
-  again until the grace ends.
+- A reattach window. With a drop grace period, seven days by default, a detached partition stays as a standalone
+  table and can be attached again until the grace ends. A grace of zero has to be set explicitly, so a deployment
+  whose environment lost the setting still keeps the window.
 - A verified currency archive. Every archived currency object is read back and matched against its manifest and the
   online rows before the drop, and none is ever evicted.
 - Best-effort statistics dumps with retries. A failed dump is retried for a configured period and does not block the

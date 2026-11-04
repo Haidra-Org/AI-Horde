@@ -164,7 +164,7 @@ deployed, the `psql` client can reach the primary, and no long-running dump or b
 running or scheduled to start during the run. A dump holds `ACCESS SHARE` on every table for its whole duration, so
 the swap cannot take its exclusive lock within the 5 second `lock_timeout` and fails. End state: both event tables
 are partitioned, each with a
-`<table>_p_legacy` partition and a first weekly partition, and the retention tables exist and are empty except for
+`<table>_p_legacy` partition and eight weekly partitions from `swap_ts`, and the retention tables exist and are empty except for
 the backfilled keys.
 
 1. Apply the file with psql in one session:
@@ -223,7 +223,7 @@ the backfilled keys.
    SELECT pg_get_partkeydef(CAST('<table>' AS regclass));                             -- RANGE (created)
    SELECT c.relname, pg_get_expr(c.relpartbound, c.oid)
    FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
-   WHERE i.inhparent = CAST('<table>' AS regclass);                                   -- legacy and first weekly
+   WHERE i.inhparent = CAST('<table>' AS regclass);                                   -- legacy and eight weekly
    SELECT pg_get_constraintdef(oid) FROM pg_constraint
    WHERE conrelid = CAST('<table>' AS regclass) AND contype = 'p';                    -- PRIMARY KEY (id, created)
    SELECT indexrelid::regclass FROM pg_index
@@ -231,8 +231,10 @@ the backfilled keys.
    SELECT pg_get_serial_sequence('<table>', 'id');                                    -- not null
    ```
 
-   The legacy bound is `FOR VALUES FROM (MINVALUE) TO ('<swap_ts>')`, and the weekly bound starts at the same
-   timestamp.
+   The legacy bound is `FOR VALUES FROM (MINVALUE) TO ('<swap_ts>')`, the first weekly bound starts at the same
+   timestamp, and the eight weeks follow each other without a gap. The file creates eight weeks because the previous
+   release does not create partitions. After a rollback to it, inserts keep finding a partition until eight weeks
+   after `swap_ts`, and the new release's retention tick creates the later weeks once it runs again.
 
 5. Deploy the application release in this order: stop every replica of the previous release, run the file again with
    the same command, including any `-v key_lifetime_days`, and only then let replicas of the new release take traffic. The conversion steps skip the
@@ -270,7 +272,9 @@ If the swap has not committed by `swap_ts`, inserts into that table fail, and th
 `swap_ts for <table> has passed and the CHECK now rejects new rows`. Drop `<table>_legacy_range` at once with the
 statement above, which restores inserts. Then rerun the file in a new session, which uses the next Monday.
 
-A rerun on converted tables does not change them, also after retention has dropped `<table>_p_legacy`.
+A rerun on converted tables does not change them, also after retention has dropped `<table>_p_legacy`, except that
+it creates each missing week among the eight from the `swap_ts` it computes. It skips a week that an existing
+partition overlaps or that ended before the current week, and it does not alter an existing partition.
 
 The conversion does not have a scripted reversal. Until retention drops the legacy partition, every row from before
 the swap is still in `<table>_p_legacy`.
@@ -303,8 +307,9 @@ docker exec -w /app -e PYTHONPATH=/app <container> python tools/kudos_ledger_adm
    to keep a dataset longer than 30 days. On a fresh production deployment, also set
    `KUDOS_RETENTION_HOLD_DROPS=true` for a soak, so every step runs but no partition is detached or dropped, and set
    `KUDOS_RETENTION_DROP_GRACE_DAYS` to the rollback window to keep after the soak, long enough for the checks run
-   after a drop to notice a problem (for example `7`). The policy is read when the process starts, so restart every
-   application process. Verify: `uv run python tools/kudos_ledger_admin.py retention step` prints `"outcome": "idle"` with
+   after a drop to notice a problem. It defaults to `7` when unset. The policy is read when the process starts, so
+   restart every application process. Verify: `retention status` reports the intended window in `drop_grace_days`,
+   and `uv run python tools/kudos_ledger_admin.py retention step` prints `"outcome": "idle"` with
    `"detail": "no actionable unit"`, or a step result. It prints `"outcome": "skipped_lock"` when the scheduled tick
    holds the lock, and then it can be run again. While retention is disabled, the detail is `retention disabled`. The
    command runs a real tick and can drop a partition.

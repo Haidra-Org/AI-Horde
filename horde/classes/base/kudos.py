@@ -739,7 +739,7 @@ class KudosPartitioning:
     The applier updates every row once, so autovacuum triggers on a fixed number of dead rows rather than on a fraction
     of the partition, as sql_statements/5.1.10.txt set on the unpartitioned tables. Storage parameters are per table
     and a partition does not inherit them from its parent, so each new partition is created with them, and
-    sql_statements/5.1.16.txt sets the same values on the first weekly partition.
+    sql_statements/5.1.16.txt sets the same values on the weekly partitions it creates.
     """
     CREATE_LOCK_TIMEOUT: str = "3s"
     """The ``lock_timeout`` of each lock a partition creation waits for.

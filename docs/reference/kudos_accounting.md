@@ -380,7 +380,11 @@ UTC.
 | Partition | Bounds | Origin |
 | --- | --- | --- |
 | `<table>_p_legacy` | `MINVALUE` to the swap timestamp | On a converted database, the table as it was before `sql_statements/5.1.16.txt`. On a fresh database, an empty partition up to the UTC Monday 00:00 on or before the first bootstrap |
-| `<table>_p_<YYYYMMDD>` | From the date in the name for one partition width | Created ahead of time by `ensure_kudos_event_partitions` |
+| `<table>_p_<YYYYMMDD>` | From the date in the name for one partition width | On a converted database, the eight weeks from the swap timestamp are created by `sql_statements/5.1.16.txt`. Later partitions are created ahead of time by `ensure_kudos_event_partitions` |
+
+`sql_statements/5.1.16.txt` creates eight weekly partitions because the release before it does not create
+partitions. After a rollback to that release, inserts keep finding a partition until eight weeks after the swap
+timestamp. Each of these partitions has the storage parameters of `KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS`.
 
 `ensure_kudos_event_partitions` creates partitions until one covers the current time plus twice the partition width.
 It runs in `init_db` at startup with the default width, and on every retention tick with `KUDOS_PARTITION_WIDTH_DAYS`.
@@ -622,7 +626,7 @@ that includes the variable.
 | `KUDOS_RETENTION_DUMP_RETRY_DAYS` | 7 | Positive whole number | How long failed statistics dumps are retried, from the first failure, before the unit blocks |
 | `KUDOS_RETENTION_DROP_DEFER_MINUTES` | 5 | Positive whole number | Transaction age of another session's lock on the partition or its parent that defers a drop |
 | `KUDOS_RETENTION_HOLD_DROPS` | `false` | `true`, `1`, `yes`, `false`, `0` or `no` | Keeps drop-ready partitions attached. Every other step runs |
-| `KUDOS_RETENTION_DROP_GRACE_DAYS` | 0 | Whole number, 0 or more | How long a detached partition is kept before it is dropped. 0 drops it right after the detach |
+| `KUDOS_RETENTION_DROP_GRACE_DAYS` | 7 | Whole number, 0 or more | How long a detached partition is kept before it is dropped. 0 drops it right after the detach and has to be set explicitly, so an environment that lost the variable keeps a reattach window |
 | `KUDOS_ARCHIVE_ACCOUNT` | Unset | Required for the archive | S3 endpoint URL |
 | `KUDOS_ARCHIVE_BUCKET` | Unset | Required for the archive | Archive bucket |
 | `KUDOS_ARCHIVE_AWS_ACCESS_KEY_ID` | Unset | Required for the archive | Access key ID of credentials scoped to the archive bucket |
@@ -725,6 +729,7 @@ does not count it. Other retention log lines are not under contract.
 | `partition_coverage_ok` | Whether each event table has a partition containing the real current time and one containing it plus one partition width |
 | `hold_drops` | Whether `KUDOS_RETENTION_HOLD_DROPS` is `true` |
 | `held_partitions` | Partitions whose units, other than `dropped` ones, are all drop-ready, while `hold_drops` is true. 0 otherwise |
+| `drop_grace_days` | The drop grace of the running policy in days, from `KUDOS_RETENTION_DROP_GRACE_DAYS` or its default |
 | `detached_partitions` | One entry per partition with `detached` units, oldest detach first: `dataset`, `partition_name`, `detached_at` and `drop_due_at` (`detached_at` plus the grace) |
 
 ### Retention commands

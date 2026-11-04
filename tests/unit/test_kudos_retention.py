@@ -73,12 +73,15 @@ MONDAY = datetime(2020, 1, 6)
 
 
 def _policy(**overrides: Any) -> KudosRetentionPolicy:
+    # Most tests drive a drop to DROPPED in one tick, so the policy drops right after the detach unless a test passes
+    # a grace of its own.
     fields: dict[str, Any] = {
         "enabled": True,
         "currency_window": timedelta(days=30),
         "statistics_window": timedelta(days=30),
         "partition_width": WEEK,
         "currency_budget_bytes": None,
+        "drop_grace": timedelta(0),
     }
     fields.update(overrides)
     return KudosRetentionPolicy(**fields)
@@ -130,9 +133,11 @@ def test_policy_reads_the_dump_retry_and_drop_defer_variables() -> None:
 
 def test_policy_reads_the_hold_and_grace_variables() -> None:
     defaults = load_retention_policy({})
-    assert (defaults.hold_drops, defaults.drop_grace) == (False, timedelta(0))
+    assert (defaults.hold_drops, defaults.drop_grace) == (False, timedelta(days=7))
     policy = load_retention_policy({HOLD_DROPS_ENV: " Yes ", DROP_GRACE_ENV: "7"})
     assert (policy.hold_drops, policy.drop_grace) == (True, timedelta(days=7))
+    assert load_retention_policy({DROP_GRACE_ENV: "0"}).drop_grace == timedelta(0)
+    assert load_retention_policy({DROP_GRACE_ENV: "10"}).drop_grace == timedelta(days=10)
     with pytest.raises(ValueError, match=HOLD_DROPS_ENV):
         load_retention_policy({HOLD_DROPS_ENV: "sometimes"})
     with pytest.raises(ValueError, match=DROP_GRACE_ENV):
@@ -2179,6 +2184,7 @@ def test_held_drops_keep_a_drop_ready_partition_attached_and_the_tick_idles(
     assert (health["hold_drops"], health["held_partitions"], health["detached_partitions"]) == (True, 1, [])
     unheld = retention_health(now=AFTER_WINDOW, policy=_policy())
     assert (unheld["hold_drops"], unheld["held_partitions"]) == (False, 0)
+    assert (health["drop_grace_days"], unheld["drop_grace_days"]) == (0, 0)
     # Holding the drop also holds the detach of a grace period.
     assert _tick(AFTER_WINDOW, hold_drops=True, drop_grace=timedelta(days=7)).outcome == RetentionTickOutcome.IDLE
     assert _attached(db_session, partition)
@@ -2211,6 +2217,7 @@ def test_drop_grace_detaches_first_and_drops_only_after_the_grace(
         AFTER_WINDOW,
     )
     health = retention_health(now=AFTER_WINDOW, policy=_policy(drop_grace=GRACE))
+    assert health["drop_grace_days"] == GRACE / timedelta(days=1)
     assert health["detached_partitions"] == [
         {"dataset": STATISTICS, "partition_name": partition, "detached_at": AFTER_WINDOW, "drop_due_at": AFTER_WINDOW + GRACE},
     ]

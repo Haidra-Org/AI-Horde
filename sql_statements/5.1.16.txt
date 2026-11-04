@@ -178,7 +178,7 @@ ON CONFLICT (event_id) DO NOTHING;
 -- 3. Partition conversion.
 --
 -- Each table becomes the partition <table>_p_legacy of a new parent with the same name, covering
--- created < swap_ts, and a first weekly partition starts at swap_ts. A validated CHECK (created <
+-- created < swap_ts, and eight weekly partitions start at swap_ts. A validated CHECK (created <
 -- swap_ts) lets the existing table attach without a scan, and its existing indexes attach to the
 -- parent's partitioned indexes, so nothing is copied or rebuilt under the exclusive lock.
 --
@@ -192,7 +192,8 @@ ON CONFLICT (event_id) DO NOTHING;
 -- committed by swap_ts, writes to that table fail and the swap refuses to run: drop <table>_legacy_range
 -- at once, then rerun the file in a new session, which picks the next Monday. A rerun that finds
 -- <table>_legacy_range still in place reuses the swap_ts of that CHECK instead of picking a new one.
--- A rerun after the conversion, including after retention dropped <table>_p_legacy, does not change the tables.
+-- A rerun after the conversion, including after retention dropped <table>_p_legacy, does not change the tables
+-- beyond creating a missing weekly partition of the current or a later week.
 
 CREATE TEMP TABLE IF NOT EXISTS kudos_swap_parameters (
     table_name TEXT PRIMARY KEY,
@@ -455,18 +456,27 @@ BEGIN
 END;
 $$;
 
--- swap_ts is a Monday 00:00, so the first weekly partition is the week starting at it and later
--- partitions continue the grid. Any partition other than the legacy one means the first weekly
--- partition, or the application's later ones, already exist. The check lists the partitions by name
--- because the legacy partition may be gone once retention dropped it.
+-- swap_ts is a Monday 00:00, so the weekly partitions start at it and later partitions continue the
+-- grid. The file creates eight weeks because the previous release does not create partitions. After a
+-- rollback to it, inserts keep finding a partition until the last of these weeks ends. The new
+-- release's retention tick creates the later weeks.
+--
+-- A rerun creates only the missing weeks and does not alter an existing partition. A week that an
+-- existing partition overlaps is skipped, because the application may have created partitions there,
+-- with another width when KUDOS_PARTITION_WIDTH_DAYS is set. A week that ended before the current UTC
+-- week is skipped as well, because only retention removes such a week, and the application leaves the
+-- same gap alone.
 --
 -- The storage parameters repeat the autovacuum settings sql_statements/5.1.10.txt gave the unpartitioned
 -- tables, because a partition does not inherit them from its parent. They match
 -- KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS, which the application applies to the partitions it creates.
-CREATE OR REPLACE FUNCTION pg_temp.kudos_create_first_partition(target_table TEXT) RETURNS VOID
+CREATE OR REPLACE FUNCTION pg_temp.kudos_create_initial_partitions(target_table TEXT) RETURNS VOID
 LANGUAGE plpgsql AS $$
 DECLARE
-    first_lower TIMESTAMP WITHOUT TIME ZONE;
+    initial_week_count CONSTANT INTEGER := 8;
+    current_week_start TIMESTAMP WITHOUT TIME ZONE := date_trunc('week', now() AT TIME ZONE 'UTC');
+    week_lower TIMESTAMP WITHOUT TIME ZONE;
+    week_upper TIMESTAMP WITHOUT TIME ZONE;
     storage_parameters TEXT := CASE target_table
         WHEN 'kudos_ledger' THEN 'autovacuum_vacuum_scale_factor = 0.0, autovacuum_vacuum_threshold = 100000, '
             'autovacuum_analyze_scale_factor = 0.0, autovacuum_analyze_threshold = 200000'
@@ -474,18 +484,32 @@ DECLARE
             'autovacuum_analyze_scale_factor = 0.0, autovacuum_analyze_threshold = 500000'
     END;
 BEGIN
-    IF EXISTS (
-        SELECT 1 FROM pg_inherits h JOIN pg_class c ON c.oid = h.inhrelid
-        WHERE h.inhparent = to_regclass(target_table) AND c.relname <> target_table || '_p_legacy'
-    ) THEN
-        RETURN;
-    END IF;
-    first_lower := pg_temp.kudos_swap_ts(target_table);
-    EXECUTE format(
-        'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I FOR VALUES FROM (%L) TO (%L) WITH (%s)',
-        target_table || '_p_' || to_char(first_lower, 'YYYYMMDD'), target_table,
-        first_lower, first_lower + interval '7 days', storage_parameters
-    );
+    FOR week_index IN 0 .. initial_week_count - 1 LOOP
+        week_lower := pg_temp.kudos_swap_ts(target_table) + week_index * interval '7 days';
+        week_upper := week_lower + interval '7 days';
+        CONTINUE WHEN week_upper <= current_week_start;
+        -- pg_get_expr renders each bound in the session's DateStyle, which the cast reads back. A NULL bound
+        -- is MINVALUE or MAXVALUE.
+        CONTINUE WHEN EXISTS (
+            SELECT 1
+            FROM (
+                SELECT
+                    CAST(substring(bound FROM '^FOR VALUES FROM \(''([^'']+)''\)') AS TIMESTAMP WITHOUT TIME ZONE) AS lower_bound,
+                    CAST(substring(bound FROM ' TO \(''([^'']+)''\)$') AS TIMESTAMP WITHOUT TIME ZONE) AS upper_bound
+                FROM (
+                    SELECT pg_get_expr(c.relpartbound, c.oid) AS bound
+                    FROM pg_inherits h JOIN pg_class c ON c.oid = h.inhrelid
+                    WHERE h.inhparent = to_regclass(target_table)
+                ) partition_bounds
+            ) existing_ranges
+            WHERE (lower_bound IS NULL OR lower_bound < week_upper) AND (upper_bound IS NULL OR upper_bound > week_lower)
+        );
+        EXECUTE format(
+            'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I FOR VALUES FROM (%L) TO (%L) WITH (%s)',
+            target_table || '_p_' || to_char(week_lower, 'YYYYMMDD'), target_table,
+            week_lower, week_upper, storage_parameters
+        );
+    END LOOP;
 END;
 $$;
 
@@ -618,8 +642,8 @@ SELECT pg_temp.kudos_attach_legacy_index('kudos_ledger', 'ix_kudos_ledger_unappl
 SELECT pg_temp.kudos_attach_legacy_index('kudos_ledger', 'ix_kudos_ledger_unapplied_users');
 SELECT pg_temp.kudos_attach_legacy_index('kudos_ledger', 'ix_kudos_ledger_unapplied_by_user');
 SELECT pg_temp.kudos_attach_legacy_index('kudos_ledger', 'ix_kudos_ledger_user_id');
--- Created last, so it inherits every partitioned index and the foreign key.
-SELECT pg_temp.kudos_create_first_partition('kudos_ledger');
+-- Created last, so they inherit every partitioned index and the foreign key.
+SELECT pg_temp.kudos_create_initial_partitions('kudos_ledger');
 COMMIT;
 
 -- 3b. kudos_stat_events
@@ -679,8 +703,8 @@ SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_eve
 SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_events_user_id');
 SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_events_worker_id');
 SELECT pg_temp.kudos_attach_legacy_index('kudos_stat_events', 'ix_kudos_stat_events_team_id');
--- Created last, so it inherits every partitioned index.
-SELECT pg_temp.kudos_create_first_partition('kudos_stat_events');
+-- Created last, so they inherit every partitioned index.
+SELECT pg_temp.kudos_create_initial_partitions('kudos_stat_events');
 COMMIT;
 
 RESET lock_timeout;

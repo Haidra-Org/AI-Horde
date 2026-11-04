@@ -87,7 +87,7 @@ def _parser() -> argparse.ArgumentParser:
             "eligibility, key-expiry and partition-creation decision moves to that time, so partitions are created up "
             "to as-of plus two partition widths and idempotency keys expire relative to as-of. Against a live "
             "production database it removes data early, so a later time than now also needs "
-            "--confirm-live-data-loss. Requires KUDOS_RETENTION_ENABLED=true. With KUDOS_RETENTION_DROP_GRACE_DAYS set, "
+            "--confirm-live-data-loss. Requires KUDOS_RETENTION_ENABLED=true. With KUDOS_RETENTION_DROP_GRACE_DAYS above 0, "
             "a detached partition is dropped only by a tick whose as-of is at least the grace past the detaching tick's."
         ),
     )

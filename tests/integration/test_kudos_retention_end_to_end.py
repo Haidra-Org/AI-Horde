@@ -256,6 +256,8 @@ def test_legacy_partitions_retire_with_reconciliation_idempotency_and_projection
             statistics_window=timedelta(days=30),
             partition_width=timedelta(days=7),
             currency_budget_bytes=1024 * 1024 * 1024,
+            # The test expects the legacy partition dropped by the ticks it runs, without waiting out a grace.
+            drop_grace=timedelta(0),
         )
         tick_now = legacy_upper + timedelta(days=30, hours=1)
         outcomes: list[Any] = []

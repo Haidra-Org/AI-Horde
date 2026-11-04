@@ -313,6 +313,25 @@ def _partition_bounds(connection: sqlalchemy.Connection, table: str) -> dict[str
     return {name: bound for name, bound in rows}
 
 
+def _weekly_partition_bounds(connection: sqlalchemy.Connection, table: str, swap_ts: Any) -> dict[str, str]:
+    """Return the bound of each weekly partition the migration creates from swap_ts, by partition name.
+
+    PostgreSQL renders a bound with trailing zeros of the fraction removed, so it renders the expected text too.
+    """
+    rows = connection.execute(
+        sqlalchemy.text(
+            "SELECT week_index, CAST(CAST(:swap_ts AS timestamp) + week_index * interval '7 days' AS text), "
+            "CAST(CAST(:swap_ts AS timestamp) + (week_index + 1) * interval '7 days' AS text) "
+            "FROM generate_series(0, :last_week_index) AS week_index",
+        ),
+        {"swap_ts": swap_ts, "last_week_index": MIGRATION_WEEK_COUNT - 1},
+    )
+    return {
+        f"{table}_p_{swap_ts + timedelta(weeks=week_index):%Y%m%d}": f"FOR VALUES FROM ('{lower_text}') TO ('{upper_text}')"
+        for week_index, lower_text, upper_text in rows
+    }
+
+
 @pytest.fixture(params=tuple(TABLE_SHAPES))
 def converted_schema(request: pytest.FixtureRequest, pg_dsn: str) -> Iterator[sqlalchemy.Connection]:
     """Yield a connection to a throwaway schema holding one pre-partitioning shape after the migration ran twice.
@@ -349,9 +368,11 @@ def test_conversion_ranges_the_table_on_created_around_the_swap_timestamp(conver
     assert swap_ts.weekday() == 0 and swap_ts.time() == time(0)
     assert swap_ts - _scalar(connection, "SELECT now() AT TIME ZONE 'UTC'") >= timedelta(hours=23)
     assert swap_ts - _scalar(connection, "SELECT now() AT TIME ZONE 'UTC'") <= timedelta(days=8)
+    weekly_bounds = _weekly_partition_bounds(connection, table, swap_ts)
+    assert weekly_bounds[f"{table}_p_{swap_ts:%Y%m%d}"] == f"FOR VALUES FROM ('{swap_text}') TO ('{first_upper}')"
     assert _partition_bounds(connection, table) == {
         f"{table}_p_legacy": f"FOR VALUES FROM (MINVALUE) TO ('{swap_text}')",
-        f"{table}_p_{swap_ts:%Y%m%d}": f"FOR VALUES FROM ('{swap_text}') TO ('{first_upper}')",
+        **weekly_bounds,
     }
     for relation in (table, f"{table}_p_legacy"):
         primary_key = _scalar(
@@ -532,6 +553,8 @@ def test_conversion_stops_before_committing_when_a_legacy_index_does_not_match(p
         drop_schema(pg_dsn, schema_name)
 
 
+MIGRATION_WEEK_COUNT = 8
+"""The number of weekly partitions the migration creates from swap_ts."""
 NEXT_SWAP_TS = "SELECT date_trunc('week', (now() AT TIME ZONE 'UTC') + interval '24 hours' + interval '7 days' - interval '1 microsecond')"
 """The swap_ts a run of the migration computes now."""
 
@@ -574,9 +597,11 @@ def test_rerun_takes_the_swap_timestamp_from_an_existing_legacy_range(unconverte
     assert _scalar(connection, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = 'kudos_ledger'") == original_swap_ts
     swap_text = _scalar(connection, "SELECT CAST(CAST(:swap_ts AS timestamp) AS text)", swap_ts=original_swap_ts)
     first_upper = _scalar(connection, "SELECT CAST(CAST(:swap_ts AS timestamp) + interval '7 days' AS text)", swap_ts=original_swap_ts)
+    weekly_bounds = _weekly_partition_bounds(connection, "kudos_ledger", original_swap_ts)
+    assert weekly_bounds[f"kudos_ledger_p_{original_swap_ts:%Y%m%d}"] == f"FOR VALUES FROM ('{swap_text}') TO ('{first_upper}')"
     assert _partition_bounds(connection, "kudos_ledger") == {
         "kudos_ledger_p_legacy": f"FOR VALUES FROM (MINVALUE) TO ('{swap_text}')",
-        f"kudos_ledger_p_{original_swap_ts:%Y%m%d}": f"FOR VALUES FROM ('{swap_text}') TO ('{first_upper}')",
+        **weekly_bounds,
     }
     # The table without a leftover CHECK still takes the Monday computed now.
     computed_swap_ts = _scalar(connection, NEXT_SWAP_TS)
@@ -712,30 +737,31 @@ def test_orm_models_build_the_same_tables_as_the_migration(_retention_catalogs: 
 
 
 def test_partition_bootstrap_continues_from_the_migrated_layout(app: Any, converted_schema: sqlalchemy.Connection) -> None:
-    """The application's weekly partitions start at the first weekly partition's upper bound and follow the Monday grid."""
+    """The application's weekly partitions start at the last migrated week's upper bound and follow the Monday grid."""
     from datetime import datetime
 
     from horde.classes.base.kudos import KudosPartitioning, ensure_kudos_event_partitions
     from horde.flask import db
 
     schema_name = _scalar(converted_schema, "SELECT current_schema()")
-    first_upper = _scalar(
+    migrated_upper = _scalar(
         converted_schema,
-        "SELECT swap_ts + interval '7 days' FROM kudos_swap_parameters WHERE table_name = 'kudos_ledger'",
+        "SELECT swap_ts + :week_count * interval '7 days' FROM kudos_swap_parameters WHERE table_name = 'kudos_ledger'",
+        week_count=MIGRATION_WEEK_COUNT,
     )
     with app.app_context():
         try:
             db.session.execute(sqlalchemy.text(f"SET LOCAL search_path TO {schema_name}"))
             created = ensure_kudos_event_partitions(
-                until=first_upper + 2 * KudosPartitioning.DEFAULT_WIDTH,
+                until=migrated_upper + 2 * KudosPartitioning.DEFAULT_WIDTH,
                 width=KudosPartitioning.DEFAULT_WIDTH,
             )
             bounds = _partition_bounds(db.session.connection(), "kudos_ledger")
         finally:
             db.session.rollback()
-    second_upper = first_upper + timedelta(days=7)
-    assert f"kudos_ledger_p_{first_upper:%Y%m%d}" in created
-    assert bounds[f"kudos_ledger_p_{first_upper:%Y%m%d}"] == f"FOR VALUES FROM ('{first_upper}') TO ('{second_upper}')"
+    next_upper = migrated_upper + timedelta(days=7)
+    assert f"kudos_ledger_p_{migrated_upper:%Y%m%d}" in created
+    assert bounds[f"kudos_ledger_p_{migrated_upper:%Y%m%d}"] == f"FOR VALUES FROM ('{migrated_upper}') TO ('{next_upper}')"
     assert all(datetime.fromisoformat(name[-8:]).weekday() == 0 for name in created if not name.endswith("_p_legacy"))
 
 
@@ -751,10 +777,12 @@ def _expected_storage_parameters(table: str) -> list[str]:
 
 
 @pytest.mark.parametrize("table", EVENT_TABLES)
-def test_first_weekly_partition_keeps_the_autovacuum_storage_parameters(converted_schema: sqlalchemy.Connection, table: str) -> None:
-    """The migration's first weekly partition gets the fixed dead-row thresholds sql_statements/5.1.10.txt set on the table."""
+def test_weekly_partitions_keep_the_autovacuum_storage_parameters(converted_schema: sqlalchemy.Connection, table: str) -> None:
+    """Every weekly partition of the migration gets the fixed dead-row thresholds sql_statements/5.1.10.txt set on the table."""
     swap_ts = _scalar(converted_schema, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = :table", table=table)
     assert _storage_parameters(converted_schema, f"{table}_p_{swap_ts:%Y%m%d}") == _expected_storage_parameters(table)
+    for partition_name in _weekly_partition_bounds(converted_schema, table, swap_ts):
+        assert _storage_parameters(converted_schema, partition_name) == _expected_storage_parameters(table), partition_name
 
 
 def test_rerun_after_retention_dropped_the_legacy_partition_leaves_the_tables_unchanged(converted_schema: sqlalchemy.Connection) -> None:
@@ -772,6 +800,40 @@ def test_rerun_after_retention_dropped_the_legacy_partition_leaves_the_tables_un
     assert catalog_after == catalog_before
     assert bounds_after == bounds_before
     assert all(f"{table}_p_legacy" not in bounds_after[table] for table in EVENT_TABLES)
+
+
+def test_rerun_creates_only_the_missing_weeks(converted_schema: sqlalchemy.Connection) -> None:
+    """A rerun recreates a missing week and leaves every existing partition alone, including a wider one the application made.
+
+    The application creates partitions of ``KUDOS_PARTITION_WIDTH_DAYS``, so one of its partitions can span two of the
+    migration's weeks. The rerun skips both weeks instead of failing on the overlap.
+    """
+    expected_bounds: dict[str, dict[str, str]] = {}
+    for table in EVENT_TABLES:
+        swap_ts = _scalar(converted_schema, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = :table", table=table)
+        missing_week = f"{table}_p_{swap_ts + timedelta(weeks=3):%Y%m%d}"
+        wide_lower = swap_ts + timedelta(weeks=MIGRATION_WEEK_COUNT - 2)
+        wide_upper = swap_ts + timedelta(weeks=MIGRATION_WEEK_COUNT)
+        replaced_weeks = (f"{table}_p_{wide_lower:%Y%m%d}", f"{table}_p_{wide_lower + timedelta(weeks=1):%Y%m%d}")
+        for dropped_week in (missing_week, *replaced_weeks):
+            converted_schema.execute(sqlalchemy.text(f"ALTER TABLE {table} DETACH PARTITION {dropped_week}"))
+            converted_schema.execute(sqlalchemy.text(f"DROP TABLE {dropped_week}"))
+        wide_partition = f"{table}_p_{wide_lower:%Y%m%d}"
+        converted_schema.execute(
+            sqlalchemy.text(f"CREATE TABLE {wide_partition} PARTITION OF {table} FOR VALUES FROM ('{wide_lower}') TO ('{wide_upper}')"),
+        )
+        expected_bounds[table] = _partition_bounds(converted_schema, table)
+        expected_bounds[table][missing_week] = _weekly_partition_bounds(converted_schema, table, swap_ts)[missing_week]
+    with converted_schema.engine.connect() as new_session:
+        _apply_migration(new_session)
+        bounds_after = {table: _partition_bounds(new_session, table) for table in EVENT_TABLES}
+        for table in EVENT_TABLES:
+            swap_ts = _scalar(new_session, "SELECT swap_ts FROM kudos_swap_parameters WHERE table_name = :table", table=table)
+            recreated_week = f"{table}_p_{swap_ts + timedelta(weeks=3):%Y%m%d}"
+            assert _storage_parameters(new_session, recreated_week) == _expected_storage_parameters(table)
+            wide_partition = f"{table}_p_{swap_ts + timedelta(weeks=MIGRATION_WEEK_COUNT - 2):%Y%m%d}"
+            assert _storage_parameters(new_session, wide_partition) == []
+    assert bounds_after == expected_bounds
 
 
 @pytest.fixture

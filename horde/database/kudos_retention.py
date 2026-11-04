@@ -14,9 +14,10 @@ call of ``run_retention_tick`` makes at most one state transition:
 - currency: ``PENDING`` -> ``CHECKPOINTED`` (per-user checkpoint and daily statements) -> ``EXPORTED`` -> ``VERIFIED``
   (archive read back) -> ``DROPPED``.
 
-With ``drop_grace`` set, the drop takes two transitions: the partition is detached and its units become ``DETACHED``,
-and a later tick drops it once the grace has passed. ``reattach_partition`` puts a ``DETACHED`` partition back. With
-``hold_drops`` set, every step except the detach and the drop runs, and drop-ready partitions stay attached.
+With ``drop_grace`` above zero, as by default, the drop takes two transitions: the partition is detached and its
+units become ``DETACHED``, and a later tick drops it once the grace has passed. ``reattach_partition`` puts a
+``DETACHED`` partition back. With ``hold_drops`` set, every step except the detach and the drop runs, and drop-ready
+partitions stay attached.
 
 A unit that cannot proceed safely becomes ``BLOCKED`` with the reason in ``error`` (``RetentionBlockReason``), and an
 operator returns it to ``PENDING``, or to ``CHECKPOINTED`` when its checkpoint is committed. Database work for one
@@ -103,8 +104,12 @@ HOLD_DROPS_ENV: Final[str] = "KUDOS_RETENTION_HOLD_DROPS"
 DROP_GRACE_ENV: Final[str] = "KUDOS_RETENTION_DROP_GRACE_DAYS"
 """The environment variable holding how many days a detached partition is kept before it is dropped."""
 
-DEFAULT_DROP_GRACE_DAYS: Final[int] = 0
-"""The drop grace period when ``KUDOS_RETENTION_DROP_GRACE_DAYS`` is unset: the drop follows the detach at once."""
+DEFAULT_DROP_GRACE_DAYS: Final[int] = 7
+"""The drop grace period when ``KUDOS_RETENTION_DROP_GRACE_DAYS`` is unset.
+
+A deployment whose rendered environment lost the variable still keeps a detached partition for a reattach window.
+A drop that follows the detach at once needs the variable set to 0.
+"""
 
 DEFAULT_DUMP_RETRY_DAYS: Final[int] = 7
 """How long failed statistics dumps are retried when ``KUDOS_RETENTION_DUMP_RETRY_DAYS`` is unset."""
@@ -539,6 +544,8 @@ class KudosRetentionHealth(TypedDict):
     """Whether the policy holds drop-ready partitions attached."""
     held_partitions: int
     """Partitions whose units are all drop-ready while ``hold_drops`` is set, or 0 when it is not set."""
+    drop_grace_days: float
+    """The policy's drop grace in days, so a deploy can check the reattach window the running policy keeps."""
     detached_partitions: list[DetachedPartitionHealth]
     """Partitions whose units are ``DETACHED``, oldest detach first."""
 
@@ -2594,6 +2601,7 @@ def retention_health(*, now: datetime | None = None, policy: KudosRetentionPolic
         partition_coverage_ok=True if SQLITE_MODE else partition_coverage_ok(partitions, moment=_utcnow(), width=policy.partition_width),
         hold_drops=policy.hold_drops,
         held_partitions=drop_ready_partition_count(catalog) if policy.hold_drops else 0,
+        drop_grace_days=policy.drop_grace / timedelta(days=1),
         detached_partitions=detached_partitions(catalog, drop_grace=policy.drop_grace),
     )
 
