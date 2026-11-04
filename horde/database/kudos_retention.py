@@ -549,6 +549,9 @@ class KudosRetentionHealth(TypedDict):
     """Seconds since the most recent catalog update, or None for an empty catalog."""
     pending_units: int
     """Catalog units neither ``DROPPED`` nor ``BLOCKED``, including currency units waiting for an archive."""
+    pending_units_by_dataset: dict[KudosRetentionDataset, int]
+    """``pending_units`` per dataset, with both datasets present. The units of the legacy partition stay counted
+    until the whole partition is dropped, so the count stays high for a whole catch-up."""
     partition_coverage_ok: bool
     """Whether each event table has a partition that contains the real current time and one that contains it plus one
     partition width. Without both, inserts fail now or within one width."""
@@ -2773,11 +2776,14 @@ def retention_health(*, now: datetime | None = None, policy: KudosRetentionPolic
     for error, count in blocked_by_error:
         if error in blocked_units_by_reason:
             blocked_units_by_reason[RetentionBlockReason(error)] = int(count)
-    pending_units = db.session.execute(
-        select(func.count(KudosRetentionUnit.id)).where(
-            KudosRetentionUnit.state.not_in([KudosRetentionState.BLOCKED, KudosRetentionState.DROPPED]),
-        ),
-    ).scalar_one()
+    pending_by_dataset = db.session.execute(
+        select(KudosRetentionUnit.dataset, func.count(KudosRetentionUnit.id))
+        .where(KudosRetentionUnit.state.not_in([KudosRetentionState.BLOCKED, KudosRetentionState.DROPPED]))
+        .group_by(KudosRetentionUnit.dataset),
+    ).all()
+    pending_units_by_dataset = dict.fromkeys(KudosRetentionDataset, 0)
+    for pending_dataset, count in pending_by_dataset:
+        pending_units_by_dataset[KudosRetentionDataset(pending_dataset)] = int(count)
     last_update = db.session.execute(select(func.max(KudosRetentionUnit.updated))).scalar_one()
     catalog = load_catalog()
     db.session.commit()
@@ -2786,7 +2792,8 @@ def retention_health(*, now: datetime | None = None, policy: KudosRetentionPolic
         blocked_units=blocked_units,
         blocked_units_by_reason=blocked_units_by_reason,
         last_step_age_seconds=None if last_update is None else (now - last_update).total_seconds(),
-        pending_units=int(pending_units),
+        pending_units=sum(pending_units_by_dataset.values()),
+        pending_units_by_dataset=pending_units_by_dataset,
         # Coverage is about inserts arriving now, so it uses the real clock whatever reference time the caller passes.
         partition_coverage_ok=True if SQLITE_MODE else partition_coverage_ok(partitions, moment=_utcnow(), width=policy.partition_width),
         hold_drops=policy.hold_drops,

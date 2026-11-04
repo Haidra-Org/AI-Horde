@@ -711,6 +711,7 @@ The tier sizes from the same listing are the `horde.kudos.archive.tier_bytes` va
 | `horde.kudos.retention.blocked_units` | Gauge, `{unit}` | `horde.kudos.block_reason` | Catalog units in `blocked`, one series per `RetentionBlockReason` value, 0 when no unit has that reason |
 | `horde.kudos.retention.partition_coverage` | Gauge, `1` | None | 1 when each event table has a partition containing the real current time and one containing it plus one partition width, else 0 |
 | `horde.kudos.retention.held_partitions` | Gauge, `{partition}` | None | `held_partitions` from `retention_health`. 0 when `KUDOS_RETENTION_HOLD_DROPS` is not `true` |
+| `horde.kudos.retention.pending_units` | Gauge, `{unit}` | `horde.kudos.dataset` | `pending_units_by_dataset` from `retention_health`. The units of the legacy partition are counted until the whole partition is dropped, so the value stays high for a whole catch-up |
 | `horde.kudos.retention.restored_partitions` | Gauge, `{partition}` | None | The number of `restored_partitions` from `retention_health`. Above 0, the tick does not make a transition in the dataset of each such partition |
 | `horde.kudos.archive.tier_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | Stored bytes of each tier, excluding manifests, from the tick's listing. Not recorded without an archive, and kept at the last value when the listing fails |
 | `horde.kudos.archive.budget_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | One series per tier that has a budget: `currency` from `KUDOS_ARCHIVE_BUDGET_BYTES`, `statistics` from `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES`. Not recorded without an archive |
@@ -736,6 +737,7 @@ does not count it. Other retention log lines are not under contract.
 | `blocked_units` | Catalog units in `blocked` |
 | `blocked_units_by_reason` | Catalog units in `blocked` per `RetentionBlockReason` value, with every reason present |
 | `pending_units` | Catalog units neither `dropped` nor `blocked`, including currency units waiting for an archive and `detached` units |
+| `pending_units_by_dataset` | `pending_units` per dataset, with both datasets present |
 | `last_step_age_seconds` | Seconds since the most recent catalog update, or null for an empty catalog |
 | `partition_coverage_ok` | Whether each event table has a partition containing the real current time and one containing it plus one partition width |
 | `hold_drops` | Whether `KUDOS_RETENTION_HOLD_DROPS` is `true` |

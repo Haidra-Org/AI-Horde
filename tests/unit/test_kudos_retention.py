@@ -984,6 +984,7 @@ def test_checkpoint_chain_carry_forward_and_daily_statements(
 
     health = retention_health(now=AFTER_WINDOW, policy=_policy())
     assert health["pending_units"] == 2
+    assert health["pending_units_by_dataset"] == {CURRENCY: 2, STATISTICS: 0}
     assert health["blocked_units"] == 0
     assert health["oldest_eligible_age_seconds"][CURRENCY] == (AFTER_WINDOW - timedelta(days=30) - (MONDAY + WEEK)).total_seconds()
 
