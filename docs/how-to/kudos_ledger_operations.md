@@ -317,14 +317,17 @@ docker exec -w /app -e PYTHONPATH=/app <container> python tools/kudos_ledger_adm
    `"detail": "no actionable unit"`, or a step result. It prints `"outcome": "skipped_lock"` when the scheduled tick
    holds the lock, and then it can be run again. While retention is disabled, the detail is `retention disabled`. The
    command runs a real tick and can drop a partition.
-3. Expect the first ticks to be idle. A partition becomes eligible when its upper bound is older than the window, so
-   the legacy partition becomes eligible one window after `swap_ts`. Until then `oldest_eligible_age_seconds` is null
-   for both datasets and the gauge reads 0.
-4. Watch the legacy partition being processed. The first eligible tick catalogues it as one unit per partition width,
-   starting at the Monday on or before its oldest row, and logs
-   `Kudos retention catalogued <n> units of <dataset> partition <table>_p_legacy`. Each later tick makes one transition
+3. Expect the first tick to catalogue the legacy partition. A unit becomes eligible when its upper bound is older
+   than the window. A weekly partition is one unit, catalogued when its upper bound is older than the window. The
+   legacy partition is catalogued as soon as the tick sees it, as one unit per partition width starting at the Monday
+   on or before its oldest row, and each of its sub-ranges becomes eligible on its own age. The tick logs
+   `Kudos retention catalogued <n> units of <dataset> partition <table>_p_legacy`. `oldest_eligible_age_seconds` is
+   then the age of the oldest sub-range past the window, or null when the legacy partition holds less than a window
+   of history.
+4. Watch the legacy partition being processed. Each tick makes one transition
    across both datasets, and the scheduler runs a tick every 60 seconds. Statistics units move through `rolled_up`
-   and `dumped`, and currency units through `checkpointed`, `exported` and `verified`. The legacy partition is
+   and `dumped`, and currency units through `checkpointed`, `exported` and `verified`. The last sub-range, which
+   ends at `swap_ts`, becomes eligible one window after `swap_ts`. The legacy partition is
    dropped by one tick after every one of its units is ready. Until then it stays attached, so
    `oldest_eligible_age_seconds` keeps growing and `pending_units` stays above zero. Verify: `retention status` shows
    the units advancing, `last_step_age_seconds` stays near the tick interval, and `horde.kudos.retention.steps` grows
@@ -402,8 +405,10 @@ currency unit recomputed over a recorded boundary blocks with `boundary already 
 
 ## Rehearsing partition removal on a restored copy
 
-Nothing becomes eligible until a partition's upper bound is older than the window, so a freshly converted database
-has nothing to remove for at least the window. To exercise the removal path before that, restore a copy of the
+A legacy sub-range becomes eligible when its upper bound is older than the window, and a weekly partition when its
+own is, so a freshly converted database with less than a window of history does not remove anything for at least
+the window, and one with more history does not drop anything before the window either, because the legacy drop waits
+for its last sub-range. To exercise the removal path before that, restore a copy of the
 database, point it at a scratch bucket or at a prefix of its own (`KUDOS_ARCHIVE_PREFIX`), enable retention, and move
 the clock forward for one tick at a time:
 

@@ -730,10 +730,13 @@ def select_next_unit(
     hold_drops: bool = False,
     detached_drop_due_before: datetime | None = None,
 ) -> NextUnit:
-    """Return the oldest actionable unit of one dataset, or the oldest eligible partition that has no catalog rows.
+    """Return the oldest actionable unit of one dataset, or the oldest partition that needs catalog rows.
 
-    A partition is eligible when its upper bound is before ``cutoff``. Units are taken in upper-bound order and skipped
-    while they cannot move:
+    A unit is eligible when its upper bound is before ``cutoff``. A weekly partition has one unit with the partition's
+    bounds, so it is catalogued once its upper bound is before ``cutoff``. The legacy partition holds every row from
+    before the swap and is catalogued as soon as it is attached, so that each of its sub-ranges becomes eligible on its
+    own age instead of waiting for the partition's upper bound, the swap time, to age past the window. Its drop still
+    waits for every sub-range. Units are taken in upper-bound order and skipped while they cannot move:
 
     - ``DROPPED`` units and ``BLOCKED`` statistics units.
     - ``DUMP_FAILED`` units whose last attempt is not before ``dump_retry_due_before``.
@@ -766,13 +769,16 @@ def select_next_unit(
     # Each entry sorts by (upper, lower); a partition without catalog rows sorts as its whole range.
     entries: list[tuple[tuple[datetime, datetime], CatalogUnit | PartitionBounds]] = []
     for partition in attached.values():
-        if partition.upper is None or partition.upper >= cutoff:
+        if partition.upper is None:
             continue
         partition_units = units_by_partition.get(partition.name)
         if not partition_units:
-            entries.append(((partition.upper, partition.lower or datetime.min), partition))
+            if partition.is_legacy or partition.upper < cutoff:
+                entries.append(((partition.upper, partition.lower or datetime.min), partition))
             continue
-        entries.extend((_unit_sort_key(partition_unit), partition_unit) for partition_unit in partition_units)
+        entries.extend(
+            (_unit_sort_key(partition_unit), partition_unit) for partition_unit in partition_units if partition_unit.upper < cutoff
+        )
     for partition_name, detached_units in units_by_partition.items():
         if partition_name in attached:
             continue
@@ -809,6 +815,32 @@ def select_next_unit(
             continue
         return NextUnit(unit=candidate)
     return NextUnit()
+
+
+def _eligible_uppers(
+    dataset: KudosRetentionDataset,
+    partitions: Sequence[PartitionBounds],
+    catalog: Sequence[CatalogUnit],
+    cutoff: datetime,
+) -> list[datetime]:
+    """Return the upper bounds past ``cutoff`` of the dataset's attached partitions, by sub-range for the legacy partition.
+
+    The legacy partition's units age individually (see ``select_next_unit``), so its backlog age is that of its oldest
+    sub-range still online, and the partition bound counts only while the partition has no catalog rows yet.
+    """
+    legacy_uppers_by_partition: dict[str, list[datetime]] = defaultdict(list)
+    for catalog_unit in catalog:
+        if catalog_unit.dataset == dataset and catalog_unit.state != KudosRetentionState.DROPPED:
+            legacy_uppers_by_partition[catalog_unit.partition_name].append(catalog_unit.upper)
+    uppers: list[datetime] = []
+    for partition in partitions:
+        if partition.dataset != dataset or partition.upper is None:
+            continue
+        if partition.is_legacy and partition.name in legacy_uppers_by_partition:
+            uppers.extend(upper for upper in legacy_uppers_by_partition[partition.name] if upper < cutoff)
+        elif partition.upper < cutoff:
+            uppers.append(partition.upper)
+    return uppers
 
 
 def _dump_retry_due(unit: CatalogUnit, due_before: datetime | None) -> bool:
@@ -2757,14 +2789,11 @@ def retention_health(*, now: datetime | None = None, policy: KudosRetentionPolic
     if now is None:
         now = _utcnow()
     partitions = [] if SQLITE_MODE else discover_partitions()
+    catalog = load_catalog()
     oldest_eligible_age: dict[KudosRetentionDataset, float | None] = {}
     for dataset in KudosRetentionDataset:
         cutoff = now - policy.window_for(dataset)
-        eligible_uppers = [
-            partition.upper
-            for partition in partitions
-            if partition.dataset == dataset and partition.upper is not None and partition.upper < cutoff
-        ]
+        eligible_uppers = _eligible_uppers(dataset, partitions, catalog, cutoff)
         oldest_eligible_age[dataset] = (cutoff - min(eligible_uppers)).total_seconds() if eligible_uppers else None
     blocked_by_error = db.session.execute(
         select(KudosRetentionUnit.error, func.count(KudosRetentionUnit.id))
@@ -2785,7 +2814,6 @@ def retention_health(*, now: datetime | None = None, policy: KudosRetentionPolic
     for pending_dataset, count in pending_by_dataset:
         pending_units_by_dataset[KudosRetentionDataset(pending_dataset)] = int(count)
     last_update = db.session.execute(select(func.max(KudosRetentionUnit.updated))).scalar_one()
-    catalog = load_catalog()
     db.session.commit()
     return KudosRetentionHealth(
         oldest_eligible_age_seconds=oldest_eligible_age,

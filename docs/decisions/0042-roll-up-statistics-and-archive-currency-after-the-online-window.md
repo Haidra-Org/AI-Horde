@@ -81,9 +81,9 @@ therefore does not need a writer barrier, sequence sealing or a drain under the 
 The primary key becomes (`id`, `created`). No foreign key references either table. The existing heap becomes the
 first partition. A validated `CHECK` on `created` lets it attach without a scan, the swap is a rename under a brief
 exclusive lock with no copy, and its indexes attach to partitioned indexes created on the parent, including the partial
-unapplied and quarantine indexes. New partitions default to one week. The first partition becomes eligible 30 days
-after the swap. Because it holds the whole pre-swap history, its replacements are built in bounded `created`
-sub-ranges recorded in the catalog, and the single drop waits for all of them. The migration is rehearsed on a restored
+unapplied and quarantine indexes. New partitions default to one week. Because the first partition holds the whole
+pre-swap history, its replacements are built in bounded `created` sub-ranges recorded in the catalog, each eligible
+on its own age, and the single drop waits for all of them, so it happens one window after the swap. The migration is rehearsed on a restored
 copy before production.
 
 The retention job runs under its own advisory lock and processes one eligible partition at a time in ascending order.

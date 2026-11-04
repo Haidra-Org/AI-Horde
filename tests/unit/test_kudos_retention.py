@@ -287,6 +287,29 @@ def test_selection_lets_checkpointed_currency_wait_for_an_archive() -> None:
     assert with_archive.unit == catalog[0]
 
 
+def test_legacy_partition_is_catalogued_before_its_upper_bound_ages_past_the_window() -> None:
+    legacy = _partition(STATISTICS, "kudos_stat_events_p_legacy", None, CUTOFF + WEEK)
+    weekly = _partition(STATISTICS, "kudos_stat_events_p_20200203", CUTOFF, CUTOFF + WEEK)
+    selection = select_next_unit(dataset=STATISTICS, partitions=[weekly, legacy], catalog=[], cutoff=CUTOFF, archive_configured=False)
+    assert selection.partition_needing_units == legacy
+    assert select_next_unit(dataset=STATISTICS, partitions=[weekly], catalog=[], cutoff=CUTOFF, archive_configured=False).unit is None
+
+
+def test_legacy_sub_ranges_become_eligible_on_their_own_age() -> None:
+    legacy = _partition(STATISTICS, "kudos_stat_events_p_legacy", None, CUTOFF + WEEK)
+    old = _unit(1, STATISTICS, legacy.name, None, CUTOFF - WEEK, KudosRetentionState.PENDING)
+    young = _unit(2, STATISTICS, legacy.name, CUTOFF - WEEK, CUTOFF + WEEK, KudosRetentionState.PENDING)
+    assert _select(STATISTICS, [legacy], [old, young], CUTOFF).unit == old
+    # The sub-range that still receives rows waits, and so does the drop of the whole partition.
+    dumped = _unit(1, STATISTICS, legacy.name, None, CUTOFF - WEEK, KudosRetentionState.DUMPED)
+    assert _select(STATISTICS, [legacy], [dumped, young], CUTOFF).unit is None
+    assert _select(STATISTICS, [legacy], [dumped, young], CUTOFF + 2 * WEEK).unit == young
+
+
+def _select(dataset: KudosRetentionDataset, partitions: list[PartitionBounds], catalog: list[Any], cutoff: datetime) -> Any:
+    return select_next_unit(dataset=dataset, partitions=partitions, catalog=catalog, cutoff=cutoff, archive_configured=False)
+
+
 def test_selection_drops_the_legacy_partition_only_when_every_sub_range_is_ready() -> None:
     legacy = _partition(STATISTICS, "kudos_stat_events_p_legacy", None, MONDAY + 2 * WEEK)
     dumped = _unit(1, STATISTICS, legacy.name, None, MONDAY + WEEK, KudosRetentionState.DUMPED)

@@ -59,8 +59,9 @@ the decision and the other options it weighed.
 ## Partitions by age
 
 Both event tables are partitioned by `RANGE (created)`. `created` is set when the row is written, so a row that
-commits late still lands in the partition of its write time. A partition is eligible for removal once its upper bound
-is older than its dataset's window. A transaction that is still open cannot write into a partition whose upper bound
+commits late still lands in the partition of its write time. A unit is eligible for removal once its upper bound
+is older than its dataset's window: a weekly partition as a whole, and the legacy partition sub-range by sub-range,
+with its drop waiting for the last one. A transaction that is still open cannot write into a range whose upper bound
 is a whole window in the past, so eligibility by age does not need a writer barrier, sequence sealing or a drain under
 the mode gate. The drop still recounts the rows, because a clock fault or a reference time moved forward on a live
 database can put a row where the age argument says none can be.

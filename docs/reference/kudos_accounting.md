@@ -439,9 +439,11 @@ A unit's `source_range` is `<partition_name>/<lower>_<upper>`. Each bound is for
 the unit they came from. A retried step deletes the rows with its own `source_range` before inserting them again. A UTC
 day can span two units, so readers sum across `source_range`.
 
-A partition is eligible when its upper bound is older than the dataset's window. A tick creates the catalog rows of an
-eligible partition, in state `pending`, the first time it selects that partition. Units are processed in order of
-upper bound, oldest first.
+A unit is eligible when its upper bound is older than the dataset's window. A tick creates the catalog rows of a
+weekly partition, in state `pending`, once its upper bound is older than the window, and the rows of the legacy
+partition the first time it sees it attached, because the legacy sub-ranges age one by one and the partition's own
+upper bound, the swap time, is the bound of its last sub-range only. Units are processed in order of upper bound,
+oldest first.
 
 ### Retention states
 
@@ -707,7 +709,7 @@ The tier sizes from the same listing are the `horde.kudos.archive.tier_bytes` va
 | --- | --- | --- | --- |
 | `horde.kudos.retention.steps` | Counter, `1` | `horde.kudos.dataset`, `horde.kudos.retention.step`, `horde.kudos.retention.outcome` | One per tick. The step is the `RetentionStep` that ran, or `none`. The outcome is a `RetentionTickOutcome`: `skipped_lock`, `idle`, `stepped`, `blocked`, `failed`, `refused` or `deferred`. Each tick adds 0 to the `blocked` and `failed` series of both datasets, so those series exist before the first event |
 | `horde.kudos.retention.dump_failures` | Counter, `{failure}` | `horde.kudos.dataset` | One per failed statistics dump attempt, including the one that blocks the unit. Each tick adds 0 for both datasets |
-| `horde.kudos.retention.oldest_eligible_age` | Gauge, `s` | `horde.kudos.dataset` | How long the oldest partition still attached has been past its window. 0 when every attached partition is inside its window |
+| `horde.kudos.retention.oldest_eligible_age` | Gauge, `s` | `horde.kudos.dataset` | How long the oldest unit still online has been past its window, by sub-range for the legacy partition. 0 when every unit is inside its window |
 | `horde.kudos.retention.blocked_units` | Gauge, `{unit}` | `horde.kudos.block_reason` | Catalog units in `blocked`, one series per `RetentionBlockReason` value, 0 when no unit has that reason |
 | `horde.kudos.retention.partition_coverage` | Gauge, `1` | None | 1 when each event table has a partition containing the real current time and one containing it plus one partition width, else 0 |
 | `horde.kudos.retention.held_partitions` | Gauge, `{partition}` | None | `held_partitions` from `retention_health`. 0 when `KUDOS_RETENTION_HOLD_DROPS` is not `true` |
@@ -733,7 +735,7 @@ does not count it. Other retention log lines are not under contract.
 
 | Field | Meaning |
 | --- | --- |
-| `oldest_eligible_age_seconds` | Per dataset, how long the oldest partition still attached has been past its window, or null |
+| `oldest_eligible_age_seconds` | Per dataset, how long the oldest unit still online has been past its window, by sub-range for the legacy partition, or null |
 | `blocked_units` | Catalog units in `blocked` |
 | `blocked_units_by_reason` | Catalog units in `blocked` per `RetentionBlockReason` value, with every reason present |
 | `pending_units` | Catalog units neither `dropped` nor `blocked`, including currency units waiting for an archive and `detached` units |
