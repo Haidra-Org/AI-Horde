@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Running ai-horde with Docker
 
+You can run your own private horde with this software, for example to pool the GPUs of a team. It is free software
+under the AGPL-3.0-or-later license, so you can use, modify and share it under that license's terms. Hordes do not
+share workers with each other, so a private horde needs its own workers.
+
 ---
 
 ## Prerequisites
