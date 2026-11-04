@@ -6,15 +6,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # {page_title}
 
-<img style="float:right" src="{horde_img_url}" width="300" /> This is a [crowdsourced distributed cluster](https://github.com/Haidra-Org/AI-Horde) of [Image generation workers](https://github.com/Haidra-Org/horde-worker-reGen) and [text generation workers](https://github.com/Haidra-Org/AI-Horde-Worker). If you like this service, consider [joining the horde yourself](https://github.com/Haidra-Org/AI-Horde#contribute-your-gpu-become-a-worker)!
+<img style="float:right" src="{horde_img_url}" width="300" /> This is an [AI Horde](https://github.com/Haidra-Org/AI-Horde), a free, community-run service for AI image and text generation. Volunteers run [image workers](https://github.com/Haidra-Org/horde-worker-reGen) and [text workers](https://github.com/LostRuins/koboldcpp) on their own GPUs, and anyone can use them. If you like this service, consider [joining the horde yourself](https://github.com/Haidra-Org/AI-Horde#contribute-your-gpu-become-a-worker)!
 
-For more information, check [the FAQ](https://aihorde.net/faq). Finally you can also follow the [main developer's blog](https://dbzer0.com)
+For more information, see [the FAQ](https://aihorde.net/faq) and [our mission](https://aihorde.net/mission). You can also follow the [main developer's blog](https://dbzer0.com).
 
 ## Latest [News](/api/v2/status/news)
 
 {news}
 
 ## Sponsors
+
+The AI Horde is paid for by donations. Volunteers donate their GPU time, and financial donations to [Haidra](https://haidra.net), a non-profit, pay for the servers. If the Horde is useful to you, please consider [supporting Haidra](https://haidra.net/donate/).
 
 [![](assets/logo_nlnet.svg)](https://nlnet.nl/project/AI-Horde/)
 
@@ -29,7 +31,7 @@ For more information, check [the FAQ](https://aihorde.net/faq). Finally you can 
 ### Text Generation
 * Average Recent Performance: {avg_text_performance} {avg_text_thing_name} per second.
 * Total generated: {total_text_things} {total_text_things_name}.
-* Total texts requests fulfilled: {total_text_fulfillments}{total_text_fulfillments_char}.
+* Total text requests fulfilled: {total_text_fulfillments}{total_text_fulfillments_char}.
 * Active [Scribes](/api/v2/workers?type=text)/Threads: {text_workers}/{text_worker_threads}
 * Queue: {total_text_queue} requests for a total of {queued_text_things} {queued_text_things_name}.
 ### Image Alchemy
@@ -37,84 +39,29 @@ For more information, check [the FAQ](https://aihorde.net/faq). Finally you can 
 * Active [Alchemists](/api/v2/workers?type=interrogation)/Threads: {interrogation_workers}/{interrogation_worker_threads}
 * Queue: {total_forms_queue} alchemy forms.
 ### Real-time stats
-* You can see the horde activity (also past stats) on [Grafana](https://grafana.aihorde.net/)
+* [Grafana](https://grafana.aihorde.net/) shows current and past horde activity.
 
 ## Usage
 
-First [Register an account](/register) which will generate for you an API key. Store that key somewhere.
+First [register an account](/register) to get an API key. Store that key somewhere safe.
 
-   * if you do not want to register, you can use '0000000000' as api_key to connect anonymously. However anonymous accounts have the lowest priority when there's too many concurrent requests!
-   * To increase your priority you will need a unique API key and then to increase your Kudos. [Read how Kudos are working](https://dbzer0.com/blog/the-kudos-based-economy-for-the-koboldai-horde/).
+* If you do not want to register, use `0000000000` as the API key to connect anonymously. Anonymous requests have the lowest priority when the horde is busy.
+* To raise your priority, use your own API key and earn kudos. [Read how kudos work](https://github.com/Haidra-Org/haidra-assets/blob/main/docs/kudos.md).
 
-### GUIs
+### Apps and integrations
 
-#### Image Generation
+* Generate images in your browser with the [image generator](https://aihorde.net/generate/image). The [image generation guide](https://aihorde.net/docs/image) walks through a first image.
+* Write stories or chat in your browser with [KoboldAI Lite](https://lite.koboldai.net).
+* The [list of integrations](https://aihorde.net/guis) has many more frontends for images and text, mobile apps, bots, editor plugins, games and developer tools.
 
-The following are some of the popular tools which provide an interface for Image Generation on the AI Horde
+## API
 
-* We provide [a client interface](https://dbzer0.itch.io/lucid-creations) requiring no installation and no technical expertise
-* We have also a few dedicated Web UIs with even less requirements:
-    * [Art Bot](https://tinybots.net/artbot)
-    * [AI Scribbles](https://www.aiscribbles.com/generate/)
-    * [Horde NG](https://horde-ng.org/)
-* There are also mobile apps:
-    * AI Painter ([iOS](https://apps.apple.com/hk/app/%E6%A9%9F%E7%95%AB%E5%B8%AB-%E5%B0%88%E6%A5%AD%E7%9A%84ai%E7%B9%AA%E7%95%ABapp/id1644645946) + [Android](https://play.google.com/store/apps/details?id=wkygame.ai.all.in.one))
-    * [Aislingeach](https://github.com/amiantos/aislingeach) (iOS)
-    * [HordeNG](https://play.google.com/store/apps/details?id=org.horde_ng.twa) (Android)
+* [REST API documentation](/api)
+* OpenAI-compatible chat completions at `https://oai.aihorde.net/v1`, with its own [API documentation](https://oai.aihorde.net/docs)
+* SDKs for [Python](https://github.com/Haidra-Org/horde-sdk) and [Node.js](https://www.npmjs.com/package/@zeldafan0225/ai_horde)
+* [Service documentation](https://haidra-org.github.io/AI-Horde/) with tutorials, how-to guides and reference pages
 
-<img src="https://raw.githubusercontent.com/Haidra-Org/Lucid-Creations/main/screenshot.png" width="500" />
-
-#### Text Generation
-
-The following are some of the popular tools which provide an interface for Text Generation on the AI Horde
-
-* We have also a few dedicated Web UIs with even less requirements:
-    * [KoboldAI Lite](https://lite.koboldai.net) - Dedicated WebUI
-    * [SillyTavern](https://sillytavernai.com/) - Another Dedicated WebUI
-    * [KoboldAI Client](https://koboldai.org) - Local Install. Small amount of technical know-how needed.
-    * [AgnAIstic](https://agnai.chat/) - Another Dedicated WebUI
-* There are also mobile apps:
-    * [Inneal](https://github.com/amiantos/inneal) (iOS)
-
-### Command Line
-
-We provide a CLI tool for each type of AI Horde usage in [this repository](https://github.com/Haidra-Org/AI-Horde-CLI)
-
-### Tools
-
-* We have created some official tools with which to integrate into the Stable Horde
-    * [Godot Engine plugin](https://github.com/Haidra-Org/AI-Horde-Godot-Addon) to integrate Stable Horde image generation into your games.
-    * [Discord Bot](https://github.com/ZeldaFan0225/Stable_Horde_Discord) which you [can add to your own server](https://discord.com/api/oauth2/authorize?client_id=1019572037360025650&permissions=8192&scope=bot) to be able to generate via the Stable Horde for free, and allow your users to transfer kudos between them.
-    * [Mastodon Bots](https://github.com/Haidra-Org/mastodon-ai-horde-generate) which you can use directly via Activity Pub to generate images.
-        * <a rel="me" href="https://sigmoid.social/@stablehorde_generator">Sigmoid.social</a>
-        * <a rel="me" href="https://hachyderm.io/@haichy">Hachyderm.io</a>
-    * [Reddit Bot](https://github.com/Haidra-Org/reddit-stable-horde-generate) which you can use [directly via reddit](https://www.reddit.com/user/StableHorde/comments/znhtaw/faq/) to generate images.
-
-* The community has made the following
-    * Bots
-        * [CraiyonArt Bot](https://t.me/CraiyonArtBot) (Telegram)
-        * [WriterBot](https://harrisonvanderbyl.github.io/WriterBot/) (Discord)
-        * [Turing Bot](https://github.com/MrlolDev/turing-bot) (Discord)
-        * [Imaginarium](https://t.me/ImaginariumAIbot) (Telegram)
-    * Plugins
-        * [GIMP Plugin](https://github.com/blueturtleai/gimp-stable-diffusion/tree/main/stablehorde)
-        * [Krita Plugin](https://github.com/dunkeroni/krita-stable-horde)
-        * [Unreal Engine Plugin](https://github.com/Mystfit/Unreal-StableDiffusionTools)
-        * [Automatic 1111 Web UI](https://github.com/natanjunges/stable-diffusion-webui-stable-horde)
-        * [Blender Plugin](https://github.com/benrugg/AI-Render)
-        * [Photoshop Plugin](https://github.com/grizbil/Auto-Photoshop-StableDiffusion-Plugin)
-        * [Chrome Accessibility Plugin](https://chrome.google.com/webstore/detail/genalt-generated-alt-text/ekbmkapnmnhhgfmjdnchgmcfggibebnn)
-    * Other
-        * [python SDK](https://github.com/Haidra-Org/horde-sdk)
-        * [npm SDK](https://www.npmjs.com/package/@zeldafan0225/ai_horde)
-
-You can see many more integrations and links to their communities in our discord server!
-
-## REST API
-
-[Full Documentation](/api)
-
-If you are developing a paid or ad-based integration with the Stable Horde, we request that you use part of your profits to support the horde. If your app is solely reliant on the volunteer resources of the horde, we expect at least 50% of those should go to supporting the horde itself, preferrably by onboarding your own workers. If the horde is merely an option among many, we suggest you assign some workers to the horde depending on how much it's being utilized by your client base.
+If you build a paid or ad-supported integration on the AI Horde, we ask that you use part of your profits to support the Horde. If your app relies only on the Horde's volunteer resources, we expect at least 50% of those profits to go to supporting the Horde, preferably by running your own workers. If the Horde is one option among many, we suggest running workers in proportion to how much your users rely on it. [This blog post](https://dbzer0.com/blog/what-about-paid-services-on-top-of-the-ai-horde/) explains the reasoning.
 
 ## Services
 
@@ -124,16 +71,16 @@ If you are developing a paid or ad-based integration with the Stable Horde, we r
 ## Community
 
 * Join us on [Discord](https://discord.gg/3DxrhksKzn)
-* Support the development of the Stable Horde on [Patreon](https://www.patreon.com/db0) or [Github](https://github.com/db0)
-* Follow us on <a rel="me" href="https://sigmoid.social/@stablehorde">Mastodon</a>
-* Subscribe to the [Division by Zer0 blog](https://dbzer0.com/)
+* Follow us on <a rel="me" href="https://sigmoid.social/@stablehorde">Mastodon</a> and [Lemmy](https://lemmy.dbzer0.com/c/aihorde)
+* Read the [news](https://aihorde.net/news) and subscribe to the [Division by Zer0 blog](https://dbzer0.com/)
+* Support the AI Horde with a [donation to Haidra](https://haidra.net/donate/)
 
 ## Credits
 
 These are the people who made this software possible.
 
 * [Db0](https://dbzer0.com) - Development and Maintenance
-* [Haidra](https://github.com/haidra-org) - The amazing developer community helping to maintain and improve the AI Horde ecosystem.
-* [Sponsors](/sponsors) - See our complete sponsor list including our patreon supporters
+* [Haidra](https://github.com/haidra-org) - The developer community that maintains and improves the AI Horde ecosystem.
+* [Sponsors](/sponsors) - Our complete sponsor list
 
 And of course, everyone contributing their GPU processing to the AI Horde!

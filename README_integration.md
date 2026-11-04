@@ -31,7 +31,7 @@ First choose what kind of generation you want to have. Image, Text, or Alchemy (
 
 They all work the same way. First send the payload which describes the generation you want to have. This is specific to the type of generation you want. This will return information about this request and will also even inform you if this request is even possible. You will receive an "id" here which you need to store to query in the next steps.
 
-Once the request is accepted and in-progress, periodically check its status (the horde has a 1 second cache on status so there's no purpose checking more often). The status endpoint will inform you if it's done, how many underlying jobs are still in progress, waiting, or done.
+Once the request is accepted and in-progress, periodically check its status, at most once a second. The image `check` endpoint is cached for 1 second, and the text status endpoint allows 60 reads a minute for each request. The status endpoint will inform you if it's done, how many underlying jobs are still in progress, waiting, or done.
 
 If the request is done, retrieve the content from the `generations` key. This will either be a URL from which to download an image, or the resulting generation if it's text.
 
@@ -48,7 +48,7 @@ Use these endpoints to generate images. Please use the `/check` endpoint for che
 
 ### Text Generation Endpoints
 
-Use these endpoints to generate text.
+Use these endpoints to generate text. The [text generation how-to](https://haidra-org.github.io/AI-Horde/how-to/send_text_generation_requests/) covers headers, parameters, polling, cancelling and errors.
 
 1. Initiate the request: `api/v2/generate/text/async`
 2. Retrieve the request results: `api/v2/generate/text/status`
@@ -112,23 +112,25 @@ Below you will find the webhook json payload for each type of generation
   "worker_name": "<WORKER NAME: STR>",
   "model": "<MODEL NAME: STR>",
   "id": "<JOB ID: STR>",
+  "censored": <CENSORED: BOOL>,
   "gen_metadata": <GENERATION METADATA: LIST[DICT]>,
   "request": "<REQUEST ID: STR>",
-  "kudos": <KUDOS CONSUMED: INT>
+  "kudos": <KUDOS CONSUMED: FLOAT>
 }
 ```
 ### Text
 
 ```{
-  "text": "<TEXT URL: STR>",
+  "text": "<GENERATED TEXT: STR>",
   "seed": <TEXT SEED: INT>,
   "worker_id": "<WORKER ID: STR>",
   "worker_name": "<WORKER NAME: STR>",
   "model": "<MODEL NAME: STR>",
   "id": "<JOB ID: STR>",
+  "state": "<STATE: ok | censored | csam>",
   "gen_metadata": <GENERATION METADATA: LIST[DICT]>,
   "request": "<REQUEST ID: STR>",
-  "kudos": <KUDOS CONSUMED: INT>
+  "kudos": <KUDOS CONSUMED: FLOAT>
 }
 ```
 ### Alchemy

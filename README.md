@@ -26,7 +26,7 @@ Priority in the queue is decided by [kudos](https://github.com/Haidra-Org/haidra
 
 ## Funding and Sponsors
 
-The AI Horde is run by [Haidra](https://haidra.net), a volunteer-run, registered non-profit in Luxembourg. It is paid for entirely by donations. Volunteers donate the GPU time that does the generation, and financial donations pay for the servers, storage and bandwidth that connect everything. If the Horde is useful to you, please consider [supporting Haidra](https://haidra.net/donate/) or [running a worker](#contribute-your-gpu-become-a-worker).
+The AI Horde is run by [Haidra](https://haidra.net), a volunteer-run, registered non-profit in Luxembourg. It is paid for entirely by donations. Volunteers donate GPU time to run the generations, and financial donations pay for the servers, storage and bandwidth. If the Horde is useful to you, please consider [supporting Haidra](https://haidra.net/donate/) or [running a worker](#contribute-your-gpu-become-a-worker).
 
 [![NLnet logo](assets/logo_nlnet.svg)](https://nlnet.nl/project/AI-Horde/)
 
@@ -161,7 +161,7 @@ The kudos system rewards contribution. It does not gate access, and every user, 
 
 ## Contribute your GPU (Become a worker)
 
-[Register](#getting-started-with-ai-horde) first, then run one of the workers below with your API key. The website has a [worker guide](https://aihorde.net/contribute/workers).
+[Register](#getting-started-with-ai-horde) first, then run one of the workers in this section with your API key. The website has a [worker guide](https://aihorde.net/contribute/workers).
 
 ### Image
 
