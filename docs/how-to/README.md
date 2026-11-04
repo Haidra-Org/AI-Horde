@@ -23,6 +23,7 @@ the ordered steps, the checks between them, and the way back if a step fails.
 | [Update an existing style integration](update_a_style_integration.md) | The changes in AI Horde 5.1.13 that a client already using styles can observe, what to change for each, and how to check it. |
 | [Run the OpenAI-compatible chat front](run_openai_chat_front.md) | Configure and run horde.oai, verify its model list and completions, and diagnose availability errors and lost submissions. |
 | [Send chat completions through the OpenAI-compatible front](send_chat_completions.md) | Configure an OpenAI client for the Horde, choose a model, send chat requests and handle tools, images, reasoning, streams and errors. |
+| [Send text generation requests through the native API](send_text_generation_requests.md) | Submit a prompt to the native text API, choose models and parameters, poll the status, read or cancel the generations and handle errors. |
 | [Add chat completions to a web frontend](add_chat_to_a_frontend.md) | Call the chat front from a browser, parse streamed replies, run tool calls and display model limits and errors. |
 | [Write a minimal chat worker](write_a_minimal_chat_worker.md) | Run the example Python chat worker with an OpenAI-compatible backend, verify the token counter and check the worker declaration. |
 | [Serve chat jobs from a text worker](serve_chat_jobs.md) | Add chat support to a text worker, declare capabilities, check prompt fit and submit replies or faults, with koboldcpp as an example. |

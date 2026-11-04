@@ -56,6 +56,7 @@ nav = [
         { "Update a style integration" = "how-to/update_a_style_integration.md" },
         { "Run the OpenAI-compatible chat front" = "how-to/run_openai_chat_front.md" },
         { "Send chat completions" = "how-to/send_chat_completions.md" },
+        { "Send text generation requests" = "how-to/send_text_generation_requests.md" },
         { "Add chat to a frontend" = "how-to/add_chat_to_a_frontend.md" },
         { "Write a minimal chat worker" = "how-to/write_a_minimal_chat_worker.md" },
         { "Serve chat jobs" = "how-to/serve_chat_jobs.md" },
