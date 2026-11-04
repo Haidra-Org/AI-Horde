@@ -52,7 +52,7 @@ One decision per record: what was chosen, what was rejected, and what it cost.
 | [Settle requests after cancellation and repeated faults](0039-settle-requests-after-cancellation-and-repeated-faults.md) | accepted | 2026-10-28 |
 | [Estimate text queue wait from the request's eligible workers](0040-estimate-text-queue-wait-from-the-eligible-workers.md) | accepted | 2026-10-28 |
 | [Enforce the speed gate for chat requests and shadow it for legacy text](0041-enforce-the-speed-gate-for-chat-requests-and-shadow-it-for-legacy-text.md) | accepted | 2026-10-30 |
-| [Keep 30 days of exact kudos history online, roll statistics up by day, and archive currency rows](0042-roll-up-statistics-and-archive-currency-after-the-online-window.md) | proposed | 2026-11-03 |
+| [Keep 30 days of exact kudos history online, roll statistics up by day, and archive currency rows](0042-roll-up-statistics-and-archive-currency-after-the-online-window.md) | accepted | 2026-11-04 |
 
 ## Relationships
 
