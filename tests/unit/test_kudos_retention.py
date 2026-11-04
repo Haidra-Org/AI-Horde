@@ -1901,6 +1901,43 @@ def test_verified_currency_unit_whose_object_vanishes_blocks_and_is_exported_aga
     assert not _relation_present(db_session, partition)
 
 
+def test_partition_restored_under_its_dropped_name_stops_its_dataset_until_it_is_detached(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+    make_user: MakeUser,
+) -> None:
+    """A dropped currency partition restored and attached under the same name stops currency, and statistics proceed."""
+    from horde.database.kudos_retention import RESTORED_PARTITION_REFUSAL, retention_health, retention_outcome_warning, run_retention_tick
+
+    partition, _, archive = _verified_currency_week(db_session, make_partition, make_user)
+    assert _run(archive).to_state == KudosRetentionState.DROPPED
+    assert not _relation_present(db_session, partition)
+    restored = make_partition("kudos_ledger", MONDAY, MONDAY + WEEK)
+    assert restored == partition
+    statistics_partition = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
+    db_session.add(_stat_event(MONDAY + timedelta(hours=1), "2"))
+    db_session.commit()
+
+    stepped = _run(archive)
+    assert (stepped.dataset, stepped.unit.partition_name, stepped.to_state) == (
+        STATISTICS,
+        statistics_partition,
+        KudosRetentionState.ROLLED_UP,
+    )
+    refused = run_retention_tick(now=AFTER_WINDOW, policy=_policy(), archive=archive, dataset=CURRENCY)
+    assert (refused.outcome, refused.dataset, refused.unit) == (RetentionTickOutcome.BLOCKED, CURRENCY, None)
+    assert refused.detail == f"{RESTORED_PARTITION_REFUSAL}: {partition}"
+    assert retention_outcome_warning(refused) == f"Kudos retention blocked currency dataset: {RESTORED_PARTITION_REFUSAL}: {partition}"
+    assert retention_health(now=AFTER_WINDOW)["restored_partitions"] == [{"dataset": CURRENCY, "partition_name": partition}]
+    assert _attached(db_session, partition)
+    assert _unit_of(db_session, partition).state == KudosRetentionState.DROPPED
+
+    db_session.execute(text(f"ALTER TABLE kudos_ledger DETACH PARTITION {partition}"))
+    db_session.commit()
+    assert retention_health(now=AFTER_WINDOW)["restored_partitions"] == []
+    assert run_retention_tick(now=AFTER_WINDOW, policy=_policy(), archive=archive, dataset=CURRENCY).outcome == RetentionTickOutcome.IDLE
+
+
 def test_drop_blocks_a_currency_unit_without_an_object_key(
     db_session: scoped_session[Session],
     make_partition: Callable[..., str],
@@ -1916,28 +1953,151 @@ def test_drop_blocks_a_currency_unit_without_an_object_key(
     assert _attached(db_session, partition)
 
 
-def test_tick_clears_object_keys_whose_objects_are_gone_and_reports_tier_bytes(
-    db_session: scoped_session[Session],
-    make_partition: Callable[..., str],
-) -> None:
+def _dumped_statistics_week(db_session: scoped_session[Session], make_partition: Callable[..., str]) -> tuple[str, Any, Any]:
+    """Create a statistics week with one event and step it to ``DUMPED`` with drops held. Returns the partition, store
+    and archive."""
     partition = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
     db_session.add(_stat_event(MONDAY + timedelta(hours=1), "2"))
     db_session.commit()
     store = _FakeObjectStore()
     archive = _fake_archive(store)
-    assert _run(archive).to_state == KudosRetentionState.ROLLED_UP
-    dumped = _run(archive, hold_drops=True)
-    assert dumped.to_state == KudosRetentionState.DUMPED
+    states = [_run(archive, hold_drops=True).to_state for _ in range(2)]
+    assert states == [KudosRetentionState.ROLLED_UP, KudosRetentionState.DUMPED]
+    return partition, store, archive
+
+
+def _delete_object(store: Any, key: str) -> None:
+    from horde.kudos_archive import manifest_key
+
+    del store.objects[key]
+    del store.objects[manifest_key(key)]
+
+
+def test_tick_dumps_again_a_statistics_unit_whose_dump_vanished_and_reports_tier_bytes(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+) -> None:
+    """A dump removed outside the horde while the raw rows are online is repeated, and the drop then proceeds."""
+    partition, store, archive = _dumped_statistics_week(db_session, make_partition)
     key = _unit_of(db_session, partition).object_key
     assert key is not None
-    assert dumped.archive_tier_bytes == {ArchiveTier.CURRENCY: 0, ArchiveTier.STATISTICS: len(store.objects[key])}
 
-    # An eviction outside the tick removes the object, and the next tick clears the key that points at nothing.
-    del store.objects[key]
+    _delete_object(store, key)
     idle = _run(archive, hold_drops=True)
     assert idle.archive_tier_bytes == {ArchiveTier.CURRENCY: 0, ArchiveTier.STATISTICS: 0}
     unit = _unit_of(db_session, partition)
-    assert (unit.state, unit.object_key) == (KudosRetentionState.DUMPED, None)
+    assert (unit.state, unit.object_key) == (KudosRetentionState.DUMP_FAILED, None)
+    assert unit.error == f"{RetentionBlockReason.ARCHIVE_OBJECT_MISSING}: {key}"
+    assert unit.first_failed_at is not None
+
+    redumped = _run(archive, hold_drops=True)
+    assert redumped.to_state == KudosRetentionState.DUMPED
+    assert _unit_of(db_session, partition).object_key == key
+    assert redumped.archive_tier_bytes is not None and redumped.archive_tier_bytes[ArchiveTier.STATISTICS] > 0
+    assert _run(archive).to_state == KudosRetentionState.DROPPED
+
+
+@pytest.mark.parametrize("resolution", ["unblock", "waive"])
+def test_drop_blocks_a_statistics_unit_whose_dump_vanished_since_the_last_listing(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+    resolution: str,
+) -> None:
+    """The drop checks each dump, so the raw rows are kept when a dump is removed after the last tick."""
+    from horde.database.kudos_retention import unblock_unit, waive_unit_dump
+
+    partition, store, archive = _dumped_statistics_week(db_session, make_partition)
+    _delete_object(store, _unit_of(db_session, partition).object_key)
+    blocked = _run(archive)
+    assert blocked.outcome == RetentionTickOutcome.BLOCKED
+    assert blocked.detail.startswith(str(RetentionBlockReason.ARCHIVE_OBJECT_MISSING))
+    assert _attached(db_session, partition)
+
+    unit_id = _unit_of(db_session, partition).id
+    if resolution == "unblock":
+        assert unblock_unit(unit_id).state == KudosRetentionState.PENDING
+        states = [_run(archive).to_state for _ in range(3)]
+        assert states == [KudosRetentionState.ROLLED_UP, KudosRetentionState.DUMPED, KudosRetentionState.DROPPED]
+    else:
+        assert waive_unit_dump(unit_id).state == KudosRetentionState.DUMP_WAIVED
+        assert _run(archive).to_state == KudosRetentionState.DROPPED
+    assert not _relation_present(db_session, partition)
+
+
+def test_detached_statistics_unit_whose_dump_vanished_blocks_until_reattached(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+) -> None:
+    """A dump lost during the drop grace blocks the unit, and the waiver is refused until the partition is reattached."""
+    from horde.database.kudos_retention import reattach_partition, waive_unit_dump
+
+    partition, store, archive = _dumped_statistics_week(db_session, make_partition)
+    assert _run(archive, drop_grace=timedelta(days=7)).to_state == KudosRetentionState.DETACHED
+    _delete_object(store, _unit_of(db_session, partition).object_key)
+    _run(archive, drop_grace=timedelta(days=7))
+    unit = _unit_of(db_session, partition)
+    assert (unit.state, unit.error) == (KudosRetentionState.BLOCKED, RetentionBlockReason.ARCHIVE_OBJECT_MISSING)
+    assert unit.detached_at is not None
+    with pytest.raises(ValueError, match="Reattach it first"):
+        waive_unit_dump(unit.id)
+    # The grace has passed, but a blocked unit keeps the detached partition.
+    _run(archive, AFTER_WINDOW + timedelta(days=8), drop_grace=timedelta(days=7))
+    assert _relation_present(db_session, partition)
+
+    reattached = reattach_partition(unit.id)
+    assert [(reattached_unit.state, reattached_unit.error) for reattached_unit in reattached] == [
+        (KudosRetentionState.BLOCKED, RetentionBlockReason.ARCHIVE_OBJECT_MISSING),
+    ]
+    assert _attached(db_session, partition)
+    assert waive_unit_dump(unit.id).state == KudosRetentionState.DUMP_WAIVED
+
+
+def test_dropped_statistics_unit_keeps_the_key_of_a_vanished_dump_so_the_audit_reports_it(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+) -> None:
+    from horde.database.kudos_retention import MissingArchiveObject, audit_archive
+
+    partition, store, archive = _dumped_statistics_week(db_session, make_partition)
+    assert _run(archive).to_state == KudosRetentionState.DROPPED
+    key = _unit_of(db_session, partition).object_key
+    _delete_object(store, key)
+    for _ in range(2):
+        _run(archive)
+        assert _unit_of(db_session, partition).object_key == key
+    missing = [record for record in audit_archive(archive) if isinstance(record, MissingArchiveObject)]
+    assert [(record.object_key, record.state) for record in missing] == [(key, KudosRetentionState.DROPPED)]
+
+
+def test_eviction_keeps_the_dumps_of_units_not_dropped_and_clears_the_keys_it_deletes(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+) -> None:
+    """Evicted dumps are not reported as lost, and a dump whose raw rows are still online is never evicted."""
+    from horde.database.kudos_retention import MissingArchiveObject, audit_archive, evict_statistics_dumps
+
+    dropped_partition = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
+    held_partition = make_partition("kudos_stat_events", MONDAY + WEEK, MONDAY + 2 * WEEK)
+    db_session.add_all([_stat_event(MONDAY + timedelta(hours=1), "2"), _stat_event(MONDAY + WEEK + timedelta(hours=1), "3")])
+    db_session.commit()
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    states = [_run(archive).to_state for _ in range(3)]
+    assert states == [KudosRetentionState.ROLLED_UP, KudosRetentionState.DUMPED, KudosRetentionState.DROPPED]
+    states = [_run(archive, hold_drops=True).to_state for _ in range(2)]
+    assert states == [KudosRetentionState.ROLLED_UP, KudosRetentionState.DUMPED]
+    dropped_key = _unit_of(db_session, dropped_partition).object_key
+    held_key = _unit_of(db_session, held_partition).object_key
+
+    eviction = evict_statistics_dumps(archive, budget_bytes=0)
+    assert eviction.deleted_keys == [dropped_key]
+    assert eviction.tier_bytes == archive.tier_bytes(ArchiveTier.STATISTICS) > 0
+    assert held_key in store.objects and dropped_key not in store.objects
+    assert _unit_of(db_session, dropped_partition).object_key is None
+    assert _unit_of(db_session, held_partition).object_key == held_key
+    assert [record for record in audit_archive(archive) if isinstance(record, MissingArchiveObject)] == []
+    assert _run(archive, hold_drops=True).outcome == RetentionTickOutcome.IDLE
+    assert _unit_of(db_session, held_partition).state == KudosRetentionState.DUMPED
 
 
 def test_tick_aborts_multipart_uploads_older_than_a_day(db_session: scoped_session[Session]) -> None:
@@ -2292,7 +2452,7 @@ def test_drop_grace_is_measured_with_the_rehearsal_reference_time(
     db_session: scoped_session[Session],
     current_week_partition: datetime,
 ) -> None:
-    from horde.database.kudos_retention import run_retention_tick
+    from horde.database.kudos_retention import RESTORED_PARTITION_REFUSAL, run_retention_tick
 
     rehearsal_partition = "kudos_stat_events_p_rehearsal"
     real_now = datetime.now(UTC).replace(tzinfo=None)
@@ -2318,9 +2478,13 @@ def test_drop_grace_is_measured_with_the_rehearsal_reference_time(
         tick_until_idle(as_of + GRACE - timedelta(minutes=1))
         assert rehearsal_state() == KudosRetentionState.DETACHED
         assert _relation_present(db_session, rehearsal_partition)
-        tick_until_idle(as_of + GRACE)
+        # The rehearsal also drops the current week that partition maintenance created again under its weekly name,
+        # and maintenance creates it once more. That table has dropped catalog units, so the dataset then blocks.
+        results = [run_retention_tick(now=as_of + GRACE, policy=policy, dataset=STATISTICS, confirm_live_data_loss=True) for _ in range(20)]
         assert rehearsal_state() == KudosRetentionState.DROPPED
         assert not _relation_present(db_session, rehearsal_partition)
+        assert results[-1].outcome == RetentionTickOutcome.BLOCKED
+        assert results[-1].detail.startswith(RESTORED_PARTITION_REFUSAL)
     finally:
         # Partitions the rehearsal detached are no longer attached, so the fixture's teardown does not see them.
         db_session.rollback()

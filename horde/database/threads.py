@@ -916,6 +916,7 @@ def kudos_retention_tick() -> None:
         kudos_retention_held_partitions,
         kudos_retention_oldest_eligible_age,
         kudos_retention_partition_coverage,
+        kudos_retention_restored_partitions,
         kudos_retention_steps,
     )
 
@@ -960,6 +961,7 @@ def kudos_retention_tick() -> None:
             kudos_retention_blocked_units.set(blocked_count, {"horde.kudos.block_reason": str(block_reason)})
         kudos_retention_partition_coverage.set(1 if health["partition_coverage_ok"] else 0)
         kudos_retention_held_partitions.set(health["held_partitions"])
+        kudos_retention_restored_partitions.set(len(health["restored_partitions"]))
         if archive is None:
             return
         for tier in ArchiveTier:

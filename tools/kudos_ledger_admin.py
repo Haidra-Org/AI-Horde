@@ -40,8 +40,8 @@ from horde.database.kudos_retention import (  # noqa: E402
     RetentionLockBusyError,
     audit_archive,
     daily_statement,
+    evict_statistics_dumps,
     load_catalog,
-    operator_retention_lock,
     parse_rehearsal_as_of,
     reattach_partition,
     recheckpoint_from_unit,
@@ -148,7 +148,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     evict = archive_commands.add_parser(
         "evict",
-        help="Delete the oldest statistics dumps until the tier fits a byte budget. Currency objects are never evicted",
+        help="Delete the oldest statistics dumps of dropped units until the tier fits a byte budget. Currency objects are never evicted",
     )
     evict.add_argument("--tier", required=True, choices=[str(ArchiveTier.STATISTICS)])
     evict.add_argument("--budget-bytes", dest="budget_bytes", type=int, required=True)
@@ -179,15 +179,23 @@ def _archive_command(options: argparse.Namespace, archive_client: KudosArchive) 
         return
     if options.archive_command == "evict":
         try:
-            # Eviction changes the tier size an export measures its allowance from, so it runs under the same lock.
-            with operator_retention_lock():
-                deleted = archive_client.enforce_budget(budget_bytes=options.budget_bytes)
+            eviction = evict_statistics_dumps(archive_client, budget_bytes=options.budget_bytes)
         except RetentionLockBusyError as err:
             raise SystemExit(str(err)) from err
         except ArchiveEvictionError as err:
             print(json.dumps({"tier": options.tier, "budget_bytes": options.budget_bytes, "deleted": err.deleted_keys, "error": str(err)}))
             raise SystemExit(1) from err
-        print(json.dumps({"tier": options.tier, "budget_bytes": options.budget_bytes, "deleted": deleted}))
+        eviction_output: dict[str, object] = {
+            "tier": options.tier,
+            "budget_bytes": options.budget_bytes,
+            "deleted": eviction.deleted_keys,
+            "tier_bytes": eviction.tier_bytes,
+        }
+        if eviction.tier_bytes > options.budget_bytes:
+            eviction_output["error"] = "The tier is still over the budget, because the dumps of units not yet dropped are kept"
+            print(json.dumps(eviction_output))
+            raise SystemExit(1)
+        print(json.dumps(eviction_output))
         return
     tiers = list(ArchiveTier) if options.tier is None else [ArchiveTier(options.tier)]
     audited_objects = 0

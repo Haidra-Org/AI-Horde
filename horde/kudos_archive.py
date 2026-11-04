@@ -31,7 +31,7 @@ import json
 import os
 import re
 import zlib
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -1069,15 +1069,16 @@ class KudosArchive:
             return None
         return ArchiveVersionUsage(noncurrent_bytes=noncurrent_bytes, delete_markers=delete_markers)
 
-    def enforce_budget(self, *, budget_bytes: int) -> list[str]:
+    def enforce_budget(self, *, budget_bytes: int, kept_keys: Collection[str] = frozenset()) -> list[str]:
         """Delete the oldest statistic objects, by unit upper bound, until the statistics tier fits ``budget_bytes``.
 
         An operator tool. The retention tick does not call it, and currency objects are never deleted. Each deleted
         object's manifest is deleted with it. Deletes go out one batch at a time, so a failure leaves the earlier
-        batches deleted and reports them.
+        batches deleted and reports them. The tier can stay above the budget when ``kept_keys`` holds too much of it.
 
         Args:
             budget_bytes: The byte budget of the statistics tier.
+            kept_keys: Object keys that are not deleted, such as the dumps of units whose raw rows are still online.
 
         Returns:
             The deleted object keys, oldest first.
@@ -1092,6 +1093,8 @@ class KudosArchive:
         for listed in sorted(statistics_objects, key=lambda candidate: (unit_upper_from_key(candidate.key), candidate.key)):
             if total <= budget_bytes:
                 break
+            if listed.key in kept_keys:
+                continue
             candidates.append(listed.key)
             total -= listed.size
         evicted: list[str] = []

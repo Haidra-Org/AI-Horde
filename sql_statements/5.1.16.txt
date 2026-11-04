@@ -613,10 +613,26 @@ SELECT pg_temp.kudos_validate_legacy_range('kudos_ledger');
 
 START TRANSACTION;
 SET LOCAL lock_timeout = '5s';
--- The application locks a users row and then inserts into kudos_ledger, whose foreign key check locks that users
--- row again. The swap takes ACCESS EXCLUSIVE on kudos_ledger at the rename and SHARE ROW EXCLUSIVE on users when it
--- adds the foreign key to the new parent. Taking the users lock first follows the application's order, so an
--- application transaction waits for the swap or the swap waits for it, and the two cannot deadlock.
+-- The swap takes ACCESS EXCLUSIVE on kudos_ledger at the rename and SHARE ROW EXCLUSIVE on users when it adds the
+-- foreign key to the new parent. The kudos applier claims kudos_ledger rows and then updates users, the reverse
+-- order. The swap therefore first takes the applier's transaction advisory lock (KUDOS_APPLIER_LOCK in
+-- horde/database/kudos_db.py). The applier only tries that lock, so it skips its cycles until the swap commits.
+SELECT pg_advisory_xact_lock(1263879247);
+-- A request transaction that inserts into kudos_ledger before it updates users can still form a lock cycle with the
+-- swap. The swap takes its kudos_ledger lock right after the users lock, and each lock wait of the swap gives up
+-- before deadlock_timeout. In such a cycle the swap fails with lock_not_available before PostgreSQL runs the deadlock
+-- check in the waiting request, so the request continues and the file is rerun.
+DO $$
+BEGIN
+    IF current_setting('deadlock_timeout')::interval <= interval '500 milliseconds' THEN
+        RAISE EXCEPTION 'deadlock_timeout is %, and the kudos_ledger swap needs it above its 500ms lock_timeout',
+            current_setting('deadlock_timeout');
+    END IF;
+END;
+$$;
+SET LOCAL lock_timeout = '500ms';
+-- Taking the users lock before kudos_ledger follows the order of a request that locks a users row and then inserts
+-- into kudos_ledger, whose foreign key check locks that users row again.
 LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE;
 SELECT pg_temp.kudos_normalize_columns('kudos_ledger');
 SELECT pg_temp.kudos_swap_normalized_index('kudos_ledger', 'ix_kudos_ledger_unapplied');

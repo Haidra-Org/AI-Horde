@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import threading
 import time as clock
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from datetime import time, timedelta
 from pathlib import Path
 from typing import Any
@@ -229,11 +229,17 @@ def _schema_engine(pg_dsn: str, schema_name: str) -> sqlalchemy.Engine:
     )
 
 
-def _apply_migration(connection: sqlalchemy.Connection, *, variables: Mapping[str, str] | None = None) -> list[str]:
+def _apply_migration(
+    connection: sqlalchemy.Connection,
+    *,
+    variables: Mapping[str, str] | None = None,
+    before_statement: Callable[[str], None] | None = None,
+) -> list[str]:
     """Run the migration as psql does, including its ``\\gexec`` statements, and return its ``\\echo`` lines.
 
     psql sends the query that ends at a ``\\gexec`` line and then runs every value it returns as a statement of its
     own, outside any transaction block. ``variables`` are the ``-v name=value`` options of the psql command line.
+    ``before_statement`` is called with each statement before it is sent, so a test can act at a point of the file.
     """
     script, echoed_lines = _expand_psql_variables(MIGRATION_PATH.read_text(), dict(variables or {}))
     segments = GEXEC_LINE.split(script)
@@ -241,11 +247,15 @@ def _apply_migration(connection: sqlalchemy.Connection, *, variables: Mapping[st
         statements = [statement for statement in sqlparse.split(segment) if sqlparse.format(statement, strip_comments=True).strip()]
         generating_query = statements.pop() if segment_index < len(segments) - 1 else None
         for statement in statements:
+            if before_statement is not None:
+                before_statement(statement)
             connection.execute(sqlalchemy.text(statement))
         if generating_query is None:
             continue
         for generated_row in connection.execute(sqlalchemy.text(generating_query)).all():
             for generated_statement in generated_row:
+                if before_statement is not None:
+                    before_statement(generated_statement)
                 connection.execute(sqlalchemy.text(generated_statement))
     return echoed_lines
 
@@ -627,6 +637,150 @@ def test_rerun_refuses_a_legacy_range_it_cannot_read(unconverted_schema: sqlalch
     connection.execute(sqlalchemy.text("ALTER TABLE kudos_ledger ADD CONSTRAINT kudos_ledger_legacy_range CHECK (amount IS NOT NULL)"))
     with pytest.raises(sqlalchemy.exc.InternalError, match="cannot read swap_ts from kudos_ledger_legacy_range"):
         _apply_migration(connection)
+    assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_ledger' AS regclass)") == "r"
+
+
+LEDGER_SWAP_START = "START TRANSACTION;"
+"""The statement that opens the ``kudos_ledger`` swap, the first transaction block of the file."""
+UNAPPLIED_POSTING = (
+    "INSERT INTO kudos_ledger (event_id, entry_type, user_id, amount) VALUES ('00000000-0000-0000-0000-0000000000e1', 'AWARD', 1, 4)"
+)
+"""A posting as a request writes it, unapplied and created now."""
+
+
+def _second_session(pg_dsn: str, connection: sqlalchemy.Connection) -> tuple[sqlalchemy.Engine, sqlalchemy.Connection]:
+    """Return an engine and a connection to the schema of ``connection``, for a second session in the test."""
+    schema_name = _scalar(connection, "SELECT current_schema()")
+    engine = _schema_engine(pg_dsn, schema_name)
+    return engine, engine.connect()
+
+
+def _wait_for_lock_wait(observer: sqlalchemy.Connection, backend_pid: int, *, timeout_seconds: float = 5) -> None:
+    """Return once the backend ``backend_pid`` waits for a lock, or fail the test after ``timeout_seconds``."""
+    deadline = clock.monotonic() + timeout_seconds
+    while clock.monotonic() < deadline:
+        if _scalar(observer, "SELECT count(*) FROM pg_locks WHERE pid = :pid AND NOT granted", pid=backend_pid):
+            return
+        clock.sleep(0.01)
+    pytest.fail(f"backend {backend_pid} did not wait for a lock within {timeout_seconds} seconds")
+
+
+def _run_migration_in_thread(
+    connection: sqlalchemy.Connection,
+    before_statement: Callable[[str], None],
+) -> tuple[threading.Thread, list[BaseException]]:
+    """Start the migration on ``connection`` in a thread and return the thread and the list its error is added to."""
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            _apply_migration(connection, before_statement=before_statement)
+        except BaseException as err:  # noqa: BLE001 - asserted in the test thread
+            errors.append(err)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    return thread, errors
+
+
+def _wait_for_flag(flag: list[bool], thread: threading.Thread, errors: list[BaseException]) -> None:
+    """Return once ``flag`` has an entry, or fail the test when ``thread`` ended first or 30 seconds passed."""
+    deadline = clock.monotonic() + 30
+    while not flag and clock.monotonic() < deadline and thread.is_alive():
+        clock.sleep(0.01)
+    assert flag, errors
+
+
+def test_ledger_swap_waits_for_the_applier_lock_instead_of_deadlocking(pg_dsn: str, unconverted_schema: sqlalchemy.Connection) -> None:
+    """An applier cycle that claims ledger rows and then updates users finishes, and the swap commits after it.
+
+    The applier holds its advisory lock and a row lock on ``kudos_ledger`` when the swap starts. The swap waits for the
+    advisory lock before it locks ``users``, so the update of ``users`` by the applier does not wait for the swap.
+    """
+    from horde.database.kudos_db import KUDOS_APPLIER_LOCK
+
+    connection = unconverted_schema
+    connection.execute(sqlalchemy.text("INSERT INTO users (id) VALUES (1)"))
+    connection.execute(sqlalchemy.text(UNAPPLIED_POSTING))
+    migration_pid = _scalar(connection, "SELECT pg_backend_pid()")
+    applier_engine, applier = _second_session(pg_dsn, connection)
+    applier_lock_taken: list[bool] = []
+
+    def start_the_applier_cycle(statement: str) -> None:
+        if statement.strip() != LEDGER_SWAP_START or applier_lock_taken:
+            return
+        applier.execute(sqlalchemy.text("BEGIN"))
+        applier_lock_taken.append(_scalar(applier, "SELECT pg_try_advisory_xact_lock(:key)", key=KUDOS_APPLIER_LOCK))
+        applier.execute(sqlalchemy.text("SELECT id FROM kudos_ledger WHERE NOT applied FOR UPDATE SKIP LOCKED")).all()
+
+    try:
+        migration_thread, migration_errors = _run_migration_in_thread(connection, start_the_applier_cycle)
+        try:
+            _wait_for_flag(applier_lock_taken, migration_thread, migration_errors)
+            assert applier_lock_taken == [True]
+            _wait_for_lock_wait(applier, migration_pid)
+            applier.execute(sqlalchemy.text("UPDATE users SET id = id WHERE id = 1"))
+            applier.execute(sqlalchemy.text("COMMIT"))
+        finally:
+            migration_thread.join(timeout=30)
+    finally:
+        applier.close()
+        applier_engine.dispose()
+    assert not migration_thread.is_alive()
+    assert not migration_errors, migration_errors
+    assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_ledger' AS regclass)") == "p"
+
+
+def test_ledger_swap_gives_up_before_a_request_deadlocks_with_it(pg_dsn: str, unconverted_schema: sqlalchemy.Connection) -> None:
+    """A request that inserted a posting and then updates users completes, and the swap fails and is rerun.
+
+    The swap holds the ``users`` lock and waits for the lock of the request on ``kudos_ledger`` when the request
+    updates ``users``. The lock wait of the swap ends before ``deadlock_timeout``, so the swap fails with
+    ``lock_not_available`` and the request is not chosen as the deadlock victim.
+    """
+    connection = unconverted_schema
+    connection.execute(sqlalchemy.text("INSERT INTO users (id) VALUES (1)"))
+    migration_pid = _scalar(connection, "SELECT pg_backend_pid()")
+    request_engine, request = _second_session(pg_dsn, connection)
+    request_started: list[bool] = []
+
+    def start_the_request(statement: str) -> None:
+        if statement.strip() != LEDGER_SWAP_START or request_started:
+            return
+        request.execute(sqlalchemy.text("BEGIN"))
+        request.execute(sqlalchemy.text(UNAPPLIED_POSTING))
+        request_started.append(True)
+
+    try:
+        migration_thread, migration_errors = _run_migration_in_thread(connection, start_the_request)
+        try:
+            _wait_for_flag(request_started, migration_thread, migration_errors)
+            _wait_for_lock_wait(request, migration_pid)
+            request.execute(sqlalchemy.text("UPDATE users SET id = id WHERE id = 1"))
+            request.execute(sqlalchemy.text("COMMIT"))
+        finally:
+            migration_thread.join(timeout=30)
+    finally:
+        request.close()
+        request_engine.dispose()
+    assert not migration_thread.is_alive()
+    assert len(migration_errors) == 1
+    assert isinstance(migration_errors[0], sqlalchemy.exc.OperationalError)
+    assert getattr(migration_errors[0].orig, "pgcode", None) == "55P03"
+    connection.execute(sqlalchemy.text("ROLLBACK"))
+    assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_ledger' AS regclass)") == "r"
+    _apply_migration(connection)
+    assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_ledger' AS regclass)") == "p"
+    assert _scalar(connection, "SELECT count(*) FROM kudos_ledger") == 1
+
+
+def test_ledger_swap_refuses_a_deadlock_timeout_at_or_below_its_lock_timeout(unconverted_schema: sqlalchemy.Connection) -> None:
+    """The lock waits of the swap must end before the deadlock check of a waiting request, so a short deadlock_timeout stops the run."""
+    connection = unconverted_schema
+    connection.execute(sqlalchemy.text("SET deadlock_timeout = '500ms'"))
+    with pytest.raises(sqlalchemy.exc.InternalError, match="deadlock_timeout is 500ms"):
+        _apply_migration(connection)
+    connection.execute(sqlalchemy.text("ROLLBACK"))
     assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_ledger' AS regclass)") == "r"
 
 

@@ -162,7 +162,8 @@ with [restoring an archived partition](#restoring-an-archived-partition-into-a-s
 Preconditions: the previous schema is applied, the application release that maps the partitioned tables is not yet
 deployed, the `psql` client can reach the primary, and no long-running dump or backup (`pg_dump`, a base backup) is
 running or scheduled to start during the run. A dump holds `ACCESS SHARE` on every table for its whole duration, so
-the swap cannot take its exclusive lock within the 5 second `lock_timeout` and fails. End state: both event tables
+the swap cannot take its exclusive lock within its `lock_timeout` and fails. The `kudos_ledger` swap also refuses to
+start when the server's `deadlock_timeout` is 500 ms or less. End state: both event tables
 are partitioned, each with a
 `<table>_p_legacy` partition and eight weekly partitions from `swap_ts`, and the retention tables exist and are empty except for
 the backfilled keys.
@@ -203,11 +204,14 @@ the backfilled keys.
    first UTC Monday 00:00 at least 24 hours away. It then adds `<table>_legacy_range CHECK (created < swap_ts)` and
    validates it with one scan that does not block writes. The swap transaction renames the table to
    `<table>_p_legacy`, creates the partitioned parent, and attaches the old table and its indexes without a scan or
-   copy. It holds an exclusive lock for a short time. The `kudos_ledger` swap first locks `users` in
-   `SHARE ROW EXCLUSIVE` mode, the order application transactions take the two locks in, so the swap cannot deadlock
-   with them. Writes to `users` wait until the swap commits. The swap fails if it cannot take a lock within the
-   5 second `lock_timeout`, and then the file is rerun as described in
-   [rerunning after a failure](#rerunning-after-a-failure).
+   copy. It holds an exclusive lock for a short time. The `kudos_ledger` swap first takes the applier's advisory
+   lock, so the applier skips its cycles until the swap commits. It then locks `users` in `SHARE ROW EXCLUSIVE` mode
+   and `kudos_ledger` right after. Writes to `users` wait until the swap commits. A request that inserted a posting
+   and then updates `users` can still form a lock cycle with the swap. Each lock wait of the `kudos_ledger` swap
+   ends after 500 ms, below `deadlock_timeout`, so in that case the swap fails with `lock_not_available` and the
+   request continues. The `kudos_stat_events` swap waits up to 5 seconds for each lock. After a lock failure, rerun
+   the file as described in [rerunning after a failure](#rerunning-after-a-failure). On a busy primary the
+   `kudos_ledger` swap can need several reruns.
 
    The swap window runs from the moment `swap_ts` is set until `swap_ts`. The CHECK rejects new rows with
    `created` at or after `swap_ts` until the swap commits, so the window must outlast the validation and the swap,
@@ -381,6 +385,21 @@ units stay `blocked` until an operator releases them.
 A partition that was already dropped cannot be reattached. Its currency rows can still be read with
 [restoring an archived partition](#restoring-an-archived-partition-into-a-scratch-table).
 
+A dropped partition restored from a backup and attached under its original name keeps its `dropped` catalog units.
+The tick then does not make a transition in that dataset. It returns `"outcome": "blocked"` and logs
+`Kudos retention blocked <dataset> dataset: an attached partition has dropped catalog units: <partitions>`,
+`retention status` lists the partition in `restored_partitions`, and `horde.kudos.retention.restored_partitions` is
+above 0. Read the rows you need, then detach the table again:
+
+```sql
+ALTER TABLE <parent> DETACH PARTITION <partition>;
+```
+
+The checkpoints, rollups and archive objects of the dropped units still describe the range, so keep the detached
+table outside the parent or drop it. Do not delete or edit the catalog rows to make the table eligible again. A
+currency unit recomputed over a recorded boundary blocks with `boundary already checkpointed`. Verify:
+`retention status` reports an empty `restored_partitions`, and the next tick steps or reports `idle`.
+
 ## Rehearsing partition removal on a restored copy
 
 Nothing becomes eligible until a partition's upper bound is older than the window, so a freshly converted database
@@ -400,6 +419,11 @@ makes the partitions that still receive rows eligible, so without `--confirm-liv
 `"outcome": "refused"` and `reference time is in the future`. Pass the flag on a restored copy only. Against a live
 database it drops the current week's rows. After the rehearsal, `retention status` reports
 `"partition_coverage_ok": true` once partitions for the real current time exist again.
+
+Partition maintenance creates a dropped current week again under its weekly name. That table has `dropped` catalog
+units, so once it is attached the dataset stops with `an attached partition has dropped catalog units`, and
+`retention status` lists it in `restored_partitions`. To continue the rehearsal past that point, detach and drop the
+table as described in [rolling back a removed partition](#rolling-back-a-removed-partition).
 
 The drop grace is measured with the tick's reference time. With `KUDOS_RETENTION_DROP_GRACE_DAYS` set, a rehearsal
 tick detaches a partition with `detached_at` set to its `--as-of`, and the partition is dropped only by a later tick
@@ -451,25 +475,34 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
    - `statistics tier would exceed budget`: the dump would push the statistics tier past
      `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES`, so nothing was uploaded. Later statistics units continue, and each of
      them blocks the same way until there is room. Raise the budget and restart, or free space by evicting the oldest
-     dumps:
+     dumps of dropped units:
 
      ```sh
      uv run python tools/kudos_ledger_admin.py archive evict --tier statistics --budget-bytes <bytes>
      ```
 
-     The command prints the deleted keys. When a delete fails it prints the keys deleted before the failure and exits
-     1. On a bucket with versioning, a deleted object stays stored as a noncurrent version that the tier listing does
-     not count, so free the space by the deployment's own procedure as well. The next tick clears the catalog keys of
-     every deleted object. Then unblock the unit, which rolls it up again
-     and retries the dump. Verify: the unit reaches `dumped` and its `object_key` is set. To drop the unit without a
-     dump instead, run `retention unblock <unit-id> --waive-dump`.
-   - `archive object missing`: a currency unit past its export has no archive object. Either the tick's archive
-     listing does not hold the unit's key, or the drop found no key. Nothing was dropped, and the rows are still
-     online or in the detached table. Find out why the object is gone before going on. For a unit in an attached
-     partition, unblock it: it returns to `checkpointed`, and the next ticks export, verify and drop it again from
-     the online rows. For a unit of a detached partition, `retention unblock` refuses, so run
-     `retention reattach <unit-id>` first and then unblock. Verify: the unit reaches `verified` with a new
-     `object_key`, and `archive audit --tier currency` reports no `missing_object` line for it.
+     The command prints the deleted keys and `tier_bytes`, and sets the catalog key of each evicted unit to NULL. The
+     dumps of units not yet dropped are kept, because their raw rows are still online. When those dumps alone keep
+     the tier above the budget, the command exits 1 with an `error`. When a delete fails it prints the keys deleted
+     before the failure and exits 1. On a bucket with versioning, a deleted object stays stored as a noncurrent
+     version that the tier listing does not count, so free the space by the deployment's own procedure as well. Then
+     unblock the unit, which rolls it up again and retries the dump. Verify: the unit reaches `dumped` and its
+     `object_key` is set. To drop the unit without a dump instead, run `retention unblock <unit-id> --waive-dump`.
+   - `archive object missing`: the archive object of a currency unit past its export, or of a dumped statistics unit
+     before its drop, is missing. Either the tick's archive listing does not hold the unit's key, or the drop found
+     that the key or the object is missing. Eviction does not reach these units, so the object was removed some
+     other way. Nothing was dropped, and the rows are still online or in the detached table. Find out why the object is gone before going on. On a
+     bucket with versioning, the object may still be stored as a noncurrent version. For a unit of a detached
+     partition, `retention unblock` refuses, so run `retention reattach <unit-id>` first. Then unblock the unit. A
+     currency unit returns to `checkpointed`, and the next ticks export, verify and drop it again from the online
+     rows. A statistics unit returns to `pending`, and the next ticks roll it up, dump it and drop it again. To drop
+     a statistics unit without a dump instead, run `retention unblock <unit-id> --waive-dump` after the reattach.
+     Verify: the unit reaches `verified` or `dumped` with an `object_key`, and `archive audit` reports no
+     `missing_object` line for it.
+
+     A `dumped` statistics unit in an attached partition whose dump is missing from the listing does not block. The
+     tick moves it to `dump_failed` and logs `Kudos retention dump failed for <source_range>: the archive does not hold
+     <key>, so the unit is dumped again`. The next tick dumps the rows again, and the usual dump retries apply.
    - `archive mismatch`: the object read back does not match its manifest. The object is kept. The warning includes
      the mismatched fields. Check the object store, and restore the object into a scratch table if the rows need
      inspection.
@@ -577,8 +610,9 @@ object are in a scratch table in the application database. Qualify the scratch t
    FROM kudos_retention_catalog WHERE object_key IS NOT NULL ORDER BY unit_upper;
    ```
 
-   A statistics object deleted by `archive evict`, or lost in any other way, leaves its unit with a null
-   `object_key` once a tick has run. A statistics unit in `dump_failed` or `dump_waived` does not have an object.
+   A statistics object deleted by `archive evict` leaves its unit with a null `object_key`. A dropped statistics
+   unit whose object was lost in any other way keeps the key, and `archive audit` reports it as a `missing_object`
+   line. A statistics unit in `dump_failed` or `dump_waived` does not have an object.
 2. Restore it into a table name that does not exist yet:
 
    ```sh

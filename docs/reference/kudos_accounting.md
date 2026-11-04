@@ -475,7 +475,8 @@ Otherwise it returns a blocked currency unit whose checkpoint
 is committed (`row_count` is set) to `checkpointed`, so export and verification run again against that checkpoint.
 Every other blocked unit returns to `pending`, and its steps run again from the start. Each step replaces what an
 earlier attempt wrote. `retention unblock --waive-dump` moves a `dump_failed` statistics unit, or one blocked for
-`dump retries exhausted` or `statistics tier would exceed budget`, to `dump_waived`.
+`dump retries exhausted`, `statistics tier would exceed budget` or `archive object missing`, to `dump_waived`. It
+refuses a unit of a detached partition until the partition is reattached.
 
 `retention unblock --recheckpoint` returns a blocked currency unit and every later currency unit to `pending`, and
 clears their `error`, `row_count`, `max_id` and `object_key`. In the same transaction it deletes the
@@ -567,7 +568,7 @@ The `error` of a blocked unit is one of the `RetentionBlockReason` values.
 | `online drift since export` | `currency`, at `exported` | The manifest's row count differs from `row_count`, or the row count, amount sum or per-user totals of the online rows differ from the archived object |
 | `late rows` | Both, at the drop | A unit's row count or highest `id` differs from `row_count` and `max_id`, or the unit has no recorded count |
 | `dump retries exhausted` | `statistics`, at `dump_failed` | A dump retry failed more than `KUDOS_RETENTION_DUMP_RETRY_DAYS` after the first failure |
-| `archive object missing` | `currency`, at `exported`, `verified` or `detached`, or at the drop | The tick's archive listing does not hold the unit's `object_key`, or the drop found a currency unit with no `object_key`. `retention unblock` returns the unit to `checkpointed`, so it is exported and verified again. A unit of a detached partition is reattached first |
+| `archive object missing` | `currency`, at `exported`, `verified` or `detached`, or at the drop. `statistics`, at `detached` with a `dumped` state before the detach, or at the drop | The tick's archive listing does not hold the unit's `object_key`, or the drop found a currency unit or a dumped statistics unit whose `object_key` or object is missing. A unit of a detached partition is reattached first. `retention unblock` then returns a currency unit to `checkpointed`, so it is exported and verified again, and a statistics unit to `pending`, so it is rolled up and dumped again. `retention unblock --waive-dump` drops a statistics unit without the dump |
 | `reattached by operator` | Both, at `detached` | `retention reattach` attached the unit's partition again. `retention unblock` returns the unit to `state_before_detach` |
 
 ### Reconciliation after retention
@@ -670,24 +671,33 @@ multipart upload and blocks the unit with the same reason without replacing an o
 count completed data objects and exclude manifests and incomplete multipart uploads. Every writer to a tier holds the
 retention lock, including `archive evict`.
 
-`archive evict --tier statistics --budget-bytes <n>` runs `KudosArchive.enforce_budget`, which deletes the oldest
-statistics objects and their manifests, ordered by unit upper bound, until the statistics tier fits `<n>`. Currency
-objects are never deleted. The deletes go out one batch at a time. When one fails, `ArchiveEvictionError` holds the
-keys deleted before it, and the command prints them.
+`archive evict --tier statistics --budget-bytes <n>` runs `evict_statistics_dumps`, which deletes the oldest
+statistics objects and their manifests, ordered by unit upper bound, until the statistics tier fits `<n>`. The dump of
+a statistics unit that is not `dropped` is kept, because its raw rows are still online. Objects that are not recorded by any
+unit are deleted like dropped dumps. Currency objects are never deleted. The deletes go out one batch at a time. When one
+fails, `ArchiveEvictionError` holds the keys deleted before it, and the command prints them. The command sets the
+`object_key` of each evicted unit to NULL, also after a failed batch, so an evicted dump is not reported as lost.
 
-With an archive configured, every tick lists both tiers after its step, while it still holds the retention lock.
-A unit whose `object_key` is not in the listing gets a NULL `object_key`, and the tick logs
-`Kudos retention cleared object key <key> of <dataset> unit <id> (<source_range>, <state>)`. The unit keeps its
-state, except a currency unit in `exported`, `verified` or `detached`. That unit becomes `blocked` with
-`archive object missing`, and the line starts with `Kudos retention blocked` instead, because a drop would remove
-the only copy of its postings. Before the detach and again immediately before the drop, currency retention checks
-every currency unit of the partition against the archive: the object exists, its manifest is readable, the stored
-size equals the manifest's `compressed_bytes`, and the manifest's `row_count` equals the unit's recorded count. A
-missing key or object blocks the unit with `archive object missing`, a mismatch blocks it with `archive mismatch`,
-and an unreachable store or unreadable manifest fails the tick so that a later tick retries. The check compares
-metadata only. The digest was verified at the `verified` step, and `archive audit` re-reads objects. The post-step
-listing is housekeeping and does not gate the drop. The tier sizes from the same listing are the
-`horde.kudos.archive.tier_bytes` values.
+With an archive configured, every tick lists both tiers after its step, while it still holds the retention lock. A
+unit whose `object_key` is not in the listing was removed outside the horde, or by an eviction that stopped before it
+updated the catalog. What the tick does depends on the unit:
+
+| Unit | Change | Log line |
+| --- | --- | --- |
+| `currency` in `exported`, `verified` or `detached` | `blocked` with `archive object missing`, `object_key` NULL, because a drop would remove the only copy of its postings | `Kudos retention blocked <dataset> unit <source_range>: archive object missing: ...` |
+| `statistics` in `dumped` | `dump_failed`, `object_key` NULL, `error` `archive object missing: <key>`. The dump retry window starts at that tick, and the next tick dumps the rows again | `Kudos retention dump failed for <source_range>: the archive does not hold <key>, so the unit is dumped again` |
+| `statistics` in `detached`, with `dumped` before the detach | `blocked` with `archive object missing`, `object_key` NULL | `Kudos retention blocked <dataset> unit <source_range>: archive object missing: ...` |
+| `statistics` in `dropped` | None. The unit keeps its `object_key`, so `archive audit` reports the lost object on every run | None |
+| Any other | `object_key` NULL | `Kudos retention cleared object key <key> of <dataset> unit <id> (<source_range>, <state>)` |
+
+Before the detach and again immediately before the drop, retention checks every unit of the partition against the
+archive. For a currency unit, the object exists, its manifest is readable, the stored size equals the manifest's
+`compressed_bytes`, and the manifest's `row_count` equals the unit's recorded count. For a statistics unit in
+`dumped`, or `detached` with `dumped` before the detach, the object exists. A missing key or object blocks the unit
+with `archive object missing`, a currency mismatch blocks it with `archive mismatch`, and an unreachable store or
+unreadable manifest fails the tick so that a later tick retries. The check compares metadata only. The digest was
+verified at the `verified` step, and `archive audit` re-reads objects. The post-step listing does not gate the drop.
+The tier sizes from the same listing are the `horde.kudos.archive.tier_bytes` values.
 
 ### Retention metrics and log lines
 
@@ -701,6 +711,7 @@ listing is housekeeping and does not gate the drop. The tier sizes from the same
 | `horde.kudos.retention.blocked_units` | Gauge, `{unit}` | `horde.kudos.block_reason` | Catalog units in `blocked`, one series per `RetentionBlockReason` value, 0 when no unit has that reason |
 | `horde.kudos.retention.partition_coverage` | Gauge, `1` | None | 1 when each event table has a partition containing the real current time and one containing it plus one partition width, else 0 |
 | `horde.kudos.retention.held_partitions` | Gauge, `{partition}` | None | `held_partitions` from `retention_health`. 0 when `KUDOS_RETENTION_HOLD_DROPS` is not `true` |
+| `horde.kudos.retention.restored_partitions` | Gauge, `{partition}` | None | The number of `restored_partitions` from `retention_health`. Above 0, the tick does not make a transition in the dataset of each such partition |
 | `horde.kudos.archive.tier_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | Stored bytes of each tier, excluding manifests, from the tick's listing. Not recorded without an archive, and kept at the last value when the listing fails |
 | `horde.kudos.archive.budget_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | One series per tier that has a budget: `currency` from `KUDOS_ARCHIVE_BUDGET_BYTES`, `statistics` from `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES`. Not recorded without an archive |
 
@@ -709,8 +720,8 @@ Two warnings are under log contract. Log-based alerting matches their prefixes, 
 
 | Prefix | Constant | Logged when | Full line |
 | --- | --- | --- | --- |
-| `Kudos retention blocked` | `RETENTION_BLOCKED_LOG_PREFIX` | A unit becomes `blocked` | `Kudos retention blocked <dataset> unit <source_range>: <error>`, optionally followed by `: <detail>` |
-| `Kudos retention dump failed` | `RETENTION_DUMP_FAILED_LOG_PREFIX` | A statistics dump attempt fails and the unit stays `dump_failed`, or the dump step waives a unit because no archive is configured | `Kudos retention dump failed for <source_range>: <cause> (<n> consecutive failures since <first failure>)`, or `...: archive not configured` |
+| `Kudos retention blocked` | `RETENTION_BLOCKED_LOG_PREFIX` | A unit becomes `blocked`, or a tick does not make a transition in a dataset because of a restored partition | `Kudos retention blocked <dataset> unit <source_range>: <error>`, optionally followed by `: <detail>`, or `Kudos retention blocked <dataset> dataset: an attached partition has dropped catalog units: <partitions>` |
+| `Kudos retention dump failed` | `RETENTION_DUMP_FAILED_LOG_PREFIX` | A statistics dump attempt fails and the unit stays `dump_failed`, the dump step waives a unit because no archive is configured, or the tick finds the dump of a `dumped` unit missing | `Kudos retention dump failed for <source_range>: <cause> (<n> consecutive failures since <first failure>)`, `...: archive not configured`, or `...: the archive does not hold <key>, so the unit is dumped again` |
 
 The dump-failed warning is logged on every failed attempt. The attempt that exhausts the retry window logs the blocked
 warning instead, with `dump retries exhausted` and the same detail. Without an archive, the dump-failed warning is
@@ -731,6 +742,7 @@ does not count it. Other retention log lines are not under contract.
 | `held_partitions` | Partitions whose units, other than `dropped` ones, are all drop-ready, while `hold_drops` is true. 0 otherwise |
 | `drop_grace_days` | The drop grace of the running policy in days, from `KUDOS_RETENTION_DROP_GRACE_DAYS` or its default |
 | `detached_partitions` | One entry per partition with `detached` units, oldest detach first: `dataset`, `partition_name`, `detached_at` and `drop_due_at` (`detached_at` plus the grace) |
+| `restored_partitions` | One entry per attached partition with `dropped` catalog units, as `dataset` and `partition_name`. Such a partition was restored under its original name. The dataset does not make a transition until the partition is detached |
 
 ### Retention commands
 
@@ -740,11 +752,11 @@ These are subcommands of `tools/kudos_ledger_admin.py`. Each prints JSON.
 | --- | --- |
 | `retention status` | Prints the health fields, `archive_configured`, `archive_tier_bytes`, and every unit not yet dropped with its catalog columns and `source_range`. Read-only |
 | `retention step [--dataset <dataset>] [--as-of <timestamp>] [--confirm-live-data-loss]` | Runs one tick as the scheduler does. With `--dataset currency` or `--dataset statistics`, only that dataset's units are stepped. `--as-of` is a rehearsal control: every eligibility, key-expiry and partition-creation decision is taken as of that UTC time, which must be no earlier than the current time and no later than the current time plus the longer window, the drop grace and four partition widths, and retention must be enabled. With a drop grace, a partition detached at one `--as-of` is dropped only by a later tick whose `--as-of` is at least the grace past it. A time later than now is refused without `--confirm-live-data-loss`, because against a live database it removes current data. Use that flag on a restored copy only. It can drop a partition |
-| `retention unblock <unit-id> [--waive-dump \| --recheckpoint]` | Returns a blocked unit to `state_before_detach` when it is set (a unit blocked by `retention reattach`), else to `checkpointed` (currency unit with a committed checkpoint) or `pending`, and clears `error`. With `--waive-dump`, moves a `dump_failed` statistics unit, or one blocked for `dump retries exhausted` or `statistics tier would exceed budget`, to `dump_waived`. With `--recheckpoint`, returns a blocked currency unit and every later currency unit to `pending` so their checkpoints are recomputed, and refuses when a later currency unit is `dropped` or `detached`. Refuses a unit of a `detached` partition. Exits with an error for any other unit, or while a tick holds the retention lock |
+| `retention unblock <unit-id> [--waive-dump \| --recheckpoint]` | Returns a blocked unit to `state_before_detach` when it is set (a unit blocked by `retention reattach`), else to `checkpointed` (currency unit with a committed checkpoint) or `pending`, and clears `error`. With `--waive-dump`, moves a `dump_failed` statistics unit, or one blocked for `dump retries exhausted`, `statistics tier would exceed budget` or `archive object missing`, to `dump_waived`. With `--recheckpoint`, returns a blocked currency unit and every later currency unit to `pending` so their checkpoints are recomputed, and refuses when a later currency unit is `dropped` or `detached`. Refuses a unit of a `detached` partition. Exits with an error for any other unit, or while a tick holds the retention lock |
 | `retention reattach <unit-id>` | Attaches the `detached` partition of the unit back to its parent over its recorded range and blocks its units with `reattached by operator`, keeping `state_before_detach`. `retention unblock` on each unit returns it to that state. Refuses when the partition is not `detached` or its table no longer exists. Exits with an error while a tick holds the retention lock |
 | `statement <user-id> --from <YYYY-MM-DD> --to <YYYY-MM-DD>` | Prints the user's lines from `kudos_ledger_daily` for those UTC days, summed across `source_range`. Days still online do not have lines yet |
 | `archive restore <key> --into <scratch-table> [--append]` | Copies an archive object into a new scratch table, `table` or `schema.table`, created from the manifest's `column_types` alone, without reference to the live event tables. A version 1 manifest does not record column types and is refused. An existing table is refused, because a repeated restore would hold every row twice and each restore verifies only its own rows. With `--append` the rows are added to an existing table, and the output has `"appended": true` and a note. Requires the archive configuration |
-| `archive evict --tier statistics --budget-bytes <n>` | Deletes the oldest statistics objects until the statistics tier fits `<n>` and prints the deleted keys. On a failed delete it prints the keys deleted before it with the error and exits 1. The next tick clears the catalog keys of the deleted objects |
+| `archive evict --tier statistics --budget-bytes <n>` | Deletes the oldest statistics objects of `dropped` units and objects without a unit until the statistics tier fits `<n>`, sets the `object_key` of each evicted unit to NULL, and prints the deleted keys and `tier_bytes`, the stored bytes left. Exits 1 with an `error` when the dumps of units not yet dropped keep the tier above `<n>`. On a failed delete it prints the keys deleted before it with the error and exits 1 |
 | `archive audit [--tier currency\|statistics] [--since-key <key>]` | Reads every object of the tier, both tiers by default, back against its manifest: digest, stored bytes, row count, amount sum, columns and per-user totals. Prints one JSON line per object (`"kind": "object"`, `matches_manifest`, `problems`), one per catalog unit whose object is missing (`"kind": "missing_object"`), then a summary line with `objects`, `problems`, `last_key`, `noncurrent_bytes` and `delete_markers`. The last two map each audited tier to the summed size of the noncurrent object versions under its prefix, manifests included, and to its count of delete markers. They show storage a versioned bucket still holds for evicted or replaced objects, which the `horde.kudos.archive.tier_bytes` gauge and `retention status` do not count. A tier's value is `null` when the store did not list its versions, which differs from `0`. Neither figure counts as a problem. A unit is missing its object when its `object_key` is not listed, or when it is a currency unit in `exported`, `verified`, `detached` or `dropped` without an `object_key`. Exits 1 on any problem, including an unreadable manifest. `--since-key` audits only objects whose key sorts after `<key>`, to resume from a summary's `last_key`. It reads the catalog and changes nothing |
 
 ### Privacy disclosure

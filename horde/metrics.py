@@ -1035,6 +1035,11 @@ kudos_retention_held_partitions = logfire.metric_gauge(
     unit="{partition}",
     description="Drop-ready kudos event partitions kept attached because KUDOS_RETENTION_HOLD_DROPS is set",
 )
+kudos_retention_restored_partitions = logfire.metric_gauge(
+    "horde.kudos.retention.restored_partitions",
+    unit="{partition}",
+    description="Attached kudos event partitions whose catalog units are dropped. Their dataset does not make a retention transition",
+)
 kudos_retention_dump_failures = logfire.metric_counter(
     "horde.kudos.retention.dump_failures",
     unit="{failure}",

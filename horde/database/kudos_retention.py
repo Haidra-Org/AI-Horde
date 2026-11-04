@@ -75,6 +75,7 @@ from horde.kudos_archive import (
     ARCHIVE_REQUIRED_ENV,
     ArchiveBudgetExceeded,
     ArchiveColumn,
+    ArchiveEvictionError,
     ArchiveObjectAudit,
     ArchiveTier,
     KudosArchive,
@@ -126,6 +127,10 @@ DUMP_RETRY_SPACING: Final[timedelta] = timedelta(minutes=15)
 STALE_UPLOAD_AGE: Final[timedelta] = timedelta(days=1)
 """How long an incomplete multipart upload stays open before a tick aborts it. It is far longer than any export."""
 FUTURE_REFERENCE_REFUSAL: Final[str] = "reference time is in the future. Pass --confirm-live-data-loss on a restored copy only"
+RESTORED_PARTITION_REFUSAL: Final[str] = "an attached partition has dropped catalog units"
+"""The detail of a ``BLOCKED`` tick result for a dataset with an attached partition whose catalog units are ``DROPPED``.
+Such a partition was restored from a backup under its original name. The catalog does not describe its rows, so the
+dataset does not make a transition until an operator detaches the partition."""
 """The detail of a tick refused because its reference time is later than the real clock."""
 
 DEFAULT_WINDOW_DAYS: Final[int] = 30
@@ -195,16 +200,23 @@ class RetentionBlockReason(enum.StrEnum):
     """Statistics dumps kept failing for longer than the retry window. ``retention unblock --waive-dump`` accepts
     dropping the unit without a dump."""
     ARCHIVE_OBJECT_MISSING = "archive object missing"
-    """A currency unit past its export has no archive object: the tick's archive listing does not hold its key, or the
-    drop found no key. ``retention unblock`` returns it to ``CHECKPOINTED``, so it is exported and verified again from
-    the rows still online, and a detached partition is reattached first."""
+    """The archive object of a currency unit past its export, or of a dumped statistics unit before its drop, is
+    missing. The tick's archive listing does not hold its key, or the drop found that the key or the object is
+    missing. A detached partition is reattached first. ``retention unblock`` then returns a currency unit to
+    ``CHECKPOINTED``, so it is exported and verified again from the rows still online, and a statistics unit to
+    ``PENDING``, so it is rolled up and dumped again. ``retention unblock --waive-dump`` drops a statistics unit
+    without the dump."""
     REATTACHED = "reattached by operator"
     """An operator reattached the unit's detached partition. The unit stays blocked, so the partition is not detached
     again until an operator unblocks it, which restores ``state_before_detach``."""
 
 
 WAIVABLE_DUMP_BLOCK_REASONS: Final[frozenset[str]] = frozenset(
-    {RetentionBlockReason.DUMP_RETRIES_EXHAUSTED, RetentionBlockReason.STATISTICS_BUDGET_EXCEEDED},
+    {
+        RetentionBlockReason.DUMP_RETRIES_EXHAUSTED,
+        RetentionBlockReason.STATISTICS_BUDGET_EXCEEDED,
+        RetentionBlockReason.ARCHIVE_OBJECT_MISSING,
+    },
 )
 """The block reasons of a statistics unit whose dump an operator may waive, dropping its raw rows without a copy."""
 
@@ -548,6 +560,15 @@ class KudosRetentionHealth(TypedDict):
     """The policy's drop grace in days, so a deploy can check the reattach window the running policy keeps."""
     detached_partitions: list[DetachedPartitionHealth]
     """Partitions whose units are ``DETACHED``, oldest detach first."""
+    restored_partitions: list[RestoredPartitionHealth]
+    """Attached partitions with ``DROPPED`` catalog units. Their dataset does not make a transition while one is listed."""
+
+
+class RestoredPartitionHealth(TypedDict):
+    """Represents one attached partition whose catalog units are ``DROPPED``."""
+
+    dataset: KudosRetentionDataset
+    partition_name: str
 
 
 class DetachedPartitionHealth(TypedDict):
@@ -830,6 +851,25 @@ def drop_ready_partition_count(catalog: Sequence[CatalogUnit]) -> int:
         catalog: Catalog rows of both datasets.
     """
     return sum(1 for partition_units in _units_by_partition(catalog).values() if _partition_drop_ready(partition_units))
+
+
+def restored_partitions(partitions: Sequence[PartitionBounds], catalog: Sequence[CatalogUnit]) -> list[RestoredPartitionHealth]:
+    """Return the attached partitions with a ``DROPPED`` catalog unit, in dataset and name order.
+
+    A dropped partition that is restored and attached under its original name keeps its catalog rows, and the
+    selection skips ``DROPPED`` units, so without this check the partition would stay attached and unaccounted.
+
+    Args:
+        partitions: Every attached partition of both datasets.
+        catalog: Catalog rows of both datasets.
+    """
+    attached = {(partition.dataset, partition.name) for partition in partitions}
+    dropped = {
+        (catalog_unit.dataset, catalog_unit.partition_name) for catalog_unit in catalog if catalog_unit.state == KudosRetentionState.DROPPED
+    }
+    return [
+        RestoredPartitionHealth(dataset=dataset, partition_name=partition_name) for dataset, partition_name in sorted(attached & dropped)
+    ]
 
 
 def detached_partitions(catalog: Sequence[CatalogUnit], *, drop_grace: timedelta) -> list[DetachedPartitionHealth]:
@@ -1635,6 +1675,48 @@ def _check_currency_archive(context: _StepContext, siblings: Sequence[CatalogUni
     return None
 
 
+def _holds_statistics_dump(unit: CatalogUnit) -> bool:
+    """Return whether ``unit`` is a statistics unit whose drop relies on its archive dump."""
+    if unit.dataset != KudosRetentionDataset.STATISTICS:
+        return False
+    if unit.state == KudosRetentionState.DETACHED:
+        return unit.state_before_detach == KudosRetentionState.DUMPED
+    return unit.state == KudosRetentionState.DUMPED
+
+
+def _check_statistics_dumps(context: _StepContext, siblings: Sequence[CatalogUnit]) -> RetentionTickResult | None:
+    """Return the outcome that stops the drop when a dumped statistics unit's object is missing or unreachable, else None.
+
+    A dump can disappear after it was written, by a delete outside the horde. Eviction does not reach the dump of a
+    unit that is not ``DROPPED``. A missing dump blocks the unit with ``ARCHIVE_OBJECT_MISSING``, so its raw rows are
+    not dropped without a copy unless an operator waives the dump.
+    """
+    db.session.commit()
+    for sibling in siblings:
+        if not _holds_statistics_dump(sibling):
+            continue
+        current = replace(context, unit=sibling)
+        if sibling.object_key is None:
+            return _block(current, RetentionBlockReason.ARCHIVE_OBJECT_MISSING, "no object key is recorded")
+        if context.archive is None:
+            return _failed(current, ARCHIVE_NOT_CONFIGURED)
+        try:
+            size = context.archive.object_size(sibling.object_key)
+        except KudosArchiveError as err:
+            return _failed(current, f"archive unavailable before drop: {err}")
+        if size is None:
+            return _block(current, RetentionBlockReason.ARCHIVE_OBJECT_MISSING, sibling.object_key)
+    return None
+
+
+def _check_archive_before_drop(context: _StepContext, siblings: Sequence[CatalogUnit]) -> RetentionTickResult | None:
+    """Return the outcome that stops the drop when an archive object of the partition's units fails its check, else None."""
+    currency_problem = _check_currency_archive(context, siblings)
+    if currency_problem is not None:
+        return currency_problem
+    return _check_statistics_dumps(context, siblings)
+
+
 def _drop_partition(context: _StepContext) -> RetentionTickResult:
     """Detach and drop the unit's partition and mark all of its units ``DROPPED``.
 
@@ -1664,7 +1746,7 @@ def _drop_partition(context: _StepContext) -> RetentionTickResult:
     siblings = [sibling for sibling in load_catalog(context.unit.dataset) if sibling.partition_name == context.unit.partition_name]
     if not _partition_drop_ready(siblings):
         return _failed(context, "partition has units whose replacement is not committed")
-    archive_problem = _check_currency_archive(context, siblings)
+    archive_problem = _check_archive_before_drop(context, siblings)
     if archive_problem is not None:
         return archive_problem
     partition_exists = _relation_exists(context.unit.partition_name)
@@ -1709,7 +1791,7 @@ def _drop_partition(context: _StepContext) -> RetentionTickResult:
                         return _block(replace(context, unit=detached_late_unit[0]), RetentionBlockReason.LATE_ROWS, detail)
                 if not keep_detached:
                     # The recount can take a while, so the archive is checked again immediately before the removal.
-                    archive_problem = _check_currency_archive(context, siblings)
+                    archive_problem = _check_archive_before_drop(context, siblings)
                     if archive_problem is not None:
                         return archive_problem
                     autocommit_connection.execute(text(f"DROP TABLE IF EXISTS {context.partition_sql}"))
@@ -1842,8 +1924,20 @@ def _run_locked_tick(
     if not policy.enabled:
         return RetentionTickResult(outcome=RetentionTickOutcome.IDLE, detail="retention disabled")
     partitions = discover_partitions()
+    restored = restored_partitions(partitions, load_catalog())
+    refusals: list[RetentionTickResult] = []
     candidates: list[CatalogUnit] = []
     for dataset in datasets:
+        restored_names = [entry["partition_name"] for entry in restored if entry["dataset"] == dataset]
+        if restored_names:
+            refusals.append(
+                RetentionTickResult(
+                    outcome=RetentionTickOutcome.BLOCKED,
+                    dataset=dataset,
+                    detail=f"{RESTORED_PARTITION_REFUSAL}: {', '.join(restored_names)}",
+                ),
+            )
+            continue
         unit = _next_unit(
             dataset,
             partitions,
@@ -1860,6 +1954,8 @@ def _run_locked_tick(
             logger.info(f"Kudos retention holds {held_partitions} partitions")
     db.session.commit()
     if not candidates:
+        if refusals:
+            return refusals[0]
         return RetentionTickResult(outcome=RetentionTickOutcome.IDLE, detail="no actionable unit")
     failures: list[RetentionTickResult] = []
     # A failed or deferred step makes no transition, so the other dataset's unit still gets this tick. An unreachable
@@ -1869,6 +1965,8 @@ def _run_locked_tick(
         if result.outcome not in (RetentionTickOutcome.FAILED, RetentionTickOutcome.DEFERRED):
             return result
         failures.append(result)
+    if refusals:
+        return refusals[0]
     return failures[0]
 
 
@@ -1964,12 +2062,16 @@ def _currency_unit_awaiting_drop(unit: CatalogUnit) -> bool:
 
 
 def _reconcile_archive_catalog(archive: KudosArchive) -> dict[ArchiveTier, int] | None:
-    """Clear ``object_key`` on units whose object is not in the archive, commit, and return each tier's stored bytes.
+    """Update the units whose object is not in the archive, commit, and return each tier's stored bytes.
 
-    A key whose object is gone points at nothing, whatever removed the object: an operator eviction, one that stopped
-    partway, or a delete outside the horde. A currency unit in ``EXPORTED``, ``VERIFIED`` or ``DETACHED`` also becomes
-    ``BLOCKED`` with ``ARCHIVE_OBJECT_MISSING``, because its rows are still online and the drop would otherwise remove
-    them without a copy. A listing failure skips the reconciliation for this tick.
+    ``archive evict`` clears the keys of the units it evicts, so a listed key without its object was removed outside
+    the horde, or by an eviction that stopped before it updated the catalog. A currency unit in ``EXPORTED``,
+    ``VERIFIED`` or ``DETACHED`` becomes ``BLOCKED`` with ``ARCHIVE_OBJECT_MISSING``, because its rows are still online
+    and the drop would otherwise remove them without a copy. A ``DUMPED`` statistics unit whose partition is attached
+    becomes ``DUMP_FAILED``, so the next ticks dump its rows again within the dump retry window. A detached one
+    becomes ``BLOCKED`` with ``ARCHIVE_OBJECT_MISSING``. A ``DROPPED`` statistics unit keeps its key, so the archive
+    audit keeps reporting the lost object. Every other unit loses the key. A listing failure skips the reconciliation
+    for this tick.
 
     Returns:
         Each tier's stored bytes, or None when a listing failed.
@@ -1981,8 +2083,32 @@ def _reconcile_archive_catalog(archive: KudosArchive) -> dict[ArchiveTier, int] 
         return None
     listed_keys = {key for sizes in sizes_by_tier.values() for key in sizes}
     for missing_unit in units_without_archive_objects(listed_keys):
+        if missing_unit.dataset == KudosRetentionDataset.STATISTICS and missing_unit.state == KudosRetentionState.DROPPED:
+            continue
         values: dict[str, object] = {"object_key": None, "updated": _utcnow()}
-        if _currency_unit_awaiting_drop(missing_unit):
+        if _holds_statistics_dump(missing_unit) and missing_unit.state == KudosRetentionState.DUMPED:
+            # The raw rows are still online, so the dump is repeated on the next tick, without the spacing that
+            # follows a failed attempt. The retry window starts now.
+            values |= {
+                "state": KudosRetentionState.DUMP_FAILED,
+                "error": f"{RetentionBlockReason.ARCHIVE_OBJECT_MISSING}: {missing_unit.object_key}",
+                "first_failed_at": missing_unit.first_failed_at or _utcnow(),
+                "last_dump_attempt_at": None,
+            }
+            # LOG CONTRACT: the line starts with RETENTION_DUMP_FAILED_LOG_PREFIX ("Kudos retention dump failed").
+            logger.warning(
+                f"{RETENTION_DUMP_FAILED_LOG_PREFIX} for {missing_unit.source_range}: the archive does not hold "
+                f"{missing_unit.object_key}, so the unit is dumped again",
+            )
+        elif _holds_statistics_dump(missing_unit):
+            values |= {"state": KudosRetentionState.BLOCKED, "error": str(RetentionBlockReason.ARCHIVE_OBJECT_MISSING)}
+            # LOG CONTRACT: the line starts with RETENTION_BLOCKED_LOG_PREFIX ("Kudos retention blocked").
+            logger.warning(
+                f"{RETENTION_BLOCKED_LOG_PREFIX} {missing_unit.dataset} unit {missing_unit.source_range}: "
+                f"{RetentionBlockReason.ARCHIVE_OBJECT_MISSING}: the archive does not hold {missing_unit.object_key} "
+                f"(state {missing_unit.state})",
+            )
+        elif _currency_unit_awaiting_drop(missing_unit):
             # The drop would remove the only copy of these postings, so the unit stops until it is exported again.
             values |= {"state": KudosRetentionState.BLOCKED, "error": str(RetentionBlockReason.ARCHIVE_OBJECT_MISSING)}
             # LOG CONTRACT: the line starts with RETENTION_BLOCKED_LOG_PREFIX ("Kudos retention blocked").
@@ -2210,9 +2336,10 @@ def recheckpoint_from_unit(unit_id: int) -> list[CatalogUnit]:
 def waive_unit_dump(unit_id: int) -> CatalogUnit:
     """Accept dropping a statistics unit without its archive dump, moving it to ``DUMP_WAIVED``, and commit.
 
-    Only a unit whose dump did not happen qualifies: ``DUMP_FAILED``, or ``BLOCKED`` with a reason in
-    ``WAIVABLE_DUMP_BLOCK_REASONS`` (retries exhausted, or the statistics budget). Its rollup is already committed, so
-    only the raw rows are lost. The ``error`` text is kept as the record of why.
+    Only a unit without a dump qualifies: ``DUMP_FAILED``, or ``BLOCKED`` with a reason in
+    ``WAIVABLE_DUMP_BLOCK_REASONS`` (retries exhausted, the statistics budget, or a dump missing from the archive). Its
+    rollup is already committed, so only the raw rows are lost. The ``error`` text is kept as the record of why. A unit
+    of a detached partition is refused until the partition is reattached, so the drop starts from an attached partition.
 
     Args:
         unit_id: The catalog id of the unit.
@@ -2221,7 +2348,8 @@ def waive_unit_dump(unit_id: int) -> CatalogUnit:
         The unit as waived.
 
     Raises:
-        ValueError: No unit has that id, it is not a statistics unit, or it is neither failed nor blocked for a waivable reason.
+        ValueError: No unit has that id, it is not a statistics unit, it is neither failed nor blocked for a waivable
+            reason, or its partition is detached.
         RetentionLockBusyError: A tick holds the retention lock.
     """
     with operator_retention_lock():
@@ -2230,6 +2358,8 @@ def waive_unit_dump(unit_id: int) -> CatalogUnit:
             raise ValueError(f"No kudos retention unit {unit_id}")
         if row.dataset != KudosRetentionDataset.STATISTICS:
             raise ValueError(f"Kudos retention unit {unit_id} is a {row.dataset} unit, and only statistics dumps can be waived")
+        if row.detached_at is not None:
+            raise ValueError(f"Kudos retention unit {unit_id} belongs to detached partition {row.partition_name}. Reattach it first")
         waivable = row.state == KudosRetentionState.BLOCKED and row.error in WAIVABLE_DUMP_BLOCK_REASONS
         if row.state != KudosRetentionState.DUMP_FAILED and not waivable:
             raise ValueError(
@@ -2241,6 +2371,64 @@ def waive_unit_dump(unit_id: int) -> CatalogUnit:
         db.session.commit()
         logger.warning(f"Kudos retention unit {unit_id} ({row.partition_name}) dump waived, so its raw rows are dropped without a copy")
         return _catalog_unit(row)
+
+
+@dataclass(frozen=True, kw_only=True)
+class StatisticsEviction:
+    """Represents the outcome of ``evict_statistics_dumps``."""
+
+    deleted_keys: list[str]
+    """The deleted object keys, oldest first."""
+    tier_bytes: int
+    """The stored bytes of the statistics tier after the eviction."""
+
+
+def evict_statistics_dumps(archive: KudosArchive, *, budget_bytes: int) -> StatisticsEviction:
+    """Delete the oldest statistics dumps of dropped units until the tier fits ``budget_bytes``, and clear their keys.
+
+    The dump of a unit that is not ``DROPPED`` is kept, because its raw rows are still online and its drop relies on
+    the dump. Objects that are not recorded by any unit are deleted like dropped dumps. The keys of the evicted units are cleared in
+    the catalog, so the tick and the archive audit treat any other missing dump as lost. The eviction runs under the
+    retention lock, because an export measures its allowance from the tier size.
+
+    Args:
+        archive: The archive client.
+        budget_bytes: The byte budget of the statistics tier.
+
+    Returns:
+        The deleted keys and the stored bytes of the tier afterwards, which stay above the budget when the kept dumps
+        alone exceed it.
+
+    Raises:
+        RetentionLockBusyError: A tick holds the retention lock.
+        KudosArchiveError: The listing failed, before anything was deleted.
+        ArchiveEvictionError: A delete failed. The keys deleted before it are cleared in the catalog first.
+    """
+    with operator_retention_lock():
+        kept_keys = {
+            catalog_unit.object_key
+            for catalog_unit in load_catalog(KudosRetentionDataset.STATISTICS)
+            if catalog_unit.object_key is not None and catalog_unit.state != KudosRetentionState.DROPPED
+        }
+        try:
+            deleted_keys = archive.enforce_budget(budget_bytes=budget_bytes, kept_keys=kept_keys)
+        except ArchiveEvictionError as err:
+            _clear_evicted_keys(err.deleted_keys)
+            raise
+        _clear_evicted_keys(deleted_keys)
+        return StatisticsEviction(deleted_keys=deleted_keys, tier_bytes=archive.tier_bytes(ArchiveTier.STATISTICS))
+
+
+def _clear_evicted_keys(deleted_keys: Sequence[str]) -> None:
+    if not deleted_keys:
+        return
+    db.session.execute(
+        update(KudosRetentionUnit)
+        .where(KudosRetentionUnit.dataset == KudosRetentionDataset.STATISTICS, KudosRetentionUnit.object_key.in_(deleted_keys))
+        .values(object_key=None, updated=_utcnow()),
+    )
+    db.session.commit()
+    logger.warning(f"Kudos retention cleared the object keys of {len(deleted_keys)} evicted statistics dumps")
 
 
 def _attached_partition_names() -> set[str]:
@@ -2490,7 +2678,7 @@ def audit_archive(
 
 
 def retention_outcome_warning(result: RetentionTickResult) -> str | None:
-    """Return the warning to log for a tick that blocked a unit or failed a statistics dump, or None otherwise.
+    """Return the warning to log for a tick that blocked a unit or a dataset or failed a statistics dump, or None otherwise.
 
     The lines start with ``RETENTION_BLOCKED_LOG_PREFIX`` or ``RETENTION_DUMP_FAILED_LOG_PREFIX``. A unit waived by the
     dump step because no archive is configured gets the dump-failed line, once, on that transition.
@@ -2504,6 +2692,8 @@ def retention_outcome_warning(result: RetentionTickResult) -> str | None:
             upper=result.unit.upper,
         )
     )
+    if result.outcome == RetentionTickOutcome.BLOCKED and result.unit is None:
+        return f"{RETENTION_BLOCKED_LOG_PREFIX} {result.dataset} dataset: {result.detail}"
     if result.outcome == RetentionTickOutcome.BLOCKED:
         return f"{RETENTION_BLOCKED_LOG_PREFIX} {result.dataset} unit {source_range}: {result.detail}"
     if result.to_state in (KudosRetentionState.DUMP_FAILED, KudosRetentionState.DUMP_WAIVED):
@@ -2555,7 +2745,7 @@ class AccountingRetentionDisclosure:
 
 
 def retention_health(*, now: datetime | None = None, policy: KudosRetentionPolicy = KUDOS_RETENTION_POLICY) -> KudosRetentionHealth:
-    """Return the retention job's progress: eligible backlog age, unit counts, last step age, coverage and held drops.
+    """Return the retention job's progress: backlog age, unit counts, last step age, coverage, held, detached and restored partitions.
 
     Args:
         now: The reference time (naive UTC); the current time when None.
@@ -2603,6 +2793,7 @@ def retention_health(*, now: datetime | None = None, policy: KudosRetentionPolic
         held_partitions=drop_ready_partition_count(catalog) if policy.hold_drops else 0,
         drop_grace_days=policy.drop_grace / timedelta(days=1),
         detached_partitions=detached_partitions(catalog, drop_grace=policy.drop_grace),
+        restored_partitions=restored_partitions(partitions, catalog),
     )
 
 
@@ -2629,6 +2820,8 @@ def _partition_contains(partition: PartitionBounds, moment: datetime) -> bool:
 
 
 __all__ = [
+    "StatisticsEviction",
+    "evict_statistics_dumps",
     "ARCHIVE_BUDGET_ENV",
     "ARCHIVE_STATISTICS_BUDGET_ENV",
     "ARCHIVE_TIERS",
@@ -2650,6 +2843,9 @@ __all__ = [
     "DUMP_RETRY_SPACING",
     "DUMP_RETRY_WINDOW_ENV",
     "FUTURE_REFERENCE_REFUSAL",
+    "RESTORED_PARTITION_REFUSAL",
+    "RestoredPartitionHealth",
+    "restored_partitions",
     "HOLD_DROPS_ENV",
     "KUDOS_RETENTION_POLICY",
     "PARTITION_WIDTH_ENV",
