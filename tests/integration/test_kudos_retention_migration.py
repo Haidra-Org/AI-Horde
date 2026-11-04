@@ -774,6 +774,56 @@ def test_ledger_swap_gives_up_before_a_request_deadlocks_with_it(pg_dsn: str, un
     assert _scalar(connection, "SELECT count(*) FROM kudos_ledger") == 1
 
 
+LEDGER_KEY_BUILD_START = "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS kudos_ledger_p_legacy_pkey"
+"""The start of the concurrent build of the ``kudos_ledger`` legacy partition key."""
+OLDER_TRANSACTION_SECONDS = 6
+"""Seconds the older transaction stays open after the build starts to wait for it, longer than any lock timeout in the file."""
+INVALID_INDEXES_IN_SCHEMA = """
+SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+WHERE c.relnamespace = CAST(current_schema() AS regnamespace) AND NOT i.indisvalid
+"""
+
+
+def test_index_build_waits_for_an_older_transaction_on_another_table_instead_of_failing(
+    pg_dsn: str, unconverted_schema: sqlalchemy.Connection
+) -> None:
+    """A concurrent build outlasts a transaction that started before it, and the run then completes.
+
+    Before it marks the index valid, the build waits for every transaction with an older snapshot, here one that only
+    reads ``users``. A lock timeout on the build would fail it after the whole table was read and leave an INVALID
+    index.
+    """
+    connection = unconverted_schema
+    migration_pid = _scalar(connection, "SELECT pg_backend_pid()")
+    older_engine, older = _second_session(pg_dsn, connection)
+    older_transaction_open: list[bool] = []
+
+    def open_the_older_transaction(statement: str) -> None:
+        if not statement.startswith(LEDGER_KEY_BUILD_START) or older_transaction_open:
+            return
+        older.execute(sqlalchemy.text("BEGIN ISOLATION LEVEL REPEATABLE READ"))
+        older.execute(sqlalchemy.text("SELECT count(*) FROM users")).all()
+        older_transaction_open.append(True)
+
+    try:
+        migration_thread, migration_errors = _run_migration_in_thread(connection, open_the_older_transaction)
+        try:
+            _wait_for_flag(older_transaction_open, migration_thread, migration_errors)
+            _wait_for_lock_wait(older, migration_pid)
+            clock.sleep(OLDER_TRANSACTION_SECONDS)
+            assert migration_thread.is_alive(), migration_errors
+            older.execute(sqlalchemy.text("COMMIT"))
+        finally:
+            migration_thread.join(timeout=30)
+    finally:
+        older.close()
+        older_engine.dispose()
+    assert not migration_thread.is_alive()
+    assert not migration_errors, migration_errors
+    assert _scalar(connection, "SELECT relkind FROM pg_class WHERE oid = CAST('kudos_ledger' AS regclass)") == "p"
+    assert _scalar(connection, INVALID_INDEXES_IN_SCHEMA) == 0
+
+
 def test_ledger_swap_refuses_a_deadlock_timeout_at_or_below_its_lock_timeout(unconverted_schema: sqlalchemy.Connection) -> None:
     """The lock waits of the swap must end before the deadlock check of a waiting request, so a short deadlock_timeout stops the run."""
     connection = unconverted_schema

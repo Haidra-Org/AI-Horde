@@ -268,8 +268,10 @@ BEGIN
 END;
 $$;
 
+-- Adding the NOT VALID CHECK takes ACCESS EXCLUSIVE for a moment, and writes queue behind its wait, so its wait is
+-- bounded. A rerun after a lock failure here is cheap, because the finished builds are skipped.
 CREATE OR REPLACE FUNCTION pg_temp.kudos_add_legacy_range(target_table TEXT) RETURNS VOID
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET lock_timeout = '5s' AS $$
 BEGIN
     IF NOT pg_temp.kudos_is_unconverted(target_table) OR EXISTS (
         SELECT 1 FROM pg_constraint
@@ -585,7 +587,14 @@ BEGIN
 END;
 $$;
 
-SET lock_timeout = '5s';
+-- The concurrent builds and the VALIDATE run without a lock or statement timeout. They take SHARE UPDATE
+-- EXCLUSIVE, which does not conflict with writes, so requests do not queue behind their waits. Before it marks an
+-- index valid, a concurrent build waits for every older transaction in the database, on any table. Under a lock
+-- timeout, one transaction that outlasts the timeout fails the build after the whole table has been read, and the
+-- build leaves an INVALID index to drop. Each statement that takes a lock in conflict with writes sets its own
+-- lock_timeout.
+SET lock_timeout = 0;
+SET statement_timeout = 0;
 
 -- 3a. kudos_ledger
 
@@ -724,6 +733,7 @@ SELECT pg_temp.kudos_create_initial_partitions('kudos_stat_events');
 COMMIT;
 
 RESET lock_timeout;
+RESET statement_timeout;
 
 -- 4. kudos_retention_catalog starts empty. The retention job discovers the partitions from pg_catalog,
 -- and the application creates the weekly partitions ahead of time from then on.

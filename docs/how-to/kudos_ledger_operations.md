@@ -197,12 +197,33 @@ the backfilled keys.
    FROM pg_stat_progress_create_index;
    ```
 
+   The builds and the CHECK validation run without a lock or statement timeout, because their waits do not block
+   writes. Before it marks an index valid, a build waits for every transaction that started before it, on any
+   table. The progress view shows a phase that begins with `waiting for` until those transactions end. Find them
+   with:
+
+   ```sql
+   SELECT pid, state, xact_start, left(query, 80) FROM pg_stat_activity
+   WHERE backend_xmin IS NOT NULL AND xact_start < now() - interval '5 minutes' ORDER BY xact_start;
+   ```
+
+   A nightly dump holds its snapshot until it ends, so the build waits for it. Cancel a stray long transaction with
+   `pg_cancel_backend(<pid>)`. A conflicting lock request does not cancel an anti-wraparound autovacuum, so a build
+   that starts during one waits for it to end. Before the run, check that the age of each table is well below
+   `autovacuum_freeze_max_age`:
+
+   ```sql
+   SELECT relname, age(relfrozenxid), current_setting('autovacuum_freeze_max_age')
+   FROM pg_class WHERE relname IN ('kudos_ledger', 'kudos_stat_events', 'users');
+   ```
+
    A failed concurrent build leaves an `INVALID` index. Drop it with `DROP INDEX CONCURRENTLY <index-name>` before
    rerunning the file.
 
 3. Watch the range CHECK and the swap. For each table, the file computes `swap_ts`, the
-   first UTC Monday 00:00 at least 24 hours away. It then adds `<table>_legacy_range CHECK (created < swap_ts)` and
-   validates it with one scan that does not block writes. The swap transaction renames the table to
+   first UTC Monday 00:00 at least 24 hours away. It then adds `<table>_legacy_range CHECK (created < swap_ts)`,
+   which takes an exclusive lock for a moment and waits up to 5 seconds for it, and validates it with one scan that
+   does not block writes. The swap transaction renames the table to
    `<table>_p_legacy`, creates the partitioned parent, and attaches the old table and its indexes without a scan or
    copy. It holds an exclusive lock for a short time. The `kudos_ledger` swap first takes the applier's advisory
    lock, so the applier skips its cycles until the swap commits. It then locks `users` in `SHARE ROW EXCLUSIVE` mode
