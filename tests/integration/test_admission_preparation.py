@@ -15,6 +15,7 @@ to the committed row, so the request keeps its models and payload.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
@@ -473,4 +474,35 @@ def test_an_activation_deadlock_retry_keeps_the_prepared_request(
         assert waiting_prompt.active is True
         assert waiting_prompt.get_model_names() == [IMAGE_MODEL]
         assert waiting_prompt.gen_payload["ddim_steps"] == IMAGE_PARAMS["steps"]
+        # The price is assigned inside the retried activation, so the attempt that succeeded wrote it.
+        assert waiting_prompt.kudos > 0
     _cancel(client, ADMISSION_CASES[0], request_id, requester)
+
+
+def test_an_image_request_becomes_active_and_priced_in_one_statement(
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    make_api_user: MakeApiUser,
+    assert_query_count: QueryCounter,
+) -> None:
+    """The UPDATE that makes an image request active also stores its price, and no later statement writes the price.
+
+    A pop reads the price of an active request, so there is no committed state in which the request is active and
+    its price is still unset.
+    """
+    _bring_worker_online(client, request_headers, ADMISSION_CASES[0])
+    requester = make_api_user()
+    with assert_query_count() as queries:
+        response = client.post("/api/v2/generate/async", json=ADMISSION_CASES[0].body, headers=_headers(requester.api_key))
+    assert response.status_code == 202, response.get_data(as_text=True)
+    _cancel(client, ADMISSION_CASES[0], response.get_json()["id"], requester)
+
+    request_updates = [
+        recorded.sql for recorded in queries.recorded_statements if recorded.kind == "UPDATE" and recorded.table == "waiting_prompts"
+    ]
+    # The word boundary keeps ``consumed_kudos=`` out of the match.
+    sets_price = re.compile(r"\bkudos=").search
+    activation_updates = [sql for sql in request_updates if "active=" in sql]
+    assert len(activation_updates) == 1, queries.describe()
+    assert sets_price(activation_updates[0]), queries.describe()
+    assert not [sql for sql in request_updates if sets_price(sql) and "active=" not in sql], queries.describe()

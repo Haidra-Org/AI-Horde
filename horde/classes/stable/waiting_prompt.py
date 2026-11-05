@@ -39,7 +39,6 @@ from horde.metrics import (
     wp_activate_post_kudos_duration,
     wp_activate_post_super_duration,
     wp_calculate_kudos_duration,
-    wp_kudos_commit_duration,
     wp_kudos_model_duration,
 )
 from horde.model_reference import model_reference
@@ -66,6 +65,12 @@ class ImageWaitingPrompt(WaitingPrompt):
     # TODO: Find a way to index width*height
     width = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
     height = db.Column(db.Integer, default=512, nullable=False, server_default=expression.literal(512))
+    _source_references: tuple[str | None, str | None] = (None, None)
+    """The source image and mask references given to ``activate``, assigned to their columns inside ``_activate``.
+
+    Not a mapped column: it survives the session rollback of a deadlock retry, which discards unflushed column
+    changes, so each attempt assigns the references again.
+    """
     source_image = db.Column(db.Text, default=None)
     source_processing = db.Column(db.String(12), default="img2img", nullable=False, server_default="img2img")
     source_mask = db.Column(db.Text, default=None)
@@ -307,6 +312,8 @@ class ImageWaitingPrompt(WaitingPrompt):
     ):
         # We separate the activation from __init__ as often we want to check if there's a valid worker for it
         # Before we add it to the queue
+        # Kept outside the mapped columns so a deadlock retry, which rolls the session back, can assign them again.
+        self._source_references = (source_image, source_mask)
         super().activate(
             downgrade_wp_priority,
             extra_source_images=extra_source_images,
@@ -315,19 +322,9 @@ class ImageWaitingPrompt(WaitingPrompt):
         )
         _t_post = time.monotonic()
         try:
-            if source_image or source_mask:
-                self.source_image = source_image
-                self.source_mask = source_mask
-                db.session.commit()
             prompt_type = "txt2img"
             if self.source_image:
                 prompt_type = self.source_processing
-            with logfire.span("horde.wp.calculate_kudos", wp_id=str(self.id)):
-                _t_kudos = time.monotonic()
-                try:
-                    self.calculate_kudos()
-                finally:
-                    wp_calculate_kudos_duration.record(time.monotonic() - _t_kudos, {})
             _t_pk = time.monotonic()
             try:
                 proxied_account = ""
@@ -426,13 +423,35 @@ class ImageWaitingPrompt(WaitingPrompt):
         return super().record_usage(**kwargs)
 
     # We can calculate the kudos in advance as they model doesn't affect them
+    def _activate(self, *args, **kwargs) -> None:
+        """Activate the request with its source references and its price in the same transaction.
+
+        The pop reads the price and the source references of an active request, so they are written by the commit
+        that makes it active rather than by later commits of their own. The assignment runs inside the retried unit
+        because a deadlock retry rolls the session back, which discards unflushed column changes.
+        """
+        source_image, source_mask = self._source_references
+        if source_image or source_mask:
+            self.source_image = source_image
+            self.source_mask = source_mask
+        with logfire.span("horde.wp.calculate_kudos", wp_id=str(self.id)):
+            _t_kudos = time.monotonic()
+            try:
+                self.calculate_kudos()
+            finally:
+                wp_calculate_kudos_duration.record(time.monotonic() - _t_kudos, {})
+        super()._activate(*args, **kwargs)
+
     def calculate_kudos(self):
+        """Mutate ``kudos`` to the request's price and return it, without committing.
+
+        Activation persists it with the activation commit; the dry-run quote and the status read only use the value.
+        """
         #
         # Legacy calculation
         #
         if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", "0") == "1" and len(self.workers) > 0:
             self.kudos = 0.1
-            db.session.commit()
             return self.kudos
         legacy_kudos_cost = 0
         result = pow(
@@ -480,11 +499,6 @@ class ImageWaitingPrompt(WaitingPrompt):
         # If they've requested TIs, we add 1 kudos extra
         if self.params.get("tis"):
             self.kudos += 1
-        _t_kc = time.monotonic()
-        try:
-            db.session.commit()
-        finally:
-            wp_kudos_commit_duration.record(time.monotonic() - _t_kc, {})
         return self.kudos
 
     def require_upfront_kudos(self, counted_totals, total_threads):
