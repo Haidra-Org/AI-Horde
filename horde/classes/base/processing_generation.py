@@ -13,6 +13,7 @@ import logfire
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import expression
 
 from horde.classes.base.kudos import kudos_event
@@ -314,10 +315,13 @@ class ProcessingGeneration(db.Model):
         gentype_label = {"horde.gentype": self.procgen_type}
         # Use an atomic compare-and-set update so exactly one concurrent submit
         # can transition this procgen from pending -> completed.
-        sanitized_generation = generation.replace("\x00", "\ufffd")
-        seed = kwargs.get("seed", self.seed)
-        gen_metadata = kwargs.get("gen_metadata", self.gen_metadata)
-        submission_columns = self.get_submission_columns(**kwargs)
+        completion_columns = {
+            "generation": generation.replace("\x00", "\ufffd"),
+            "seed": kwargs.get("seed", self.seed),
+            "gen_metadata": kwargs.get("gen_metadata", self.gen_metadata),
+            "cancelled": False,
+            **self.get_submission_columns(**kwargs),
+        }
 
         _t = time.monotonic()
         updated_rows = (
@@ -328,13 +332,7 @@ class ProcessingGeneration(db.Model):
                 type(self).faulted.is_(False),
             )
             .update(
-                {
-                    type(self).generation: sanitized_generation,
-                    type(self).seed: seed,
-                    type(self).gen_metadata: gen_metadata,
-                    type(self).cancelled: False,
-                    **{getattr(type(self), column_name): value for column_name, value in submission_columns.items()},
-                },
+                {getattr(type(self), column_name): value for column_name, value in completion_columns.items()},
                 synchronize_session=False,
             )
         )
@@ -346,23 +344,24 @@ class ProcessingGeneration(db.Model):
             if current_procgen is not None and current_procgen.is_completed():
                 return 0
             return -1
-        # Sanitize NUL char away from string literal we store in the DB
-        self.generation = generation.replace("\x00", "\ufffd")
-        # Support for two typical properties
-        self.seed = kwargs.get("seed", None)
-        self.gen_metadata = kwargs.get("gen_metadata", None)
-        for column_name, value in submission_columns.items():
-            setattr(self, column_name, value)
+        # The compare-and-set already wrote these fields. Make them available to
+        # reward calculation without scheduling another UPDATE at flush, while
+        # leaving unrelated pending changes in this session intact. The cancelled
+        # flag is synchronized after settlement, so record() can still log that
+        # this submission arrived for a job that had been cancelled.
+        for column_name, value in completion_columns.items():
+            if column_name != "cancelled":
+                set_committed_value(self, column_name, value)
         # The reward is derived from what the worker returned (text kudos scale
         # with the delivered token count), so it is computed once the generation
         # fields above are populated.
         _t = time.monotonic()
         kudos = self.get_gen_kudos()
         submit_gen_kudos_duration.record(time.monotonic() - _t, gentype_label)
-        self.cancelled = False
         _t = time.monotonic()
         self.record(things_per_sec, kudos)
         submit_record_duration.record(time.monotonic() - _t)
+        set_committed_value(self, "cancelled", False)
         _t = time.monotonic()
         db.session.commit()
         submit_commit_duration.record(time.monotonic() - _t)

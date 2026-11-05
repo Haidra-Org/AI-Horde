@@ -1111,17 +1111,17 @@ class JobPopTemplate(Resource):
         self.prioritized_wp = []
         # self.priority_users = [self.user]
         ## Start prioritize by bridge request ##
-        pre_priority_user_ids = [x.split("#")[-1] for x in self.priority_usernames]
-        if any((u == "" or not u.isdigit) for u in pre_priority_user_ids):
+        requested_priority_user_ids = [username.split("#")[-1] for username in self.priority_usernames]
+        if any((user_id == "" or not user_id.isdigit()) for user_id in requested_priority_user_ids):
             raise e.BadRequest(
                 message="Priority usernames need to be provided in the form of 'alias#number'. Example: 'db0#1'",
                 rc="InvalidPriorityUsername",
             )
         self.priority_user_ids = [self.user.id]
         # TODO move to database class
-        p_users_id_from_db = db.session.query(User.id).filter(User.id.in_(pre_priority_user_ids)).all()
-        if p_users_id_from_db:
-            self.priority_user_ids.extend([x.id for x in p_users_id_from_db])
+        if requested_priority_user_ids:
+            priority_users = db.session.query(User.id).filter(User.id.in_(requested_priority_user_ids)).all()
+            self.priority_user_ids.extend(priority_user.id for priority_user in priority_users)
 
         # for priority_username in self.priority_usernames:
         #     priority_user = database.find_user_by_username(priority_username)
