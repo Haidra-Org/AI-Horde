@@ -28,7 +28,8 @@ the unit's row count and highest id, and the drop recounts both before removing 
 Each archive tier has its own byte budget. The dump and the export each admit an upload only when the tier's stored
 bytes plus the estimate fit, and block the unit otherwise. Nothing is evicted by a tick. With an archive configured,
 every tick lists both tiers once, clears ``object_key`` on units whose object is not listed, and returns the tier sizes.
-``audit_archive`` reads every object back against its manifest for a scheduled audit.
+``audit_archive_metadata`` checks every object's manifest and listed size for the scheduled audit, and
+``audit_archive_contents`` reads every object back against its manifest when an operator asks for it.
 
 ``KUDOS_RETENTION_POLICY`` is read from the environment at import, so an invalid setting fails startup. The pure
 helpers (``parse_partition_bound``, ``format_source_range``, ``legacy_unit_ranges``, ``select_next_unit``,
@@ -1432,6 +1433,11 @@ def _stat_dump(context: _StepContext) -> RetentionTickResult:
     with ``DUMP_RETRIES_EXHAUSTED``. Without an archive no dump is possible, so the unit goes to ``DUMP_WAIVED`` at
     once and is dropped on the rollup alone. A dump that would take the statistics tier over its budget is not
     uploaded, and the unit blocks with ``STATISTICS_BUDGET_EXCEEDED``.
+
+    The uploaded object is read back in full and compared with its manifest before the unit counts as dumped, as the
+    currency ``verified`` step does for exports. This is the one full read of a statistics object, because the
+    scheduled audit checks only manifests and sizes. A read-back that differs counts as a failed attempt, and the
+    retry uploads the object again under the same key.
     """
     archive = context.archive
     if archive is None:
@@ -1446,10 +1452,13 @@ def _stat_dump(context: _StepContext) -> RetentionTickResult:
         if refusal is not None:
             return _block(context, RetentionBlockReason.STATISTICS_BUDGET_EXCEEDED, refusal)
         key = _archive_unit(archive, context, ArchiveTier.STATISTICS, allowance)
+        report = archive.verify_unit(key, archive.get_manifest(key))
     except ArchiveBudgetExceeded as err:
         return _block(context, RetentionBlockReason.STATISTICS_BUDGET_EXCEEDED, str(err))
     except KudosArchiveError as err:
         return _stat_dump_failed(context, str(err))
+    if not report.matches_manifest:
+        return _stat_dump_failed(context, f"archive read-back of {key} differs from the manifest: fields={','.join(report.mismatches)}")
     _set_state(context.unit, KudosRetentionState.DUMPED, object_key=key)
     db.session.execute(
         update(KudosRetentionUnit)
@@ -2657,17 +2666,44 @@ CURRENCY_ARCHIVED_STATES: Final[frozenset[KudosRetentionState]] = frozenset(
 of them with no ``object_key`` lost its object, and the tick's reconciliation already cleared the key."""
 
 
-def audit_archive(
+@dataclass(frozen=True, kw_only=True)
+class _ListedArchiveObject:
+    """One object an audit lists, with the size the listing reported."""
+
+    tier: ArchiveTier
+    key: str
+    size: int
+
+
+def _list_audited_objects(archive: KudosArchive, tiers: Collection[ArchiveTier]) -> list[_ListedArchiveObject]:
+    """List the objects of ``tiers``, tier by tier in ``ArchiveTier`` order and by key within a tier.
+
+    Raises:
+        KudosArchiveError: A listing failed.
+    """
+    listed: list[_ListedArchiveObject] = []
+    for tier in ArchiveTier:
+        if tier not in tiers:
+            continue
+        sizes = archive.object_sizes(tier)
+        listed.extend(_ListedArchiveObject(tier=tier, key=key, size=sizes[key]) for key in sorted(sizes))
+    return listed
+
+
+def audit_archive_metadata(
     archive: KudosArchive,
     *,
     tiers: Collection[ArchiveTier] = tuple(ArchiveTier),
     since_key: str | None = None,
 ) -> Iterator[ArchiveObjectAudit | MissingArchiveObject]:
-    """Yield the read-back of every object of ``tiers`` in key order, then every catalog unit missing its object.
+    """Yield the metadata check of every object of ``tiers`` in key order, then every catalog unit missing its object.
 
-    Each object is read in full and compared with its manifest by ``KudosArchive.audit_object``. The database is
-    only read: the catalog is compared with the listing, and nothing is changed. A unit is reported when its
-    ``object_key`` is not listed, and a currency unit also when it is in ``CURRENCY_ARCHIVED_STATES`` without a key.
+    Each object is checked by ``KudosArchive.check_object_metadata``, which reads the manifest and the listing and not
+    the object's bytes, so a run costs one small read per object however large the archive grows. Every object was
+    read back in full once, when it was written (the currency ``verified`` step and the statistics dump), and the
+    bucket keeps earlier versions of a replaced or deleted object, so the scheduled audit looks for objects that went
+    missing, changed size or lost their manifest. ``audit_archive_contents`` reads the bytes when that is wanted. The
+    catalog comparison is that of ``audit_archive_contents``, and nothing is changed.
 
     Args:
         archive: The archive client.
@@ -2678,16 +2714,50 @@ def audit_archive(
     Raises:
         KudosArchiveError: A listing failed.
     """
-    listed_keys: set[str] = set()
-    for tier in ArchiveTier:
-        if tier not in tiers:
+    listed = _list_audited_objects(archive, tiers)
+    for listed_object in listed:
+        if since_key is not None and listed_object.key <= since_key:
             continue
-        tier_keys = sorted(archive.object_sizes(tier))
-        listed_keys.update(tier_keys)
-        for key in tier_keys:
-            if since_key is not None and key <= since_key:
-                continue
-            yield archive.audit_object(key, tier=tier)
+        yield archive.check_object_metadata(listed_object.key, tier=listed_object.tier, listed_size=listed_object.size)
+    yield from _missing_archive_objects({listed_object.key for listed_object in listed}, tiers)
+
+
+def audit_archive_contents(
+    archive: KudosArchive,
+    *,
+    tiers: Collection[ArchiveTier] = tuple(ArchiveTier),
+    since_key: str | None = None,
+) -> Iterator[ArchiveObjectAudit | MissingArchiveObject]:
+    """Yield the read-back of every object of ``tiers`` in key order, then every catalog unit missing its object.
+
+    Each object is read in full and compared with its manifest by ``KudosArchive.audit_object``, so a run downloads
+    the whole archive. The database is only read: the catalog is compared with the listing, and nothing is changed. A
+    unit is reported when its ``object_key`` is not listed, and a currency unit also when it is in
+    ``CURRENCY_ARCHIVED_STATES`` without a key.
+
+    Args:
+        archive: The archive client.
+        tiers: The tiers to audit, both by default.
+        since_key: Audit only objects whose key sorts after this one, to resume an interrupted audit. The catalog
+            comparison always covers the whole listing.
+
+    Raises:
+        KudosArchiveError: A listing failed.
+    """
+    listed = _list_audited_objects(archive, tiers)
+    for listed_object in listed:
+        if since_key is not None and listed_object.key <= since_key:
+            continue
+        yield archive.audit_object(listed_object.key, tier=listed_object.tier)
+    yield from _missing_archive_objects({listed_object.key for listed_object in listed}, tiers)
+
+
+def _missing_archive_objects(listed_keys: set[str], tiers: Collection[ArchiveTier]) -> Iterator[MissingArchiveObject]:
+    """Yield every catalog unit of the datasets archived in ``tiers`` whose object is not in ``listed_keys``.
+
+    A currency unit is also reported when it is in ``CURRENCY_ARCHIVED_STATES`` without a key. The read-only
+    transaction is ended once every unit is reported.
+    """
     datasets = [dataset for dataset, tier in ARCHIVE_TIERS.items() if tier in tiers]
     for missing_unit in units_without_archive_objects(listed_keys, datasets=datasets):
         yield MissingArchiveObject(
@@ -2863,7 +2933,8 @@ __all__ = [
     "WAIVABLE_DUMP_BLOCK_REASONS",
     "CURRENCY_ARCHIVED_STATES",
     "MissingArchiveObject",
-    "audit_archive",
+    "audit_archive_contents",
+    "audit_archive_metadata",
     "units_without_archive_objects",
     "RETENTION_BLOCKED_LOG_PREFIX",
     "RETENTION_DUMP_FAILED_LOG_PREFIX",

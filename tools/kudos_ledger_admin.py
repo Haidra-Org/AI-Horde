@@ -38,7 +38,8 @@ from horde.database.kudos_retention import (  # noqa: E402
     KUDOS_RETENTION_POLICY,
     MissingArchiveObject,
     RetentionLockBusyError,
-    audit_archive,
+    audit_archive_contents,
+    audit_archive_metadata,
     daily_statement,
     evict_statistics_dumps,
     load_catalog,
@@ -155,13 +156,19 @@ def _parser() -> argparse.ArgumentParser:
     audit = archive_commands.add_parser(
         "audit",
         help=(
-            "Read every archive object back against its manifest and compare the catalog with the listing. Prints one "
+            "Check every archive object's manifest and listed size and compare the catalog with the listing. Prints one "
             "JSON line per object and per missing object, then a summary with each tier's noncurrent version bytes and "
             "delete markers, and exits 1 on any problem"
         ),
     )
     audit.add_argument("--tier", choices=[str(tier) for tier in ArchiveTier], help="Audit one tier (default: both)")
     audit.add_argument("--since-key", dest="since_key", help="Audit only objects whose key sorts after this one")
+    audit.add_argument(
+        "--read-back",
+        dest="read_back",
+        action="store_true",
+        help="Download every object and compare its digest and control totals with the manifest. Reads the whole archive",
+    )
     return parser
 
 
@@ -201,7 +208,12 @@ def _archive_command(options: argparse.Namespace, archive_client: KudosArchive) 
     audited_objects = 0
     problems = 0
     last_key = None
-    for record in audit_archive(archive_client, tiers=tiers, since_key=options.since_key):
+    audit_records = (
+        audit_archive_contents(archive_client, tiers=tiers, since_key=options.since_key)
+        if options.read_back
+        else audit_archive_metadata(archive_client, tiers=tiers, since_key=options.since_key)
+    )
+    for record in audit_records:
         if isinstance(record, MissingArchiveObject):
             problems += 1
             print(json.dumps({"kind": "missing_object", **asdict(record)}, default=str))
@@ -218,6 +230,7 @@ def _archive_command(options: argparse.Namespace, archive_client: KudosArchive) 
         "objects": audited_objects,
         "problems": problems,
         "last_key": last_key,
+        "read_back": options.read_back,
         "tiers": [str(tier) for tier in tiers],
         "noncurrent_bytes": {tier: None if usage is None else usage.noncurrent_bytes for tier, usage in version_usage.items()},
         "delete_markers": {tier: None if usage is None else usage.delete_markers for tier, usage in version_usage.items()},

@@ -491,7 +491,10 @@ class VerificationReport:
 
 @dataclass(frozen=True, kw_only=True)
 class ArchiveObjectAudit:
-    """Represents the read-back of one archive object against its manifest, with every problem found."""
+    """Represents the check of one archive object against its manifest, with every problem found.
+
+    A metadata check leaves ``row_count`` and ``compressed_bytes`` unset. A full read-back fills both.
+    """
 
     key: str
     """The object key."""
@@ -1114,6 +1117,37 @@ class KudosArchive:
         if evicted:
             logger.warning(f"Kudos archive evicted {len(evicted)} statistic objects to fit {budget_bytes} bytes")
         return evicted
+
+    def check_object_metadata(self, key: str, *, tier: ArchiveTier, listed_size: int) -> ArchiveObjectAudit:
+        """Return the check of the object at ``key`` against its manifest without reading the object's bytes.
+
+        The manifest is read and parsed, its stored byte count is compared with the size the listing reported, and its
+        unit upper bound and codec are compared with the ones the key encodes. This finds a deleted, replaced or
+        truncated object, a lost or unreadable manifest, and a manifest that belongs to another object. Damage that
+        keeps the object's size is found only by ``audit_object``. Nothing is written.
+
+        Args:
+            key: The object key.
+            tier: The tier the object was listed under.
+            listed_size: The object's size as the listing reported it.
+        """
+        try:
+            manifest = self.get_manifest(key)
+        except KudosArchiveError as err:
+            return ArchiveObjectAudit(key=key, tier=tier, problems=[f"manifest unreadable: {err}"])
+        problems: list[str] = []
+        if listed_size != manifest.compressed_bytes:
+            problems.append(f"compressed_bytes differs from the manifest (listed {listed_size}, manifest {manifest.compressed_bytes})")
+        try:
+            key_upper = unit_upper_from_key(key)
+            key_codec = codec_for_key(key).name
+        except KudosArchiveError as err:
+            return ArchiveObjectAudit(key=key, tier=tier, problems=[*problems, f"key unreadable: {err}"])
+        if key_upper != manifest.unit_upper:
+            problems.append(f"unit_upper differs from the manifest (key {key_upper}, manifest {manifest.unit_upper})")
+        if key_codec != manifest.codec:
+            problems.append(f"codec differs from the manifest (key {key_codec}, manifest {manifest.codec})")
+        return ArchiveObjectAudit(key=key, tier=tier, problems=problems)
 
     def audit_object(self, key: str, *, tier: ArchiveTier) -> ArchiveObjectAudit:
         """Return the read-back of the object at ``key`` against its manifest, with any failure recorded as a problem.

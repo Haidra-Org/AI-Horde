@@ -661,7 +661,7 @@ object are in a scratch table in the application database. Qualify the scratch t
 ## Auditing the archive
 
 Preconditions: every `KUDOS_ARCHIVE_*` variable is set where the command runs. End state: every archive object has
-been read back against its manifest, and the catalog has been compared with the listing. Nothing is changed.
+been checked against its manifest, and the catalog has been compared with the listing. Nothing is changed.
 
 1. Run the audit, monthly from cron or by hand:
 
@@ -669,12 +669,16 @@ been read back against its manifest, and the catalog has been compared with the 
    uv run python tools/kudos_ledger_admin.py archive audit > kudos-archive-audit.jsonl
    ```
 
-   Pass `--tier currency` or `--tier statistics` to audit one tier. Each object is downloaded in full, so the audit
-   takes as long as reading the whole tier.
+   Pass `--tier currency` or `--tier statistics` to audit one tier. The audit reads each object's manifest and the
+   listing, not the object itself, so it costs one small read per object. Every object was read back in full once,
+   when it was written. To download every object and compare its digest and control totals with the manifest, add
+   `--read-back`. That reads the whole archive, so keep it for a suspected problem rather than a schedule.
 2. Read the result. The command exits 1 when any line reports a problem. A line with `"kind": "object"` and
-   `"matches_manifest": false` lists its `problems`: an unreadable manifest, an object that does not decompress, or a
-   field that differs from the manifest. A line with `"kind": "missing_object"` is a catalog unit whose object is
-   gone. For a currency unit that is lost history, because currency objects are never evicted. The last line is the
+   `"matches_manifest": false` lists its `problems`: an unreadable manifest, a stored size that differs from the
+   manifest, a manifest whose range or codec belongs to another key, and with `--read-back` an object that does not
+   decompress or a field that differs from the manifest. For one object, `archive restore` into a scratch table
+   (section "Restoring an archived partition into a scratch table") reads it back in full. A line with
+   `"kind": "missing_object"` is a catalog unit whose object is gone. For a currency unit that is lost history, because currency objects are never evicted. The last line is the
    summary. Verify: the exit status is 0 and the summary has `"problems": 0`. The summary's `noncurrent_bytes` and
    `delete_markers` map each tier to the storage still held by noncurrent object versions and to its delete markers.
    They grow after an eviction or a re-export in a versioned bucket until a lifecycle rule expires the old versions.

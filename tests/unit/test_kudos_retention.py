@@ -643,6 +643,10 @@ class _FakeObjectStore:
         self.objects: dict[str, bytes] = {}
         self.uploads: dict[str, tuple[str, datetime, dict[int, bytes]]] = {}
         self.fail_uploads = False
+        # Object reads, manifests excluded, so a test can tell whether an audit downloaded objects.
+        self.object_reads: list[str] = []
+        # Serves every object with its last byte flipped, as a read of a damaged object would.
+        self.corrupt_object_reads = False
         # Unversioned by default, refusing version listings the way a store without versioning support does.
         self.versioned = False
         self.noncurrent_versions: list[tuple[str, int]] = []
@@ -694,10 +698,17 @@ class _FakeObjectStore:
         return ClientError({"Error": {"Code": "NoSuchKey", "Message": key}}, operation_name)
 
     def get_object(self, **kwargs: Any) -> dict[str, Any]:
+        from horde.kudos_archive import ARCHIVE_MANIFEST_SUFFIX
+
         key = str(kwargs["Key"])
         if key not in self.objects:
             raise self._missing(key, "GetObject")
-        return {"Body": _FakeBody(self.objects[key])}
+        payload = self.objects[key]
+        if not key.endswith(ARCHIVE_MANIFEST_SUFFIX):
+            self.object_reads.append(key)
+            if self.corrupt_object_reads:
+                payload = payload[:-1] + bytes([payload[-1] ^ 0xFF])
+        return {"Body": _FakeBody(payload)}
 
     def head_object(self, **kwargs: Any) -> dict[str, Any]:
         key = str(kwargs["Key"])
@@ -2080,7 +2091,7 @@ def test_dropped_statistics_unit_keeps_the_key_of_a_vanished_dump_so_the_audit_r
     db_session: scoped_session[Session],
     make_partition: Callable[..., str],
 ) -> None:
-    from horde.database.kudos_retention import MissingArchiveObject, audit_archive
+    from horde.database.kudos_retention import MissingArchiveObject, audit_archive_metadata
 
     partition, store, archive = _dumped_statistics_week(db_session, make_partition)
     assert _run(archive).to_state == KudosRetentionState.DROPPED
@@ -2089,7 +2100,7 @@ def test_dropped_statistics_unit_keeps_the_key_of_a_vanished_dump_so_the_audit_r
     for _ in range(2):
         _run(archive)
         assert _unit_of(db_session, partition).object_key == key
-    missing = [record for record in audit_archive(archive) if isinstance(record, MissingArchiveObject)]
+    missing = [record for record in audit_archive_metadata(archive) if isinstance(record, MissingArchiveObject)]
     assert [(record.object_key, record.state) for record in missing] == [(key, KudosRetentionState.DROPPED)]
 
 
@@ -2098,7 +2109,7 @@ def test_eviction_keeps_the_dumps_of_units_not_dropped_and_clears_the_keys_it_de
     make_partition: Callable[..., str],
 ) -> None:
     """Evicted dumps are not reported as lost, and a dump whose raw rows are still online is never evicted."""
-    from horde.database.kudos_retention import MissingArchiveObject, audit_archive, evict_statistics_dumps
+    from horde.database.kudos_retention import MissingArchiveObject, audit_archive_metadata, evict_statistics_dumps
 
     dropped_partition = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
     held_partition = make_partition("kudos_stat_events", MONDAY + WEEK, MONDAY + 2 * WEEK)
@@ -2119,7 +2130,7 @@ def test_eviction_keeps_the_dumps_of_units_not_dropped_and_clears_the_keys_it_de
     assert held_key in store.objects and dropped_key not in store.objects
     assert _unit_of(db_session, dropped_partition).object_key is None
     assert _unit_of(db_session, held_partition).object_key == held_key
-    assert [record for record in audit_archive(archive) if isinstance(record, MissingArchiveObject)] == []
+    assert [record for record in audit_archive_metadata(archive) if isinstance(record, MissingArchiveObject)] == []
     assert _run(archive, hold_drops=True).outcome == RetentionTickOutcome.IDLE
     assert _unit_of(db_session, held_partition).state == KudosRetentionState.DUMPED
 
@@ -2780,11 +2791,11 @@ def test_version_usage_is_unknown_when_the_store_does_not_list_versions() -> Non
     assert archive.version_usage(ArchiveTier.CURRENCY) is None
 
 
-def test_archive_audit_reports_matching_corrupted_and_unmanifested_objects_and_missing_catalog_objects(
+def test_archive_contents_audit_reports_matching_corrupted_and_unmanifested_objects_and_missing_catalog_objects(
     db_session: scoped_session[Session],
     make_partition: Callable[..., str],
 ) -> None:
-    from horde.database.kudos_retention import MissingArchiveObject, audit_archive
+    from horde.database.kudos_retention import MissingArchiveObject, audit_archive_contents
     from horde.kudos_archive import manifest_key
 
     partition = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
@@ -2808,7 +2819,7 @@ def test_archive_audit_reports_matching_corrupted_and_unmanifested_objects_and_m
     # An exported currency unit without a key lost its object, because currency objects are never evicted.
     _seed_catalog_unit(db_session, CURRENCY, "kudos_ledger_p_20200106", MONDAY, MONDAY + WEEK, KudosRetentionState.DROPPED)
 
-    records = list(audit_archive(archive))
+    records = list(audit_archive_contents(archive))
     audits = {record.key: record for record in records if not isinstance(record, MissingArchiveObject)}
     assert list(audits) == [good_key, corrupted_key, unmanifested_key]
     assert audits[good_key].matches_manifest
@@ -2825,14 +2836,101 @@ def test_archive_audit_reports_matching_corrupted_and_unmanifested_objects_and_m
 
     resumed = [
         record.key
-        for record in audit_archive(archive, tiers=[ArchiveTier.STATISTICS], since_key=good_key)
+        for record in audit_archive_contents(archive, tiers=[ArchiveTier.STATISTICS], since_key=good_key)
         if not isinstance(record, MissingArchiveObject)
     ]
     assert resumed == [corrupted_key, unmanifested_key]
-    currency_only = list(audit_archive(archive, tiers=[ArchiveTier.CURRENCY]))
+    currency_only = list(audit_archive_contents(archive, tiers=[ArchiveTier.CURRENCY]))
     assert [(record.dataset, record.object_key) for record in currency_only if isinstance(record, MissingArchiveObject)] == [
         (CURRENCY, None)
     ]
+
+
+def test_archive_metadata_audit_checks_manifests_and_sizes_without_reading_objects(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+) -> None:
+    from horde.database.kudos_retention import MissingArchiveObject, audit_archive_metadata
+    from horde.kudos_archive import manifest_key
+
+    partition = make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
+    later_partition = make_partition("kudos_stat_events", MONDAY + WEEK, MONDAY + 2 * WEEK)
+    db_session.add_all([_stat_event(MONDAY + timedelta(hours=1), "2"), _stat_event(MONDAY + WEEK + timedelta(hours=1), "3")])
+    db_session.commit()
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    states = [_run(archive, hold_drops=True).to_state for _ in range(4)]
+    assert states == [KudosRetentionState.ROLLED_UP, KudosRetentionState.DUMPED] * 2
+    good_key = _unit_of(db_session, partition).object_key
+    later_key = _unit_of(db_session, later_partition).object_key
+    stored = store.objects[good_key]
+    week_range = f"{MONDAY:%Y%m%dT%H%M%S}_{MONDAY + WEEK:%Y%m%dT%H%M%S}"
+    # Damage that keeps the size is left to the read-back audit.
+    flipped = stored[:-1] + bytes([stored[-1] ^ 0xFF])
+    flipped_key = _store_statistics_object(archive, store, f"kudos_stat_events_p_flipped/{week_range}", flipped)
+    store.objects[manifest_key(flipped_key)] = store.objects[manifest_key(good_key)]
+    truncated_key = _store_statistics_object(archive, store, f"kudos_stat_events_p_truncated/{week_range}", stored[:-1])
+    store.objects[manifest_key(truncated_key)] = store.objects[manifest_key(good_key)]
+    # A manifest copied from another unit names that unit's range.
+    store.objects[manifest_key(later_key)] = store.objects[manifest_key(good_key)]
+    unmanifested_key = _store_statistics_object(archive, store, f"kudos_stat_events_p_nomanifest/{week_range}", stored)
+    store.object_reads.clear()
+
+    records = list(audit_archive_metadata(archive))
+
+    assert store.object_reads == []
+    audits = {record.key: record for record in records if not isinstance(record, MissingArchiveObject)}
+    assert audits[good_key].matches_manifest
+    assert (audits[good_key].row_count, audits[good_key].compressed_bytes) == (None, None)
+    assert audits[flipped_key].matches_manifest
+    assert any(problem.startswith("compressed_bytes differs") for problem in audits[truncated_key].problems)
+    assert any(problem.startswith("unit_upper differs") for problem in audits[later_key].problems)
+    assert audits[unmanifested_key].problems[0].startswith("manifest unreadable")
+    assert [record for record in records if isinstance(record, MissingArchiveObject)] == []
+
+
+@pytest.mark.parametrize("damage", ["object_bytes", "control_totals"])
+def test_statistics_dump_reads_the_object_back_and_retries_a_damaged_upload(
+    db_session: scoped_session[Session],
+    make_partition: Callable[..., str],
+    monkeypatch: pytest.MonkeyPatch,
+    damage: str,
+) -> None:
+    import dataclasses
+
+    from horde.kudos_archive import KudosArchive
+
+    make_partition("kudos_stat_events", MONDAY, MONDAY + WEEK)
+    db_session.add(_stat_event(MONDAY + timedelta(hours=1), "2"))
+    db_session.commit()
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    assert _run(archive).to_state == KudosRetentionState.ROLLED_UP
+    if damage == "object_bytes":
+        store.corrupt_object_reads = True
+    else:
+        stored_manifest = KudosArchive.get_manifest
+
+        def manifest_with_another_row_count(self: Any, key: str) -> Any:
+            manifest = stored_manifest(self, key)
+            return dataclasses.replace(manifest, row_count=manifest.row_count + 1)
+
+        monkeypatch.setattr(KudosArchive, "get_manifest", manifest_with_another_row_count)
+
+    failed = _run(archive)
+
+    assert failed.to_state == KudosRetentionState.DUMP_FAILED
+    unit = _catalog(db_session)[0]
+    assert (unit.object_key, unit.consecutive_dump_failures) == (None, 1)
+    assert store.object_reads != []
+    if damage == "control_totals":
+        assert "differs from the manifest: fields=row_count" in failed.detail
+
+    store.corrupt_object_reads = False
+    monkeypatch.undo()
+    retried = _run(archive, AFTER_WINDOW + timedelta(days=1))
+    assert (retried.from_state, retried.to_state) == (KudosRetentionState.DUMP_FAILED, KudosRetentionState.DUMPED)
+    assert _catalog(db_session)[0].object_key in store.objects
 
 
 @pytest.mark.parametrize("missing", ["manifest", "unavailable", "size"])
