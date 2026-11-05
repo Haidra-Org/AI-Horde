@@ -535,7 +535,7 @@ class TestSpeedGate:
         eligibility = worker.can_generate(waiting_prompt)
 
         assert [wp.id for wp in popped] == ([waiting_prompt.id] if offered else [])
-        assert eligibility == ([True, None] if offered else [False, "lease_speed"])
+        assert eligibility == ((True, None) if offered else (False, "lease_speed"))
 
     @pytest.mark.parametrize(
         "capable_worker_state",
@@ -576,7 +576,7 @@ class TestSpeedGate:
         popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
 
         assert [wp.id for wp in popped] == [waiting_prompt.id]
-        assert worker.can_generate(waiting_prompt) == [True, None]
+        assert worker.can_generate(waiting_prompt) == (True, None)
 
     @pytest.mark.parametrize(
         ("faster_worker_features", "slow_worker_offered"),
@@ -608,7 +608,7 @@ class TestSpeedGate:
         popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
 
         assert [wp.id for wp in popped] == ([waiting_prompt.id] if slow_worker_offered else [])
-        assert worker.can_generate(waiting_prompt) == ([True, None] if slow_worker_offered else [False, "lease_speed"])
+        assert worker.can_generate(waiting_prompt) == ((True, None) if slow_worker_offered else (False, "lease_speed"))
 
     @pytest.mark.parametrize(
         ("faster_worker_transports", "slow_worker_offered"),
@@ -651,7 +651,7 @@ class TestSpeedGate:
         popped = text_functions.get_sorted_text_wp_filtered_to_worker(worker, [MODEL_NAME])
 
         assert [wp.id for wp in popped] == ([waiting_prompt.id] if slow_worker_offered else [])
-        assert worker.can_generate(waiting_prompt) == ([True, None] if slow_worker_offered else [False, "lease_speed"])
+        assert worker.can_generate(waiting_prompt) == ((True, None) if slow_worker_offered else (False, "lease_speed"))
 
     def test_an_unmeasured_worker_counts_as_capable_at_the_assumed_speed(
         self,
@@ -672,8 +672,8 @@ class TestSpeedGate:
         popped = text_functions.get_sorted_text_wp_filtered_to_worker(slow_worker, [MODEL_NAME])
 
         assert [wp.id for wp in popped] == [over_request.id]
-        assert slow_worker.can_generate(within_request) == [False, "lease_speed"]
-        assert slow_worker.can_generate(over_request) == [True, None]
+        assert slow_worker.can_generate(within_request) == (False, "lease_speed")
+        assert slow_worker.can_generate(over_request) == (True, None)
 
     def test_a_slow_worker_is_refused_a_chat_request_a_capable_worker_can_take_and_assigned_a_legacy_one(
         self,
@@ -697,7 +697,7 @@ class TestSpeedGate:
 
         generation_request_ids = [generation.wp_id for generation in db.session.query(TextProcessingGeneration).all()]
         assert [wp.id for wp in popped] == [legacy_request.id]
-        assert worker.can_generate(chat_request) == [False, "lease_speed"]
+        assert worker.can_generate(chat_request) == (False, "lease_speed")
         assert generation_request_ids == [legacy_request.id]
 
     def test_only_a_chat_declaration_above_the_capacity_makes_a_pop_capacity_limited(
@@ -945,9 +945,9 @@ class TestTrustedOnlyRequests:
         trusted_verdict = worker.can_generate(waiting_prompt)
 
         assert [wp.id for wp in untrusted_popped] == []
-        assert untrusted_verdict == [False, "untrusted"]
+        assert untrusted_verdict == (False, "untrusted")
         assert [wp.id for wp in trusted_popped] == [waiting_prompt.id]
-        assert trusted_verdict == [True, None]
+        assert trusted_verdict == (True, None)
 
 
 _FEATURE_CONTAINMENT_CASES = [

@@ -17,7 +17,7 @@ from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from horde.apis.v2.stable import ImageJobPop, parsers
 from horde.classes.base.user import UserRoleTypes
 from horde.classes.base.waiting_prompt import WPModels
-from horde.classes.base.worker import WorkerModel
+from horde.classes.base.worker import EligibilityVerdict, WorkerModel
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.flask import db
@@ -73,10 +73,29 @@ def _make_worker(user: Any) -> ImageWorker:
     return worker
 
 
-def _judge_with_model_names(worker: ImageWorker, request: ImageWaitingPrompt, model_names: list[str]) -> list[bool | str | None]:
+def _judge_with_model_names(worker: ImageWorker, request: ImageWaitingPrompt, model_names: list[str]) -> EligibilityVerdict:
     """Evaluate the worker as if it advertised ``model_names``, the way the availability query supplies them."""
     worker_inputs = replace(worker.get_eligibility_inputs(request), model_names=tuple(model_names))
     return worker.can_generate_with_eligibility_inputs(request, request.get_eligibility_inputs(), worker_inputs)
+
+
+class _CapabilitiesExceptOne:
+    """Represents a bridge release that has every capability except one."""
+
+    def __init__(self, missing_capability: str | None) -> None:
+        self.missing_capability: str | None = missing_capability
+        """The capability the release lacks, or None for a release that lacks none."""
+
+    def __contains__(self, capability: object) -> bool:
+        return capability != self.missing_capability
+
+
+def _give_bridge_every_capability_except(monkeypatch: pytest.MonkeyPatch, missing_capability: str | None) -> None:
+    """Make the worker's bridge release report every capability except ``missing_capability``."""
+    monkeypatch.setattr(
+        "horde.classes.stable.worker.get_bridge_capabilities",
+        lambda _bridge_agent: _CapabilitiesExceptOne(missing_capability),
+    )
 
 
 def _make_pair(make_user: Any, make_user_role: Any) -> tuple[ImageWaitingPrompt, ImageWorker]:
@@ -140,7 +159,7 @@ def test_runtime_gate_rejects_worker_pop_constraints(
     for name, value in worker_change.items():
         setattr(worker, name, value)
 
-    assert _judge_with_model_names(worker, request, model_names) == [False, reason]
+    assert _judge_with_model_names(worker, request, model_names) == (False, reason)
 
 
 @pytest.mark.parametrize(
@@ -166,12 +185,9 @@ def test_runtime_gate_rejects_missing_bridge_capability(
     for name, value in request_change.items():
         setattr(request, name, value)
     monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
-    monkeypatch.setattr(
-        "horde.classes.stable.worker.check_bridge_capability",
-        lambda checked_capability, _bridge_agent: checked_capability != capability,
-    )
+    _give_bridge_every_capability_except(monkeypatch, capability)
 
-    assert _judge_with_model_names(worker, request, [_MODEL]) == [False, "bridge_version"]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == (False, "bridge_version")
 
 
 def test_runtime_gate_allows_r2_request_without_bridge_capability(
@@ -183,12 +199,9 @@ def test_runtime_gate_allows_r2_request_without_bridge_capability(
     request, worker = _make_pair(make_user, make_user_role)
     request.r2 = True
     monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
-    monkeypatch.setattr(
-        "horde.classes.stable.worker.check_bridge_capability",
-        lambda checked_capability, _bridge_agent: checked_capability != "r2",
-    )
+    _give_bridge_every_capability_except(monkeypatch, "r2")
 
-    assert _judge_with_model_names(worker, request, [_MODEL]) == [True, None]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == (True, None)
 
 
 @pytest.mark.parametrize(
@@ -212,9 +225,9 @@ def test_runtime_gate_honors_worker_capability_opt_outs(
     for name, value in worker_change.items():
         setattr(worker, name, value)
     monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
-    monkeypatch.setattr("horde.classes.stable.worker.check_bridge_capability", lambda *_args: True)
+    _give_bridge_every_capability_except(monkeypatch, None)
 
-    assert _judge_with_model_names(worker, request, [_MODEL]) == [False, reason]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == (False, reason)
 
 
 def test_runtime_gate_rejects_control_strength_on_a_bridge_that_cannot_read_it(
@@ -227,12 +240,9 @@ def test_runtime_gate_rejects_control_strength_on_a_bridge_that_cannot_read_it(
     request, worker = _make_pair(make_user, make_user_role)
     request.gen_payload = {**request.params, "control_type": "canny", "control_strength": 0.8}
     monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
-    monkeypatch.setattr(
-        "horde.classes.stable.worker.check_bridge_capability",
-        lambda checked_capability, _bridge_agent: checked_capability != "control_strength",
-    )
+    _give_bridge_every_capability_except(monkeypatch, "control_strength")
 
-    assert _judge_with_model_names(worker, request, [_MODEL]) == [False, "bridge_version"]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == (False, "bridge_version")
 
 
 def test_runtime_gate_allows_control_strength_on_a_bridge_that_reads_it(
@@ -244,9 +254,9 @@ def test_runtime_gate_allows_control_strength_on_a_bridge_that_reads_it(
     request, worker = _make_pair(make_user, make_user_role)
     request.gen_payload = {**request.params, "control_type": "canny", "control_strength": 0.8}
     monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
-    monkeypatch.setattr("horde.classes.stable.worker.check_bridge_capability", lambda *_args: True)
+    _give_bridge_every_capability_except(monkeypatch, None)
 
-    assert _judge_with_model_names(worker, request, [_MODEL]) == [True, None]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == (True, None)
 
 
 def test_runtime_gate_judges_baseline_features_on_the_requested_models_only(
@@ -271,11 +281,11 @@ def test_runtime_gate_judges_baseline_features_on_the_requested_models_only(
     worker.bridge_agent = "AI Horde Worker reGen:18.4.1:https://github.com/Haidra-Org/horde-worker-reGen"
     monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
 
-    assert _judge_with_model_names(worker, request, [_MODEL, flux_model]) == [True, None]
+    assert _judge_with_model_names(worker, request, [_MODEL, flux_model]) == (True, None)
 
     request.models = [WPModels(model=flux_model, wp_id=request.id)]
     db.session.commit()
-    assert _judge_with_model_names(worker, request, [_MODEL, flux_model]) == [False, "bridge_version"]
+    assert _judge_with_model_names(worker, request, [_MODEL, flux_model]) == (False, "bridge_version")
 
 
 def _reload_policy_worker(make_user: Any, make_user_role: Any, *, debounced: bool = True) -> ImageWorker:
@@ -330,12 +340,12 @@ def _check_in_image_pop(
 @pytest.mark.parametrize(
     ("require_upfront_kudos", "trusted", "priority", "kudos", "expected"),
     [
-        (True, False, False, 10, [False, "kudos"]),
-        (True, True, False, 10, [True, None]),
-        (True, False, True, 10, [True, None]),
-        (False, False, False, 10, [True, None]),
-        (True, False, False, 124, [False, "kudos"]),
-        (True, False, False, 125, [True, None]),
+        (True, False, False, 10, (False, "kudos")),
+        (True, True, False, 10, (True, None)),
+        (True, False, True, 10, (True, None)),
+        (False, False, False, 10, (True, None)),
+        (True, False, False, 124, (False, "kudos")),
+        (True, False, False, 125, (True, None)),
     ],
     ids=[
         "insufficient-kudos",
@@ -357,7 +367,7 @@ def test_image_pop_applies_policy_to_a_fresh_worker(
     trusted: bool,
     priority: bool,
     kudos: int,
-    expected: list[bool | str | None],
+    expected: tuple[bool, str | None],
 ) -> None:
     worker = _reload_policy_worker(make_user, make_user_role, debounced=debounced)
     requester = make_user(kudos=kudos)
@@ -542,10 +552,103 @@ def test_next_debounced_pop_replaces_previous_policy_inputs(
     request = _make_request(requester)
     request.kudos = 100
     _check_in_image_pop(app, worker, require_upfront_kudos=True, priority_usernames=[requester.get_unique_alias()])
-    assert _judge_with_model_names(worker, request, [_MODEL]) == [True, None]
+    assert _judge_with_model_names(worker, request, [_MODEL]) == (True, None)
 
     _check_in_image_pop(app, worker, require_upfront_kudos=require_upfront_kudos)
 
     assert worker.require_upfront_kudos is require_upfront_kudos
     assert worker.prioritized_users == []
-    assert _judge_with_model_names(worker, request, [_MODEL]) == ([False, "kudos"] if require_upfront_kudos else [True, None])
+    assert _judge_with_model_names(worker, request, [_MODEL]) == ((False, "kudos") if require_upfront_kudos else (True, None))
+
+
+def _make_flux_holding_pair(make_user: Any, make_user_role: Any, monkeypatch: pytest.MonkeyPatch) -> tuple[ImageWaitingPrompt, ImageWorker]:
+    """Return an SD1 request and a worker that also holds a flux model, on a bridge release without flux."""
+    flux_model = "flux-model"
+    seed_image_reference(
+        monkeypatch,
+        {
+            _MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1,
+            flux_model: KNOWN_IMAGE_GENERATION_BASELINE.flux_1,
+        },
+    )
+    request, worker = _make_pair(make_user, make_user_role)
+    db.session.add(WorkerModel(worker_id=worker.id, model=flux_model))
+    db.session.commit()
+    monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
+    _give_bridge_every_capability_except(monkeypatch, "flux")
+    return request, worker
+
+
+def test_a_worker_holding_a_model_its_bridge_cannot_run_cannot_serve_any_request(
+    db_session: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worker-only rule and the per-request rule refuse the worker with the same reason."""
+    request, worker = _make_flux_holding_pair(make_user, make_user_role, monkeypatch)
+    worker_inputs = worker.read_eligibility_inputs()
+
+    assert worker.can_generate_any(worker_inputs) == (False, "bridge_version")
+    assert worker.can_generate_with_eligibility_inputs(request, request.get_eligibility_inputs(), worker_inputs) == (
+        False,
+        "bridge_version",
+    )
+
+
+def test_a_worker_whose_bridge_runs_its_models_can_serve_some_request(
+    db_session: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, worker = _make_pair(make_user, make_user_role)
+    _give_bridge_every_capability_except(monkeypatch, None)
+
+    assert worker.can_generate_any(worker.read_eligibility_inputs()) == (True, None)
+
+
+def test_the_pop_inputs_hold_the_bridge_capabilities_and_the_model_baselines(
+    db_session: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, worker = _make_flux_holding_pair(make_user, make_user_role, monkeypatch)
+    capabilities = frozenset({"img2img", "lora"})
+    monkeypatch.setattr("horde.classes.stable.worker.get_bridge_capabilities", lambda _bridge_agent: capabilities)
+
+    worker_inputs = worker.read_eligibility_inputs(maintenance_user_ids=[worker.user_id])
+
+    assert worker_inputs.bridge_capabilities == capabilities
+    assert dict(worker_inputs.model_baselines) == {
+        _MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1,
+        "flux-model": KNOWN_IMAGE_GENERATION_BASELINE.flux_1,
+    }
+    assert worker_inputs.maintenance_user_ids == frozenset({worker.user_id})
+    assert worker_inputs.blacklist_words is None
+
+
+@pytest.mark.parametrize("holds_flux_on_old_bridge", [False, True], ids=["servable", "flux-on-old-bridge"])
+def test_inputs_without_the_derived_facts_give_the_same_verdict(
+    db_session: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    holds_flux_on_old_bridge: bool,
+) -> None:
+    """Inputs built by the availability query, without capabilities or baselines, are judged like the pop's inputs."""
+    if holds_flux_on_old_bridge:
+        request, worker = _make_flux_holding_pair(make_user, make_user_role, monkeypatch)
+    else:
+        request, worker = _make_pair(make_user, make_user_role)
+        monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
+        _give_bridge_every_capability_except(monkeypatch, None)
+    pop_inputs = worker.get_eligibility_inputs(request)
+    query_inputs = replace(pop_inputs, bridge_capabilities=None, model_baselines={})
+    request_inputs = request.get_eligibility_inputs()
+
+    pop_verdict = worker.can_generate_with_eligibility_inputs(request, request_inputs, pop_inputs)
+
+    assert pop_verdict == ((False, "bridge_version") if holds_flux_on_old_bridge else (True, None))
+    assert worker.can_generate_with_eligibility_inputs(request, request_inputs, query_inputs) == pop_verdict

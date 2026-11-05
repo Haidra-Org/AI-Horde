@@ -14,6 +14,7 @@ from flask_restx import marshal
 
 from horde.apis.v2 import base
 from horde.apis.v2.stable import models
+from horde.classes.base.worker import EligibilityVerdict
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 
 pytestmark = pytest.mark.unit
@@ -56,11 +57,20 @@ def test_pop_continues_after_an_assignment_returns_none(
     next_candidate_assignable: bool,
 ) -> None:
     """An assignment refusal permits later candidates or the normal empty response."""
-    candidates = [SimpleNamespace(id=name, needs_gen=lambda: True) for name in ("first", "second")]
+    candidates = [
+        SimpleNamespace(id=name, needs_gen=lambda: True, get_eligibility_inputs=lambda: SimpleNamespace())
+        for name in ("first", "second")
+    ]
     pop = base.JobPopTemplate()
     pop.args = SimpleNamespace(priority_usernames=[], models=[])
     pop.user = make_user()
-    pop.worker = SimpleNamespace(id="worker", maintenance=False, can_generate=lambda _wp: [True, None])
+    pop.worker = SimpleNamespace(
+        id="worker",
+        maintenance=False,
+        read_eligibility_inputs=Mock(return_value=SimpleNamespace()),
+        can_generate_any=Mock(return_value=EligibilityVerdict.accepted()),
+        can_generate_with_eligibility_inputs=Mock(return_value=EligibilityVerdict.accepted()),
+    )
     pop.skipped = {}
     monkeypatch.setattr(pop, "validate", lambda: None)
     monkeypatch.setattr(pop, "check_in", lambda: None)

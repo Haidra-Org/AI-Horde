@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
-from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATIONS, ChatFeature, ChatLimitField
+from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATIONS, ChatFeature
 from horde_sdk.worker.chat_declaration import IMAGE_PART_TRANSPORTS, ChatImageTransport
 from sqlalchemy import JSON, ScalarSelect, case, literal, or_
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
@@ -26,6 +26,8 @@ from horde.bridge_reference import (
 from horde.classes.base.sql_constructs import TextArrayContainsAll
 from horde.classes.base.worker import (
     SPEED_BASELINE_THINGS_PER_SEC,
+    EligibilitySkipReason,
+    EligibilityVerdict,
     Worker,
     WorkerEligibilityInputs,
     worker_ordered_names_clause,
@@ -426,25 +428,30 @@ class TextWorker(Worker):
         # The uptime is based on both how much context they provide, as well as how many parameters they're serving
         return round(base_kudos * param_multiplier, 2)
 
-    def get_eligibility_inputs(self, waiting_prompt: Any) -> WorkerEligibilityInputs:
+    @override
+    def read_eligibility_inputs(self, *, maintenance_user_ids: Collection[int] = ()) -> WorkerEligibilityInputs:
         """Return the worker-side eligibility inputs, including the worker's softprompt names.
 
         Args:
-            waiting_prompt: The text request being evaluated.
+            maintenance_user_ids: The users besides the owner whose requests the worker accepts while in maintenance.
 
         Returns:
             The worker's eligibility inputs.
         """
-        eligibility_inputs = super().get_eligibility_inputs(waiting_prompt)
+        eligibility_inputs = super().read_eligibility_inputs(maintenance_user_ids=maintenance_user_ids)
         return replace(eligibility_inputs, softprompt_names=tuple(self.get_softprompt_names()))
 
+    @override
     def can_generate_with_eligibility_inputs(
         self,
         waiting_prompt: Any,
         request_inputs: RequestEligibilityInputs,
         worker_inputs: WorkerEligibilityInputs,
-    ) -> list[bool | str | None]:
+    ) -> EligibilityVerdict:
         """Evaluate a text request from already loaded eligibility inputs.
+
+        The shared rules run first, then the text rules in a fixed order. The first rule that refuses the worker
+        gives the reason.
 
         Args:
             waiting_prompt: Text request being evaluated.
@@ -452,54 +459,81 @@ class TextWorker(Worker):
             worker_inputs: This worker's eligibility inputs.
 
         Returns:
-            Eligibility followed by the existing rejection reason, if any.
+            The verdict, with the reason when the worker is refused.
         """
+        shared_verdict = super().can_generate_with_eligibility_inputs(waiting_prompt, request_inputs, worker_inputs)
+        if not shared_verdict.eligible:
+            return shared_verdict
+        skip_reason = self._text_refusal_reason(waiting_prompt, request_inputs, worker_inputs)
+        if skip_reason is not None:
+            return EligibilityVerdict.refused(skip_reason)
+        return EligibilityVerdict.accepted()
 
-        can_generate = super().can_generate_with_eligibility_inputs(waiting_prompt, request_inputs, worker_inputs)
-        if not can_generate[0]:
-            return [can_generate[0], can_generate[1]]
-        model_names = list(worker_inputs.model_names)
-        requested_models = list(request_inputs.model_names)
-        if requested_models and request_inputs.model_name_set.isdisjoint(model_names):
-            return [False, "models"]
+    def _text_refusal_reason(
+        self,
+        waiting_prompt: Any,
+        request_inputs: RequestEligibilityInputs,
+        worker_inputs: WorkerEligibilityInputs,
+    ) -> EligibilitySkipReason | None:
+        """Return why this worker cannot serve a text request, if it cannot.
+
+        Args:
+            waiting_prompt: Text request being evaluated.
+            request_inputs: The request's eligibility inputs.
+            worker_inputs: This worker's eligibility inputs.
+
+        Returns:
+            The skip reason, or None when the text rules pass.
+        """
+        requested_models = request_inputs.model_names
+        does_not_serve_requested_model = bool(requested_models) and request_inputs.model_name_set.isdisjoint(worker_inputs.model_names)
+        if does_not_serve_requested_model:
+            return EligibilitySkipReason.MODELS
         if waiting_prompt.is_chat:
-            chat_refusal = self.chat_refusal_reason(waiting_prompt, requested_models)
-            if chat_refusal is not None:
-                return [False, chat_refusal]
+            declaration_refusal = self.chat_refusal_reason(waiting_prompt, requested_models)
         else:
-            if not self.accepts_prompt_jobs:
-                return [False, "prompt_jobs"]
-            if self.max_context_length < waiting_prompt.max_context_length:
-                return [False, "max_context_length"]
-            if self.max_length < waiting_prompt.max_length:
-                return [False, "max_length"]
-        if not waiting_prompt.slow_workers and self.speed < get_minimum_text_worker_speed(model_names):
-            return [False, "performance"]
+            declaration_refusal = self._prompt_job_refusal_reason(waiting_prompt)
+        if declaration_refusal is not None:
+            return declaration_refusal
+        too_slow_for_request = not waiting_prompt.slow_workers and self.speed < get_minimum_text_worker_speed(
+            worker_inputs.model_names,
+        )
+        if too_slow_for_request:
+            return EligibilitySkipReason.PERFORMANCE
         # A chat job the worker cannot finish inside the base lease would only be renewed by progress posts, which a
         # worker that never posts does not send. Such a job is left to a worker that finishes it in time while one is
         # online, and is offered to this worker otherwise, so a model served only by slow workers stays servable.
         # A legacy text job is assigned whatever its length. Either over-capacity assignment is recorded at pop.
-        if (
-            waiting_prompt.is_chat
-            and waiting_prompt.max_length > get_text_worker_lease_capacity(self.speed)
-            and waiting_prompt.has_capable_chat_worker()
-        ):
-            return [False, "lease_speed"]
+        # The capable-worker lookup runs only for a chat job that exceeds the lease.
+        exceeds_base_lease = waiting_prompt.is_chat and waiting_prompt.max_length > get_text_worker_lease_capacity(self.speed)
+        if exceeds_base_lease and waiting_prompt.has_capable_chat_worker():
+            return EligibilitySkipReason.LEASE_SPEED
         if waiting_prompt.validated_backends and not is_backed_validated(self.bridge_agent):
-            return [False, "bridge_version"]
-        matching_softprompt = True
-        if waiting_prompt.softprompt:
-            matching_softprompt = False
-            # If a None softprompts has been provided, we always match, since we can always remove the softprompt
-            if waiting_prompt.softprompt == "":
-                matching_softprompt = True
-            if waiting_prompt.softprompt in worker_inputs.softprompt_names:
-                matching_softprompt = True
-        if not matching_softprompt:
-            return [False, "matching_softprompt"]
-        return [True, None]
+            return EligibilitySkipReason.BRIDGE_VERSION
+        # An empty softprompt always matches, because the worker can always remove its softprompt.
+        lacks_requested_softprompt = bool(waiting_prompt.softprompt) and waiting_prompt.softprompt not in worker_inputs.softprompt_names
+        if lacks_requested_softprompt:
+            return EligibilitySkipReason.MATCHING_SOFTPROMPT
+        return None
 
-    def chat_refusal_reason(self, waiting_prompt: Any, requested_models: Sequence[str]) -> str | None:
+    def _prompt_job_refusal_reason(self, waiting_prompt: Any) -> EligibilitySkipReason | None:
+        """Return why this worker cannot serve a text prompt job under its text limits, if it cannot.
+
+        Args:
+            waiting_prompt: The text prompt request.
+
+        Returns:
+            The skip reason, or None when the worker can serve the request.
+        """
+        if not self.accepts_prompt_jobs:
+            return EligibilitySkipReason.PROMPT_JOBS
+        if self.max_context_length < waiting_prompt.max_context_length:
+            return EligibilitySkipReason.MAX_CONTEXT_LENGTH
+        if self.max_length < waiting_prompt.max_length:
+            return EligibilitySkipReason.MAX_LENGTH
+        return None
+
+    def chat_refusal_reason(self, waiting_prompt: Any, requested_models: Sequence[str]) -> EligibilitySkipReason | None:
         """Return why this worker cannot serve a chat request under its chat declaration, if it cannot.
 
         Chat jobs are bounded by the chat limits, never by the text limits, which only bound text jobs.
@@ -515,27 +549,29 @@ class TextWorker(Worker):
             when the backend would clamp the temperature of a request that forwards tools, ``max_context_length`` or
             ``max_length`` when the request exceeds a chat limit, or None when it can serve the request.
         """
-        if not self.accepts_chat_jobs or self.chat_model_id is None:
-            return "chat_jobs"
+        serves_chat = self.accepts_chat_jobs and self.chat_model_id is not None
+        if not serves_chat:
+            return EligibilitySkipReason.CHAT_JOBS
         if requested_models and self.chat_model_id not in requested_models:
-            return "chat_jobs"
+            return EligibilitySkipReason.CHAT_JOBS
         needed_features = set(waiting_prompt.chat_required_features or ())
         if not needed_features <= set(self.chat_features or ()):
-            return "chat_features"
+            return EligibilitySkipReason.CHAT_FEATURES
         if ChatFeature.VISION.value in needed_features and not self.serves_chat_images():
-            return "chat_features"
+            return EligibilitySkipReason.CHAT_FEATURES
         # The SDK's violated_chat_limit defines this rule; the stored projection lets the pop query and this check
         # apply it without loading the request's extras. It holds under every conformance mode.
-        if (
+        backend_would_lower_tools_temperature = (
             waiting_prompt.chat_tools_temperature is not None
             and self.chat_tools_max_temperature is not None
             and waiting_prompt.chat_tools_temperature > self.chat_tools_max_temperature
-        ):
-            return ChatLimitField.TOOLS_MAX_TEMPERATURE.value
+        )
+        if backend_would_lower_tools_temperature:
+            return EligibilitySkipReason.TOOLS_MAX_TEMPERATURE
         if self.chat_max_context_length is None or self.chat_max_context_length < waiting_prompt.max_context_length:
-            return "max_context_length"
+            return EligibilitySkipReason.MAX_CONTEXT_LENGTH
         if self.chat_max_length is None or self.chat_max_length < waiting_prompt.max_length:
-            return "max_length"
+            return EligibilitySkipReason.MAX_LENGTH
         return None
 
     def missing_chat_declarations(self, waiting_prompt: Any) -> set[str]:
