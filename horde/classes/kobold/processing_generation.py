@@ -391,15 +391,15 @@ class TextProcessingGeneration(ProcessingGeneration):
         )
 
     def set_job_ttl(self) -> None:
-        """Persist the base lease, the deadline from pop to submission offered to the worker for this assignment.
+        """Set the base lease, the deadline from pop to submission offered to the worker for this assignment.
 
         The lease does not grow with ``max_length``, since a worker that pops a job and never submits holds it for
         the whole lease. The pop offers a chat job first to the workers whose speed finishes its ``max_length`` inside
         this lease, and a chat job's progress posts extend it up to
-        [`text_job_lease_cap`][horde.classes.kobold.processing_generation.text_job_lease_cap].
+        [`text_job_lease_cap`][horde.classes.kobold.processing_generation.text_job_lease_cap]. The caller's commit
+        persists it with the rest of the assignment.
         """
         self.job_ttl = TEXT_JOB_LEASE_SECONDS
-        db.session.commit()
 
     def _write_stream_lease(self) -> None:
         """Write the stream lease of a chat generation whose client streams the reply.
