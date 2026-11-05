@@ -15,16 +15,15 @@ from horde.logger import logger
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # noqa E731
 
 
-def record_text_statistic(procgen):
-    """Store a finished text generation's statistic row, best-effort.
+def build_text_statistic(procgen) -> "TextGenerationStatistic":
+    """Create the statistic of a text generation without adding it to the session.
 
-    Callers invoke this after the generation and its kudos payout are committed,
-    so a failed insert is logged and rolled back without raising. Raising would
-    fail the worker's submit for a job that is already paid and complete.
+    Args:
+        procgen: The text generation, stored or faulted.
+
+    Returns:
+        The new statistic.
     """
-    # Read before the insert: after a rollback these attributes are expired and
-    # reloading them needs the database that just failed.
-    procgen_id, wp_id, worker_id = procgen.id, procgen.wp_id, procgen.worker_id
     state = ImageGenState.OK
     # Currently there's no way to record cancelled images, but maybe there will be in the future
     if procgen.cancelled:
@@ -43,6 +42,22 @@ def record_text_statistic(procgen):
         style_id=procgen.wp.style_id,
         state=state,
     )
+    return statistic
+
+
+def record_text_statistic(procgen):
+    """Store the statistic of a faulted text generation in its own commit, best-effort.
+
+    A stored submission records its statistic with the rest of the submit statistics, in
+    [`record_submission_statistics`][horde.classes.base.processing_generation.ProcessingGeneration.record_submission_statistics].
+    This path serves a generation that ends without a stored result, faulted by its worker, by a lapsed lease or by
+    an abort, and records one ``FAULTED`` statistic for it. A failed insert is logged and rolled back without
+    raising, since ``fault_and_restart`` commits the fault before it records the statistic.
+    """
+    # Read before the insert: after a rollback these attributes are expired and
+    # reloading them needs the database that just failed.
+    procgen_id, wp_id, worker_id = procgen.id, procgen.wp_id, procgen.worker_id
+    statistic = build_text_statistic(procgen)
     try:
         db.session.add(statistic)
         db.session.commit()

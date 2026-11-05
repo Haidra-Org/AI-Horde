@@ -87,7 +87,6 @@ from horde.metrics import (
     submit_get_progen_duration,
     submit_kudos,
     submit_outcomes,
-    submit_record_fulfilment_stat_duration,
     submit_set_gen_duration,
     waitress_metrics,
 )
@@ -1448,13 +1447,12 @@ class JobSubmitTemplate(Resource):
 
     def set_generation(self):
         """Set to its own function to it can be overwritten depending on the class"""
-        record_fulfilment_t0 = time.monotonic()
-        things_per_sec = stats.record_fulfilment(self.procgen, self.get_submitted_things_count())
-        submit_record_fulfilment_stat_duration.record(time.monotonic() - record_fulfilment_t0, {"horde.gentype": self.gentype})
+        submitted_things = self.get_submitted_things_count()
         gen_metadata = getattr(self.args, "gen_metadata", None)
         kwargs: dict[str, object] = {
             "generation": self.args["generation"],
-            "things_per_sec": things_per_sec,
+            "things_per_sec": stats.calculate_things_per_sec(things=submitted_things, start_time=self.procgen.start_time),
+            "submitted_things": submitted_things,
             "seed": self.args.seed,
             "state": self.args.state,
         }

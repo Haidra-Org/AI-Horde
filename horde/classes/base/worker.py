@@ -493,6 +493,8 @@ class WorkerTemplate(db.Model):
         amount: int = 1,
         reason: Suspicions = Suspicions.WORKER_PROFANITY,
         formats: list[Any] | None = None,
+        *,
+        commit: bool = True,
     ) -> None:
         """Record suspicion in the resettable scores and in the retained worker history.
 
@@ -500,6 +502,9 @@ class WorkerTemplate(db.Model):
             amount: Suspicion amount attributed to the owner.
             reason: Suspicion category.
             formats: Values interpolated into the category's diagnostic template.
+            commit: Let the owner's ``report_suspicion`` commit the suspicion rows at once. A submit's settlement
+                passes False, so the suspicion rows and the automatic pause are committed or rolled back with the
+                reward.
         """
         if not formats:
             formats = []
@@ -519,7 +524,7 @@ class WorkerTemplate(db.Model):
                 detail=reason_log,
             ),
         )
-        self.user.report_suspicion(amount, reason, formats)
+        self.user.report_suspicion(amount, reason, formats, commit=commit)
         if reason:
             logger.warning(f"Worker '{self.id}' suspicion increased. Reason: {reason_log}")
         if self.is_suspicious() and not self.paused:
@@ -721,19 +726,22 @@ class WorkerTemplate(db.Model):
         # separately via record_performance() after the main commit so it does not
         # lengthen the hot `users` row lock hold. See record_performance().
         if things_per_sec / hv.thing_divisors[self.wtype] > hv.suspicion_thresholds[self.wtype]:
+            # Committed with the settlement. A commit here would split the settlement and store the
+            # reward without the requester's charge if the rest of the settlement then failed.
             self.report_suspicion(
                 reason=Suspicions.UNREASONABLY_FAST,
                 formats=[round(things_per_sec / hv.thing_divisors[self.wtype], 2)],
+                commit=False,
             )
 
     def record_performance(self, things_per_sec: float, commit: bool = True) -> None:
         """Append a worker performance sample.
 
-        Split out of _record_contribution so it runs in its own transaction after
-        the submission's main commit, keeping the worker_performances insert out of
-        the window where the hot `users` rows are locked. Performance samples are
-        telemetry, so persisting them separately (and losing at most one sample on a
-        crash between commits) is safe.
+        Split out of _record_contribution so it runs after the submission's main
+        commit, in the submit statistics transaction, keeping the worker_performances
+        insert out of the window where the hot `users` rows are locked. Performance
+        samples are telemetry, so persisting them separately (and losing at most one
+        sample on a crash between commits) is safe.
 
         This is an append only: retaining the most recent samples and refreshing the
         materialized ``Worker.speed`` average from them belong to

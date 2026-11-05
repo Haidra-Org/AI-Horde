@@ -1238,7 +1238,16 @@ class User(db.Model):
         # logger.debug([allowed_concurrency,models_dict.get(model_name,{"count":0})["count"]])
         return allowed_concurrency
 
-    def report_suspicion(self, amount=1, reason=Suspicions.USERNAME_PROFANITY, formats=None):
+    def report_suspicion(self, amount=1, reason=Suspicions.USERNAME_PROFANITY, formats=None, *, commit: bool = True):
+        """Record a suspicion against this user. An anonymous user is never suspicious.
+
+        Args:
+            amount: Suspicion amount; one row is recorded regardless.
+            reason: Suspicion category.
+            formats: Values interpolated into the category's diagnostic template.
+            commit: Commit the suspicion at once. A caller inside a larger transaction, such as a submit's
+                settlement, passes False so the suspicion is committed or rolled back with that transaction.
+        """
         if not formats:
             formats = []
         # Anon is never considered suspicious
@@ -1248,7 +1257,8 @@ class User(db.Model):
             return
         new_suspicion = UserSuspicions(user_id=self.id, suspicion_id=int(reason))
         db.session.add(new_suspicion)
-        db.session.commit()
+        if commit:
+            db.session.commit()
         if reason:
             reason_log = SUSPICION_LOGS[reason].format(*formats)
             logger.warning(f"User '{self.id}' suspicion increased to {len(self.suspicions)}. Reason: {reason_log}")

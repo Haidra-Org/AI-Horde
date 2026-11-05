@@ -31,26 +31,52 @@ class FulfillmentPerformance(db.Model):
     created = db.Column(db.DateTime, default=datetime.utcnow)
 
 
-def record_fulfilment(procgen, things=None):
-    # TODO: Refactor this so that I don't need to calulcate it in advance for LLMs
-    # This will require changing how set_generation() works
-    if things is None:
-        things = procgen.wp.things
-    starting_time = procgen.start_time
-    model = procgen.model
-    thing_type = procgen.procgen_type
-    seconds_taken = (datetime.utcnow() - starting_time).total_seconds()
+def calculate_things_per_sec(*, things: float, start_time: datetime) -> float:
+    """Return the speed of a submitted generation, from its things and the time since its job was assigned.
+
+    This only reads the clock. Settlement rewards the worker on this speed, so a submit measures it before the
+    completion claim, and its samples are stored only once the claim succeeded.
+
+    Args:
+        things: The things the submitted generation delivered.
+        start_time: When the job was assigned to the worker.
+
+    Returns:
+        The things per second rounded to one decimal, or 1 when no time has passed.
+    """
+    seconds_taken = (datetime.utcnow() - start_time).total_seconds()
     if seconds_taken == 0:
-        things_per_sec = 1
-    else:
-        things_per_sec = round(things / seconds_taken, 1)
-    new_performance = ModelPerformance(model=model, performance=things_per_sec)
-    new_fulfillment = FulfillmentPerformance(things=things, thing_type=thing_type)
-    db.session.add(new_performance)
-    db.session.add(new_fulfillment)
-    db.session.commit()
+        return 1
+    things_per_sec = round(things / seconds_taken, 1)
     logger.debug(things_per_sec)
     return things_per_sec
+
+
+def build_fulfilment_records(
+    *,
+    model: str,
+    thing_type: str,
+    things: float,
+    things_per_sec: float,
+) -> list[ModelPerformance | FulfillmentPerformance]:
+    """Create the model performance and fulfilment samples of one stored generation, without adding them to the session.
+
+    The model performance sample feeds the models list averages (``get_model_avgs``) and the fulfilment sample feeds
+    the throughput of the past minute (``get_things_per_min``).
+
+    Args:
+        model: The model that produced the generation.
+        thing_type: The generation type, ``image`` or ``text``.
+        things: The things the generation delivered.
+        things_per_sec: The speed from [`calculate_things_per_sec`][horde.classes.base.stats.calculate_things_per_sec].
+
+    Returns:
+        The two new records.
+    """
+    return [
+        ModelPerformance(model=model, performance=things_per_sec),
+        FulfillmentPerformance(things=things, thing_type=thing_type),
+    ]
 
 
 def get_things_per_min(thing_type="image"):

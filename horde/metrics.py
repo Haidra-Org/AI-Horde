@@ -730,9 +730,10 @@ submit_record_duration = _seconds_histogram(
     "horde.submit.record.duration",
     "Duration of procgen.record",
 )
-submit_record_performance_duration = _seconds_histogram(
-    "horde.submit.record_performance.duration",
-    "Duration of worker.record_performance (the worker_performances sample insert) after the submit commit",
+submit_statistics_duration = _seconds_histogram(
+    "horde.submit.statistics.duration",
+    "Duration of the submit statistics transaction after the submit commit (model performance, fulfilment and "
+    "worker performance samples and the generation statistic)",
 )
 submit_wp_completion_duration = _seconds_histogram(
     "horde.submit.wp_completion.duration",
@@ -750,17 +751,9 @@ submit_webhook_call_duration = _seconds_histogram(
     "horde.submit.webhook_call.duration",
     "Duration of procgen.send_webhook in submit",
 )
-submit_record_fulfilment_stat_duration = _seconds_histogram(
-    "horde.submit.record_fulfilment_stat.duration",
-    "Duration of stats.record_fulfilment (gen-stats archive insert) during submit",
-)
 submit_server_upload_duration = _seconds_histogram(
     "horde.submit.server_upload.duration",
     "Duration of server-side object-storage uploads during submit (b64 fallback image, shared metadata)",
-)
-submit_genstats_record_duration = _seconds_histogram(
-    "horde.submit.genstats_record.duration",
-    "Duration of the inline gen-stats archive insert during procgen.set_generation",
 )
 submit_commit_duration = _seconds_histogram(
     "horde.submit.commit.duration",

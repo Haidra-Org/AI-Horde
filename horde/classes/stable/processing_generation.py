@@ -8,19 +8,18 @@ import json
 import math
 import os
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import logfire
 from sqlalchemy.orm import Mapped, relationship
 
 from horde.baseline_policy import kudos_multiplier, policy
 from horde.classes.base.processing_generation import ProcessingGeneration
-from horde.classes.stable.genstats import record_image_statistic
+from horde.classes.stable.genstats import ImageGenerationStatistic, build_image_statistic, record_image_statistic
 from horde.flask import db
 from horde.image import convert_b64_to_pil, convert_pil_to_b64
 from horde.logger import logger
 from horde.metrics import (
-    submit_genstats_record_duration,
     submit_server_upload_duration,
     submit_state_handling_duration,
 )
@@ -85,6 +84,10 @@ class ImageProcessingGeneration(ProcessingGeneration):
             hires_fix=bool(self.wp.params.get("hires_fix", False)),
             qr_code=self.wp.params.get("workflow") == "qr_code",
         )
+
+    @override
+    def build_generation_statistic(self) -> ImageGenerationStatistic | None:
+        return build_image_statistic(self)
 
     def log_aborted_generation(self):
         record_image_statistic(self)
@@ -159,9 +162,6 @@ class ImageProcessingGeneration(ProcessingGeneration):
                 # This signifies to send the download URL
                 generation = "R2"
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
-        genstats_t0 = time.monotonic()
-        record_image_statistic(self)
-        submit_genstats_record_duration.record(time.monotonic() - genstats_t0, {"horde.gentype": "image"})
         if self.wp.shared and not self.fake and generation == "R2":
             metadata_t0 = time.monotonic()
             self.upload_generation_metadata()

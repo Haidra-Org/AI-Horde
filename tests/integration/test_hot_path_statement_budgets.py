@@ -197,12 +197,12 @@ The job row, its model and its lease are written under one commit; the candidate
 TEXT_POP_MATCH_COLD = StatementBudget(selects=31, inserts=3, updates=4, deletes=1, commits=4, rollbacks=1)
 """Bounds a new text worker's first pop that returns a job, which adds registration to the warm case."""
 
-SUBMIT = StatementBudget(selects=8, inserts=7, updates=3, deletes=0, commits=5, rollbacks=0)
-"""Keeps a successful image or text submit at five commits, for a worker's first job and a repeat alike.
+SUBMIT = StatementBudget(selects=8, inserts=7, updates=3, deletes=0, commits=3, rollbacks=0)
+"""Keeps a successful image or text submit at three commits, for a worker's first job and a repeat alike.
 
-The commits are the fulfilment statistics, the completion with its settlement, the worker
-performance sample, the request completion with the reservation release, and the generation
-statistic.
+The commits are the completion claim with its settlement, the statistics transaction (fulfilment
+statistics, the worker performance sample and the generation statistic), and the request
+completion with the reservation release.
 """
 
 IMAGE_CHECK_COLD = StatementBudget(selects=9, inserts=0, updates=0, deletes=0, commits=0, rollbacks=1)

@@ -108,10 +108,21 @@ class ImageGenerationStatistic(db.Model):
     )
 
 
-def record_image_statistic(procgen):
-    # We don't record stats for special models
+def build_image_statistic(procgen) -> ImageGenerationStatistic | None:
+    """Create the statistic of an image generation with its post-processor, ControlNet, LoRa and TI rows, without
+    adding it to the session.
+
+    The child rows are attached through the statistic's relationships, so they are written in the statistic's flush
+    and do not need a flush of their own for its id.
+
+    Args:
+        procgen: The image generation, stored or faulted.
+
+    Returns:
+        The new statistic, or None for a ``horde_special`` model, which is not recorded.
+    """
     if "horde_special" in procgen.model:
-        return
+        return None
     state = ImageGenState.OK
     if procgen.censored:
         state = ImageGenState.CENSORED
@@ -139,37 +150,37 @@ def record_image_statistic(procgen):
         style_id=procgen.wp.style_id,
         state=state,
     )
-    db.session.add(statistic)
-    db.session.commit()
     # face_fixers = ["GFPGAN", "CodeFormers"]
     # upscalers = ["RealESRGAN_x4plus"]
-    post_processors = procgen.wp.params.get("post_processing", [])
-    if len(post_processors) > 0:
-        for pp in post_processors:
-            new_pp_entry = ImageGenerationStatisticPP(imgstat_id=statistic.id, pp=pp)
-            db.session.add(new_pp_entry)
-        db.session.commit()
+    for pp in procgen.wp.params.get("post_processing", []):
+        statistic.post_processors.append(ImageGenerationStatisticPP(pp=pp))
     # For now we support only one control_type per request, but in the future we might allow more
     # So I set it up on an external table to be able to expand
     if procgen.wp.params.get("control_type", None):
-        new_cn_entry = ImageGenerationStatisticCN(
-            imgstat_id=statistic.id,
-            control_type=procgen.wp.params["control_type"],
-        )
-        db.session.add(new_cn_entry)
-        db.session.commit()
-    loras = procgen.wp.params.get("loras", [])
-    if len(loras) > 0:
-        for lora in loras:
-            new_lora_entry = ImageGenerationStatisticLora(imgstat_id=statistic.id, lora=lora["name"])
-            db.session.add(new_lora_entry)
-        db.session.commit()
-    tis = procgen.wp.params.get("tis", [])
-    if len(tis) > 0:
-        for ti in tis:
-            new_ti_entry = ImageGenerationStatisticTI(imgstat_id=statistic.id, ti=ti["name"])
-            db.session.add(new_ti_entry)
-        db.session.commit()
+        statistic.controlnet.append(ImageGenerationStatisticCN(control_type=procgen.wp.params["control_type"]))
+    for lora in procgen.wp.params.get("loras", []):
+        statistic.loras.append(ImageGenerationStatisticLora(lora=lora["name"]))
+    for ti in procgen.wp.params.get("tis", []):
+        statistic.tis.append(ImageGenerationStatisticTI(ti=ti["name"]))
+    return statistic
+
+
+def record_image_statistic(procgen) -> None:
+    """Store the statistic of a faulted image generation in its own commit.
+
+    A stored submission records its statistic with the rest of the submit statistics, in
+    [`record_submission_statistics`][horde.classes.base.processing_generation.ProcessingGeneration.record_submission_statistics].
+    This path serves a generation that ends without a stored result, faulted by its worker, by a lapsed lease or by
+    an abort, and records one ``FAULTED`` statistic for it.
+
+    Args:
+        procgen: The faulted image generation.
+    """
+    statistic = build_image_statistic(procgen)
+    if statistic is None:
+        return
+    db.session.add(statistic)
+    db.session.commit()
 
 
 class CompiledImageGenStatsTotals(db.Model):
