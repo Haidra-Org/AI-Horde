@@ -20,7 +20,7 @@ from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.flask import db
-from tests.unit.conftest import _QueryRecorder
+from tests.conftest import _QueryRecorder
 
 pytestmark = pytest.mark.unit
 

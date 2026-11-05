@@ -16,8 +16,8 @@ from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
 from horde.flask import db
+from tests.conftest import _QueryRecorder
 from tests.fixture_types import MakeUser
-from tests.unit.conftest import _QueryRecorder
 
 pytestmark = pytest.mark.unit
 

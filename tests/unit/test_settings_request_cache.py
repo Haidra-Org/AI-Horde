@@ -15,7 +15,7 @@ import pytest
 from horde.classes.base import settings as horde_settings
 from horde.classes.base.settings import HordeSettings
 from horde.flask import db
-from tests.unit.conftest import _QueryRecorder
+from tests.conftest import _QueryRecorder
 
 pytestmark = pytest.mark.unit
 

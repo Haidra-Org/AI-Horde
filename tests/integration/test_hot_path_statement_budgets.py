@@ -39,9 +39,8 @@ import pytest
 from flask.testing import FlaskClient
 from werkzeug.test import TestResponse
 
+from tests.conftest import _QueryRecorder
 from tests.fixture_types import ApiUser, MakeApiUser
-from tests.unit.conftest import _QueryRecorder
-from tests.unit.conftest import assert_query_count as assert_query_count
 
 pytestmark = pytest.mark.integration
 
@@ -149,19 +148,19 @@ class StatementBudget:
         return [f"{label}: {count} > {bound}" for label, (count, bound) in measured.items() if count > bound]
 
 
-IMAGE_ADMISSION_COLD = StatementBudget(selects=15, inserts=4, updates=3, deletes=0, commits=3, rollbacks=2)
+IMAGE_ADMISSION_COLD = StatementBudget(selects=12, inserts=4, updates=3, deletes=0, commits=3, rollbacks=1)
 """Keeps image admission at three commits: the prepared inactive request with its model rows and payload, the
 activation charge, and the kudos calculation.
 
-The rollbacks close the user lookup, which runs in an app context of its own, and the read-only
-worker check. Two of the SELECTs count active workers, which the warm case reads from Redis. The UPDATEs
-are all in activation; preparation is one INSERT per row.
+The whole admission runs in one session, so the requester and its roles are read once. The rollback closes
+the read-only worker check. Two of the SELECTs count active workers, which the warm case reads from Redis. The
+UPDATEs are all in activation; preparation is one INSERT per row.
 """
 
-IMAGE_ADMISSION_WARM = StatementBudget(selects=13, inserts=4, updates=3, deletes=0, commits=3, rollbacks=2)
+IMAGE_ADMISSION_WARM = StatementBudget(selects=10, inserts=4, updates=3, deletes=0, commits=3, rollbacks=1)
 """Keeps a repeat image admission by the same requester from adding reads once the active worker count is cached."""
 
-TEXT_ADMISSION = StatementBudget(selects=11, inserts=4, updates=3, deletes=0, commits=2, rollbacks=1)
+TEXT_ADMISSION = StatementBudget(selects=9, inserts=4, updates=2, deletes=0, commits=2, rollbacks=0)
 """Keeps text admission at two commits: the prepared inactive request with its model rows and payload, and activation
 with its charge.
 

@@ -65,8 +65,7 @@ charged the surcharge nor credits the author.
 
 The comparison needs both the style and the requesting user, and `apply_style` runs before the user is
 resolved, so `GenerateTemplate.decide_style_surcharge` makes it after the shared `super().validate()`
-on each gentype. The two rows are compared by id, since the shared validation resolves the user inside
-a separate app context.
+on each gentype. The two rows are compared by id.
 
 The request path does not credit the owner itself. `GenerateTemplate.style_reward` builds a
 `StyleReward` (the author's id, the surcharge and the style type), which `WaitingPrompt.activate`
