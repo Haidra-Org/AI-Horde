@@ -162,13 +162,12 @@ class ImageWaitingPrompt(WaitingPrompt):
             self.trusted_workers = True
             self.shared = False
         self.prepare_job_payload(self.params)
-        # Commit will happen in prepare_job_payload()
         # logger.debug(self.params)
         # logger.debug(self.prompt)
 
     @logger.catch(reraise=True)
     def prepare_job_payload(self, initial_dict=None):
-        """Prepares the default job payload. This might be further adjusted per job in get_job_payload()"""
+        """Prepares the default job payload, without committing. This might be further adjusted per job in get_job_payload()"""
         if not initial_dict:
             initial_dict = {}
         self.gen_payload = initial_dict.copy()
@@ -181,7 +180,6 @@ class ImageWaitingPrompt(WaitingPrompt):
         if self.seed is None and self.seed_variation:
             self.seed = self.seed_to_int(self.seed)
         del self.gen_payload["steps"]
-        db.session.commit()
 
     @logger.catch(reraise=True)
     def get_job_payload(self, current_n):

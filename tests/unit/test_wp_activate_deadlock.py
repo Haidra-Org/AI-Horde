@@ -11,8 +11,8 @@ The telemetry ``finally`` in ``activate`` must therefore never touch the session
 after a failed activation -- otherwise it masks the real ``OperationalError``
 with a confusing ``PendingRollbackError`` (the production symptom this guards).
 
-We bind the real unbound method to a lightweight stub rather than building a
-persisted ORM graph (``WaitingPrompt.__init__`` commits to the DB), mirroring
+We bind the real unbound method to a lightweight stub rather than building an
+ORM graph (``WaitingPrompt.__init__`` needs a database session), mirroring
 ``test_kobold_text_wp.py``.
 """
 

@@ -8,7 +8,7 @@ The stable/image line has dedicated tests; the text line had none. The kudos and
 upfront-requirement methods here are effectively pure given their inputs. They
 read a handful of attributes off ``self`` and an env var, so we exercise the
 branch matrix by binding each method to a lightweight stub rather than building a
-full persisted ORM graph (``WaitingPrompt.__init__`` commits to the DB). This
+full ORM graph (``WaitingPrompt.__init__`` needs a database session). This
 keeps the test hermetic and fast while still locking the real arithmetic.
 
 The allowance and queue wait records are read at request creation and at assignment, so their tests create

@@ -128,9 +128,9 @@ same operation, and `model: "a"` gives the fingerprint of `models: ["a"]`. `stre
 
 #### Activation and retries
 
-The activation path commits in several places. `WaitingPrompt.__init__` commits the inactive row and
-`prepare_job_payload` commits again. The upfront kudos hold is committed before activation. Inside
-`WaitingPrompt._activate`, `record_usage` commits the activation and the tax through `WaitingPrompt.refresh`, and a
+The activation path commits in several places. The `WaitingPrompt` constructor does not commit.
+`initiate_waiting_prompt` commits the inactive row with its model rows and payload right after constructing it. The
+upfront kudos hold is committed before activation. Inside `WaitingPrompt._activate`, `record_usage` commits the activation and the tax through `WaitingPrompt.refresh`, and a
 final commit follows the style reward. The claim is set at the start of `TextWaitingPrompt._activate`, so the
 first of the two activation commits writes it. It is kept on the instance as a plain attribute, so a deadlock retry, which rolls
 back and runs `_activate` again, writes it again.

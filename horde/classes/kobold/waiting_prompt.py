@@ -229,7 +229,7 @@ class TextWaitingPrompt(WaitingPrompt):
 
     @logger.catch(reraise=True)
     def prepare_job_payload(self, initial_dict=None):
-        """Prepares the default job payload. This might be further adjusted per job in get_job_payload()"""
+        """Prepares the default job payload, without committing. This might be further adjusted per job in get_job_payload()"""
         if not initial_dict:
             initial_dict = {}
         if self.is_chat:
@@ -244,7 +244,6 @@ class TextWaitingPrompt(WaitingPrompt):
             self.gen_payload = initial_dict.copy()
             self.gen_payload["prompt"] = self.prompt
             self.gen_payload["n"] = 1
-        db.session.commit()
 
     def get_generation_assignment(self, worker) -> dict[str, Any]:
         """Return the columns a new generation records about the worker it is assigned to.

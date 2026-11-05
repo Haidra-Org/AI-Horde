@@ -721,6 +721,14 @@ class GenerateTemplate(Resource):
 
     # We split this into its own function, so that it may be overriden
     def initiate_waiting_prompt(self):
+        """Create and commit the request's inactive waiting prompt, then run the steps that come before activation.
+
+        Subclass Integration:
+            Commit the constructed waiting prompt before any other step. The constructor does not commit, and this
+            commit writes the row, its model and worker rows and its payload together. Uploads use the row's id in
+            their storage keys and run outside any transaction. A later refusal deletes the committed row, and a
+            deadlock retry in activation rolls back to it.
+        """
         from horde.telemetry import get_traceparent
 
         self.wp = WaitingPrompt(
@@ -740,12 +748,13 @@ class GenerateTemplate(Resource):
             webhook=self.args.webhook,
             traceparent=get_traceparent(),
         )
+        db.session.commit()
         self.upload_source_images_or_delete_waiting_prompt()
 
     def upload_source_images_or_delete_waiting_prompt(self):
         """Upload the request's source images, deleting the waiting prompt if any upload fails.
 
-        The waiting prompt is committed before the upload because the storage keys carry its id. A row left behind
+        The waiting prompt is committed before the upload because the storage keys include its id. A row left behind
         by a refused or unreadable source image is never faulted and counts toward the user's concurrency until
         stale-request cleanup removes it, so repeated refusals would lock the user out of new requests.
 
