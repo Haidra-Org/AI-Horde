@@ -148,16 +148,16 @@ class StatementBudget:
         return [f"{label}: {count} > {bound}" for label, (count, bound) in measured.items() if count > bound]
 
 
-IMAGE_ADMISSION_COLD = StatementBudget(selects=12, inserts=4, updates=3, deletes=0, commits=3, rollbacks=1)
-"""Keeps image admission at three commits: the prepared inactive request with its model rows and payload, the
-activation charge, and the kudos calculation.
+IMAGE_ADMISSION_COLD = StatementBudget(selects=12, inserts=4, updates=2, deletes=0, commits=2, rollbacks=1)
+"""Keeps image admission at two commits: the prepared inactive request with its model rows and payload, then the
+activation with its price, source references and charge.
 
 The whole admission runs in one session, so the requester and its roles are read once. The rollback closes
 the read-only worker check. Two of the SELECTs count active workers, which the warm case reads from Redis. The
-UPDATEs are all in activation; preparation is one INSERT per row.
+UPDATEs are both in activation; preparation is one INSERT per row.
 """
 
-IMAGE_ADMISSION_WARM = StatementBudget(selects=10, inserts=4, updates=3, deletes=0, commits=3, rollbacks=1)
+IMAGE_ADMISSION_WARM = StatementBudget(selects=10, inserts=4, updates=2, deletes=0, commits=2, rollbacks=1)
 """Keeps a repeat image admission by the same requester from adding reads once the active worker count is cached."""
 
 TEXT_ADMISSION = StatementBudget(selects=9, inserts=4, updates=2, deletes=0, commits=2, rollbacks=0)
