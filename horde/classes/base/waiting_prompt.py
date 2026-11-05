@@ -21,6 +21,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, object_session, relationship
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import ColumnElement, expression, null
 
 from horde import vars as hv
@@ -332,13 +333,43 @@ class WaitingPrompt(db.Model):
     terminal_recorded_at = db.Column(db.DateTime(timezone=False), nullable=True)
 
     def __init__(self, worker_ids, models, *args, **kwargs):
+        """Prepare an inactive request with its workers, its models and its job payload, without committing.
+
+        The request is added to the session and is not flushed. The caller commits it, which writes the row, its
+        model and worker rows and its payload in one transaction. Activation puts it on the queue afterwards.
+
+        Args:
+            worker_ids: The ids of the workers the request lists. Only the first five are kept.
+            models: The names of the models the request accepts.
+            *args: Passed to the declarative constructor.
+            **kwargs: Column values, passed to the declarative constructor.
+        """
         with logfire.span("horde.wp.init"):
             super().__init__(*args, **kwargs)
+            # The column default would assign the id only at flush. Callers read it straight after construction,
+            # to build storage keys and to reference the request from other rows.
+            if self.id is None:
+                self.id = get_db_uuid()
             db.session.add(self)
-            db.session.commit()
-            self.set_workers(worker_ids)
-            self.set_models(models)
-            self.extract_params()
+            # Preparation reads the requester and its roles. An autoflush on those reads would insert the row
+            # before preparation ends, and every later change would then be written as another UPDATE.
+            with db.session.no_autoflush:
+                self._load_requester()
+                self.set_workers(worker_ids)
+                self.set_models(models)
+                self.extract_params()
+
+    def _load_requester(self) -> None:
+        """Load the requester from ``user_id`` into ``user`` when the caller did not set it.
+
+        SQLAlchemy does not lazy-load the relationships of a pending instance, so without this ``user`` is None
+        until the request is flushed. Preparation and activation both read it.
+        """
+        from horde.classes.base.user import User
+
+        if self.user_id is None or self.user is not None:
+            return
+        set_committed_value(self, "user", db.session.get(User, self.user_id))
 
     def set_workers(self, worker_ids=None):
         if not worker_ids:
@@ -346,18 +377,15 @@ class WaitingPrompt(db.Model):
         else:
             # We only allow whitelisting up to 5 worker IDs
             worker_ids = worker_ids[0:5]
-        # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
-        for wid in worker_ids:
-            worker_entry = WPAllowedWorkers(worker_id=wid, wp_id=self.id)
-            db.session.add(worker_entry)
+        # Assigned as a whole so the session holds the collection in memory, and later reads during admission do not
+        # query the table.
+        self.workers = [WPAllowedWorkers(worker_id=worker_id) for worker_id in worker_ids]
 
     def set_models(self, model_names=None):
         if not model_names:
             model_names = []
-        # logger.debug(model_names)
-        for model in model_names:
-            model_entry = WPModels(model=model, wp_id=self.id)
-            db.session.add(model_entry)
+        # Assigned as a whole for the same reason as the workers.
+        self.models = [WPModels(model=model_name) for model_name in model_names]
 
     def activate(
         self,
@@ -548,6 +576,7 @@ class WaitingPrompt(db.Model):
 
     # These are typically horde-specific so they will be defined in the specific class for this horde type
     def extract_params(self):
+        """Mutate the request's columns from its parameters and build its job payload, without committing."""
         # logger.debug(self.params)
         if self.user.education:
             self.nsfw = False
@@ -558,12 +587,11 @@ class WaitingPrompt(db.Model):
         self.things = 0
         self.total_usage = round(self.things * self.n, 2)
         self.prepare_job_payload()
-        db.session.commit()
 
     def prepare_job_payload(self):
+        """Mutate the request to hold the payload sent to workers, without committing."""
         # This is what we send to the worker
         self.gen_payload = self.params
-        db.session.commit()
 
     def get_job_payload(self, current_n):
         return self.gen_payload

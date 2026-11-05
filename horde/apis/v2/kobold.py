@@ -280,6 +280,8 @@ class TextAsyncGenerate(GenerateTemplate):
 
     def initiate_waiting_prompt(self):
         self.wp = TextWaitingPrompt(**self.get_waiting_prompt_arguments())
+        # See GenerateTemplate.initiate_waiting_prompt for why this commit comes first.
+        db.session.commit()
         requested_max_length = self.wp.max_length
         self.refuse_over_kudos_cap()
         self.upload_source_images_or_delete_waiting_prompt()

@@ -50,9 +50,8 @@ instead, and every rewrite of `prompt` is mirrored onto them. Moderation evidenc
 flattened strings. See the [chat requests reference](chat_requests.md).
 
 `submitted_prompt` is captured in `GenerateTemplate._post_inner` before the subclass `validate()` runs, because that
-is where styles and moderation are applied. Each constructor path receives the captured string explicitly: the waiting
-prompt constructor commits internally, so setting provenance afterwards would leave a committed row whose provenance is
-temporarily missing.
+is where styles and moderation are applied. Each constructor path receives the captured string explicitly, so the INSERT that first writes the row includes its
+provenance.
 
 ## Access contract
 

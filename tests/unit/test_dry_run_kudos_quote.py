@@ -10,9 +10,8 @@ image, so the quote carries the same tax. The image line multiplies the
 per-job kudos by a baseline factor, and the tax stays outside that factor
 because activation charges it flat.
 
-``WaitingPrompt.__init__`` commits to the DB, so the formulas are exercised by
-binding the methods to lightweight stubs rather than building a persisted ORM
-graph.
+``WaitingPrompt.__init__`` needs a database session, so the formulas are exercised
+by binding the methods to lightweight stubs rather than building an ORM graph.
 
 The quote is cached under a hash of the request, computed once before validation to look a cached
 quote up and once after to store it. The hash cases check that a style changes it and that validation
