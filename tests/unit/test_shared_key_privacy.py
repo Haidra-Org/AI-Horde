@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from flask.testing import FlaskClient
 
     from horde.horde_redis import HordeRedis
-    from tests.unit.conftest import _QueryRecorder
+    from tests.conftest import _QueryRecorder
 
 pytestmark: pytest.MarkDecorator = pytest.mark.unit
 

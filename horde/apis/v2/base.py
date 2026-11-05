@@ -59,7 +59,7 @@ from horde.database.prompt_moderation import PromptEvidence, PromptModerationRea
 from horde.detection import prompt_checker
 from horde.discord import moderation_event_url, send_problem_user_notification
 from horde.enums import KudosEntryType
-from horde.flask import cache, db, get_app
+from horde.flask import cache, db
 from horde.horde_redis import horde_redis as hr
 from horde.image import ensure_source_image_uploaded
 from horde.limiter import limiter
@@ -442,195 +442,194 @@ class GenerateTemplate(Resource):
                 "'template_fields' can only be used together with a style, since a style declares them.",
                 rc="TemplateFieldsRequireStyle",
             )
-        with get_app().app_context():
-            find_user_t0 = time.monotonic()
-            # If this is set, it means we've already found an active shared key through an applied style.
+        find_user_t0 = time.monotonic()
+        # If this is set, it means we've already found an active shared key through an applied style.
+        if self.sharedkey:
+            self.user = self.sharedkey.user
+            logger.debug(f"Using style-specified shared key {self.sharedkey.id} from user #{self.user.id}")
+        elif self.apikey:
+            self.sharedkey = database.find_sharedkey(self.apikey)
             if self.sharedkey:
-                self.user = self.sharedkey.user
-                logger.debug(f"Using style-specified shared key {self.sharedkey.id} from user #{self.user.id}")
-            elif self.apikey:
-                self.sharedkey = database.find_sharedkey(self.apikey)
-                if self.sharedkey:
-                    is_valid, error_msg, rc = self.sharedkey.is_valid()
-                    if not is_valid:
-                        if rc == "SharedKeyEmpty" and self.args.allow_downgrade:
-                            self.apikey = "0000000000"
-                            self.downgrade_wp_priority = True
-                            self.user = database.find_user_by_api_key(self.apikey)
-                        else:
-                            raise e.Forbidden(message=error_msg, rc=rc)
+                is_valid, error_msg, rc = self.sharedkey.is_valid()
+                if not is_valid:
+                    if rc == "SharedKeyEmpty" and self.args.allow_downgrade:
+                        self.apikey = "0000000000"
+                        self.downgrade_wp_priority = True
+                        self.user = database.find_user_by_api_key(self.apikey)
                     else:
-                        self.user = self.sharedkey.user
-                    if not self.sharedkey.is_adhoc():
-                        raise e.Forbidden(
-                            message="This shared key cannot be used as it has been assigned to specific styles only",
-                            rc="SharedKeyAssignedStyles",
-                        )
-                if not self.user:
-                    self.user = database.find_user_by_api_key(self.apikey)
-            # logger.warning(datetime.utcnow())
-            # Recorded before the rejection so requests with an unusable key are attributed too.
-            generate_validate_find_user_duration.record(time.monotonic() - find_user_t0, {"horde.gentype": self.gentype})
-            if not self.user:
-                raise e.InvalidAPIKey("generation")
-            if not self.user.service and self.args["proxied_account"]:
-                raise e.BadRequest(message="Only service accounts can provide a proxied_account value.", rc="OnlyServiceAccountProxy")
-            if self.user.deleted:
-                raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
-            if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
-                if len(self.args.extra_source_images) > 5:
-                    raise e.BadRequest("You can send a maximum of 5 extra source images.", rc="TooManyExtraSourceImages")
-                if len(self.args.extra_source_images) > 1 and not self.user.trusted and not patrons.is_patron(self.user.id):
-                    raise e.BadRequest(
-                        "Only trusted users and patrons can send more than 1 extra source images.",
-                        rc="MoreThanMinExtraSourceImage",
-                    )
-            if self.user.education or self.user.trusted or self.user.service:
-                if not self.proxied_request:
-                    lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
-            self.username = self.user.get_unique_alias()
-            # logger.warning(datetime.utcnow())
-            if not _is_storable_text(self.args["prompt"]):
-                raise e.BadRequest(
-                    "Prompt contains characters that cannot be encoded (unpaired UTF-16 surrogates).",
-                    rc="InvalidPromptEncoding",
-                )
-            if self.args["prompt"] == "":
-                raise e.MissingPrompt(self.username)
-            wp_count_t0 = time.monotonic()
-            if self.user.is_anon():
-                wp_count = database.count_waiting_requests(
-                    user=self.user,
-                    models=self.args["models"],
-                    request_type=self.gentype,
-                )
-                # logger.warning(datetime.utcnow())
-            else:
-                wp_count = database.count_waiting_requests(
-                    user=self.user,
-                    request_type=self.gentype,
-                )
-                # logger.warning(datetime.utcnow())
-            generate_validate_wp_count_duration.record(time.monotonic() - wp_count_t0, {"horde.gentype": self.gentype})
-            if len(self.workers):
-                missing_workers = database.workers_exist(self.workers)
-                if missing_workers:
-                    raise e.WorkerNotFound(missing_workers.pop())
-            # logger.warning(datetime.utcnow())
-            n = 1
-            if self.args.params:
-                n = self.args.params.get("n", 1)
-            if n > 1 and self.args["disable_batching"] is True and not self.user.trusted and not patrons.is_patron(self.user.id):
-                raise e.BadRequest(message="Only trusted users and patreon supporters can disable batching.", rc="RequiresTrust")
-            user_limit = self.user.get_concurrency(self.args["models"], database.retrieve_available_models)
-            # logger.warning(datetime.utcnow())
-            if wp_count + n > user_limit:
-                if self.user.is_anon():
-                    raise e.TooManyPrompts(
-                        self.username,
-                        wp_count + n,
-                        user_limit,
-                        msg=(
-                            f"Too many anonymous requests on using the {horde_title} currently "
-                            f"({wp_count + n}/{user_limit}). Please consider getting a personal API key at https://aihorde.net/register "
-                            "which will also provide higher priority."
-                        ),
-                    )
+                        raise e.Forbidden(message=error_msg, rc=rc)
                 else:
-                    raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
-            ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
-            # logger.warning(datetime.utcnow())
-            if ip_timeout:
-                raise e.TimeoutIP(self.user_ip, ip_timeout)
-            # logger.warning(datetime.utcnow())
-            moderation_prompt = self.prompt
-            prompt_suspicion = 0
-            # The suspicion score is only read by the corrupt-prompt branch below, which excludes the
-            # text gentype, so text requests would pay for a full regex sweep of a multi-kilobyte
-            # prompt without any moderation decision depending on it.
-            if self.gentype != "text":
-                prompt_filter_t0 = time.monotonic()
-                prompt_suspicion, _ = prompt_checker(self.prompt)
-                generate_validate_prompt_filter_duration.record(time.monotonic() - prompt_filter_t0, {"horde.gentype": self.gentype})
-            # logger.warning(datetime.utcnow())
-            prompt_replaced = False
-            if prompt_suspicion >= 2 and self.gentype != "text":
-                # if replacement filter mode is enabled AND prompt is short enough, do that instead
-                if self.args.replacement_filter or self.user.education:
-                    if not prompt_checker.check_prompt_replacement_length(self.prompt):
-                        self._handle_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
-                        raise e.BadRequest("Prompt has to be below 7000 chars when replacement filter is on")
-                    self.prompt = prompt_checker.apply_replacement_filter(self.prompt)
-                    # If it returns None, it means it replaced everything with an empty string
-                    if self.prompt is not None:
-                        prompt_replaced = True
-                if not prompt_replaced:
-                    self._handle_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
-                    # Moderators do not get ip blocked to allow for experiments
-                    if not self.user.moderator:
-                        prompt_dict = {
-                            "prompt": self.prompt,
-                            "user": self.username,
-                            "type": "regex",
-                        }
-                        upload_prompt(prompt_dict)
-                        self.user.report_suspicion(1, Suspicions.CORRUPT_PROMPT)
-                        logger.info(f"IP Address {self.user_ip} from user {self.username} going into timeout!")
-                        CounterMeasures.report_suspicion(self.user_ip)
-                    if self.proxied_request:
-                        sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
-                        if sus > 10:
-                            send_problem_user_notification(
-                                f"Proxy Service {get_current_passkey_owner()} from IP {request.remote_addr}"
-                                " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
-                            )
-                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, proxy_service_ip=request.remote_addr)
-                    else:
-                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt)
-            if_nsfw_model = prompt_checker.check_nsfw_model_block(self.prompt, self.models)
-            if if_nsfw_model or self.user.flagged:
-                # For NSFW models and flagged users, we always do replacements
-                # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
-                self.prompt = prompt_checker.nsfw_model_prompt_replace(
-                    self.prompt,
-                    self.models,
-                    already_replaced=prompt_replaced,
-                )
-                if self.prompt is None:
-                    prompt_replaced = False
-                elif prompt_replaced is False:
-                    prompt_replaced = True
-                # This will only trigger if the prompt after replacements is an empty string
-                if not prompt_replaced:
-                    self._handle_prompt_rejection(moderation_prompt, PromptModerationReason.MODEL_REJECTION)
-                    msg = (
-                        "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. "
-                        "Please select another model and try again."
+                    self.user = self.sharedkey.user
+                if not self.sharedkey.is_adhoc():
+                    raise e.Forbidden(
+                        message="This shared key cannot be used as it has been assigned to specific styles only",
+                        rc="SharedKeyAssignedStyles",
                     )
-                    if self.user.flagged and not if_nsfw_model:
-                        msg = "To prevent generation of unethical images, we cannot allow this prompt."
-                    if self.proxied_request:
-                        sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
-                        if sus > 10:
-                            send_problem_user_notification(
-                                f"Proxy Service {get_current_passkey_owner()} from IP {request.remote_addr}"
-                                " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
-                            )
-                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg, proxy_service_ip=request.remote_addr)
-                    else:
-                        raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg)
-            # Disabling as this is handled by the worker-csam-filter now
-            # If I re-enable it, also make it use the prompt replacement
-            # if not prompt_replaced:
-            #     csam_trigger_check = prompt_checker.check_csam_triggers(self.prompt)
-            #     if csam_trigger_check is not False and self.gentype != "text":
-            #         raise e.CorruptPrompt(
-            #             self.username,
-            #             self.user_ip,
-            #             self.prompt,
-            #             message = (f"The trigger '{csam_trigger_check}' has been detected to generate "
-            #                       "unethical images on its own and as such has had to be prevented from use. "
-            #                        "Thank you for understanding.")
+            if not self.user:
+                self.user = database.find_user_by_api_key(self.apikey)
+        # logger.warning(datetime.utcnow())
+        # Recorded before the rejection so requests with an unusable key are attributed too.
+        generate_validate_find_user_duration.record(time.monotonic() - find_user_t0, {"horde.gentype": self.gentype})
+        if not self.user:
+            raise e.InvalidAPIKey("generation")
+        if not self.user.service and self.args["proxied_account"]:
+            raise e.BadRequest(message="Only service accounts can provide a proxied_account value.", rc="OnlyServiceAccountProxy")
+        if self.user.deleted:
+            raise e.Forbidden(message="This account has been scheduled for deletion and is disabled.", rc="DeletedUser")
+        if self.args.extra_source_images is not None and len(self.args.extra_source_images) > 0:
+            if len(self.args.extra_source_images) > 5:
+                raise e.BadRequest("You can send a maximum of 5 extra source images.", rc="TooManyExtraSourceImages")
+            if len(self.args.extra_source_images) > 1 and not self.user.trusted and not patrons.is_patron(self.user.id):
+                raise e.BadRequest(
+                    "Only trusted users and patrons can send more than 1 extra source images.",
+                    rc="MoreThanMinExtraSourceImage",
+                )
+        if self.user.education or self.user.trusted or self.user.service:
+            if not self.proxied_request:
+                lim.dynamic_ip_whitelist.whitelist_ip(self.user_ip)
+        self.username = self.user.get_unique_alias()
+        # logger.warning(datetime.utcnow())
+        if not _is_storable_text(self.args["prompt"]):
+            raise e.BadRequest(
+                "Prompt contains characters that cannot be encoded (unpaired UTF-16 surrogates).",
+                rc="InvalidPromptEncoding",
+            )
+        if self.args["prompt"] == "":
+            raise e.MissingPrompt(self.username)
+        wp_count_t0 = time.monotonic()
+        if self.user.is_anon():
+            wp_count = database.count_waiting_requests(
+                user=self.user,
+                models=self.args["models"],
+                request_type=self.gentype,
+            )
+            # logger.warning(datetime.utcnow())
+        else:
+            wp_count = database.count_waiting_requests(
+                user=self.user,
+                request_type=self.gentype,
+            )
+            # logger.warning(datetime.utcnow())
+        generate_validate_wp_count_duration.record(time.monotonic() - wp_count_t0, {"horde.gentype": self.gentype})
+        if len(self.workers):
+            missing_workers = database.workers_exist(self.workers)
+            if missing_workers:
+                raise e.WorkerNotFound(missing_workers.pop())
+        # logger.warning(datetime.utcnow())
+        n = 1
+        if self.args.params:
+            n = self.args.params.get("n", 1)
+        if n > 1 and self.args["disable_batching"] is True and not self.user.trusted and not patrons.is_patron(self.user.id):
+            raise e.BadRequest(message="Only trusted users and patreon supporters can disable batching.", rc="RequiresTrust")
+        user_limit = self.user.get_concurrency(self.args["models"], database.retrieve_available_models)
+        # logger.warning(datetime.utcnow())
+        if wp_count + n > user_limit:
+            if self.user.is_anon():
+                raise e.TooManyPrompts(
+                    self.username,
+                    wp_count + n,
+                    user_limit,
+                    msg=(
+                        f"Too many anonymous requests on using the {horde_title} currently "
+                        f"({wp_count + n}/{user_limit}). Please consider getting a personal API key at https://aihorde.net/register "
+                        "which will also provide higher priority."
+                    ),
+                )
+            else:
+                raise e.TooManyPrompts(self.username, wp_count + n, user_limit)
+        ip_timeout = CounterMeasures.retrieve_timeout(self.user_ip)
+        # logger.warning(datetime.utcnow())
+        if ip_timeout:
+            raise e.TimeoutIP(self.user_ip, ip_timeout)
+        # logger.warning(datetime.utcnow())
+        moderation_prompt = self.prompt
+        prompt_suspicion = 0
+        # The suspicion score is only read by the corrupt-prompt branch below, which excludes the
+        # text gentype, so text requests would pay for a full regex sweep of a multi-kilobyte
+        # prompt without any moderation decision depending on it.
+        if self.gentype != "text":
+            prompt_filter_t0 = time.monotonic()
+            prompt_suspicion, _ = prompt_checker(self.prompt)
+            generate_validate_prompt_filter_duration.record(time.monotonic() - prompt_filter_t0, {"horde.gentype": self.gentype})
+        # logger.warning(datetime.utcnow())
+        prompt_replaced = False
+        if prompt_suspicion >= 2 and self.gentype != "text":
+            # if replacement filter mode is enabled AND prompt is short enough, do that instead
+            if self.args.replacement_filter or self.user.education:
+                if not prompt_checker.check_prompt_replacement_length(self.prompt):
+                    self._handle_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
+                    raise e.BadRequest("Prompt has to be below 7000 chars when replacement filter is on")
+                self.prompt = prompt_checker.apply_replacement_filter(self.prompt)
+                # If it returns None, it means it replaced everything with an empty string
+                if self.prompt is not None:
+                    prompt_replaced = True
+            if not prompt_replaced:
+                self._handle_prompt_rejection(moderation_prompt, PromptModerationReason.FILTER_REJECTION)
+                # Moderators do not get ip blocked to allow for experiments
+                if not self.user.moderator:
+                    prompt_dict = {
+                        "prompt": self.prompt,
+                        "user": self.username,
+                        "type": "regex",
+                    }
+                    upload_prompt(prompt_dict)
+                    self.user.report_suspicion(1, Suspicions.CORRUPT_PROMPT)
+                    logger.info(f"IP Address {self.user_ip} from user {self.username} going into timeout!")
+                    CounterMeasures.report_suspicion(self.user_ip)
+                if self.proxied_request:
+                    sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
+                    if sus > 10:
+                        send_problem_user_notification(
+                            f"Proxy Service {get_current_passkey_owner()} from IP {request.remote_addr}"
+                            " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
+                        )
+                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, proxy_service_ip=request.remote_addr)
+                else:
+                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt)
+        if_nsfw_model = prompt_checker.check_nsfw_model_block(self.prompt, self.models)
+        if if_nsfw_model or self.user.flagged:
+            # For NSFW models and flagged users, we always do replacements
+            # This is to avoid someone using the NSFW models to figure out the regex since they don't have an IP timeout
+            self.prompt = prompt_checker.nsfw_model_prompt_replace(
+                self.prompt,
+                self.models,
+                already_replaced=prompt_replaced,
+            )
+            if self.prompt is None:
+                prompt_replaced = False
+            elif prompt_replaced is False:
+                prompt_replaced = True
+            # This will only trigger if the prompt after replacements is an empty string
+            if not prompt_replaced:
+                self._handle_prompt_rejection(moderation_prompt, PromptModerationReason.MODEL_REJECTION)
+                msg = (
+                    "To prevent generation of unethical images, we cannot allow this prompt with NSFW models. "
+                    "Please select another model and try again."
+                )
+                if self.user.flagged and not if_nsfw_model:
+                    msg = "To prevent generation of unethical images, we cannot allow this prompt."
+                if self.proxied_request:
+                    sus = CounterMeasures.report_proxy_suspicion(request.remote_addr)
+                    if sus > 10:
+                        send_problem_user_notification(
+                            f"Proxy Service {get_current_passkey_owner()} from IP {request.remote_addr}"
+                            " has caused {sus} proxied IPs to be blocked due to suspicion in the last hour!",
+                        )
+                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg, proxy_service_ip=request.remote_addr)
+                else:
+                    raise e.CorruptPrompt(self.username, self.user_ip, self.prompt, message=msg)
+        # Disabling as this is handled by the worker-csam-filter now
+        # If I re-enable it, also make it use the prompt replacement
+        # if not prompt_replaced:
+        #     csam_trigger_check = prompt_checker.check_csam_triggers(self.prompt)
+        #     if csam_trigger_check is not False and self.gentype != "text":
+        #         raise e.CorruptPrompt(
+        #             self.username,
+        #             self.user_ip,
+        #             self.prompt,
+        #             message = (f"The trigger '{csam_trigger_check}' has been detected to generate "
+        #                       "unethical images on its own and as such has had to be prevented from use. "
+        #                        "Thank you for understanding.")
 
     def _handle_prompt_rejection(self, moderation_prompt: str, reason: PromptModerationReason) -> None:
         """Record a prompt rejection's evidence and apply the model-path timeout.

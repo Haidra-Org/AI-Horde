@@ -25,9 +25,8 @@ import pytest
 from flask import Flask
 from flask.testing import FlaskClient
 
+from tests.conftest import _QueryRecorder
 from tests.fixture_types import ApiUser, MakeApiUser
-from tests.unit.conftest import _QueryRecorder
-from tests.unit.conftest import assert_query_count as assert_query_count
 
 pytestmark = pytest.mark.integration
 
