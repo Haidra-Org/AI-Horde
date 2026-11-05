@@ -48,7 +48,7 @@ from horde.classes.base.style_contract import (
 from horde.classes.base.team import Team, find_team_by_id, find_team_by_name, get_all_teams
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
-from horde.classes.base.worker import MAX_WORKER_NAME_CHARACTERS, Worker, WorkerMessage
+from horde.classes.base.worker import MAX_WORKER_NAME_CHARACTERS, EligibilitySkipReason, Worker, WorkerMessage
 from horde.consts import HORDE_VERSION
 from horde.countermeasures import REJECTION_WINDOW, CounterMeasures
 from horde.database import functions as database
@@ -1135,17 +1135,26 @@ class JobPopTemplate(Resource):
         #     priority_user = database.find_user_by_username(priority_username)
         #     if priority_user:
         #        self.priority_users.append(priority_user)
+        # The worker-side inputs do not change during the pop, so they are read once and every candidate is judged
+        # with them.
+        self.worker_eligibility_inputs = self.worker.read_eligibility_inputs(maintenance_user_ids=self.priority_user_ids)
+        worker_only_eligibility = self.worker.can_generate_any(self.worker_eligibility_inputs)
         self.wp_page = 0
-        with logfire.span("horde.pop.get_sorted_wp", priority=True, page=0):
-            wp_list = self.get_sorted_wp(self.priority_user_ids)
-        self.priority_wp_ids = {wp.id for wp in wp_list}
-        for wp in wp_list:
-            self.prioritized_wp.append(wp)
-        ## End prioritize by bridge request ##
-        with logfire.span("horde.pop.get_sorted_wp", priority=False, page=0):
-            for wp in self.get_sorted_wp():
-                if wp.id not in [wp.id for wp in self.prioritized_wp]:
-                    self.prioritized_wp.append(wp)
+        self.priority_wp_ids = set()
+        if worker_only_eligibility.eligible:
+            with logfire.span("horde.pop.get_sorted_wp", priority=True, page=0):
+                wp_list = self.get_sorted_wp(self.priority_user_ids)
+            self.priority_wp_ids = {wp.id for wp in wp_list}
+            for wp in wp_list:
+                self.prioritized_wp.append(wp)
+            ## End prioritize by bridge request ##
+            with logfire.span("horde.pop.get_sorted_wp", priority=False, page=0):
+                for wp in self.get_sorted_wp():
+                    if wp.id not in [wp.id for wp in self.prioritized_wp]:
+                        self.prioritized_wp.append(wp)
+        else:
+            # Every candidate would be refused for this reason, so we record it once and skip further evaluation
+            self.record_skipped_reason(worker_only_eligibility.skip_reason)
         # logger.warning(datetime.utcnow())
         candidates_evaluated = 0
         pop_pre_eval_duration.record(time.monotonic() - pre_eval_t0, {"horde.gentype": self.gentype})
@@ -1154,21 +1163,13 @@ class JobPopTemplate(Resource):
             while len(self.prioritized_wp) > 0:
                 for wp in self.prioritized_wp:
                     candidates_evaluated += 1
-                    check_gen = self.worker.can_generate(wp)
-                    if not check_gen[0]:
-                        skipped_reason = check_gen[1]
-                        # We don't report on secret skipped reasons
-                        # as they're typically countermeasures to raids
-                        if skipped_reason != "secret":
-                            self.skipped[skipped_reason] = self.skipped.get(skipped_reason, 0) + 1
-                            # skipped_reason can be None (e.g. stale/maintenance
-                            # workers). OTLP attribute values cannot be None, so
-                            # only attach the label when there is one; the
-                            # counter still increments either way.
-                            if skipped_reason is None:
-                                pop_skipped.add(1, {"horde.gentype": self.gentype})
-                            else:
-                                pop_skipped.add(1, {"horde.skip_reason": skipped_reason, "horde.gentype": self.gentype})
+                    check_gen = self.worker.can_generate_with_eligibility_inputs(
+                        wp,
+                        wp.get_eligibility_inputs(),
+                        self.worker_eligibility_inputs,
+                    )
+                    if not check_gen.eligible:
+                        self.record_skipped_reason(check_gen.skip_reason)
                         continue
                     # There is a chance that by the time we finished all the checks, another worker picked up the WP.
                     # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
@@ -1210,6 +1211,28 @@ class JobPopTemplate(Resource):
             raise e.WorkerMaintenance(self.worker.maintenance_msg)
         # logger.debug(self.skipped)
         return {"id": None, "ids": [], "skipped": self.skipped, "messages": database.get_all_active_worker_messages(self.worker.id)}, 200
+
+    def record_skipped_reason(self, skipped_reason: EligibilitySkipReason | None) -> None:
+        """Count one refused candidate against its reason in the pop response and the skip metric.
+
+        Args:
+            skipped_reason: The reason the worker was refused, or None for a refusal without a reported reason.
+        """
+        # We don't report on secret skipped reasons
+        # as they're typically countermeasures to raids
+        if skipped_reason == EligibilitySkipReason.SECRET:
+            return
+        # The response and the metric use the plain wire string.
+        reason_key = None if skipped_reason is None else skipped_reason.value
+        self.skipped[reason_key] = self.skipped.get(reason_key, 0) + 1
+        # skipped_reason can be None (e.g. stale/maintenance
+        # workers). OTLP attribute values cannot be None, so
+        # only attach the label when there is one; the
+        # counter still increments either way.
+        if reason_key is None:
+            pop_skipped.add(1, {"horde.gentype": self.gentype})
+        else:
+            pop_skipped.add(1, {"horde.skip_reason": reason_key, "horde.gentype": self.gentype})
 
     def get_sorted_wp(self, priority_user_ids=None):
         """Extendable class to retrieve the sorted WP list for this worker"""

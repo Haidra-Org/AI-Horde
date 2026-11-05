@@ -30,6 +30,8 @@ from sqlalchemy.dialects import postgresql, sqlite
 
 from horde.classes.base.waiting_prompt import RequestEligibilityInputs, WaitingPrompt
 from horde.classes.base.worker import (
+    EligibilitySkipReason,
+    EligibilityVerdict,
     Worker,
     WorkerEligibilityInputs,
     WorkerModel,
@@ -64,7 +66,15 @@ def _allowing_worker(**overrides):
     }
     defaults.update(overrides)
     worker = MagicMock(
-        spec_set=list(defaults.keys()) + ["is_stale", "get_model_names", "get_eligibility_inputs", "can_generate_with_eligibility_inputs"],
+        spec_set=list(defaults.keys())
+        + [
+            "is_stale",
+            "get_model_names",
+            "get_eligibility_inputs",
+            "read_eligibility_inputs",
+            "can_generate_any",
+            "can_generate_with_eligibility_inputs",
+        ],
     )
     for k, v in defaults.items():
         setattr(worker, k, v)
@@ -72,6 +82,8 @@ def _allowing_worker(**overrides):
     worker.get_model_names.return_value = []
     # The real input builder and rule chain run against the mock, so ``Worker.can_generate`` runs against the stand-in without a database.
     worker.get_eligibility_inputs = partial(Worker.get_eligibility_inputs, worker)
+    worker.read_eligibility_inputs = partial(Worker.read_eligibility_inputs, worker)
+    worker.can_generate_any = partial(Worker.can_generate_any, worker)
     worker.can_generate_with_eligibility_inputs = partial(Worker.can_generate_with_eligibility_inputs, worker)
     return worker
 
@@ -81,6 +93,7 @@ def _allowing_wp(**overrides):
     user = overrides.pop("user", _allowing_user())
     defaults = {
         "user": user,
+        "user_id": user.id,
         "nsfw": False,
         "trusted_workers": False,
         "prompt": "a friendly prompt",
@@ -127,7 +140,7 @@ class TestHappyPath:
     def test_default_allowing_state_returns_true(self):
         worker = _allowing_worker()
         wp = _allowing_wp()
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
 
 class TestMaintenance:
@@ -137,83 +150,164 @@ class TestMaintenance:
         worker = _allowing_worker(maintenance=True, user=owner)
         wp = _allowing_wp(user=non_owner)
         # Silent rejection: reason is None so the queue does not surface it.
-        assert Worker.can_generate(worker, wp) == [False, None]
+        assert Worker.can_generate(worker, wp) == (False, None)
 
     def test_maintenance_does_not_block_owner(self):
         owner = _allowing_user()
         worker = _allowing_worker(maintenance=True, user=owner)
         wp = _allowing_wp(user=owner)
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
+
+    def test_maintenance_serves_the_priority_users_of_the_pop(self):
+        """A worker in maintenance serves the users its pop prioritizes, as the priority pass of the pop query does."""
+        owner = _allowing_user()
+        priority_user = _allowing_user()
+        worker = _allowing_worker(maintenance=True, user=owner)
+        worker_inputs = _worker_inputs(maintenance_user_ids=frozenset({owner.id, priority_user.id}))
+        wp = _allowing_wp(user=priority_user)
+        assert Worker.can_generate_with_eligibility_inputs(worker, wp, _request_inputs(), worker_inputs) == (True, None)
+
+    def test_maintenance_refuses_users_the_pop_does_not_prioritize(self):
+        owner = _allowing_user()
+        priority_user = _allowing_user()
+        other_user = _allowing_user()
+        worker = _allowing_worker(maintenance=True, user=owner)
+        worker_inputs = _worker_inputs(maintenance_user_ids=frozenset({owner.id, priority_user.id}))
+        wp = _allowing_wp(user=other_user)
+        assert Worker.can_generate_with_eligibility_inputs(worker, wp, _request_inputs(), worker_inputs) == (False, None)
+
+    def test_maintenance_serves_the_owner_without_priority_users(self):
+        owner = _allowing_user()
+        worker = _allowing_worker(maintenance=True, user=owner)
+        wp = _allowing_wp(user=owner)
+        assert Worker.can_generate_with_eligibility_inputs(worker, wp, _request_inputs(), _worker_inputs()) == (True, None)
+
+    def test_read_inputs_hold_the_given_maintenance_users(self):
+        worker = _allowing_worker()
+        worker_inputs = Worker.read_eligibility_inputs(worker, maintenance_user_ids=[3, 4, 3])
+        assert worker_inputs.maintenance_user_ids == frozenset({3, 4})
+        assert Worker.get_eligibility_inputs(worker, _allowing_wp()).maintenance_user_ids == frozenset()
+
+
+class TestWorkerOnlyRules:
+    """``can_generate_any`` judges the rules that refuse a worker whatever the request."""
+
+    def test_a_fresh_worker_can_serve_some_request(self):
+        worker = _allowing_worker()
+        assert Worker.can_generate_any(worker, _worker_inputs()) == (True, None)
+
+    def test_a_stale_worker_is_refused_with_the_per_request_reason(self):
+        worker = _allowing_worker(_is_stale=True)
+        assert Worker.can_generate_any(worker, _worker_inputs()) == (False, None)
+        assert Worker.can_generate(worker, _allowing_wp()) == (False, None)
+
+
+class TestVerdict:
+    def test_skip_reason_values_are_the_wire_strings(self):
+        """The skip reasons are the keys of a pop response's ``skipped`` counts, so their values do not change."""
+        assert {reason.value for reason in EligibilitySkipReason} == {
+            "nsfw",
+            "untrusted",
+            "secret",
+            "blacklist",
+            "worker_id",
+            "models",
+            "max_pixels",
+            "performance",
+            "img2img",
+            "painting",
+            "bridge_version",
+            "controlnet",
+            "lora",
+            "unsafe_ip",
+            "step_count",
+            "post-processing",
+            "kudos",
+            "prompt_jobs",
+            "chat_jobs",
+            "chat_features",
+            "tools_max_temperature",
+            "max_context_length",
+            "max_length",
+            "lease_speed",
+            "matching_softprompt",
+        }
+
+    def test_verdict_indexes_as_eligibility_then_reason(self):
+        verdict = EligibilityVerdict.refused(EligibilitySkipReason.NSFW)
+        assert verdict[0] is False
+        assert verdict[1] == "nsfw"
+        assert EligibilityVerdict.accepted() == (True, None)
 
 
 class TestStaleness:
     def test_stale_worker_is_silently_rejected(self):
         worker = _allowing_worker(_is_stale=True)
         wp = _allowing_wp()
-        assert Worker.can_generate(worker, wp) == [False, None]
+        assert Worker.can_generate(worker, wp) == (False, None)
 
 
 class TestNsfw:
     def test_nsfw_request_to_sfw_worker_rejected(self):
         worker = _allowing_worker(nsfw=False)
         wp = _allowing_wp(nsfw=True)
-        assert Worker.can_generate(worker, wp) == [False, "nsfw"]
+        assert Worker.can_generate(worker, wp) == (False, "nsfw")
 
     def test_sfw_request_to_nsfw_worker_allowed(self):
         worker = _allowing_worker(nsfw=True)
         wp = _allowing_wp(nsfw=False)
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
     def test_sfw_request_to_sfw_worker_allowed(self):
         worker = _allowing_worker(nsfw=False)
         wp = _allowing_wp(nsfw=False)
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
 
 class TestTrustedWorkersOnly:
     def test_request_requires_trusted_owner_untrusted_blocks(self):
         worker = _allowing_worker(user=_allowing_user(trusted=False))
         wp = _allowing_wp(trusted_workers=True)
-        assert Worker.can_generate(worker, wp) == [False, "untrusted"]
+        assert Worker.can_generate(worker, wp) == (False, "untrusted")
 
     def test_request_requires_trusted_owner_trusted_passes(self):
         worker = _allowing_worker(user=_allowing_user(trusted=True))
         wp = _allowing_wp(trusted_workers=True)
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
 
 class TestTrickedWorker:
     def test_tricked_worker_rejected_with_secret_reason(self):
         worker = _allowing_worker(id="worker-1")
         wp = _allowing_wp(_tricked_worker_ids=["worker-1"])
-        assert Worker.can_generate(worker, wp) == [False, "secret"]
+        assert Worker.can_generate(worker, wp) == (False, "secret")
 
     def test_worker_tricked_by_another_request_passes(self):
         worker = _allowing_worker(id="worker-1")
         wp = _allowing_wp(_tricked_worker_ids=["worker-2"])
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
 
 class TestBlacklist:
     def test_prompt_with_blacklisted_word_rejected(self):
         worker = _allowing_worker(blacklist=[SimpleNamespace(word="evil")])
         wp = _allowing_wp(prompt="something evil happens")
-        assert Worker.can_generate(worker, wp) == [False, "blacklist"]
+        assert Worker.can_generate(worker, wp) == (False, "blacklist")
 
     def test_blacklist_match_is_case_insensitive(self):
         worker = _allowing_worker(blacklist=[SimpleNamespace(word="EVIL")])
         wp = _allowing_wp(prompt="evil things")
-        assert Worker.can_generate(worker, wp) == [False, "blacklist"]
+        assert Worker.can_generate(worker, wp) == (False, "blacklist")
 
     def test_clean_prompt_passes_blacklist(self):
         worker = _allowing_worker(blacklist=[SimpleNamespace(word="evil")])
         wp = _allowing_wp(prompt="a sunny day in the park")
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
     def test_empty_blacklist_short_circuits(self):
         worker = _allowing_worker(blacklist=[])
         wp = _allowing_wp(prompt="anything goes")
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
 
 class TestWorkerTargeting:
@@ -227,7 +321,7 @@ class TestWorkerTargeting:
             workers=["worker-1", "worker-2"],
             _worker_ids=["worker-1", "worker-2"],
         )
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
     def test_allowlist_worker_not_in_list_rejected(self):
         worker = _allowing_worker(id="worker-99")
@@ -236,7 +330,7 @@ class TestWorkerTargeting:
             workers=["worker-1", "worker-2"],
             _worker_ids=["worker-1", "worker-2"],
         )
-        assert Worker.can_generate(worker, wp) == [False, "worker_id"]
+        assert Worker.can_generate(worker, wp) == (False, "worker_id")
 
     def test_denylist_worker_in_list_rejected(self):
         worker = _allowing_worker(id="worker-1")
@@ -245,7 +339,7 @@ class TestWorkerTargeting:
             workers=["worker-1"],
             _worker_ids=["worker-1"],
         )
-        assert Worker.can_generate(worker, wp) == [False, "worker_id"]
+        assert Worker.can_generate(worker, wp) == (False, "worker_id")
 
     def test_denylist_worker_not_in_list_passes(self):
         worker = _allowing_worker(id="worker-99")
@@ -254,14 +348,14 @@ class TestWorkerTargeting:
             workers=["worker-1"],
             _worker_ids=["worker-1"],
         )
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
     def test_empty_workers_list_passes_allowlist(self):
         # Quirk: when ``workers`` is empty, the worker_id gate is skipped
         # regardless of allowlist/denylist mode (the `len(workers)` guard).
         worker = _allowing_worker(id="worker-1")
         wp = _allowing_wp(worker_blacklist=False, workers=[], _worker_ids=[])
-        assert Worker.can_generate(worker, wp) == [True, None]
+        assert Worker.can_generate(worker, wp) == (True, None)
 
 
 class TestRejectionPriority:
@@ -274,17 +368,17 @@ class TestRejectionPriority:
         worker = _allowing_worker(maintenance=True, user=owner, nsfw=False)
         wp = _allowing_wp(user=non_owner, nsfw=True)
         # Maintenance check fires first → silent rejection (None), not "nsfw".
-        assert Worker.can_generate(worker, wp) == [False, None]
+        assert Worker.can_generate(worker, wp) == (False, None)
 
     def test_stale_takes_priority_over_nsfw(self):
         worker = _allowing_worker(_is_stale=True, nsfw=False)
         wp = _allowing_wp(nsfw=True)
-        assert Worker.can_generate(worker, wp) == [False, None]
+        assert Worker.can_generate(worker, wp) == (False, None)
 
     def test_nsfw_takes_priority_over_trusted(self):
         worker = _allowing_worker(nsfw=False, user=_allowing_user(trusted=False))
         wp = _allowing_wp(nsfw=True, trusted_workers=True)
-        assert Worker.can_generate(worker, wp) == [False, "nsfw"]
+        assert Worker.can_generate(worker, wp) == (False, "nsfw")
 
 
 class TestEligibilityInputs:
@@ -295,25 +389,25 @@ class TestEligibilityInputs:
         worker = _allowing_worker(blacklist=[])
         wp = _allowing_wp(prompt="something evil happens")
         result = Worker.can_generate_with_eligibility_inputs(worker, wp, _request_inputs(), _worker_inputs(blacklist_words=("EVIL",)))
-        assert result == [False, "blacklist"]
+        assert result == (False, "blacklist")
 
     def test_owner_trust_comes_from_the_worker_inputs(self):
         worker = _allowing_worker(user=_allowing_user(trusted=True))
         wp = _allowing_wp(trusted_workers=True)
         result = Worker.can_generate_with_eligibility_inputs(worker, wp, _request_inputs(), _worker_inputs(owner_trusted=False))
-        assert result == [False, "untrusted"]
+        assert result == (False, "untrusted")
 
     def test_tricked_worker_ids_come_from_the_request_inputs(self):
         worker = _allowing_worker(id="worker-1")
         wp = _allowing_wp()
         request_inputs = _request_inputs(tricked_worker_ids=frozenset({"worker-1"}))
-        assert Worker.can_generate_with_eligibility_inputs(worker, wp, request_inputs, _worker_inputs()) == [False, "secret"]
+        assert Worker.can_generate_with_eligibility_inputs(worker, wp, request_inputs, _worker_inputs()) == (False, "secret")
 
     def test_targeted_worker_ids_come_from_the_request_inputs(self):
         worker = _allowing_worker(id="worker-99")
         wp = _allowing_wp(worker_blacklist=False, workers=[])
         request_inputs = _request_inputs(has_targeted_workers=True, targeted_worker_ids=frozenset({"worker-1"}))
-        assert Worker.can_generate_with_eligibility_inputs(worker, wp, request_inputs, _worker_inputs()) == [False, "worker_id"]
+        assert Worker.can_generate_with_eligibility_inputs(worker, wp, request_inputs, _worker_inputs()) == (False, "worker_id")
 
     def test_request_inputs_skip_the_worker_id_cache_without_targeted_workers(self):
         wp = _allowing_wp(workers=[], _worker_ids=["worker-1"])

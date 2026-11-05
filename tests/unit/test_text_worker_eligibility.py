@@ -20,7 +20,7 @@ from horde.apis.v2.base import GenerateTemplate
 from horde.apis.v2.kobold import TextAsyncGenerate, read_text_request_status
 from horde.chat_contract import ChatImpossibleReason
 from horde.classes.base.user import UserRoleTypes
-from horde.classes.base.worker import WorkerBlackList, WorkerModel
+from horde.classes.base.worker import EligibilityVerdict, WorkerBlackList, WorkerModel
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import (
     TEXT_WORKER_DECLARATION_GENERATION_KEY,
@@ -153,7 +153,7 @@ def test_queuing_a_text_request_seeds_the_availability_its_first_status_poll_rea
     assert functions.get_worker_availability_for_request(request).worker_count == 1
 
 
-def _judge_with_names(worker: TextWorker, request: TextWaitingPrompt, *, model_names: list[str]) -> list[Any]:
+def _judge_with_names(worker: TextWorker, request: TextWaitingPrompt, *, model_names: list[str]) -> EligibilityVerdict:
     """Evaluate the worker with ``model_names`` and no softprompts in place of the inputs the availability query would supply."""
     worker_inputs = replace(worker.get_eligibility_inputs(request), model_names=tuple(model_names), softprompt_names=())
     return worker.can_generate_with_eligibility_inputs(request, request.get_eligibility_inputs(), worker_inputs)
@@ -233,7 +233,7 @@ def _make_chat_worker(user: Any, **chat_declaration: Any) -> TextWorker:
     return worker
 
 
-def _chat_eligibility(worker: TextWorker, request: TextWaitingPrompt) -> list[Any]:
+def _chat_eligibility(worker: TextWorker, request: TextWaitingPrompt) -> EligibilityVerdict:
     return _judge_with_names(worker, request, model_names=[CHAT_MODEL])
 
 
@@ -245,7 +245,7 @@ def test_a_chat_request_is_refused_by_a_worker_that_did_not_declare_chat_jobs(
     user = make_user()
     worker = _make_chat_worker(user, accepts_chat_jobs=False)
 
-    assert _chat_eligibility(worker, _make_chat_request(user)) == [False, "chat_jobs"]
+    assert _chat_eligibility(worker, _make_chat_request(user)) == (False, "chat_jobs")
 
 
 def test_a_chat_request_is_refused_by_a_worker_serving_another_chat_model(
@@ -256,7 +256,7 @@ def test_a_chat_request_is_refused_by_a_worker_serving_another_chat_model(
     user = make_user()
     worker = _make_chat_worker(user, chat_model_id="koboldcpp/another-model")
 
-    assert _chat_eligibility(worker, _make_chat_request(user)) == [False, "chat_jobs"]
+    assert _chat_eligibility(worker, _make_chat_request(user)) == (False, "chat_jobs")
 
 
 def test_chat_limits_and_not_text_limits_gate_a_chat_request(
@@ -267,9 +267,9 @@ def test_chat_limits_and_not_text_limits_gate_a_chat_request(
     user = make_user()
     worker = _make_chat_worker(user)
 
-    assert _chat_eligibility(worker, _make_chat_request(user)) == [True, None]
-    assert _chat_eligibility(worker, _make_chat_request(user, {"max_context_length": 16384})) == [False, "max_context_length"]
-    assert _chat_eligibility(worker, _make_chat_request(user, {"max_length": 2048})) == [False, "max_length"]
+    assert _chat_eligibility(worker, _make_chat_request(user)) == (True, None)
+    assert _chat_eligibility(worker, _make_chat_request(user, {"max_context_length": 16384})) == (False, "max_context_length")
+    assert _chat_eligibility(worker, _make_chat_request(user, {"max_length": 2048})) == (False, "max_length")
 
 
 def test_a_chat_worker_is_still_bounded_by_its_text_limits_for_text_requests(
@@ -283,18 +283,18 @@ def test_a_chat_worker_is_still_bounded_by_its_text_limits_for_text_requests(
     text_request.slow_workers = True
     text_request.max_context_length = 1024
 
-    assert _chat_eligibility(worker, text_request) == [True, None]
+    assert _chat_eligibility(worker, text_request) == (True, None)
     text_request.max_context_length = 4096
-    assert _chat_eligibility(worker, text_request) == [False, "max_context_length"]
+    assert _chat_eligibility(worker, text_request) == (False, "max_context_length")
 
 
 @pytest.mark.parametrize(
     ("request_params", "expected"),
     [
-        ({}, [True, None]),
-        ({"frequency_penalty": 0, "presence_penalty": 0}, [True, None]),
-        ({"seed": 42, "presence_penalty": 0.5}, [True, None]),
-        ({"frequency_penalty": 0.5}, [False, "chat_features"]),
+        ({}, (True, None)),
+        ({"frequency_penalty": 0, "presence_penalty": 0}, (True, None)),
+        ({"seed": 42, "presence_penalty": 0.5}, (True, None)),
+        ({"frequency_penalty": 0.5}, (False, "chat_features")),
     ],
 )
 def test_a_chat_request_needing_an_undeclared_feature_is_refused(
@@ -302,7 +302,7 @@ def test_a_chat_request_needing_an_undeclared_feature_is_refused(
     fake_redis: Any,
     make_user: Any,
     request_params: dict[str, Any],
-    expected: list[Any],
+    expected: tuple[bool, str | None],
 ) -> None:
     user = make_user()
     worker = _make_chat_worker(user)
@@ -346,7 +346,7 @@ def test_availability_counts_a_slow_worker_for_a_legacy_request_over_its_capacit
 
     assert legacy_availability.worker_count == 1
     assert chat_availability.worker_count == 1
-    assert _chat_eligibility(slow_chat_worker, chat_request) == [False, "lease_speed"]
+    assert _chat_eligibility(slow_chat_worker, chat_request) == (False, "lease_speed")
 
 
 def test_availability_counts_a_slow_chat_worker_when_no_online_chat_worker_has_the_capacity(
@@ -364,7 +364,7 @@ def test_availability_counts_a_slow_chat_worker_when_no_online_chat_worker_has_t
 
     assert availability.worker_count == 1
     assert availability.impossible_reason is None
-    assert _chat_eligibility(slow_chat_worker, chat_request) == [True, None]
+    assert _chat_eligibility(slow_chat_worker, chat_request) == (True, None)
 
 
 @pytest.mark.parametrize(
@@ -421,19 +421,19 @@ IMAGE_CHAT_MESSAGES = [
 @pytest.mark.parametrize(
     ("image_declaration", "expected"),
     [
-        ({}, [False, "chat_features"]),
-        ({"image_transports": ["url"]}, [False, "chat_features"]),
-        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE]}, [False, "chat_features"]),
-        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": []}, [False, "chat_features"]),
+        ({}, (False, "chat_features")),
+        ({"image_transports": ["url"]}, (False, "chat_features")),
+        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE]}, (False, "chat_features")),
+        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": []}, (False, "chat_features")),
         (
             {
                 "chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE],
                 "image_transports": ["messages_url"],
             },
-            [False, "chat_features"],
+            (False, "chat_features"),
         ),
-        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": ["base64"]}, [True, None]),
-        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": ["url"]}, [True, None]),
+        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": ["base64"]}, (True, None)),
+        ({"chat_features": [ChatFeature.VISION.value, STRICT_BASELINE_GUARANTEE], "image_transports": ["url"]}, (True, None)),
     ],
 )
 def test_a_chat_request_with_images_needs_vision_and_an_image_transport(
@@ -441,7 +441,7 @@ def test_a_chat_request_with_images_needs_vision_and_an_image_transport(
     fake_redis: Any,
     make_user: Any,
     image_declaration: dict[str, Any],
-    expected: list[Any],
+    expected: tuple[bool, str | None],
 ) -> None:
     user = make_user()
     worker = _make_chat_worker(user, **image_declaration)
@@ -459,16 +459,16 @@ def test_a_strict_chat_request_is_refused_by_a_worker_without_the_guarantees_it_
     user = make_user()
     worker = _make_chat_worker(user, chat_features=[ChatFeature.SEED.value])
 
-    assert _chat_eligibility(worker, _make_chat_request(user)) == [False, "chat_features"]
-    assert _chat_eligibility(worker, _make_chat_request(user, conformance=ChatConformance.BEST_EFFORT)) == [True, None]
+    assert _chat_eligibility(worker, _make_chat_request(user)) == (False, "chat_features")
+    assert _chat_eligibility(worker, _make_chat_request(user, conformance=ChatConformance.BEST_EFFORT)) == (True, None)
 
 
 @pytest.mark.parametrize(
     ("tools_max_temperature", "temperature", "expected"),
     [
-        (None, 1.5, [True, None]),
-        (1.0, 1.0, [True, None]),
-        (1.0, 1.5, [False, "tools_max_temperature"]),
+        (None, 1.5, (True, None)),
+        (1.0, 1.0, (True, None)),
+        (1.0, 1.5, (False, "tools_max_temperature")),
     ],
 )
 def test_a_tool_temperature_limit_refuses_a_hotter_request_that_forwards_tools(
@@ -477,7 +477,7 @@ def test_a_tool_temperature_limit_refuses_a_hotter_request_that_forwards_tools(
     make_user: Any,
     tools_max_temperature: float | None,
     temperature: float,
-    expected: list[Any],
+    expected: tuple[bool, str | None],
 ) -> None:
     """A worker without the limit applies any temperature with tools; one with it takes only requests within it."""
     user = make_user()
@@ -500,7 +500,7 @@ def test_best_effort_does_not_relax_the_tool_temperature_limit(
     worker = _make_chat_worker(user, chat_features=[ChatFeature.TOOLS.value], chat_tools_max_temperature=1.0)
     request = _make_chat_request(user, {"temperature": 1.5}, chat_extras=TOOL_EXTRAS, conformance=ChatConformance.BEST_EFFORT)
 
-    assert _chat_eligibility(worker, request) == [False, "tools_max_temperature"]
+    assert _chat_eligibility(worker, request) == (False, "tools_max_temperature")
 
 
 def test_a_tool_temperature_limit_does_not_apply_without_forwarded_tools(
@@ -514,7 +514,7 @@ def test_a_tool_temperature_limit_does_not_apply_without_forwarded_tools(
     request = _make_chat_request(user, {"temperature": 1.5}, chat_extras={**TOOL_EXTRAS, "tool_choice": "none"})
 
     assert request.chat_tools_temperature is None
-    assert _chat_eligibility(worker, request) == [True, None]
+    assert _chat_eligibility(worker, request) == (True, None)
 
 
 def test_the_pop_query_withholds_a_hotter_tool_request_from_a_worker_with_a_tool_temperature_limit(
@@ -585,7 +585,7 @@ def test_a_chat_request_without_images_needs_no_image_declaration(
     user = make_user()
     worker = _make_chat_worker(user, image_transports=None)
 
-    assert _chat_eligibility(worker, _make_chat_request(user)) == [True, None]
+    assert _chat_eligibility(worker, _make_chat_request(user)) == (True, None)
 
 
 def test_the_pop_query_withholds_image_requests_from_a_worker_that_cannot_take_images(
@@ -630,8 +630,8 @@ def test_a_chat_only_worker_refuses_text_requests_and_serves_chat_requests(
     text_request.slow_workers = True
     text_request.max_context_length = 512
 
-    assert _chat_eligibility(worker, text_request) == [False, "prompt_jobs"]
-    assert _chat_eligibility(worker, _make_chat_request(user)) == [True, None]
+    assert _chat_eligibility(worker, text_request) == (False, "prompt_jobs")
+    assert _chat_eligibility(worker, _make_chat_request(user)) == (True, None)
 
 
 def test_availability_and_context_growth_leave_out_a_chat_only_worker_for_text_requests(

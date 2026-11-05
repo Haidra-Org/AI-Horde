@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, NamedTuple, Self
 
 import logfire
+from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField
 from sqlalchemy import JSON, ScalarSelect, func, select, type_coerce
 from sqlalchemy.dialects.postgresql import UUID, aggregate_order_by, array_agg
 from sqlalchemy.orm import InstrumentedAttribute, Mapped, relationship
@@ -50,6 +52,13 @@ MAX_WORKER_NAME_CHARACTERS: int = 100
 """The longest worker name the workers table stores; ``check_for_bad_actor`` cuts longer names to it.
 
 The suspicion history copies the worker's name, so its column has the same length and a copy never exceeds it.
+"""
+
+BLACKLIST_WORD_STORED_CHARACTERS: int = 15
+"""How many leading characters of a blacklisted word the worker_blacklists table stores.
+
+``set_blacklist`` cuts a declared word to this length before storing it and before comparing it with the stored rows,
+so a longer word does not read as changed on every check-in.
 """
 
 WORKER_ONLINE_SECONDS: int = 300
@@ -169,20 +178,152 @@ class WorkerModel(db.Model):
 
 @dataclass(frozen=True)
 class WorkerEligibilityInputs:
-    """Represents the worker-side facts the eligibility rules read beyond the worker's own columns.
+    """Represents the worker-side facts the eligibility rules read beyond the worker's columns.
 
-    ``Worker.get_eligibility_inputs`` reads them from the worker's relationships; the availability query selects them
-    as aggregates in the same statement as the worker, so evaluating many workers does not hydrate their collections.
+    ``Worker.read_eligibility_inputs`` reads them from the worker's relationships and caches. A pop reads them once
+    and judges every candidate request with them, as they do not change during the pop. The availability query
+    selects the first four as aggregates in the same statement as the worker, so evaluating many workers does not
+    hydrate their collections. That query leaves the other fields at their defaults.
     """
 
     model_names: tuple[str, ...]
     """The models the worker advertises."""
     softprompt_names: tuple[str, ...]
     """The softprompts a text worker holds; empty for image workers."""
-    blacklist_words: tuple[str, ...]
-    """The words the worker refuses to see in a prompt."""
+    blacklist_words: tuple[str, ...] | None
+    """The worker's blacklisted words, or None when they were not read with the other inputs.
+
+    When None, the blacklist rule reads the worker's ``blacklist`` relationship, which loads once per session. A pop
+    leaves the words unread, so a pop that finds no candidate does not read them, and a pop whose check-in compared
+    the blacklist reuses the rows loaded by the check-in.
+    """
     owner_trusted: bool
     """Whether the worker's owner is trusted."""
+    maintenance_user_ids: frozenset[int] = frozenset()
+    """The users besides the owner whose requests the worker accepts while in maintenance.
+
+    A pop sets these to its priority users, the same users that the priority pass of the pop query admits. When the
+    set is empty, a worker in maintenance accepts only its owner's requests.
+    """
+    bridge_capabilities: frozenset[str] | None = field(default=None, compare=False)
+    """The capabilities of the worker's bridge, or None when they were not read with the other inputs.
+
+    When None, the checks read the capabilities from the worker's bridge agent. The field is left out of equality
+    because it is derived from the bridge agent.
+    """
+    model_baselines: Mapping[str, str] = field(default_factory=dict, compare=False)
+    """The baseline of each model in ``model_names``, read from the model reference, and empty for text workers.
+
+    A check looks up a model that is missing from the mapping in the model reference, so an empty mapping gives the
+    same results. The field is left out of equality because it is derived from ``model_names``.
+    """
+
+
+class EligibilitySkipReason(StrEnum):
+    """Represents why a worker was refused a request.
+
+    The values are the keys of the ``skipped`` counts in a pop response and the reasons recorded by the availability
+    query, so they are part of the API.
+    """
+
+    NSFW = "nsfw"
+    """The request is NSFW and the worker does not accept NSFW requests."""
+    UNTRUSTED = "untrusted"
+    """The request needs a trusted worker, or an untrusted worker would get an untrusted user's request from an unsafe
+    IP address."""
+    SECRET = "secret"
+    """The request tricked this worker before. The pop does not report this reason."""
+    BLACKLIST = "blacklist"
+    """The prompt contains a word on the worker's blacklist."""
+    WORKER_ID = "worker_id"
+    """The request's worker list excludes the worker."""
+    MODELS = "models"
+    """The worker does not serve a model the request accepts."""
+    MAX_PIXELS = "max_pixels"
+    """The image is larger than the worker's pixel limit."""
+    PERFORMANCE = "performance"
+    """The worker is slower than the request allows."""
+    IMG2IMG = "img2img"
+    """The request has a source image and the worker does not take one."""
+    PAINTING = "painting"
+    """The request is an inpainting or outpainting job and the worker does not take one."""
+    BRIDGE_VERSION = "bridge_version"
+    """The worker's bridge release does not support a feature of the request."""
+    CONTROLNET = "controlnet"
+    """The request uses a ControlNet feature the worker opted out of."""
+    LORA = "lora"
+    """The request uses LoRAs and the worker opted out of them."""
+    UNSAFE_IP = "unsafe_ip"
+    """The request comes from an unsafe IP address and the worker does not accept those."""
+    STEP_COUNT = "step_count"
+    """The request needs more sampler work than the worker's step limit allows."""
+    POST_PROCESSING = "post-processing"
+    """The request uses post-processing and the worker opted out of it."""
+    KUDOS = "kudos"
+    """The worker requires upfront kudos and the requesting user does not have enough."""
+    PROMPT_JOBS = "prompt_jobs"
+    """The request is a text prompt job and the worker does not accept those."""
+    CHAT_JOBS = "chat_jobs"
+    """The request is a chat job and the worker does not serve its model with chat."""
+    CHAT_FEATURES = "chat_features"
+    """The chat request needs a capability or guarantee the worker does not declare."""
+    TOOLS_MAX_TEMPERATURE = ChatLimitField.TOOLS_MAX_TEMPERATURE.value
+    """The chat request forwards tools at a temperature the worker's backend would lower."""
+    MAX_CONTEXT_LENGTH = "max_context_length"
+    """The request's context is longer than the worker's limit."""
+    MAX_LENGTH = "max_length"
+    """The request asks for more tokens than the worker's limit."""
+    LEASE_SPEED = "lease_speed"
+    """The worker cannot finish the chat job inside the base lease while a faster worker is online."""
+    MATCHING_SOFTPROMPT = "matching_softprompt"
+    """The worker does not hold the softprompt the request needs."""
+
+
+class EligibilityVerdict(NamedTuple):
+    """Represents the outcome of judging a worker against a request.
+
+    It indexes and unpacks as ``(eligible, skip_reason)``.
+    """
+
+    eligible: bool
+    """Whether the worker can serve the request."""
+    skip_reason: EligibilitySkipReason | None
+    """Why the worker was refused, or None when it is eligible or the refusal is not reported."""
+
+    @classmethod
+    def accepted(cls) -> Self:
+        """Create the verdict of an eligible worker.
+
+        Returns:
+            The eligible verdict.
+        """
+        return cls(eligible=True, skip_reason=None)
+
+    @classmethod
+    def refused(cls, skip_reason: EligibilitySkipReason | None) -> Self:
+        """Create the verdict of a refused worker.
+
+        Args:
+            skip_reason: Why the worker was refused, or None for a refusal that is not reported.
+
+        Returns:
+            The refused verdict.
+        """
+        return cls(eligible=False, skip_reason=skip_reason)
+
+
+def _contains_blacklisted_word(prompt: str, blacklist_words: Collection[str]) -> bool:
+    """Return whether a prompt contains any of a worker's blacklisted words, ignoring case.
+
+    Args:
+        prompt: The request's prompt.
+        blacklist_words: The worker's blacklisted words.
+
+    Returns:
+        True when a blacklisted word appears in the prompt.
+    """
+    prompt_lower = prompt.lower()
+    return any(word.lower() in prompt_lower for word in blacklist_words)
 
 
 class WorkerMessage(db.Model):
@@ -863,17 +1004,22 @@ class Worker(WorkerTemplate):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
         blacklist = [sanitize_string(word) for word in blacklist]
         del blacklist[200:]
-        blacklist = set(blacklist)
-        existing_blacklist = db.session.query(WorkerBlackList).filter_by(worker_id=self.id)
-
-        existing_blacklist_words = set([b.word for b in existing_blacklist.all()])
+        # The rows store at most the first fifteen characters of a word, so the comparison uses the same
+        # truncation; otherwise a longer word would differ from its stored row on every check-in and the
+        # rows would be rewritten each time.
+        blacklist = {word[0:BLACKLIST_WORD_STORED_CHARACTERS] for word in blacklist}
+        # Compared through the relationship so the pop's blacklist rule reuses the loaded rows instead of reading
+        # them again. Only this method writes the rows, and it expires the collection after writing them.
+        existing_blacklist_words = set([b.word for b in self.blacklist])
         if existing_blacklist_words == blacklist:
             return
-        existing_blacklist.delete()
+        db.session.query(WorkerBlackList).filter_by(worker_id=self.id).delete()
         for word in blacklist:
-            blacklisted_word = WorkerBlackList(worker_id=self.id, word=word[0:15])
+            blacklisted_word = WorkerBlackList(worker_id=self.id, word=word)
             db.session.add(blacklisted_word)
         db.session.flush()
+        # The bulk delete and the inserts above bypass the loaded collection.
+        db.session.expire(self, ["blacklist"])
 
     def refresh_model_cache(self) -> list[str]:
         # Read the authoritative rows straight from worker_models rather than the
@@ -938,14 +1084,14 @@ class Worker(WorkerTemplate):
         del models[200:]
         return set(models)
 
-    def can_generate(self, waiting_prompt: Any) -> list[bool | str | None]:
+    def can_generate(self, waiting_prompt: Any) -> EligibilityVerdict:
         """Return whether this worker can serve a request, reading the eligibility inputs from the loaded rows.
 
         Args:
             waiting_prompt: The request being evaluated.
 
         Returns:
-            Eligibility followed by the rejection reason, if any.
+            The verdict, with the reason when the worker is refused.
         """
         return self.can_generate_with_eligibility_inputs(
             waiting_prompt,
@@ -954,10 +1100,27 @@ class Worker(WorkerTemplate):
         )
 
     def get_eligibility_inputs(self, waiting_prompt: Any) -> WorkerEligibilityInputs:
-        """Return the worker-side eligibility inputs, read from the worker's relationships and model cache.
+        """Return the worker-side eligibility inputs for judging one request.
 
         Args:
             waiting_prompt: The request being evaluated.
+
+        Returns:
+            The worker's eligibility inputs, with the blacklisted words read.
+        """
+        return replace(
+            self.read_eligibility_inputs(),
+            blacklist_words=tuple(blacklisted.word for blacklisted in self.blacklist),
+        )
+
+    def read_eligibility_inputs(self, *, maintenance_user_ids: Collection[int] = ()) -> WorkerEligibilityInputs:
+        """Return the worker-side eligibility inputs for a pop, read from the worker's caches.
+
+        The blacklisted words are left unread. The blacklist rule reads them from the ``blacklist`` relationship when
+        a request first reaches the rule.
+
+        Args:
+            maintenance_user_ids: The users besides the owner whose requests the worker accepts while in maintenance.
 
         Returns:
             The worker's eligibility inputs.
@@ -965,17 +1128,39 @@ class Worker(WorkerTemplate):
         return WorkerEligibilityInputs(
             model_names=tuple(self.get_model_names()),
             softprompt_names=(),
-            blacklist_words=tuple(blacklisted.word for blacklisted in self.blacklist),
+            blacklist_words=None,
             owner_trusted=self.user.trusted,
+            maintenance_user_ids=frozenset(maintenance_user_ids),
         )
+
+    def can_generate_any(self, worker_inputs: WorkerEligibilityInputs) -> EligibilityVerdict:
+        """Return whether this worker can serve any request, judged by the rules that do not depend on the request.
+
+        A pop runs this once before it reads a candidate page. A worker that fails here would be refused by every
+        candidate, so the pop does not page through the queue for it.
+        [`can_generate_with_eligibility_inputs`][horde.classes.base.worker.Worker.can_generate_with_eligibility_inputs]
+        applies the same rules to each request as well.
+
+        Args:
+            worker_inputs: This worker's eligibility inputs.
+
+        Returns:
+            The verdict. A refusal has the reason that the per-request check reports for the same rule.
+        """
+        # A stale worker is not offered any request, so the refusal is not reported.
+        if self.is_stale():
+            return EligibilityVerdict.refused(None)
+        return EligibilityVerdict.accepted()
 
     def can_generate_with_eligibility_inputs(
         self,
         waiting_prompt: Any,
         request_inputs: RequestEligibilityInputs,
         worker_inputs: WorkerEligibilityInputs,
-    ) -> list[bool | str | None]:
+    ) -> EligibilityVerdict:
         """Evaluate the eligibility rules every worker type shares.
+
+        The rules run in a fixed order. The first rule that refuses the worker gives the reason.
 
         Args:
             waiting_prompt: The request being evaluated.
@@ -983,56 +1168,38 @@ class Worker(WorkerTemplate):
             worker_inputs: This worker's eligibility inputs.
 
         Returns:
-            Eligibility followed by the rejection reason, if any.
+            The verdict, with the reason when the worker is refused.
         """
-        # Workers in maintenance are still allowed to generate for their owner
-        if self.maintenance and waiting_prompt.user != self.user:
-            return [False, None]
-        # logger.warning(datetime.utcnow())
+        # A worker in maintenance still serves its owner and the priority users of the pop. The priority pass of the
+        # pop query admits the same users. The request's user is compared only for a worker in maintenance.
+        if self.maintenance:
+            served_during_maintenance = waiting_prompt.user == self.user or waiting_prompt.user_id in worker_inputs.maintenance_user_ids
+            if not served_during_maintenance:
+                return EligibilityVerdict.refused(None)
+        # A stale worker is not offered any request, so the refusal is not reported.
         if self.is_stale():
-            # We don't consider stale workers in the request, so we don't need to report a reason
-            return [False, None]
-        # logger.warning(datetime.utcnow())
+            return EligibilityVerdict.refused(None)
         if waiting_prompt.nsfw and not self.nsfw:
-            return [False, "nsfw"]
-        # logger.warning(datetime.utcnow())
+            return EligibilityVerdict.refused(EligibilitySkipReason.NSFW)
         if waiting_prompt.trusted_workers and not worker_inputs.owner_trusted:
-            return [False, "untrusted"]
-        # If the worker has been tricked once by this prompt, we don't want to resend it it
-        # as it may give up the jig
-        # logger.warning(datetime.utcnow())
+            return EligibilityVerdict.refused(EligibilitySkipReason.UNTRUSTED)
+        # A request that tricked this worker once is not sent to it again, because that could reveal the trick.
         if self.id in request_inputs.tricked_worker_ids:
-            return [False, "secret"]
-        # logger.warning(datetime.utcnow())
-        if worker_inputs.blacklist_words:
-            prompt_lower = waiting_prompt.prompt.lower()
-            if any(word.lower() in prompt_lower for word in worker_inputs.blacklist_words):
-                return [False, "blacklist"]
-        # Skips working prompts which require a specific worker from a list, and our ID is not in that list
-        if waiting_prompt.worker_blacklist:
-            if request_inputs.has_targeted_workers and self.id in request_inputs.targeted_worker_ids:
-                return [False, "worker_id"]
+            return EligibilityVerdict.refused(EligibilitySkipReason.SECRET)
+        if worker_inputs.blacklist_words is None:
+            blacklist_words: Collection[str] = [blacklisted.word for blacklisted in self.blacklist]
         else:
-            if request_inputs.has_targeted_workers and self.id not in request_inputs.targeted_worker_ids:
-                return [False, "worker_id"]
-        # logger.warning(datetime.utcnow())
-
-        # my_model_names = self.get_model_names()
-        # wp_model_names = waiting_prompt.get_model_names()
-        # if len(wp_model_names) > 0:
-        #     found_matching_model = False
-        #     for model_name in my_model_names:
-        #         if model_name in wp_model_names:
-        #             found_matching_model = True
-        #             break
-        #     if not found_matching_model:
-        #         return [False, 'model']
-
-        # # I removed this for now as I think it might be blocking requests from generating. I will revisit later again
-        # # If the worker is slower than average, and we're on the last quarter of the request, we try to utilize only fast workers
-        # if self.get_performance_average() < self.db.stats.get_request_avg() and waiting_prompt.n <= waiting_prompt.jobs/4:
-        #   return [False, 'performance']
-        return [True, None]
+            blacklist_words = worker_inputs.blacklist_words
+        # The prompt is read only for a worker with a blacklist.
+        if blacklist_words and _contains_blacklisted_word(waiting_prompt.prompt, blacklist_words):
+            return EligibilityVerdict.refused(EligibilitySkipReason.BLACKLIST)
+        if request_inputs.has_targeted_workers:
+            is_listed = self.id in request_inputs.targeted_worker_ids
+            # The request's worker list is a denylist when ``worker_blacklist`` is set, and an allowlist otherwise.
+            excluded_by_worker_list = is_listed if waiting_prompt.worker_blacklist else not is_listed
+            if excluded_by_worker_list:
+                return EligibilityVerdict.refused(EligibilitySkipReason.WORKER_ID)
+        return EligibilityVerdict.accepted()
 
     # Should be extended by each specific horde
     @logger.catch(reraise=True)
