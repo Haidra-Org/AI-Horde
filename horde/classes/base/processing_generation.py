@@ -257,7 +257,10 @@ class ProcessingGeneration(db.Model):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         db.session.add(self)
-        db.session.commit()
+        # A flush makes the row persistent so the request and worker relationships load for
+        # the model choice and the lease below. The row, its model and its lease are then
+        # committed together at the end, so a failure in between leaves no pending job behind.
+        db.session.flush()
         if kwargs.get("model") is None:
             # Callers on the pop path pass an explicit model selected against the
             # worker's declared list. This branch serves the remaining callers
@@ -675,8 +678,9 @@ class ProcessingGeneration(db.Model):
         enqueue_webhook(self.wp.webhook, data, str(self.wp.id), str(self.id))
 
     def set_job_ttl(self):
-        """Returns how many seconds each job request should stay waiting before considering it stale and cancelling it
-        This function should be overriden by the invididual hordes depending on how the calculating ttl
+        """Set how many seconds the job may stay out before it is considered stale and cancelled.
+
+        Subclasses override this with their own lease calculation. The value is persisted by the
+        caller's commit, together with the rest of the assignment.
         """
         self.job_ttl = 150
-        db.session.commit()

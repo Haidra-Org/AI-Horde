@@ -239,4 +239,3 @@ class ImageProcessingGeneration(ProcessingGeneration):
         # The wire contract and database column are whole seconds. Round upward so fractional pixel
         # ratios can never shorten the promised completion window.
         self.job_ttl = math.ceil(ttl)
-        db.session.commit()
