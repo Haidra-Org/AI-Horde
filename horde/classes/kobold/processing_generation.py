@@ -8,7 +8,7 @@ import os
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, override
 
 from sqlalchemy.sql import expression
 
@@ -34,7 +34,7 @@ from horde.classes.kobold.chat_request import (
     chat_reply_characters,
     streams_progress,
 )
-from horde.classes.kobold.genstats import record_text_statistic
+from horde.classes.kobold.genstats import TextGenerationStatistic, build_text_statistic, record_text_statistic
 from horde.classes.kobold.worker import (
     TEXT_JOB_LEASE_SECONDS,
     TextWorker,
@@ -46,7 +46,6 @@ from horde.logger import logger
 from horde.metrics import (
     TEXT_LENGTH_BUCKETS,
     TextRequester,
-    submit_genstats_record_duration,
     submit_state_handling_duration,
     text_empty_generations,
     text_gate_shadow_assignments,
@@ -557,6 +556,10 @@ class TextProcessingGeneration(ProcessingGeneration):
             return
         super().log_worker_abort()
 
+    @override
+    def build_generation_statistic(self) -> TextGenerationStatistic:
+        return build_text_statistic(self)
+
     def log_aborted_generation(self):
         record_text_statistic(self)
         logger.info(
@@ -622,9 +625,6 @@ class TextProcessingGeneration(ProcessingGeneration):
         kudos = super().set_generation(generation, things_per_sec, **kwargs)
         if submission_is_empty:
             self._record_empty_generation(state, things_per_sec, kudos)
-        genstats_t0 = time.monotonic()
-        record_text_statistic(self)
-        submit_genstats_record_duration.record(time.monotonic() - genstats_t0, {"horde.gentype": "text"})
         # The base returns -1 for a generation that was already faulted and 0 for one already submitted;
         # neither stores this submission.
         if kudos in (-1, 0):
@@ -752,4 +752,9 @@ class TextProcessingGeneration(ProcessingGeneration):
         if "8x" in self.model:
             unreasonable_speed = unreasonable_speed * 3
         if things_per_sec > unreasonable_speed:
-            self.worker.report_suspicion(reason=Suspicions.UNREASONABLY_FAST, formats=[f"{things_per_sec} > {unreasonable_speed}"])
+            # Committed with the settlement, like the suspicion in Worker._record_contribution.
+            self.worker.report_suspicion(
+                reason=Suspicions.UNREASONABLY_FAST,
+                formats=[f"{things_per_sec} > {unreasonable_speed}"],
+                commit=False,
+            )

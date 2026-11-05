@@ -12,7 +12,8 @@ untrusted, half of every contribution credit is held in an evaluation escrow
 crosses the trust threshold it is flushed into the balance and the owner becomes
 trusted. A censored generation debits the requester nothing. A fake generation
 (the placeholder served to a tricked worker) settles nothing: the job is
-fulfilled by another worker, so its submission moves no kudos.
+fulfilled by another worker, so its submission moves no kudos. A stored image
+submission records its statistics once, in one transaction after its settlement.
 
 The image pop/submit HTTP lifecycle depends on S3-compatible object storage, so
 settlement is characterized against the real ``record_usage`` and
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -34,12 +36,16 @@ from sqlalchemy.orm import Session
 
 from horde.classes.base.kudos import KudosLedger
 from horde.classes.base.processing_generation import ProcessingGeneration
+from horde.classes.base.stats import FulfillmentPerformance, ModelPerformance
 from horde.classes.base.user import User, UserRole, UserSuspicions
-from horde.classes.base.worker import WorkerModel, WorkerTemplate
+from horde.classes.base.worker import WorkerModel, WorkerPerformance, WorkerTemplate
+from horde.classes.stable.genstats import ImageGenerationStatistic
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
-from horde.enums import UserRoleTypes
+from horde.enums import ImageGenState, UserRoleTypes
+from horde.flask import db
+from tests.conftest import _QueryRecorder
 from tests.fixture_types import MakeUser, MakeUserRole
 from tests.unit.model_reference_seed import seed_image_reference
 
@@ -376,3 +382,94 @@ class TestFakeGenerationSettlement:
         assert worker.kudos == 0
         assert owner.kudos == 1000
         assert db_session.query(KudosLedger).count() == 0
+
+
+IMAGE_SUBMIT_STATISTIC_INSERTS = 6
+"""The INSERTs of the image submission below: model performance, fulfilment, worker performance, the image statistic
+and its post-processor and LoRa rows."""
+
+
+def _count_image_submission_statistics(worker: ImageWorker) -> tuple[int, int, int, int]:
+    """Return the committed model performances, image fulfilments, worker performances and censored image statistics."""
+    with Session(db.engine) as reader:
+        return (
+            reader.query(ModelPerformance).filter_by(model=_HOSTED_MODEL).count(),
+            reader.query(FulfillmentPerformance).filter_by(thing_type="image").count(),
+            reader.query(WorkerPerformance).filter_by(worker_id=worker.id).count(),
+            reader.query(ImageGenerationStatistic).filter_by(model=_HOSTED_MODEL, state=ImageGenState.CENSORED).count(),
+        )
+
+
+class TestImageSubmissionStatistics:
+    """A stored image submission records its statistics once, in one transaction after its settlement."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_model_reference(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pin the image model reference to a single model."""
+        seed_image_reference(monkeypatch, {_HOSTED_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1})
+
+    def test_censored_submission_records_one_censored_statistic_with_its_child_rows(
+        self,
+        db_session: Session,
+        make_user: MakeUser,
+        fake_redis: Any,
+        assert_query_count: Callable[[], AbstractContextManager[_QueryRecorder]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Record a censored image as CENSORED with its post-processor and LoRa rows, and do not record anything on a repeat."""
+        requester = make_user(kudos=1000)
+        owner = make_user(kudos=1000)
+        worker = _make_image_worker(db_session, owner)
+        wp = ImageWaitingPrompt(
+            [],
+            [_HOSTED_MODEL],
+            prompt="a unit-test prompt",
+            user_id=requester.id,
+            params={
+                "n": 1,
+                "width": 512,
+                "height": 512,
+                "steps": 10,
+                "sampler_name": "k_euler_a",
+                "post_processing": ["GFPGAN"],
+                "loras": [{"name": "unit-test-lora"}],
+            },
+        )
+        db_session.commit()
+        procgen = ImageProcessingGeneration(wp_id=wp.id, worker_id=worker.id, model=_HOSTED_MODEL)
+        db_session.commit()
+        monkeypatch.setattr(procgen, "get_gen_kudos", lambda: 10)
+        statistics_before = _count_image_submission_statistics(worker)
+        censorship = [{"type": "censorship", "value": "nsfw"}]
+
+        with assert_query_count() as queries:
+            reward = procgen.set_generation("R2", things_per_sec=2.5, seed=1, gen_metadata=censorship, state="ok")
+
+        assert reward == 10
+        statistics_index = next(
+            index
+            for index, transaction in enumerate(queries.commits)
+            if transaction.statement_kinds == ["INSERT"] * IMAGE_SUBMIT_STATISTIC_INSERTS
+        )
+        settlement_index = next(
+            index
+            for index, transaction in enumerate(queries.commits)
+            if "UPDATE" in transaction.statement_kinds and "INSERT" in transaction.statement_kinds
+        )
+        assert settlement_index < statistics_index, queries.describe()
+        statistics_after = _count_image_submission_statistics(worker)
+        assert [after - before for before, after in zip(statistics_before, statistics_after, strict=True)] == [1, 1, 1, 1]
+        with Session(db.engine) as reader:
+            statistic = (
+                reader.query(ImageGenerationStatistic)
+                .filter_by(model=_HOSTED_MODEL, state=ImageGenState.CENSORED)
+                .order_by(ImageGenerationStatistic.id.desc())
+                .first()
+            )
+            assert [post_processor.pp for post_processor in statistic.post_processors] == ["GFPGAN"]
+            assert [lora.lora for lora in statistic.loras] == ["unit-test-lora"]
+
+        repeated_reward = procgen.set_generation("R2", things_per_sec=2.5, seed=1, gen_metadata=censorship, state="ok")
+
+        assert repeated_reward == 0
+        assert _count_image_submission_statistics(worker) == statistics_after

@@ -57,7 +57,6 @@ from horde.metrics import (
     generate_source_upload_duration,
     status_duration,
     submit_duration,
-    submit_record_fulfilment_stat_duration,
 )
 from horde.model_reference import model_reference
 from horde.patreon import patrons
@@ -909,12 +908,9 @@ class ImageJobSubmit(JobSubmitTemplate):
 
     def set_generation(self):
         """Set to its own function to it can be overwritten depending on the class"""
-        record_fulfilment_t0 = time.monotonic()
-        things_per_sec = stats.record_fulfilment(self.procgen)
-        submit_record_fulfilment_stat_duration.record(time.monotonic() - record_fulfilment_t0, {"horde.gentype": self.gentype})
         self.kudos = self.procgen.set_generation(
             generation=self.args["generation"],
-            things_per_sec=things_per_sec,
+            things_per_sec=stats.calculate_things_per_sec(things=self.procgen.wp.things, start_time=self.procgen.start_time),
             seed=self.args.seed,
             censored=self.args.censored,
             state=self.args.state,

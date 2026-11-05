@@ -17,6 +17,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql import expression
 
 from horde.classes.base.kudos import kudos_event
+from horde.classes.base.stats import build_fulfilment_records
 from horde.enums import RequestTerminalOutcome
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
@@ -302,7 +303,27 @@ class ProcessingGeneration(db.Model):
         self.set_job_ttl()
         db.session.commit()
 
-    def set_generation(self, generation: str, things_per_sec: float, **kwargs: object) -> float | int:
+    def set_generation(
+        self,
+        generation: str,
+        things_per_sec: float,
+        *,
+        submitted_things: float | None = None,
+        **kwargs: object,
+    ) -> float | int:
+        """Claim this pending generation for a submission, settle it, store its statistics and complete its request.
+
+        Args:
+            generation: The submitted generation.
+            things_per_sec: The submission's speed from
+                [`calculate_things_per_sec`][horde.classes.base.stats.calculate_things_per_sec].
+            submitted_things: The things the submission delivered, for its fulfilment sample. The request's things
+                are used when it is not given.
+            **kwargs: Further submitted fields, such as ``seed``, ``gen_metadata`` and the gentype's columns.
+
+        Returns:
+            The kudos reward, 0 when the generation was already stored, or -1 when it was faulted or is missing.
+        """
         from horde.metrics import (
             request_outcomes,
             request_time_to_completion,
@@ -310,7 +331,7 @@ class ProcessingGeneration(db.Model):
             submit_commit_duration,
             submit_gen_kudos_duration,
             submit_record_duration,
-            submit_record_performance_duration,
+            submit_statistics_duration,
             submit_webhook_call_duration,
             submit_wp_completion_duration,
         )
@@ -369,14 +390,13 @@ class ProcessingGeneration(db.Model):
         db.session.commit()
         submit_commit_duration.record(time.monotonic() - _t)
         self._record_capacity_return()
-        # Persist the worker performance sample AFTER the main commit so its INSERT
-        # on worker_performances does not extend the time the hot `users` row locks
-        # are held above. Performance samples are telemetry, so a separate follow-up
-        # transaction is safe. Retention and the workers.speed average are folded
-        # off the request path by threads.refresh_worker_speeds.
+        # After the settlement commit, so the statistics inserts stay out of the settlement transaction.
         _t = time.monotonic()
-        self.worker.record_performance(things_per_sec)
-        submit_record_performance_duration.record(time.monotonic() - _t, gentype_label)
+        self.record_submission_statistics(
+            things=self.wp.things if submitted_things is None else submitted_things,
+            things_per_sec=things_per_sec,
+        )
+        submit_statistics_duration.record(time.monotonic() - _t, gentype_label)
         _t = time.monotonic()
         request_completed = self.wp.is_completed()
         if request_completed:
@@ -428,6 +448,61 @@ class ProcessingGeneration(db.Model):
         """
         return {}
 
+    def record_submission_statistics(self, *, things: float, things_per_sec: float) -> None:
+        """Store the statistics of a stored submission in one transaction, after its settlement is committed.
+
+        A submission is recorded only when its completion claim succeeded. It records the model performance and
+        fulfilment samples, the worker performance sample and the gentype's generation statistic. A duplicate or
+        refused submission does not record any of them, since it did not deliver anything new. A faulted
+        generation is recorded only by the ``FAULTED`` generation statistic that its fault writes.
+
+        The settlement is committed before this runs, so these inserts do not lengthen its transaction. A failure is
+        logged and rolled back without raising. The settlement stands, the submit still succeeds, and a repeated
+        submit is a duplicate that does not record anything.
+
+        Args:
+            things: The things the submission delivered.
+            things_per_sec: The submission's speed, as settled.
+
+        Side Effects:
+            Commits the session. On failure the session is rolled back, which expires every loaded instance.
+        """
+        # Read before the inserts: after a rollback these attributes are expired and
+        # reloading them needs the database that just failed.
+        procgen_id, wp_id, worker_id = self.id, self.wp_id, self.worker_id
+        statistic_records: list[db.Model] = build_fulfilment_records(
+            model=self.model,
+            thing_type=self.procgen_type,
+            things=things,
+            things_per_sec=things_per_sec,
+        )
+        generation_statistic = self.build_generation_statistic()
+        if generation_statistic is not None:
+            statistic_records.append(generation_statistic)
+        try:
+            db.session.add_all(statistic_records)
+            # worker_performances is folded into the worker's speed and pruned by threads.refresh_worker_speeds.
+            self.worker.record_performance(things_per_sec, commit=False)
+            db.session.commit()
+        except SQLAlchemyError as error:
+            db.session.rollback()
+            logger.error(
+                f"Submit statistics insert failed after settlement ({type(error).__name__}): "
+                f"procgen {procgen_id} of wp {wp_id} by worker {worker_id}: {error}",
+            )
+
+    def build_generation_statistic(self) -> db.Model | None:
+        """Create the generation statistic of a stored submission without adding it to the session.
+
+        Subclass Integration:
+            Override where a gentype keeps a generation statistic. It is stored in
+            [`record_submission_statistics`][horde.classes.base.processing_generation.ProcessingGeneration.record_submission_statistics].
+
+        Returns:
+            The new statistic, or None when the gentype does not keep one, which is the default.
+        """
+        return None
+
     def cancel(self) -> float | None:
         """Cancelling requests in progress still rewards/burns the relevant amount of kudos"""
         if self.is_completed() or self.is_faulted():
@@ -440,7 +515,7 @@ class ProcessingGeneration(db.Model):
         self.record(things_per_sec, kudos)
         db.session.commit()
         self._record_capacity_return()
-        # See set_generation: keep the performance write out of the locked window.
+        # After the settlement commit, so the worker_performances insert stays out of the settlement transaction.
         self.worker.record_performance(things_per_sec)
         if self.wp.is_completed():
             from horde.database.kudos_reservations import release_reservation
