@@ -40,6 +40,7 @@ from typing import Any
 import pytest
 from horde_model_reference.meta_consts import KNOWN_IMAGE_GENERATION_BASELINE
 from horde_sdk.generation_parameters.image.sampler_work import SamplerExecutionContractVersion
+from sqlalchemy import event, text
 
 from horde.classes.base.waiting_prompt import WPTrickedWorkers
 from horde.classes.base.worker import WorkerBlackList, WorkerModel
@@ -519,6 +520,39 @@ class TestFreshCapableWorker:
 
         assert len(active_dispatches) == 1
         assert active_dispatches[0].dispatch_id == str(dispatch_batch_id)
+
+    def test_active_dispatch_query_reads_the_dispatch_index(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        make_user_role: Any,
+    ) -> None:
+        """The active dispatch query is planned on ix_processing_gens_active_worker_dispatch, so it does not read
+        finished jobs."""
+        user = _make_trusted_user(make_user, make_user_role)
+        target = _make_image_wp(user)
+        worker = _make_image_worker(user, threads=2)
+        db.session.commit()
+        captured: list[tuple[str, Any]] = []
+
+        def capture(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:
+            if "dispatch_batch_id" in statement and statement.lstrip().upper().startswith("SELECT"):
+                captured.append((statement, parameters))
+
+        event.listen(db.engine, "before_cursor_execute", capture)
+        try:
+            f._get_active_worker_dispatches(target, [str(worker.id)])
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture)
+        assert len(captured) == 1
+        statement, parameters = captured[0]
+
+        db.session.execute(text("SET LOCAL enable_seqscan = off"))
+        plan = "\n".join(row[0] for row in db.session.connection().exec_driver_sql(f"EXPLAIN {statement}", parameters))
+        db.session.rollback()
+
+        assert "ix_processing_gens_active_worker_dispatch" in plan
 
     def test_availability_reports_only_new_compatible_demand_ahead(
         self,

@@ -2942,8 +2942,10 @@ def _get_active_worker_dispatches(
             ProcessingGeneration.worker_id.in_(eligible_worker_ids),
             ProcessingGeneration.dispatch_batch_id.is_not(None),
             ProcessingGeneration.generation.is_(None),
-            ProcessingGeneration.faulted.is_(False),
-            ProcessingGeneration.fake.is_(False),
+            # NOT rather than IS false, the form of the ix_processing_gens_active_worker_dispatch predicate. The planner
+            # does not match faulted IS false to it.
+            not_(ProcessingGeneration.faulted),
+            not_(ProcessingGeneration.fake),
         )
         .distinct()
         .all()
