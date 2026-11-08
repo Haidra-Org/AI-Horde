@@ -279,13 +279,15 @@ class TextWorker(Worker):
         image_transports: Sequence[str] | None = None,
         **kwargs,
     ):
-        # The chat declaration is replaced at every pop, outside the check-in debounce: this request's chat
-        # eligibility and payload shape are decided from these fields, and a worker that stops declaring chat must
-        # not receive a chat payload. Unchanged values leave the row clean, so a steady worker does not add an UPDATE or a
-        # generation bump. A changed one is committed here, ahead of the pop's own commit, because the bump that
-        # invalidates cached request availability must follow the commit. The plain-job opt-out is part of the
-        # declaration for the same reason: a chat-only worker must not receive a prompt.
+        # The declaration is replaced on every pop, outside the check-in debounce, because the pop's eligibility
+        # checks and payload shape are decided from these fields. A worker that stops declaring chat must not receive
+        # a chat payload, and a worker that lowers its text limits must not receive a longer prompt job. The plain-job
+        # opt-out is part of the declaration for the same reason, since a chat-only worker must not receive a prompt.
+        # Unchanged values leave the row clean, so a steady worker does not add an UPDATE or a generation bump. A
+        # changed value is committed here, ahead of the pop's own commit, because the bump that invalidates cached
+        # request availability must follow the commit.
         previous_chat_declaration = self.get_chat_declaration()
+        previous_prompt_job_limits = (self.max_length, self.max_context_length)
         self.accepts_chat_jobs = accepts_chat_jobs
         self.accepts_prompt_jobs = accepts_prompt_jobs or not accepts_chat_jobs
         self.chat_features = sorted(set(chat_features or ()) & KNOWN_CHAT_DECLARATIONS) if accepts_chat_jobs else None
@@ -296,15 +298,17 @@ class TextWorker(Worker):
         self.image_transports = (
             sorted(set(image_transports or ()) & {transport.value for transport in ChatImageTransport}) if accepts_chat_jobs else None
         )
+        self.max_length = max_length
+        self.max_context_length = max_context_length
+        softprompts_changed = self.set_softprompts(softprompts)
+        prompt_job_limits_changed = (self.max_length, self.max_context_length) != previous_prompt_job_limits
         chat_declaration_changed = self.get_chat_declaration() != previous_chat_declaration
+        declaration_changed = chat_declaration_changed or prompt_job_limits_changed or softprompts_changed
         if not super().check_in(**kwargs):
-            if chat_declaration_changed:
+            if declaration_changed:
                 db.session.commit()
                 bump_text_worker_declaration_generation()
             return
-        self.max_length = max_length
-        self.max_context_length = max_context_length
-        self.set_softprompts(softprompts)  # Does a commit as well
         paused_string = ""
         if self.paused:
             paused_string = "(Paused) "
@@ -313,7 +317,7 @@ class TextWorker(Worker):
             f"at {self.max_length} max tokens and {self.max_context_length} max content length.",
         )
         db.session.commit()
-        if chat_declaration_changed:
+        if declaration_changed:
             bump_text_worker_declaration_generation()
 
     def get_chat_declaration(self) -> tuple[Any, ...]:
@@ -379,13 +383,18 @@ class TextWorker(Worker):
             return self.refresh_softprompt_cache()
         return softprompts_ret
 
-    def set_softprompts(self, softprompts):
+    def set_softprompts(self, softprompts) -> bool:
+        """Replace the worker's advertised softprompts, writing only when they change.
+
+        Returns:
+            True when the stored softprompt list changed.
+        """
         softprompts = [sanitize_string(softprompt_name[0:100]) for softprompt_name in softprompts]
         del softprompts[200:]
         softprompts = set(softprompts)
         existing_softprompts_names = set(self.get_softprompt_names())
         if existing_softprompts_names == softprompts:
-            return
+            return False
         logger.debug(
             [
                 existing_softprompts_names,
@@ -399,6 +408,7 @@ class TextWorker(Worker):
             softprompt = TextWorkerSoftprompts(worker_id=self.id, softprompt=softprompt_name)
             db.session.add(softprompt)
         self.refresh_softprompt_cache()
+        return True
 
     def calculate_uptime_reward(self):
         model = self.get_model_names()[0]

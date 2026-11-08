@@ -759,10 +759,13 @@ class TestPersistedSamplerExecutionContract:
 
         # Exercise the debounced path: the capability assignment happens before the base check-in
         # returns False, and the pop handler's unconditional commit is represented explicitly here.
+        # Like every pop, this one repeats the rest of the worker's declaration.
         worker.created = datetime.utcnow() - timedelta(minutes=5)
         worker.last_check_in = datetime.utcnow()
         worker.check_in(
             max_pixels=worker.max_pixels,
+            models=[_HOSTED_MODEL],
+            limit_max_steps=True,
             sampler_execution_contract_version=SamplerExecutionContractVersion.V1.value,
         )
         worker_id = worker.id

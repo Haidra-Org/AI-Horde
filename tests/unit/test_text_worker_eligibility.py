@@ -560,6 +560,7 @@ def test_a_check_in_stores_known_guarantees_and_the_tool_temperature_limit(
         80,
         1024,
         [],
+        models=[CHAT_MODEL],
         accepts_chat_jobs=True,
         chat_features=[ChatFeature.TOOLS.value, ChatGuarantee.TOOL_CHOICE_ENFORCED.value, "teleportation"],
         chat_max_context_length=8192,
@@ -571,7 +572,7 @@ def test_a_check_in_stores_known_guarantees_and_the_tool_temperature_limit(
     assert worker.chat_features == [ChatGuarantee.TOOL_CHOICE_ENFORCED.value, ChatFeature.TOOLS.value]
     assert worker.chat_tools_max_temperature == 1.0
 
-    worker.check_in(80, 1024, [], accepts_chat_jobs=False, chat_tools_max_temperature=1.0)
+    worker.check_in(80, 1024, [], models=[CHAT_MODEL], accepts_chat_jobs=False, chat_tools_max_temperature=1.0)
 
     assert worker.chat_tools_max_temperature is None
 
@@ -738,6 +739,7 @@ def test_a_debounced_check_in_stores_the_text_job_opt_out(
         80,
         1024,
         [],
+        models=[CHAT_MODEL],
         accepts_chat_jobs=accepts_chat_jobs,
         accepts_prompt_jobs=accepts_prompt_jobs,
         chat_max_context_length=8192,
@@ -771,7 +773,7 @@ def _check_in_chat_declaration(worker: TextWorker, **chat_declaration: Any) -> N
         "chat_model_id": CHAT_MODEL,
         **chat_declaration,
     }
-    worker.check_in(80, 1024, [], **declaration)
+    worker.check_in(80, 1024, [], models=[CHAT_MODEL], **declaration)
 
 
 def test_cached_chat_availability_is_recomputed_after_a_worker_declaration_change(
@@ -792,6 +794,44 @@ def test_cached_chat_availability_is_recomputed_after_a_worker_declaration_chang
     availability = functions.get_worker_availability_for_request(request)
     assert availability.worker_count == 0
     assert availability.is_possible is False
+
+
+@pytest.mark.parametrize(("max_length", "max_context_length"), [(64, 4096), (512, 1024)])
+def test_a_debounced_check_in_replaces_the_text_limits_and_discards_cached_availability(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    max_length: int,
+    max_context_length: int,
+) -> None:
+    """A worker that lowers its text limits between pops is refused longer prompt jobs at once, and request
+    availability cached under the old limits is discarded."""
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    model_name = "koboldcpp/limit-change-model"
+    request = _make_text_request(user, model_name)
+    worker = _make_text_worker(user, model_name, speed=50)
+    worker.created = datetime.utcnow() - timedelta(minutes=5)
+    db.session.commit()
+    last_check_in = worker.last_check_in
+    assert functions.get_worker_availability_for_request(request).worker_count == 1
+    generation = _declaration_generation(fake_redis)
+
+    worker.check_in(max_length, max_context_length, [], models=[model_name])
+    db.session.commit()
+
+    assert (worker.max_length, worker.max_context_length, worker.last_check_in) == (max_length, max_context_length, last_check_in)
+    assert _declaration_generation(fake_redis) == generation + 1
+    assert functions.get_worker_availability_for_request(request).worker_count == 0
+
+    worker.check_in(max_length, max_context_length, [], models=[model_name])
+
+    assert _declaration_generation(fake_redis) == generation + 1
+
+    worker.check_in(512, 4096, [], models=[model_name])
+    assert functions.get_worker_availability_for_request(request).worker_count == 1
+    assert _declaration_generation(fake_redis) == generation + 2
 
 
 def test_a_declaration_change_counts_the_live_chat_cache_entry_as_a_generation_mismatch(
@@ -1314,3 +1354,45 @@ def test_an_infeasible_creation_measurement_leaves_only_the_validity_flag_cached
     assert has_valid_workers is False
     assert fake_redis.horde_r_get(f"wp_availability_{request.id}") is None
     assert int(fake_redis.horde_r_get(f"wp_validity_{request.id}")) == 0
+
+
+@pytest.mark.parametrize("change", ["models", "softprompts"])
+def test_debounced_text_offer_switches_in_both_directions(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    change: str,
+) -> None:
+    """A debounced pop that drops the request's model or softprompt makes the worker ineligible at once, and a later
+    pop that offers it again makes the worker eligible again. Repeating an unchanged offer does not bump the
+    declaration generation."""
+    user = make_user()
+    make_user_role(user, UserRoleTypes.TRUSTED, value=True)
+    model = "koboldcpp/offer-model"
+    request = _make_text_request(user, model)
+    request.softprompt = "required" if change == "softprompts" else None
+    worker = _make_text_worker(user, model, speed=50)
+    worker.created = datetime.utcnow() - timedelta(minutes=5)
+    db.session.commit()
+    last_check_in = worker.last_check_in
+    offered = ["required"] if change == "softprompts" else []
+    worker.check_in(512, 4096, offered, models=[model])
+    assert functions.get_worker_availability_for_request(request).worker_count == 1
+    generation = _declaration_generation(fake_redis)
+
+    worker.check_in(512, 4096, [], models=["koboldcpp/other-model"] if change == "models" else [model])
+    assert functions.get_worker_availability_for_request(request).worker_count == 0
+    assert _declaration_generation(fake_redis) == generation + 1
+    worker_id = worker.id
+    db.session.expunge(worker)
+    worker = db.session.get(TextWorker, worker_id)
+    assert worker.can_generate(request)[0] is False
+
+    worker.check_in(512, 4096, offered, models=[model])
+    assert worker.can_generate(request)[0] is True
+    assert functions.get_worker_availability_for_request(request).worker_count == 1
+    assert worker.last_check_in == last_check_in
+    generation = _declaration_generation(fake_redis)
+    worker.check_in(512, 4096, offered, models=[model])
+    assert _declaration_generation(fake_redis) == generation

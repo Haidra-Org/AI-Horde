@@ -58,19 +58,15 @@ class ImageWorker(Worker):
     wtype = "image"
 
     def check_in(self, *, max_pixels: int = 512 * 512, **kwargs: Any) -> bool:
-        # The worker row is the shared, recent capability snapshot used by forecasting as well as
-        # this pop. Update the claim even when ordinary check-in bookkeeping is debounced; the pop
-        # handler's unconditional commit persists a changed value.
+        # The worker row is the recent capability snapshot shared by forecasting and this pop, and reGen
+        # changes these fields between pops. They are updated even when the check-in bookkeeping is
+        # debounced. The pop handler's unconditional commit persists a changed value.
         execution_contract_version = parse_sampler_execution_contract_version(
             kwargs.get("sampler_execution_contract_version"),
         )
         self.sampler_execution_contract_version = (
             execution_contract_version.value if execution_contract_version is not None else None
         )
-        if not super().check_in(**kwargs):
-            return False
-        if max_pixels > 3072 * 3072 and not self.user.trusted:
-            self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
         self.max_pixels = max_pixels
         self.allow_img2img = kwargs.get("allow_img2img", True)
         self.allow_painting = kwargs.get("allow_painting", True)
@@ -80,6 +76,12 @@ class ImageWorker(Worker):
         self.allow_sdxl_controlnet = kwargs.get("allow_sdxl_controlnet", False)
         self.allow_lora = kwargs.get("allow_lora", False)
         self.limit_max_steps = kwargs.get("limit_max_steps", False)
+        if not super().check_in(**kwargs):
+            return False
+        # Reported with the debounced bookkeeping, so a worker that declares an extreme max_pixels is not reported on
+        # every pop.
+        if self.max_pixels > 3072 * 3072 and not self.user.trusted:
+            self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
         if len(self.get_model_names()) == 0:
             self.set_models(["stable_diffusion"])
         paused_string = ""

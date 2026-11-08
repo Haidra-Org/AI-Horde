@@ -298,6 +298,7 @@ def _check_in_image_pop(
     *,
     require_upfront_kudos: bool,
     priority_usernames: list[str] | None = None,
+    declaration: dict[str, Any] | None = None,
 ) -> None:
     """Exercise the image parser and its actual check-in keyword mapping."""
     with app.test_request_context(
@@ -311,6 +312,7 @@ def _check_in_image_pop(
             "bridge_agent": "AI Horde Worker reGen:18.4.1:https://github.com/Haidra-Org/horde-worker-reGen",
             "require_upfront_kudos": require_upfront_kudos,
             "priority_usernames": priority_usernames or [],
+            **(declaration or {}),
         },
     ):
         pop = ImageJobPop()
@@ -384,6 +386,9 @@ def test_debounced_image_policy_does_not_write_check_in_bookkeeping(
 ) -> None:
     worker = _reload_policy_worker(make_user, make_user_role)
     last_check_in, uptime, last_reward = worker.last_check_in, worker.uptime, worker.last_reward_uptime
+    # Store the initial declaration before measuring an unchanged pop.
+    _check_in_image_pop(app, worker, require_upfront_kudos=False)
+    db.session.commit()
 
     with assert_query_count() as queries:
         _check_in_image_pop(app, worker, require_upfront_kudos=True, priority_usernames=["priority#123"])
@@ -395,6 +400,101 @@ def test_debounced_image_policy_does_not_write_check_in_bookkeeping(
     assert not queries.of_kind("INSERT")
     assert not queries.of_kind("UPDATE")
     assert not queries.of_kind("DELETE")
+
+
+def test_a_debounced_image_pop_replaces_the_declaration(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+) -> None:
+    """A changed declaration applies to job matching even when bookkeeping is debounced."""
+    worker = _reload_policy_worker(make_user, make_user_role)
+    last_check_in = worker.last_check_in
+    request = _make_request(make_user())
+    reduced_offer = {"max_pixels": 256 * 256, "allow_lora": False, "allow_post_processing": False, "nsfw": False}
+
+    _check_in_image_pop(app, worker, require_upfront_kudos=False, declaration=reduced_offer)
+    db.session.commit()
+    worker_id = worker.id
+    db.session.expunge(worker)
+    stored = db.session.get(ImageWorker, worker_id)
+
+    assert (stored.max_pixels, stored.allow_lora, stored.allow_post_processing, stored.nsfw) == (256 * 256, False, False, False)
+    assert stored.last_check_in == last_check_in
+    assert tuple(_judge_with_model_names(stored, request, [_MODEL])) == (False, "max_pixels")
+
+    _check_in_image_pop(app, stored, require_upfront_kudos=False, declaration={"max_pixels": 1024 * 1024})
+
+    assert tuple(_judge_with_model_names(stored, request, [_MODEL])) == (True, None)
+
+
+@pytest.mark.parametrize(
+    ("flag", "params", "reason"),
+    [
+        ("allow_lora", {"loras": [{"name": "test-lora", "model": 1.0}]}, "lora"),
+        ("allow_post_processing", {"post_processing": ["GFPGAN"]}, "post-processing"),
+        ("nsfw", {}, "nsfw"),
+    ],
+)
+def test_debounced_image_flags_independently_gate_jobs(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str,
+    params: dict[str, Any],
+    reason: str,
+) -> None:
+    """Each pop's feature flags apply to new jobs without waiting for bookkeeping."""
+    monkeypatch.setattr("horde.classes.stable.worker.check_sampler_capability", lambda *_args: True)
+    monkeypatch.setattr("horde.classes.stable.worker.check_bridge_capability", lambda *_args: True)
+    worker = _reload_policy_worker(make_user, make_user_role)
+    request = _make_request(make_user())
+    request.params = {**request.params, **params}
+    request.gen_payload = {**request.gen_payload, **params}
+    request.nsfw = flag == "nsfw"
+    db.session.commit()
+    last_check_in = worker.last_check_in
+    for enabled in (True, False, True):
+        _check_in_image_pop(app, worker, require_upfront_kudos=False, declaration={flag: enabled})
+        db.session.commit()
+        worker_id = worker.id
+        db.session.expunge(worker)
+        worker = db.session.get(ImageWorker, worker_id)
+        assert tuple(worker.can_generate(request)) == ((True, None) if enabled else (False, reason))
+        assert worker.last_check_in == last_check_in
+
+
+def test_reduced_image_offer_preserves_already_assigned_job(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+) -> None:
+    """Declaration changes affect new assignments without changing an assigned job."""
+    from horde.classes.stable.processing_generation import ImageProcessingGeneration
+
+    worker = _reload_policy_worker(make_user, make_user_role)
+    request = _make_request(make_user())
+    job = ImageProcessingGeneration(wp_id=request.id, worker_id=worker.id, model=_MODEL)
+    db.session.commit()
+    job_id = job.id
+    original = (job.worker_id, job.wp_id, job.model, job.start_time)
+
+    _check_in_image_pop(app, worker, require_upfront_kudos=False, declaration={"max_pixels": 256 * 256})
+    db.session.commit()
+    db.session.expire(job)
+
+    assert tuple(worker.can_generate(request)) == (False, "max_pixels")
+    stored = db.session.get(ImageProcessingGeneration, job_id)
+    assert (stored.worker_id, stored.wp_id, stored.model, stored.start_time) == original
+    assert stored.generation is None
+    assert not stored.faulted
 
 
 @pytest.mark.parametrize("require_upfront_kudos", [False, True])

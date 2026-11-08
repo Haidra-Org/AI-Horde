@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -468,21 +469,21 @@ class WorkerTemplate(db.Model):
 
     # This should be extended by each worker type
     def check_in(self, **kwargs: Any) -> bool:
-        # To avoid excessive commits and UPDATE churn under heavy pop load,
-        # we only update the worker on check_in every 30 seconds (after the first 30s of life).
-        # Returns True if the check_in actually performed work, False if it was debounced.
-        # Subclasses should also short-circuit when this returns False.
-        # These are the current pop's policy inputs, not persisted check-in bookkeeping.
-        # Apply them even when a freshly loaded worker's bookkeeping is debounced.
+        # The worker's declaration (the fields it offers, set here and in the subclasses before they call this) is
+        # applied on every pop. The pop query and the eligibility check read it from this row, and a bridge such as
+        # reGen changes its offer between pops. Reassigning an unchanged value leaves the row clean, so a steady worker
+        # does not add an UPDATE. The bookkeeping below changes on every pop, so it is written at most every 30 seconds
+        # after the first 30 seconds of life. Writing it on every pop would add an UPDATE per pop under heavy load.
+        # Returns True if the bookkeeping ran and False if it was debounced. Subclasses return early on False.
         self.require_upfront_kudos = kwargs.get("require_upfront_kudos", False)
         self.prioritized_users = kwargs.get("priority_usernames", [])
+        self.bridge_agent = sanitize_string(kwargs.get("bridge_agent", "unknown:0:unknown"))
+        self.threads = kwargs.get("threads", 1)
+        self.allow_unsafe_ipaddr = kwargs.get("allow_unsafe_ipaddr", True)
         now = datetime.utcnow()
         if (now - self.last_check_in).total_seconds() < 30 and (now - self.created).total_seconds() > 30:
             return False
         self.ipaddr = kwargs.get("ipaddr", None)
-        self.bridge_agent = sanitize_string(kwargs.get("bridge_agent", "unknown:0:unknown"))
-        self.threads = kwargs.get("threads", 1)
-        self.allow_unsafe_ipaddr = kwargs.get("allow_unsafe_ipaddr", True)
         if not kwargs.get("safe_ip", True) and not self.user.trusted:
             self.report_suspicion(reason=Suspicions.UNSAFE_IP)
         if not self.is_stale() and not self.paused and not self.maintenance:
@@ -825,14 +826,34 @@ class Worker(WorkerTemplate):
 
     # This should be extended by each specific horde
     def check_in(self, **kwargs):
+        # The models, nsfw and extra_slow_worker fields are part of the declaration, so they are applied before the
+        # bookkeeping debounce (see WorkerTemplate.check_in). set_models is skipped when the pop declares the stored
+        # model list, because its validation reads the owner's roles from the database. The full validation still runs
+        # with the bookkeeping, so a model that the reference no longer accepts is removed from the stored list.
+        declared_models = kwargs.get("models")
+        if not self.declares_stored_models(declared_models):
+            self.set_models(declared_models)
+        self.nsfw = kwargs.get("nsfw", True)
+        self.extra_slow_worker = kwargs.get("extra_slow_worker", False)
         if not super().check_in(**kwargs):
             return False
-        self.set_models(kwargs.get("models"))
-        self.nsfw = kwargs.get("nsfw", True)
+        self.set_models(declared_models)
+        # Comparing the blacklist reads its rows, so the blacklist is replaced with the debounced bookkeeping instead
+        # of on every pop.
         self.set_blacklist(kwargs.get("blacklist", []))
-        self.extra_slow_worker = kwargs.get("extra_slow_worker", False)
         # Commit should happen on calling extensions
         return True
+
+    def declares_stored_models(self, models: Sequence[str]) -> bool:
+        """Return whether a pop's declared model list matches the stored models, comparing the names as given.
+
+        Args:
+            models: The pop's declared model names, before validation.
+
+        Returns:
+            True when the declared names and the stored names are the same set.
+        """
+        return set(models) == set(self.get_model_names())
 
     def set_blacklist(self, blacklist):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
