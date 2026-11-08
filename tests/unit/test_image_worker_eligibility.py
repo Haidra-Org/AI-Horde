@@ -430,6 +430,37 @@ def test_a_debounced_image_pop_replaces_the_declaration(
     assert tuple(_judge_with_model_names(stored, request, [_MODEL])) == (True, None)
 
 
+def test_bookkeeping_revalidates_stored_models_after_reference_change(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    make_user_role: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Periodic bookkeeping removes models that are no longer accepted by the reference."""
+    retired_model = "retired-model"
+    seed_image_reference(
+        monkeypatch,
+        {
+            _MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1,
+            retired_model: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1,
+        },
+    )
+    worker = _reload_policy_worker(make_user, make_user_role, debounced=False)
+    worker.set_models([_MODEL, retired_model])
+    seed_image_reference(monkeypatch, {_MODEL: KNOWN_IMAGE_GENERATION_BASELINE.stable_diffusion_1})
+
+    _check_in_image_pop(
+        app,
+        worker,
+        require_upfront_kudos=False,
+        declaration={"models": [_MODEL, retired_model]},
+    )
+
+    assert set(worker.get_model_names()) == {_MODEL}
+
+
 @pytest.mark.parametrize(
     ("flag", "params", "reason"),
     [

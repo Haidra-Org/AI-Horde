@@ -831,13 +831,17 @@ class Worker(WorkerTemplate):
         # model list, because its validation reads the owner's roles from the database. The full validation still runs
         # with the bookkeeping, so a model that the reference no longer accepts is removed from the stored list.
         declared_models = kwargs.get("models")
-        if not self.declares_stored_models(declared_models):
+        models_changed = not self.declares_stored_models(declared_models)
+        if models_changed:
             self.set_models(declared_models)
         self.nsfw = kwargs.get("nsfw", True)
         self.extra_slow_worker = kwargs.get("extra_slow_worker", False)
         if not super().check_in(**kwargs):
             return False
-        self.set_models(declared_models)
+        # Changed declarations were validated before the debounce. Unchanged ones still need periodic validation
+        # because the model reference can change between pops.
+        if not models_changed:
+            self.set_models(declared_models)
         # Comparing the blacklist reads its rows, so the blacklist is replaced with the debounced bookkeeping instead
         # of on every pop.
         self.set_blacklist(kwargs.get("blacklist", []))
