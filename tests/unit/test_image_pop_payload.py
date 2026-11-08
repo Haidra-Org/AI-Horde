@@ -1,14 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Abhinav Gorrepati <gorrepatiabhinav1@gmail.com>
+# SPDX-FileCopyrightText: 2026 Tazlin
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """Worker-facing image generation pop payload coverage."""
 
 from types import SimpleNamespace
+from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from flask_restx import marshal
 
+from horde.apis.v2 import base
 from horde.apis.v2.stable import models
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 
@@ -41,3 +45,38 @@ def test_image_pop_response_model_preserves_shared_flag(monkeypatch: pytest.Monk
     payload = _make_pop_payload(monkeypatch, shared=True)
 
     assert marshal(payload, models.response_model_job_pop)["shared"] is True
+
+
+@pytest.mark.parametrize("next_candidate_assignable", [False, True])
+def test_pop_continues_after_an_assignment_returns_none(
+    app: Any,
+    db_session: Any,
+    make_user: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    next_candidate_assignable: bool,
+) -> None:
+    """An assignment refusal permits later candidates or the normal empty response."""
+    candidates = [SimpleNamespace(id=name, needs_gen=lambda: True) for name in ("first", "second")]
+    pop = base.JobPopTemplate()
+    pop.args = SimpleNamespace(priority_usernames=[], models=[])
+    pop.user = make_user()
+    pop.worker = SimpleNamespace(id="worker", maintenance=False, can_generate=lambda _wp: [True, None])
+    pop.skipped = {}
+    monkeypatch.setattr(pop, "validate", lambda: None)
+    monkeypatch.setattr(pop, "check_in", lambda: None)
+    monkeypatch.setattr(pop, "get_sorted_wp", Mock(side_effect=[candidates, [], []]))
+    assigned = {"id": "second-job", "ids": ["second-job"]}
+    start_worker = Mock(side_effect=[None, assigned if next_candidate_assignable else None])
+    monkeypatch.setattr(pop, "start_worker", start_worker)
+    messages = [{"message": "worker notice"}]
+    read_messages = Mock(return_value=messages)
+    monkeypatch.setattr(base.database, "get_all_active_worker_messages", read_messages)
+
+    with app.test_request_context("/api/v2/generate/pop", method="POST"):
+        response, status = pop._post_inner()
+
+    assert status == 200
+    assert response["ids"] == (["second-job"] if next_candidate_assignable else [])
+    assert response["messages"] == messages
+    assert [call.args[0].id for call in start_worker.call_args_list] == ["first", "second"]
+    read_messages.assert_called_once_with("worker")

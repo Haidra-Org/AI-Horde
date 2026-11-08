@@ -1175,10 +1175,10 @@ class JobPopTemplate(Resource):
                         )
                     pop_start_gen_duration.record(time.monotonic() - sg_t0, {"horde.gentype": self.gentype})
                     pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "match", "horde.gentype": self.gentype})
-                    worker_ret["messages"] = database.get_all_active_worker_messages(self.worker.id)
                     # logger.debug(worker_ret)
                     if worker_ret is None:
                         continue
+                    worker_ret["messages"] = database.get_all_active_worker_messages(self.worker.id)
                     # logger.debug(worker_ret)
                     eval_span.set_attribute("horde.candidates_evaluated", candidates_evaluated)
                     pop_candidates.record(candidates_evaluated, {"horde.gentype": self.gentype})
