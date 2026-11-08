@@ -28,11 +28,18 @@ def start_background_threads():
     """Start all periodic background threads. Called from create_app() in non-test mode."""
     import horde.database.threads as threads
     from horde.argparser import args
+    from horde.classes.kobold.worker import (
+        TEXT_WORKER_DECLARATION_PUBLISH_SECONDS,
+        flush_text_worker_declaration_generation,
+    )
     from horde.database.classes import CachedPasskeys, Quorum
     from horde.logger import logger
     from horde.threads import PrimaryTimedFunction
 
     quorum = Quorum(1, threads.get_quorum)
+    # Cached text request availability is recomputed after this publishes the worker declaration changes. Pops read
+    # the worker rows and do not depend on it.
+    PrimaryTimedFunction(TEXT_WORKER_DECLARATION_PUBLISH_SECONDS, flush_text_worker_declaration_generation, quorum=quorum)
     PrimaryTimedFunction(1, threads.store_prioritized_wp_queue, quorum=quorum)
     # /v2/workers is served straight from this cache and workers change their advertised models/parameters often,
     # so keep the snapshot near-realtime. The job is a few set-based queries (see threads.store_worker_list).

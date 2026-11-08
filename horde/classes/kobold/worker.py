@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from horde_sdk.generation_parameters.text.chat_policy import KNOWN_CHAT_DECLARATIONS, ChatFeature, ChatLimitField
 from horde_sdk.worker.chat_declaration import IMAGE_PART_TRANSPORTS, ChatImageTransport
+from redis.exceptions import WatchError
 from sqlalchemy import JSON, ScalarSelect, case, literal, or_
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, relationship
@@ -44,10 +45,21 @@ text_array_column_type = ARRAY(db.Text) if not SQLITE_MODE else JSON
 """A list of strings: a text array on Postgres, JSON where arrays are not available."""
 
 TEXT_WORKER_DECLARATION_GENERATION_KEY = "text_worker_declaration_generation"
-"""Redis counter of changes to the text worker state that decides chat eligibility: the chat declaration and the model
-list. A cached text request availability records the value it was computed under and is recomputed once the counter
-moves, so a worker that pops with a new declaration is reflected at the next status poll rather than when the cache
-expires. A missing key reads as 0."""
+"""Redis counter of published changes to the text worker declarations and model lists, the fields that text and chat
+eligibility are computed from. A cached text request availability records the counter's value at computation time and
+is recomputed once the counter moves. `flush_text_worker_declaration_generation` increments it on the quorum timer, so
+a status poll shows a new declaration within one timer interval. A pop reads the worker rows directly and does not
+read this counter. Only the primary Redis holds it, because availability reads it from the primary alone. A missing
+key reads as 0."""
+
+TEXT_WORKER_DECLARATION_CHANGED_KEY = "text_worker_declaration_changed"
+"""Redis flag set after a committed text worker declaration change and cleared when the change is published by an
+increment of `TEXT_WORKER_DECLARATION_GENERATION_KEY`."""
+
+TEXT_WORKER_DECLARATION_PUBLISH_SECONDS = 5
+"""Interval of the quorum timer that publishes text worker declaration changes. Many workers change their declarations
+between pops, and one increment per interval keeps those changes from invalidating every cached availability on each
+change. Status polls show a change at most this late."""
 
 TEXT_JOB_LEASE_SECONDS = 150
 """The lease a text or chat job receives at pop, and the time a renewing progress post extends it to from the post.
@@ -68,18 +80,44 @@ CHAT_WORKER_ONLINE_WINDOW = timedelta(seconds=300)
 
 
 def bump_text_worker_declaration_generation() -> None:
-    """Invalidate every cached text request availability computed before the current worker state.
+    """Mark the text worker declarations as changed, for publication on the next quorum timer tick.
 
-    Call only after the changed worker row is committed. A poll that computes between the bump and the commit would
-    read the old row and cache it under the new generation, keeping the stale verdict until the cache expires.
-    Only the primary Redis is incremented because availability reads the counter from the primary alone.
+    Call only after the changed worker row is committed. A poll that computes between the publication and the commit
+    would read the old row and cache it under the new generation, keeping the stale verdict until the cache expires.
+    Changes within one timer interval are published together, and a stream of changes does not delay the tick. A pop
+    reads the worker rows and does not wait for the publication.
     """
     if hr.horde_r is None:
         return
     try:
-        hr.horde_r.incr(TEXT_WORKER_DECLARATION_GENERATION_KEY)
+        # NX leaves an existing flag untouched, so a repeated change does not abort a publication that is watching it.
+        hr.horde_r.set(TEXT_WORKER_DECLARATION_CHANGED_KEY, "1", nx=True)
     except Exception as err:
-        logger.warning(f"Failed to bump the text worker declaration generation: {err}")
+        logger.warning(f"Failed to mark the text worker declarations as changed: {err}")
+
+
+def flush_text_worker_declaration_generation() -> None:
+    """Publish the marked text worker declaration changes with one increment of the generation counter.
+
+    The quorum timer calls this every `TEXT_WORKER_DECLARATION_PUBLISH_SECONDS`. The flag is cleared and the counter
+    incremented in one transaction under WATCH, so a change marked between the two steps is not lost.
+    """
+    if hr.horde_r is None:
+        return
+    try:
+        with hr.horde_r.pipeline() as pipe:
+            pipe.watch(TEXT_WORKER_DECLARATION_CHANGED_KEY)
+            if not pipe.get(TEXT_WORKER_DECLARATION_CHANGED_KEY):
+                return
+            pipe.multi()
+            pipe.delete(TEXT_WORKER_DECLARATION_CHANGED_KEY)
+            pipe.incr(TEXT_WORKER_DECLARATION_GENERATION_KEY)
+            pipe.execute()
+    except WatchError:
+        # The flag was written during the publication. A flag that is still set is published on the next tick.
+        return
+    except Exception as err:
+        logger.warning(f"Failed to publish the text worker declaration changes: {err}")
 
 
 def get_minimum_text_worker_speed(model_names: Sequence[str]) -> int:

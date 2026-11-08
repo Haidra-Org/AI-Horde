@@ -27,12 +27,27 @@ from horde.classes.kobold.worker import (
     UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND,
     TextWorker,
     TextWorkerSoftprompts,
+    bump_text_worker_declaration_generation,
+    flush_text_worker_declaration_generation,
     get_minimum_text_worker_speed,
 )
 from horde.database import functions, threads
 from horde.flask import db
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _publish_declarations_before_availability(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Publish the marked declaration changes before each availability read, as the next quorum timer tick would, so
+    the tests do not wait for the timer interval."""
+    original = functions.get_worker_availability_for_request
+
+    def after_tick(*args: Any, **kwargs: Any) -> Any:
+        flush_text_worker_declaration_generation()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(functions, "get_worker_availability_for_request", after_tick)
 
 
 def _make_text_request(user: Any, model_name: str) -> TextWaitingPrompt:
@@ -750,6 +765,7 @@ def test_a_debounced_check_in_stores_the_text_job_opt_out(
 
 
 def _declaration_generation(fake_redis: Any) -> int:
+    flush_text_worker_declaration_generation()
     return int(fake_redis.horde_r.get(TEXT_WORKER_DECLARATION_GENERATION_KEY) or 0)
 
 
@@ -1314,3 +1330,22 @@ def test_an_infeasible_creation_measurement_leaves_only_the_validity_flag_cached
     assert has_valid_workers is False
     assert fake_redis.horde_r_get(f"wp_availability_{request.id}") is None
     assert int(fake_redis.horde_r_get(f"wp_validity_{request.id}")) == 0
+
+
+def test_declaration_changes_are_published_once_per_timer_tick(fake_redis: Any) -> None:
+    """Changes marked before a tick are published by one increment, a tick without changes does not increment the
+    counter, and a change marked after a tick is published by the next tick."""
+    redis = fake_redis.horde_r
+    for _ in range(100):
+        bump_text_worker_declaration_generation()
+    assert redis.get(TEXT_WORKER_DECLARATION_GENERATION_KEY) is None
+
+    flush_text_worker_declaration_generation()
+    assert int(redis.get(TEXT_WORKER_DECLARATION_GENERATION_KEY)) == 1
+
+    flush_text_worker_declaration_generation()
+    assert int(redis.get(TEXT_WORKER_DECLARATION_GENERATION_KEY)) == 1
+
+    bump_text_worker_declaration_generation()
+    flush_text_worker_declaration_generation()
+    assert int(redis.get(TEXT_WORKER_DECLARATION_GENERATION_KEY)) == 2

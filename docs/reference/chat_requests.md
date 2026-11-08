@@ -701,6 +701,12 @@ The SDK's `violated_chat_limit` defines the rule. The server applies it to the s
 
 #### Eligibility
 
+A committed text worker declaration or model-list change marks cached request availability for recomputation.
+The quorum primary publishes marked changes every five seconds with `flush_text_worker_declaration_generation`.
+Status polls and submission forecasts can reflect a declaration change up to one publication interval late.
+If publication stops, the cached result still expires at the end of the cache lifetime. Pops read worker rows
+directly, so publication does not delay job matching.
+
 A chat request goes to a worker only when every rule holds. The queue query applies the cheap ones. `can_generate`
 applies the rest and repeats them for worker availability:
 
