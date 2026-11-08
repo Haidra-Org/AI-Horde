@@ -636,9 +636,8 @@ Tool call arguments, tool definitions and response formats are JSON documents an
 
 Examples: [Pop request](chat_wire_examples.md#pop-request), [ChatDeclarationInvalid](chat_wire_examples.md#chatdeclarationinvalid).
 
-`POST /v2/generate/text/pop` takes six further fields. The worker row stores them at every pop, including a pop
-inside the 30 second window in which the other check-in fields are not rewritten, and the pop is matched against
-them. A pop without `chat_jobs` therefore withdraws the whole declaration and does not receive a chat job.
+`POST /v2/generate/text/pop` takes six further fields. The worker row stores them at every pop, together with the
+rest of the declaration such as the models, text limits and softprompts, and the pop is matched against them. A pop without `chat_jobs` therefore withdraws the whole declaration and does not receive a chat job.
 
 | Field           | Type                                   | Required        | Meaning                                                            |
 | --------------- | -------------------------------------- | --------------- | ------------------------------------------------------------------ |
