@@ -18,6 +18,11 @@ executes an immutable release selected through `/home/aipg/current`.
   BF16 audio/video sources are public through337frames; larger Gallery
   original uploads do not raise that bound. NVFP4 sources stay closed.
 
+- `PAYOUT_POLICY_RENEWAL_2026_11_10.md` - the eight-week payout sender
+  failure after the single reward-policy window expired, the appended
+  windows and valuations through 2026-12-15, verification, and the catch-up
+  and monitoring work still open. Extend the window list before it ends.
+
 - `VIDEO_PAID_RETEST_2026_10_14.md` - subsequent funded-account exporter
   deployment/retest and closed cohort, exact paid completion/clock evidence,
   preserved unsuccessful interruption control, scoped key401 cleanup and
