@@ -13,6 +13,9 @@ pop→submit cycle runs in-process.
 
 from __future__ import annotations
 
+import uuid
+from datetime import timedelta
+
 import pytest
 
 TEXT_MODEL = "elinas/chronos-70b-v2"
@@ -224,6 +227,87 @@ class TestPopWorkerRegistration:
         assert resp.status_code == 400, resp.get_data(as_text=True)
         assert resp.get_json()["rc"] == "TooLongWorkerName"
         assert _count_workers_named(app, long_name[:100]) == 0
+
+
+def _stored_model_rows(app, worker_id: str) -> list[tuple[int, str]]:
+    """Return the worker's model rows as (row id, model), in row order."""
+    from horde.classes.base.worker import WorkerModel
+    from horde.flask import db
+
+    with app.app_context():
+        return [(row.id, row.model) for row in db.session.query(WorkerModel).filter_by(worker_id=worker_id).order_by(WorkerModel.id)]
+
+
+def _cache_model_list(worker_id: str, models: list[str]) -> None:
+    """Store a model list in the worker's Redis model cache, like the copy left on a host by an earlier declaration."""
+    import json
+
+    from horde import horde_redis as horde_redis_module
+
+    horde_redis_module.horde_redis.horde_r_setex(f"worker_{worker_id}_model_cache", timedelta(seconds=600), json.dumps(models))
+
+
+class TestPopDeclarationAgainstStaleCache:
+    """A pop compares its declared models with the stored rows, so a cached list that differs from them is ignored."""
+
+    def test_a_declaration_matching_the_stale_cache_rewrites_the_rows(self, app, client, make_api_user):
+        owner = make_api_user(trusted=True, kudos=100)
+        worker_name = f"stale-cache-{uuid.uuid4().hex[:8]}"
+        cached_models = [TEXT_MODEL, f"koboldcpp/stale-probe-{uuid.uuid4().hex[:8]}"]
+        assert _pop_text(client, owner.api_key, worker_name, models=[TEXT_MODEL]).status_code == 200
+        worker_id = _worker_id_by_name(client, owner.api_key, worker_name)
+        _cache_model_list(worker_id, cached_models)
+
+        assert _pop_text(client, owner.api_key, worker_name, models=cached_models).status_code == 200
+
+        assert sorted(model for _, model in _stored_model_rows(app, worker_id)) == sorted(cached_models)
+
+    def test_a_declaration_matching_the_rows_leaves_them_unchanged(self, app, client, make_api_user):
+        owner = make_api_user(trusted=True, kudos=100)
+        worker_name = f"stale-cache-{uuid.uuid4().hex[:8]}"
+        assert _pop_text(client, owner.api_key, worker_name, models=[TEXT_MODEL]).status_code == 200
+        worker_id = _worker_id_by_name(client, owner.api_key, worker_name)
+        rows_before = _stored_model_rows(app, worker_id)
+        _cache_model_list(worker_id, [TEXT_MODEL, f"koboldcpp/stale-probe-{uuid.uuid4().hex[:8]}"])
+
+        assert _pop_text(client, owner.api_key, worker_name, models=[TEXT_MODEL]).status_code == 200
+
+        assert _stored_model_rows(app, worker_id) == rows_before
+
+
+def _queue_text_request(client, api_key: str, prompt: str, **request_fields) -> str:
+    """Queue a text request for trusted workers and return its id."""
+    request_body = {
+        "prompt": prompt,
+        "trusted_workers": True,
+        "validated_backends": False,
+        "max_length": 80,
+        "max_context_length": 1024,
+        **request_fields,
+    }
+    response = client.post("/api/v2/generate/text/async", json=request_body, headers=_headers(api_key))
+    assert response.status_code < 400, response.get_data(as_text=True)
+    return response.get_json()["id"]
+
+
+class TestPopJudgedWithItsOwnDeclaration:
+    """A pop that changes its declaration is judged with the changed declaration on that same pop."""
+
+    def test_a_pop_that_adds_a_model_receives_a_request_for_it(self, client, api_key, make_api_user):
+        owner = make_api_user(trusted=True, kudos=100)
+        worker_name = f"declaration-{uuid.uuid4().hex[:8]}"
+        added_model = f"koboldcpp/added-{uuid.uuid4().hex[:8]}"
+        assert _pop_text(client, owner.api_key, worker_name, models=[TEXT_MODEL]).status_code == 200
+        prompt = f"a prompt for the added model {uuid.uuid4().hex[:8]}"
+        request_id = _queue_text_request(client, api_key, prompt, models=[added_model])
+
+        try:
+            pop_response = _pop_text(client, owner.api_key, worker_name, models=[TEXT_MODEL, added_model])
+
+            assert pop_response.status_code == 200, pop_response.get_data(as_text=True)
+            assert (pop_response.get_json()["payload"] or {}).get("prompt") == prompt, pop_response.get_json()
+        finally:
+            client.delete(f"/api/v2/generate/text/status/{request_id}", headers=_headers(api_key))
 
 
 # --------------------------------------------------------------------------- #

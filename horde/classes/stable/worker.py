@@ -18,7 +18,7 @@ from horde.bridge_reference import (
     is_latest_bridge_version,
     is_official_bridge_version,
 )
-from horde.classes.base.worker import EligibilitySkipReason, EligibilityVerdict, Worker, WorkerEligibilityInputs
+from horde.classes.base.worker import EligibilitySkipReason, EligibilityVerdict, StoredWorkerDeclaration, Worker, WorkerEligibilityInputs
 from horde.consts import (
     CONTROL_STRENGTH_PARAM,
     EXTENDED_SCHEDULERS,
@@ -93,7 +93,13 @@ class ImageWorker(Worker):
     sampler_execution_contract_version: Mapped[str | None] = mapped_column(db.String(32), nullable=True)
     wtype = "image"
 
-    def check_in(self, *, max_pixels: int = 512 * 512, **kwargs: Any) -> bool:
+    def check_in(
+        self,
+        *,
+        max_pixels: int = 512 * 512,
+        stored_declaration: StoredWorkerDeclaration | None = None,
+        **kwargs: Any,
+    ) -> bool:
         # The worker row is the recent capability snapshot shared by forecasting and this pop, and reGen
         # changes these fields between pops. They are updated even when the check-in bookkeeping is
         # debounced. The pop handler's unconditional commit persists a changed value.
@@ -112,20 +118,24 @@ class ImageWorker(Worker):
         self.allow_sdxl_controlnet = kwargs.get("allow_sdxl_controlnet", False)
         self.allow_lora = kwargs.get("allow_lora", False)
         self.limit_max_steps = kwargs.get("limit_max_steps", False)
-        if not super().check_in(**kwargs):
+        # The bookkeeping below reads the stored models, so they come from the pop's declaration (see
+        # StoredWorkerDeclaration), or from the caches without it.
+        if stored_declaration is None:
+            stored_declaration = self.get_stored_declaration()
+        if not super().check_in(stored_declaration=stored_declaration, **kwargs):
             return False
         # Reported with the debounced bookkeeping, so a worker that declares an extreme max_pixels is not reported on
         # every pop.
         if self.max_pixels > 3072 * 3072 and not self.user.trusted:
             self.report_suspicion(reason=Suspicions.EXTREME_MAX_PIXELS)
-        if len(self.get_model_names()) == 0:
-            self.set_models(["stable_diffusion"])
+        if not stored_declaration.models and self.set_models_from_stored_declaration(["stable_diffusion"], stored_models=()):
+            stored_declaration.models = tuple(self.get_model_names())
         paused_string = ""
         if self.paused:
             paused_string = "(Paused) "
         db.session.commit()
         logger.trace(
-            f"{paused_string}Stable Worker {self.name} checked-in, offering models {self.get_model_names()} "
+            f"{paused_string}Stable Worker {self.name} checked-in, offering models {stored_declaration.models} "
             f"at {self.max_pixels} max pixels",
         )
         return True
@@ -137,16 +147,25 @@ class ImageWorker(Worker):
         return baseline
 
     @override
-    def read_eligibility_inputs(self, *, maintenance_user_ids: Collection[int] = ()) -> WorkerEligibilityInputs:
+    def get_eligibility_inputs_from_stored_declaration(
+        self,
+        stored_declaration: StoredWorkerDeclaration,
+        *,
+        maintenance_user_ids: Collection[int] = (),
+    ) -> WorkerEligibilityInputs:
         """Return the worker-side eligibility inputs, including the bridge capabilities and the model baselines.
 
         Args:
+            stored_declaration: The models stored for the worker.
             maintenance_user_ids: The users besides the owner whose requests the worker accepts while in maintenance.
 
         Returns:
             The worker's eligibility inputs.
         """
-        eligibility_inputs = super().read_eligibility_inputs(maintenance_user_ids=maintenance_user_ids)
+        eligibility_inputs = super().get_eligibility_inputs_from_stored_declaration(
+            stored_declaration,
+            maintenance_user_ids=maintenance_user_ids,
+        )
         return replace(
             eligibility_inputs,
             bridge_capabilities=get_bridge_capabilities(self.bridge_agent),

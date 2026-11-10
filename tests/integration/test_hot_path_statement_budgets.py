@@ -11,6 +11,11 @@ added query or commit in one of these operations fails here, and the assertion
 message lists every statement and transaction with the application frames that
 issued it.
 
+A pop by an existing worker also has a Redis read budget. It does not read the worker's
+declaration caches from the shared Redis, so a host whose local Redis does not hold them
+does not pay a round trip for them. The exception is the pop that pays an uptime reward,
+once per ten minutes of uptime, which reads the model cache to price the reward.
+
 Cold means the first call for a new requester or worker, with the response cache
 and the Redis caches filled by request handlers empty. The values that the quorum
 node's threads keep in Redis are stored, as they are in production. Warm means a
@@ -648,3 +653,128 @@ def test_text_status_stays_within_budget(
 
     _assert_within(cold, TEXT_STATUS_COLD)
     _assert_within(warm, TEXT_STATUS_WARM)
+
+
+DROPPED_IMAGE_MODEL: str = "unlisted-model-for-declaration-reads"
+"""A model name dropped by the image validation for an owner without the customizer role, so the declared list does not
+equal the stored one."""
+
+
+@pytest.fixture
+def shared_declaration_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Give the local Redis an empty fake of its own and record the worker declaration cache keys read from the shared one.
+
+    On a host whose local Redis does not hold a worker's cache entries, each such read is a round trip to the shared
+    Redis. The test fixture otherwise uses one fake for both, which hides those reads.
+    """
+    import fakeredis
+
+    from horde import horde_redis as horde_redis_module
+
+    redis_conn = horde_redis_module.horde_redis
+    shared_client = redis_conn.horde_r
+    assert shared_client is not None
+    monkeypatch.setattr(redis_conn, "horde_local_r", fakeredis.FakeStrictRedis())
+    read_keys: list[str] = []
+    shared_get = shared_client.get
+
+    def recording_get(key: str | bytes, *args: Any, **kwargs: Any) -> Any:
+        key_text = key.decode() if isinstance(key, bytes) else key
+        if key_text.startswith("worker_") and key_text.endswith(("_model_cache", "_softprompts_cache")):
+            read_keys.append(key_text)
+        return shared_get(key, *args, **kwargs)
+
+    monkeypatch.setattr(shared_client, "get", recording_get)
+    return read_keys
+
+
+def _empty_local_cache() -> None:
+    """Expire everything in the local Redis, as on a host where a worker's last pop was more than 5 seconds ago."""
+    from horde import horde_redis as horde_redis_module
+
+    local_client = horde_redis_module.horde_redis.horde_local_r
+    assert local_client is not None
+    local_client.flushdb()
+
+
+def _age_worker(app: Any, worker_name: str, *, since_last_check_in: timedelta) -> None:
+    """Make the worker older than the check-in debounce and set how long ago it last checked in.
+
+    A pop within 30 seconds of the last check-in is debounced. A later pop runs the check-in bookkeeping.
+    """
+    from horde.classes.base.worker import WorkerTemplate
+    from horde.flask import db
+
+    with app.app_context():
+        worker = db.session.query(WorkerTemplate).filter_by(name=worker_name).one()
+        worker.created = datetime.utcnow() - timedelta(minutes=10)
+        worker.last_check_in = datetime.utcnow() - since_last_check_in
+        db.session.commit()
+
+
+def _stored_image_models(app: Any, worker_name: str) -> list[str]:
+    """Return the models stored for the image worker, from its rows."""
+    from horde.classes.base.worker import WorkerModel
+    from horde.classes.stable.worker import ImageWorker
+    from horde.flask import db
+
+    with app.app_context():
+        worker = db.session.query(ImageWorker).filter_by(name=worker_name).one()
+        return [row.model for row in db.session.query(WorkerModel).filter_by(worker_id=worker.id)]
+
+
+CHECK_IN_AGES: dict[str, timedelta] = {
+    "debounced": timedelta(0),
+    "bookkeeping": timedelta(minutes=1),
+}
+"""How long ago the worker last checked in, for a debounced pop and for one that runs the check-in bookkeeping."""
+
+
+@pytest.mark.parametrize("check_in_age", CHECK_IN_AGES.values(), ids=CHECK_IN_AGES.keys())
+@pytest.mark.parametrize(
+    "image_models",
+    [[IMAGE_MODEL], [IMAGE_MODEL, DROPPED_IMAGE_MODEL]],
+    ids=["stored-list", "list-with-a-dropped-model"],
+)
+def test_a_steady_image_pop_does_not_read_the_declaration_cache(
+    app: Any,
+    client: FlaskClient,
+    actors: _Actors,
+    shared_declaration_reads: list[str],
+    check_in_age: timedelta,
+    image_models: list[str],
+) -> None:
+    """An existing image worker's pop compares and judges its models without reading the shared Redis model cache."""
+    worker_name = _worker_name()
+    body = {**_image_pop_body(worker_name), "models": image_models}
+    _pop(client, "/api/v2/generate/pop", body, actors.worker_owner)
+    assert DROPPED_IMAGE_MODEL not in _stored_image_models(app, worker_name)
+    _age_worker(app, worker_name, since_last_check_in=check_in_age)
+    _empty_local_cache()
+    shared_declaration_reads.clear()
+
+    response = _pop(client, "/api/v2/generate/pop", body, actors.worker_owner)
+
+    assert response.get_json()["id"] is None
+    assert shared_declaration_reads == []
+
+
+@pytest.mark.parametrize("check_in_age", CHECK_IN_AGES.values(), ids=CHECK_IN_AGES.keys())
+def test_a_steady_text_pop_does_not_read_the_declaration_caches(
+    app: Any,
+    client: FlaskClient,
+    actors: _Actors,
+    shared_declaration_reads: list[str],
+    check_in_age: timedelta,
+) -> None:
+    """An existing text worker's pop compares and judges its models and softprompts without reading their shared caches."""
+    worker_name = _worker_name()
+    _pop_text(client, worker_name, actors.worker_owner)
+    _age_worker(app, worker_name, since_last_check_in=check_in_age)
+    _empty_local_cache()
+    shared_declaration_reads.clear()
+
+    response = _pop_text(client, worker_name, actors.worker_owner)
+
+    assert response.get_json()["id"] is None
+    assert shared_declaration_reads == []

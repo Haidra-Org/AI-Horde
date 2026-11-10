@@ -180,7 +180,8 @@ class WorkerModel(db.Model):
 class WorkerEligibilityInputs:
     """Represents the worker-side facts the eligibility rules read beyond the worker's columns.
 
-    ``Worker.read_eligibility_inputs`` reads them from the worker's relationships and caches. A pop reads them once
+    ``Worker.read_eligibility_inputs`` reads them from the worker's relationships and caches, and a pop builds them from
+    the stored declaration selected with its worker row (see ``StoredWorkerDeclaration``). A pop reads them once
     and judges every candidate request with them, as they do not change during the pop. The availability query
     selects the first four as aggregates in the same statement as the worker, so evaluating many workers does not
     hydrate their collections. That query leaves the other fields at their defaults.
@@ -217,6 +218,22 @@ class WorkerEligibilityInputs:
     A check looks up a model that is missing from the mapping in the model reference, so an empty mapping gives the
     same results. The field is left out of equality because it is derived from ``model_names``.
     """
+
+
+@dataclass
+class StoredWorkerDeclaration:
+    """Represents the models and softprompts stored for a worker, as a pop holds them.
+
+    A pop selects them with its worker row and passes them to the check-in and then to the eligibility snapshot,
+    so a steady pop compares and judges its declaration without reading the Redis caches of these lists. On a host
+    where the local Redis does not hold a worker's cache, each cache read is a round trip to the shared Redis.
+    The check-in replaces a list it rewrites, so after the check-in the object holds the stored declaration.
+    """
+
+    models: tuple[str, ...]
+    """The models stored for the worker, in the order they were stored."""
+    softprompts: tuple[str, ...]
+    """The softprompts stored for a text worker, in the order they were stored. Empty for image workers."""
 
 
 class EligibilitySkipReason(StrEnum):
@@ -974,39 +991,46 @@ class Worker(WorkerTemplate):
     processing_gens = db.relationship("ImageProcessingGeneration", back_populates="worker", lazy="raise")
 
     # This should be extended by each specific horde
-    def check_in(self, **kwargs):
+    def check_in(self, *, stored_declaration: StoredWorkerDeclaration | None = None, **kwargs):
         # The models, nsfw and extra_slow_worker fields are part of the declaration, so they are applied before the
-        # bookkeeping debounce (see WorkerTemplate.check_in). set_models is skipped when the pop declares the stored
-        # model list, because its validation reads the owner's roles from the database. The full validation still runs
-        # with the bookkeeping, so a model that the reference no longer accepts is removed from the stored list.
-        declared_models = kwargs.get("models")
-        models_changed = not self.declares_stored_models(declared_models)
-        if models_changed:
-            self.set_models(declared_models)
+        # bookkeeping debounce (see WorkerTemplate.check_in). The model rows are replaced only when the pop declares a
+        # list other than the stored one, because the validation reads the owner's roles from the database. The full
+        # validation still runs with the bookkeeping, so a model removed from the model reference is also removed from
+        # the stored list. A pop passes the stored declaration selected with its worker row, so a steady pop compares
+        # without reading the Redis model cache. Without it, the stored declaration is read from the caches.
+        if stored_declaration is None:
+            stored_declaration = self.get_stored_declaration()
+        declared_models = kwargs.get("models", [])
+        models_changed = not self.declares_stored_models(declared_models, stored_models=stored_declaration.models)
+        # A declared list that validates to the stored list, for example one with a model dropped by the validation,
+        # leaves the rows and the stored declaration unchanged.
+        if models_changed and self.set_models_from_stored_declaration(declared_models, stored_models=stored_declaration.models):
+            stored_declaration.models = tuple(self.get_model_names())
         self.nsfw = kwargs.get("nsfw", True)
         self.extra_slow_worker = kwargs.get("extra_slow_worker", False)
         if not super().check_in(**kwargs):
             return False
         # Changed declarations were validated before the debounce. Unchanged ones still need periodic validation
         # because the model reference can change between pops.
-        if not models_changed:
-            self.set_models(declared_models)
+        if not models_changed and self.set_models_from_stored_declaration(declared_models, stored_models=stored_declaration.models):
+            stored_declaration.models = tuple(self.get_model_names())
         # Comparing the blacklist reads its rows, so the blacklist is replaced with the debounced bookkeeping instead
         # of on every pop.
         self.set_blacklist(kwargs.get("blacklist", []))
         # Commit should happen on calling extensions
         return True
 
-    def declares_stored_models(self, models: Sequence[str]) -> bool:
+    def declares_stored_models(self, models: Sequence[str], *, stored_models: Collection[str]) -> bool:
         """Return whether a pop's declared model list matches the stored models, comparing the names as given.
 
         Args:
             models: The pop's declared model names, before validation.
+            stored_models: The model names stored for the worker.
 
         Returns:
             True when the declared names and the stored names are the same set.
         """
-        return set(models) == set(self.get_model_names())
+        return set(models) == set(stored_models)
 
     def set_blacklist(self, blacklist):
         # We don't allow more workers to claim they can server more than 50 models atm (to prevent abuse)
@@ -1034,7 +1058,8 @@ class Worker(WorkerTemplate):
         # self.models relationship collection. Under expire_on_commit=False that
         # collection can remain loaded with pre-change rows across a commit, which
         # would republish a stale list. A direct query always reflects what was written.
-        models_list = [row.model for row in db.session.query(WorkerModel.model).filter_by(worker_id=self.id).all()]
+        # Ordered by row id, like the aggregate selected with the pop's worker row, so both lists start with the same model.
+        models_list = [row.model for row in db.session.query(WorkerModel.model).filter_by(worker_id=self.id).order_by(WorkerModel.id).all()]
         try:
             hr.horde_r_setex(
                 f"worker_{self.id}_model_cache",
@@ -1063,17 +1088,33 @@ class Worker(WorkerTemplate):
     def set_models(self, models) -> bool:
         """Replace the worker's advertised models, committing only when they change.
 
+        The stored models are read from the model cache. See
+        [`set_models_from_stored_declaration`][horde.classes.base.worker.Worker.set_models_from_stored_declaration].
+
         Returns:
             True when the stored model list changed.
         """
-        models = self.parse_models(models)
-        existing_model_names = set(self.get_model_names())
-        if existing_model_names == models:
+        return self.set_models_from_stored_declaration(models, stored_models=self.get_model_names())
+
+    def set_models_from_stored_declaration(self, models: Sequence[str], *, stored_models: Collection[str]) -> bool:
+        """Replace the worker's stored models with the validated declaration, committing only when they differ.
+
+        Args:
+            models: The declared model names, before validation.
+            stored_models: The model names stored for the worker, which the validated declaration is compared
+                with.
+
+        Returns:
+            True when the stored model list changed.
+        """
+        validated_models = self.parse_models(models)
+        existing_model_names = set(stored_models)
+        if existing_model_names == validated_models:
             return False
         # logger.debug([existing_model_names,models, existing_model_names == models])
         db.session.query(WorkerModel).filter_by(worker_id=self.id).delete()
         db.session.flush()
-        for model_name in models:
+        for model_name in validated_models:
             model = WorkerModel(worker_id=self.id, model=model_name)
             db.session.add(model)
         db.session.commit()
@@ -1124,8 +1165,7 @@ class Worker(WorkerTemplate):
     def read_eligibility_inputs(self, *, maintenance_user_ids: Collection[int] = ()) -> WorkerEligibilityInputs:
         """Return the worker-side eligibility inputs for a pop, read from the worker's caches.
 
-        The blacklisted words are left unread. The blacklist rule reads them from the ``blacklist`` relationship when
-        a request first reaches the rule.
+        See [`the stored declaration form`][horde.classes.base.worker.Worker.get_eligibility_inputs_from_stored_declaration].
 
         Args:
             maintenance_user_ids: The users besides the owner whose requests the worker accepts while in maintenance.
@@ -1133,9 +1173,37 @@ class Worker(WorkerTemplate):
         Returns:
             The worker's eligibility inputs.
         """
+        return self.get_eligibility_inputs_from_stored_declaration(self.get_stored_declaration(), maintenance_user_ids=maintenance_user_ids)
+
+    def get_stored_declaration(self) -> StoredWorkerDeclaration:
+        """Return the worker's stored models, read from the model cache.
+
+        Returns:
+            The stored declaration, with an empty softprompt list.
+        """
+        return StoredWorkerDeclaration(models=tuple(self.get_model_names()), softprompts=())
+
+    def get_eligibility_inputs_from_stored_declaration(
+        self,
+        stored_declaration: StoredWorkerDeclaration,
+        *,
+        maintenance_user_ids: Collection[int] = (),
+    ) -> WorkerEligibilityInputs:
+        """Return the worker-side eligibility inputs for a pop, judged with the given stored declaration.
+
+        The blacklisted words are left unread. The blacklist rule reads them from the ``blacklist`` relationship when
+        a request first reaches the rule.
+
+        Args:
+            stored_declaration: The models and softprompts stored for the worker.
+            maintenance_user_ids: The users besides the owner whose requests the worker accepts while in maintenance.
+
+        Returns:
+            The worker's eligibility inputs.
+        """
         return WorkerEligibilityInputs(
-            model_names=tuple(self.get_model_names()),
-            softprompt_names=(),
+            model_names=stored_declaration.models,
+            softprompt_names=stored_declaration.softprompts,
             blacklist_words=None,
             owner_trusted=self.user.trusted,
             maintenance_user_ids=frozenset(maintenance_user_ids),

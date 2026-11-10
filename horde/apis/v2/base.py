@@ -48,7 +48,14 @@ from horde.classes.base.style_contract import (
 from horde.classes.base.team import Team, find_team_by_id, find_team_by_name, get_all_teams
 from horde.classes.base.user import User, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt
-from horde.classes.base.worker import MAX_WORKER_NAME_CHARACTERS, EligibilitySkipReason, Worker, WorkerMessage
+from horde.classes.base.worker import (
+    MAX_WORKER_NAME_CHARACTERS,
+    EligibilitySkipReason,
+    StoredWorkerDeclaration,
+    Worker,
+    WorkerMessage,
+    WorkerTemplate,
+)
 from horde.consts import HORDE_VERSION
 from horde.countermeasures import REJECTION_WINDOW, CounterMeasures
 from horde.database import functions as database
@@ -1073,6 +1080,9 @@ class JobPopTemplate(Resource):
     worker_class = Worker
     args: ParseResult
     gentype = "template"
+    stored_declaration: StoredWorkerDeclaration | None = None
+    """The models and softprompts stored for the pop's worker, selected with its row, or None when the pop reads
+    them from the caches. See [`StoredWorkerDeclaration`][horde.classes.base.worker.StoredWorkerDeclaration]."""
 
     def post(self):
         t0 = time.monotonic()
@@ -1135,8 +1145,15 @@ class JobPopTemplate(Resource):
         #     if priority_user:
         #        self.priority_users.append(priority_user)
         # The worker-side inputs do not change during the pop, so they are read once and every candidate is judged
-        # with them.
-        self.worker_eligibility_inputs = self.worker.read_eligibility_inputs(maintenance_user_ids=self.priority_user_ids)
+        # with them. The check-in left the stored declaration current, so a pop that selected it with the worker row
+        # judges with it instead of reading the caches.
+        if self.stored_declaration is None:
+            self.worker_eligibility_inputs = self.worker.read_eligibility_inputs(maintenance_user_ids=self.priority_user_ids)
+        else:
+            self.worker_eligibility_inputs = self.worker.get_eligibility_inputs_from_stored_declaration(
+                self.stored_declaration,
+                maintenance_user_ids=self.priority_user_ids,
+            )
         worker_only_eligibility = self.worker.can_generate_any(self.worker_eligibility_inputs)
         self.wp_page = 0
         self.priority_wp_ids = set()
@@ -1298,11 +1315,11 @@ class JobPopTemplate(Resource):
                 "worker name",
                 rc="TooLongWorkerName",
             )
-        self.worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
-        if not self.worker and database.worker_name_exists(self.worker_name):
+        found_worker = self.find_worker_by_name()
+        if found_worker is None and database.worker_name_exists(self.worker_name):
             raise e.PolymorphicNameConflict(self.worker_name)
         self.check_ip()
-        if not self.worker:
+        if found_worker is None:
             colab_search = re.compile(r"colab|tpu|google", re.IGNORECASE)
             cs = colab_search.search(self.worker_name)
             if cs:
@@ -1317,8 +1334,24 @@ class JobPopTemplate(Resource):
             if is_profane(self.args.bridge_agent):
                 raise e.Profanity(self.user.get_unique_alias(), self.args.bridge_agent, "bridge agent", rc="ProfaneBridgeAgent")
             self.worker = self.register_worker()
+            # The registration can return a worker that a concurrent pop registered with its declaration, so the
+            # stored declaration of a new worker is read from the caches.
+            self.stored_declaration = None
+        else:
+            self.worker, self.stored_declaration = found_worker
         if self.user != self.worker.user:
             raise e.WrongCredentials(self.user.get_unique_alias(), self.worker_name)
+
+    def find_worker_by_name(self) -> tuple[WorkerTemplate, StoredWorkerDeclaration | None] | None:
+        """Return the worker with the pop's name and its stored declaration, or None when no worker has the name.
+
+        This finds the worker alone and returns no stored declaration, so the pop reads it from the caches. A pop whose
+        worker type has a stored declaration overrides this to select it with the worker row.
+        """
+        worker = database.find_worker_by_name(self.worker_name, worker_class=self.worker_class)
+        if worker is None:
+            return None
+        return worker, None
 
     def check_worker_limits(self):
         """Refuse a new worker when the user is at the invite, worker-count or same-IP limit."""

@@ -28,6 +28,7 @@ from horde.classes.base.worker import (
     SPEED_BASELINE_THINGS_PER_SEC,
     EligibilitySkipReason,
     EligibilityVerdict,
+    StoredWorkerDeclaration,
     Worker,
     WorkerEligibilityInputs,
     worker_ordered_names_clause,
@@ -279,6 +280,7 @@ class TextWorker(Worker):
         chat_tools_max_temperature: float | None = None,
         chat_model_id: str | None = None,
         image_transports: Sequence[str] | None = None,
+        stored_declaration: StoredWorkerDeclaration | None = None,
         **kwargs,
     ):
         # The declaration is replaced on every pop, outside the check-in debounce, because the pop's eligibility
@@ -287,7 +289,10 @@ class TextWorker(Worker):
         # opt-out is part of the declaration for the same reason, since a chat-only worker must not receive a prompt.
         # Unchanged values leave the row clean, so a steady worker does not add an UPDATE or a generation bump. A
         # changed value is committed here, ahead of the pop's own commit, because the bump that invalidates cached
-        # request availability must follow the commit.
+        # request availability must follow the commit. The softprompts are compared with the stored declaration
+        # selected with the pop's worker row (see StoredWorkerDeclaration), or read from the caches without it.
+        if stored_declaration is None:
+            stored_declaration = self.get_stored_declaration()
         previous_chat_declaration = self.get_chat_declaration()
         previous_prompt_job_limits = (self.max_length, self.max_context_length)
         self.accepts_chat_jobs = accepts_chat_jobs
@@ -302,11 +307,13 @@ class TextWorker(Worker):
         )
         self.max_length = max_length
         self.max_context_length = max_context_length
-        softprompts_changed = self.set_softprompts(softprompts)
+        softprompts_changed = self.set_softprompts_from_stored_declaration(softprompts, stored_softprompts=stored_declaration.softprompts)
+        if softprompts_changed:
+            stored_declaration.softprompts = tuple(self.get_softprompt_names())
         prompt_job_limits_changed = (self.max_length, self.max_context_length) != previous_prompt_job_limits
         chat_declaration_changed = self.get_chat_declaration() != previous_chat_declaration
         declaration_changed = chat_declaration_changed or prompt_job_limits_changed or softprompts_changed
-        if not super().check_in(**kwargs):
+        if not super().check_in(stored_declaration=stored_declaration, **kwargs):
             if declaration_changed:
                 db.session.commit()
                 bump_text_worker_declaration_generation()
@@ -339,17 +346,22 @@ class TextWorker(Worker):
             self.image_transports,
         )
 
-    def set_models(self, models) -> bool:
+    @override
+    def set_models_from_stored_declaration(self, models: Sequence[str], *, stored_models: Collection[str]) -> bool:
         """Replace the advertised models, bumping the declaration generation when they change.
 
         A chat request that lists models is refused by a worker that does not advertise any of them, and the pop speed threshold
         depends on the first model, so the model list is part of eligibility. The base method commits a change
         before returning, so the bump follows the commit.
 
+        Args:
+            models: The declared model names, before validation.
+            stored_models: The model names stored for the worker.
+
         Returns:
             True when the stored model list changed.
         """
-        models_changed = super().set_models(models)
+        models_changed = super().set_models_from_stored_declaration(models, stored_models=stored_models)
         if models_changed:
             bump_text_worker_declaration_generation()
         return models_changed
@@ -359,7 +371,13 @@ class TextWorker(Worker):
         # the self.softprompts relationship collection. Under expire_on_commit=False that
         # collection can remain loaded with pre-change rows across a commit, which would
         # republish a stale list. A direct query always reflects what was written.
-        softprompts_list = [row.softprompt for row in db.session.query(TextWorkerSoftprompts.softprompt).filter_by(worker_id=self.id).all()]
+        softprompts_list = [
+            row.softprompt
+            for row in db.session.query(TextWorkerSoftprompts.softprompt)
+            .filter_by(worker_id=self.id)
+            .order_by(TextWorkerSoftprompts.id)
+            .all()
+        ]
         try:
             hr.horde_r_setex(
                 f"worker_{self.id}_softprompts_cache",
@@ -388,27 +406,46 @@ class TextWorker(Worker):
     def set_softprompts(self, softprompts) -> bool:
         """Replace the worker's advertised softprompts, writing only when they change.
 
+        The stored softprompts are read from the softprompt cache. See
+        [`set_softprompts_from_stored_declaration`][horde.classes.kobold.worker.TextWorker.set_softprompts_from_stored_declaration].
+
         Returns:
             True when the stored softprompt list changed.
         """
-        softprompts = [sanitize_string(softprompt_name[0:100]) for softprompt_name in softprompts]
-        del softprompts[200:]
-        softprompts = set(softprompts)
-        existing_softprompts_names = set(self.get_softprompt_names())
-        if existing_softprompts_names == softprompts:
+        return self.set_softprompts_from_stored_declaration(softprompts, stored_softprompts=self.get_softprompt_names())
+
+    def set_softprompts_from_stored_declaration(self, softprompts: Sequence[str], *, stored_softprompts: Collection[str]) -> bool:
+        """Replace the worker's stored softprompts with the declared ones, writing only when they differ.
+
+        Args:
+            softprompts: The declared softprompt names, before sanitizing.
+            stored_softprompts: The softprompt names stored for the worker, which the declaration is compared
+                with.
+
+        Returns:
+            True when the stored softprompt list changed.
+        """
+        sanitized_softprompts = [sanitize_string(softprompt_name[0:100]) for softprompt_name in softprompts]
+        del sanitized_softprompts[200:]
+        declared_softprompts = set(sanitized_softprompts)
+        existing_softprompts_names = set(stored_softprompts)
+        if existing_softprompts_names == declared_softprompts:
             return False
         logger.debug(
             [
                 existing_softprompts_names,
-                softprompts,
-                existing_softprompts_names == softprompts,
+                declared_softprompts,
+                existing_softprompts_names == declared_softprompts,
             ],
         )
         db.session.query(TextWorkerSoftprompts).filter_by(worker_id=self.id).delete()
         db.session.flush()
-        for softprompt_name in softprompts:
+        for softprompt_name in declared_softprompts:
             softprompt = TextWorkerSoftprompts(worker_id=self.id, softprompt=softprompt_name)
             db.session.add(softprompt)
+        # The bulk delete above bypasses the loaded ``softprompts`` collection. With expire_on_commit=False the
+        # collection would otherwise hold the pre-change rows for the rest of this session.
+        db.session.expire(self, ["softprompts"])
         self.refresh_softprompt_cache()
         return True
 
@@ -429,17 +466,13 @@ class TextWorker(Worker):
         return round(base_kudos * param_multiplier, 2)
 
     @override
-    def read_eligibility_inputs(self, *, maintenance_user_ids: Collection[int] = ()) -> WorkerEligibilityInputs:
-        """Return the worker-side eligibility inputs, including the worker's softprompt names.
-
-        Args:
-            maintenance_user_ids: The users besides the owner whose requests the worker accepts while in maintenance.
+    def get_stored_declaration(self) -> StoredWorkerDeclaration:
+        """Return the worker's stored models and softprompts, read from their caches.
 
         Returns:
-            The worker's eligibility inputs.
+            The stored declaration.
         """
-        eligibility_inputs = super().read_eligibility_inputs(maintenance_user_ids=maintenance_user_ids)
-        return replace(eligibility_inputs, softprompt_names=tuple(self.get_softprompt_names()))
+        return replace(super().get_stored_declaration(), softprompts=tuple(self.get_softprompt_names()))
 
     @override
     def can_generate_with_eligibility_inputs(

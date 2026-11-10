@@ -7,7 +7,7 @@ import json
 import math
 import os
 from datetime import datetime
-from typing import Any, NoReturn
+from typing import Any, NoReturn, override
 
 import logfire
 import redis
@@ -65,6 +65,7 @@ from horde.classes.base.style_contract import (
     build_vocabulary,
 )
 from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX, estimate_queue_wait_seconds
+from horde.classes.base.worker import StoredWorkerDeclaration
 from horde.classes.kobold.chat_request import (
     CHAT_WORKER_FAULT_RC,
     MAX_NATIVE_FINISH_REASON_LENGTH,
@@ -1814,7 +1815,13 @@ class TextJobPop(JobPopTemplate):
             chat_tools_max_temperature=chat_limits.get(ChatLimitField.TOOLS_MAX_TEMPERATURE.value),
             chat_model_id=self.args.model_id,
             image_transports=self.args.image_transports,
+            stored_declaration=self.stored_declaration,
         )
+
+    @override
+    def find_worker_by_name(self) -> tuple[TextWorker, StoredWorkerDeclaration] | None:
+        """Return the text worker with the pop's name and its stored declaration, selected in one statement."""
+        return database.find_text_worker_by_name(self.worker_name)
 
     def get_sorted_wp(self, priority_user_ids=None):
         """We're sending the lists directly, to avoid having to join tables"""

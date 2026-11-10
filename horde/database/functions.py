@@ -32,6 +32,7 @@ from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTa
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
 from horde.classes.base.waiting_prompt import WaitingPrompt, WPAllowedWorkers, WPModels
 from horde.classes.base.worker import (
+    StoredWorkerDeclaration,
     Worker,
     WorkerEligibilityInputs,
     WorkerMessage,
@@ -554,6 +555,56 @@ def find_sharedkey(shared_key):
 def find_worker_by_name(worker_name, worker_class=ImageWorker):
     worker = db.session.query(worker_class).filter_by(name=worker_name).first()
     return worker
+
+
+def find_image_worker_by_name(worker_name: str) -> tuple[ImageWorker, StoredWorkerDeclaration] | None:
+    """Return the image worker with this name and its stored declaration, selected in one statement.
+
+    The names are selected as an aggregate with the worker row, as in the availability query, so a pop
+    compares its declaration and judges candidates without reading the Redis model cache. On a host where the local
+    Redis does not hold the cache, that read is a round trip to the shared Redis.
+
+    Args:
+        worker_name: The worker's name.
+
+    Returns:
+        The worker and its stored declaration, or None when no image worker has the name.
+    """
+    worker_row = (
+        db.session.query(ImageWorker, worker_model_names_clause().label("model_names")).filter(ImageWorker.name == worker_name).first()
+    )
+    if worker_row is None:
+        return None
+    worker, model_names = worker_row
+    # The Postgres aggregate over no rows is NULL.
+    return worker, StoredWorkerDeclaration(models=tuple(model_names or ()), softprompts=())
+
+
+def find_text_worker_by_name(worker_name: str) -> tuple[TextWorker, StoredWorkerDeclaration] | None:
+    """Return the text worker with this name and its stored declaration, selected in one statement.
+
+    See [`find_image_worker_by_name`][horde.database.functions.find_image_worker_by_name].
+
+    Args:
+        worker_name: The worker's name.
+
+    Returns:
+        The worker and its stored declaration, or None when no text worker has the name.
+    """
+    worker_row = (
+        db.session.query(
+            TextWorker,
+            worker_model_names_clause().label("model_names"),
+            text_worker_softprompt_names_clause().label("softprompt_names"),
+        )
+        .filter(TextWorker.name == worker_name)
+        .first()
+    )
+    if worker_row is None:
+        return None
+    worker, model_names, softprompt_names = worker_row
+    # The Postgres aggregate over no rows is NULL.
+    return worker, StoredWorkerDeclaration(models=tuple(model_names or ()), softprompts=tuple(softprompt_names or ()))
 
 
 def find_worker_id_by_name(worker_name):

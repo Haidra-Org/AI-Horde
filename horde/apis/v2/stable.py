@@ -5,6 +5,7 @@
 import time
 from collections import defaultdict
 from datetime import datetime
+from typing import override
 
 import logfire
 import requests
@@ -33,6 +34,7 @@ from horde.classes.base.style_contract import (
     build_vocabulary,
 )
 from horde.classes.base.user import User
+from horde.classes.base.worker import StoredWorkerDeclaration
 from horde.classes.stable.genstats import (
     get_compiled_imagegen_stats_models,
     get_compiled_imagegen_stats_totals,
@@ -870,7 +872,13 @@ class ImageJobPop(JobPopTemplate):
             limit_max_steps=self.args.limit_max_steps,
             sampler_execution_contract_version=self.args.sampler_execution_contract_version,
             priority_usernames=self.priority_usernames,
+            stored_declaration=self.stored_declaration,
         )
+
+    @override
+    def find_worker_by_name(self) -> tuple[ImageWorker, StoredWorkerDeclaration] | None:
+        """Return the image worker with the pop's name and its stored declaration, selected in one statement."""
+        return database.find_image_worker_by_name(self.worker_name)
 
     def get_sorted_wp(self, priority_user_ids=None):
         """We're sending the lists directly, to avoid having to join tables"""

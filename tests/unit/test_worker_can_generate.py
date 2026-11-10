@@ -72,6 +72,8 @@ def _allowing_worker(**overrides):
             "get_model_names",
             "get_eligibility_inputs",
             "read_eligibility_inputs",
+            "get_stored_declaration",
+            "get_eligibility_inputs_from_stored_declaration",
             "can_generate_any",
             "can_generate_with_eligibility_inputs",
         ],
@@ -83,6 +85,8 @@ def _allowing_worker(**overrides):
     # The real input builder and rule chain run against the mock, so ``Worker.can_generate`` runs against the stand-in without a database.
     worker.get_eligibility_inputs = partial(Worker.get_eligibility_inputs, worker)
     worker.read_eligibility_inputs = partial(Worker.read_eligibility_inputs, worker)
+    worker.get_stored_declaration = partial(Worker.get_stored_declaration, worker)
+    worker.get_eligibility_inputs_from_stored_declaration = partial(Worker.get_eligibility_inputs_from_stored_declaration, worker)
     worker.can_generate_any = partial(Worker.can_generate_any, worker)
     worker.can_generate_with_eligibility_inputs = partial(Worker.can_generate_with_eligibility_inputs, worker)
     return worker
