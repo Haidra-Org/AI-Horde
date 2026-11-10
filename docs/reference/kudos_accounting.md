@@ -719,6 +719,18 @@ The tier sizes from the same listing are the `horde.kudos.archive.tier_bytes` va
 | `horde.kudos.archive.tier_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | Stored bytes of each tier, excluding manifests, from the tick's listing. Not recorded without an archive, and kept at the last value when the listing fails |
 | `horde.kudos.archive.budget_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | One series per tier that has a budget: `currency` from `KUDOS_ARCHIVE_BUDGET_BYTES`, `statistics` from `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES`. Not recorded without an archive |
 
+The SDK exports a gauge point only for an export interval in which the gauge was set, and the counters are exported
+with delta temporality, so they too send a point only for an interval in which they were added to. Each tick records
+its metrics when it ends. A tick that runs longer than a query's lookback, such as a long statistics dump, therefore
+leaves these metrics without a recent sample, and an instant query returns nothing for them although nothing failed.
+Read the gauges with `last_over_time` and compare the age of the last sample with the tick interval.
+
+Where the backend converts the deltas to a cumulative series, the first point of a new series already carries its
+first count, so `increase()` and `rate()` over that series miss the first event. Each `stepped` series of
+`horde.kudos.retention.steps` starts again when the quorum node restarts, so progress right after a deploy shows in
+the counter's value, not in its increase. Every tick adds 0 to the `blocked` and `failed` series, so they exist
+before their first event and that event counts.
+
 Two warnings are under log contract. Log-based alerting matches their prefixes, and
 `tests/unit/test_kudos_retention.py::test_log_contract_prefixes_start_the_outcome_warnings` tests them.
 
