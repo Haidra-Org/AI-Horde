@@ -259,6 +259,8 @@ class FakeHorde:
         """Bodies the next status reads return in order; each becomes ``status_payload`` when read."""
         self.status_code: int = 200
         """The status code the status route returns."""
+        self.status_read: asyncio.Event = asyncio.Event()
+        """Set once the status route has been read."""
         self._redis_client = redis_client
         status_path = f"{HORDE_URL}/v2/generate/chat/status/{REQUEST_ID}"
         self.submit_route: respx.Route = router.post(f"{HORDE_URL}/v2/generate/chat/async").mock(
@@ -282,6 +284,7 @@ class FakeHorde:
 
     def _answer_status(self, _request: httpx.Request) -> httpx.Response:
         """Return the current status response, after taking the next of ``next_status_payloads`` when one is left."""
+        self.status_read.set()
         if self.next_status_payloads:
             self.status_payload = self.next_status_payloads.pop(0)
         return httpx.Response(self.status_code, json=self.status_payload)
@@ -358,8 +361,22 @@ class FakeHorde:
         assert self.stream_redis_client is not None, "The front was started without a delta stream database."
         await self.stream_redis_client.xadd(f"{DELTA_STREAM_KEY_PREFIX}{REQUEST_ID}", fields)
 
-    async def finish_later(self, delay_seconds: float, *, signal: bool = True, **generation_overrides: Any) -> None:
-        """Mark the request done after ``delay_seconds`` and publish ``done`` when ``signal`` is set."""
+    async def finish_later(
+        self,
+        delay_seconds: float,
+        *,
+        signal: bool = True,
+        after_first_read: bool = False,
+        **generation_overrides: Any,
+    ) -> None:
+        """Mark the request done after ``delay_seconds`` and publish ``done`` when ``signal`` is set.
+
+        With ``after_first_read`` the delay starts at the first status read instead of at the call. Use it when the
+        assertion depends on the delay relative to the front's own read schedule: the submit before that first read
+        takes a variable time, so a delay counted from the call can end before the front reads at all.
+        """
+        if after_first_read:
+            await self.status_read.wait()
         await asyncio.sleep(delay_seconds)
         self.status_payload = done_status(**generation_overrides)
         if signal:

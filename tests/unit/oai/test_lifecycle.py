@@ -880,7 +880,7 @@ async def test_fail_fast_admits_once_the_positioned_read_bound_passes_on_unposit
     monkeypatch.setattr(waiter, "POSITIONED_READ_WAIT_SECONDS", SHORT_POSITIONED_READ_WAIT_SECONDS)
     async with start_front() as front:
         front.horde.status_payload = UNPOSITIONED_STATUS
-        finisher = asyncio.create_task(front.horde.finish_later(SHORT_POSITIONED_READ_WAIT_SECONDS + 0.2))
+        finisher = asyncio.create_task(front.horde.finish_later(SHORT_POSITIONED_READ_WAIT_SECONDS + 0.2, after_first_read=True))
         started_at = time.monotonic()
         response = await front.client.post("/v1/chat/completions", json=build_chat_body(stream=stream, horde=FAIL_FAST_OPTIONS))
         elapsed_seconds = time.monotonic() - started_at
@@ -895,7 +895,7 @@ async def test_fail_fast_admits_once_the_positioned_read_bound_passes_on_unposit
 async def test_wait_mode_admits_an_unpositioned_first_status_without_reading_again(start_front: StartFront) -> None:
     async with start_front() as front:
         front.horde.status_payload = UNPOSITIONED_STATUS
-        finisher = asyncio.create_task(front.horde.finish_later(0.3))
+        finisher = asyncio.create_task(front.horde.finish_later(0.3, after_first_read=True))
         response = await front.client.post("/v1/chat/completions", json=build_chat_body(horde={"availability_mode": "wait"}))
         await finisher
 
