@@ -4,8 +4,9 @@
 
 import time
 from collections import defaultdict
+from collections.abc import Collection
 from datetime import datetime
-from typing import override
+from typing import Any, override
 
 import logfire
 import requests
@@ -880,7 +881,7 @@ class ImageJobPop(JobPopTemplate):
         """Return the image worker with the pop's name and its stored declaration, selected in one statement."""
         return database.find_image_worker_by_name(self.worker_name)
 
-    def get_sorted_wp(self, priority_user_ids=None):
+    def get_sorted_wp(self, priority_user_ids: Collection[int] | None = None, *, page_size: int | None = None) -> list[Any]:
         """We're sending the lists directly, to avoid having to join tables"""
         sorted_wps = database.get_sorted_wp_filtered_to_worker(
             self.worker,
@@ -888,6 +889,8 @@ class ImageJobPop(JobPopTemplate):
             self.blacklist,
             priority_user_ids=priority_user_ids,
             page=self.wp_page,
+            excluded_ids=self.read_wp_ids,
+            page_size=page_size or self.scan_page_sizes[0],
         )
         return sorted_wps
 

@@ -4,8 +4,10 @@
 
 import json
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import aliased, joinedload, noload, selectinload, with_expression
@@ -27,7 +29,14 @@ from horde.classes.kobold.worker import (
     get_minimum_text_worker_speed,
     get_text_worker_lease_capacity,
 )
-from horde.database.functions import query_prioritized_wps
+from horde.database.functions import (
+    TEXT_POP_SCAN_PAGE_SIZES,
+    claim_waiting_prompt,
+    pop_scan_page_size,
+    query_prioritized_wps,
+    queued_request_clauses,
+    read_pop_scan_page,
+)
 from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
@@ -140,11 +149,8 @@ def text_wp_offer_clauses(worker, models_list):
         # A chat-only worker may leave its text limits at the pop defaults, which are not a capacity it serves at.
         wp_fits_worker = or_(wp_fits_worker, wp_fits_chat_worker) if worker.accepts_prompt_jobs else wp_fits_chat_worker
     return [
-        TextWaitingPrompt.n > 0,
+        *queued_request_clauses(TextWaitingPrompt),
         wp_fits_worker,
-        TextWaitingPrompt.active.is_(True),
-        TextWaitingPrompt.faulted.is_(False),
-        TextWaitingPrompt.expiry > datetime.utcnow(),
         or_(
             TextWaitingPrompt.safe_ip.is_(True),
             worker.allow_unsafe_ipaddr is True,
@@ -270,12 +276,34 @@ def worker_may_be_speed_gated(worker, models_list) -> bool:
     return get_text_worker_lease_capacity(worker.speed) < worker.chat_max_length
 
 
-def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_user_ids=None, page=0):
-    # This is just the top 3 - Adjusted method to send Worker object. Filters to add.
+def get_sorted_text_wp_filtered_to_worker(
+    worker: Any,
+    models_list: list[str] | None = None,
+    priority_user_ids: Collection[int] | None = None,
+    page: int = 0,
+    *,
+    excluded_ids: Collection[Any] = (),
+    page_size: int | None = None,
+) -> list[Any]:
+    """Return one page of text requests for a worker's pop to evaluate, in queue order, without locking them.
+
+    Args:
+        worker: The popping text worker.
+        models_list: The worker's advertised models, in bridge preference order.
+        priority_user_ids: When set, only these users' requests are returned.
+        page: The zero-based page index.
+        excluded_ids: The ids of the requests already read by this pop.
+        page_size: The most requests to return. By default, the entry for ``page`` in
+            [`TEXT_POP_SCAN_PAGE_SIZES`][horde.database.functions.TEXT_POP_SCAN_PAGE_SIZES].
+
+    Returns:
+        The requests. Fewer than ``page_size`` means the worker's queue does not have more.
+    """
     # TODO: Filter by (Worker in WP.workers) __ONLY IF__ len(WP.workers) >=1
     # TODO: Filter by Worker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.Worker.gan_generate())
-    PER_PAGE = 3  # how many requests we're picking up to filter further
+    if page_size is None:
+        page_size = pop_scan_page_size(TEXT_POP_SCAN_PAGE_SIZES, page)
     final_wp_list = (
         db.session.query(TextWaitingPrompt)
         .options(
@@ -284,8 +312,7 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
             selectinload(TextWaitingPrompt.models),
             selectinload(TextWaitingPrompt.tricked_workers),
             selectinload(TextWaitingPrompt.workers),
-            # Computed for the returned page only, so eligibility never loads a candidate's deferred messages.
-            with_expression(TextWaitingPrompt.carries_chat_images, chat_images_clause()),
+            *text_wp_loader_options(),
         )
         # The speed gate is kept apart from the offer clauses so each rule reads on its own. A chat request the
         # worker's speed cannot finish inside the base lease is not paged here while a capable worker is online, so it
@@ -297,14 +324,31 @@ def get_sorted_text_wp_filtered_to_worker(worker, models_list=None, priority_use
     )
     if priority_user_ids:
         final_wp_list = final_wp_list.filter(TextWaitingPrompt.user_id.in_(priority_user_ids))
-    # logger.debug(final_wp_list)
-    final_wp_list = (
-        final_wp_list.order_by(TextWaitingPrompt.extra_priority.desc(), TextWaitingPrompt.created.asc())
-        .offset(PER_PAGE * page)
-        .limit(PER_PAGE)
-    )
-    # logger.debug(final_wp_list.all())
-    return final_wp_list.populate_existing().with_for_update(skip_locked=True, of=TextWaitingPrompt).all()
+    return read_pop_scan_page(final_wp_list, TextWaitingPrompt, excluded_ids=excluded_ids, page_size=page_size)
+
+
+def text_wp_loader_options() -> list[Any]:
+    """Return the loader options applied by every pop load of a text request, in the scan and in the claim.
+
+    Returns:
+        The options. ``carries_chat_images`` is computed in the same statement, so eligibility does not load a
+        request's deferred messages. A load without the option would reset the attribute to None.
+    """
+    return [with_expression(TextWaitingPrompt.carries_chat_images, chat_images_clause())]
+
+
+def claim_text_wp(wp: TextWaitingPrompt, *, worker_id: Any) -> Any:
+    """Lock a text request that passed the pop's eligibility rules, and return it with its columns read again.
+
+    Args:
+        wp: The request as loaded by the pop's scan.
+        worker_id: The id of the popping worker.
+
+    Returns:
+        The locked request, or None in the cases listed for
+        [`claim_waiting_prompt`][horde.database.functions.claim_waiting_prompt].
+    """
+    return claim_waiting_prompt(wp, worker_id=worker_id, loader_options=text_wp_loader_options())
 
 
 def get_text_wp_by_id(wp_id, lite=False, *, chat=False):

@@ -79,7 +79,7 @@ def _prepare_pop(
     monkeypatch.setattr(pop, "validate", lambda: None)
     monkeypatch.setattr(pop, "check_in", lambda: None)
 
-    def sorted_prompts(priority_user_ids: list[int] | None = None) -> list[Any]:
+    def sorted_prompts(priority_user_ids: list[int] | None = None, *, page_size: int | None = None) -> list[Any]:
         is_first_normal_page = priority_user_ids is None and pop.wp_page == 0
         return list(candidates) if is_first_normal_page else []
 

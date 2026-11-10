@@ -6,6 +6,7 @@ import hmac
 import json
 import math
 import os
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any, NoReturn, override
 
@@ -1718,6 +1719,8 @@ class TextJobPop(JobPopTemplate):
     worker_class = TextWorker
     gentype = "text"
     decorators = [limiter.limit("60/second")]
+    scan_page_sizes: tuple[int, ...] = database.TEXT_POP_SCAN_PAGE_SIZES
+    """How many requests each page of the pop's queue scan reads, in page order. The last size repeats."""
 
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
     @api.response(200, "Generation Popped", models.response_model_job_pop)
@@ -1823,15 +1826,21 @@ class TextJobPop(JobPopTemplate):
         """Return the text worker with the pop's name and its stored declaration, selected in one statement."""
         return database.find_text_worker_by_name(self.worker_name)
 
-    def get_sorted_wp(self, priority_user_ids=None):
+    def get_sorted_wp(self, priority_user_ids: Collection[int] | None = None, *, page_size: int | None = None) -> list[Any]:
         """We're sending the lists directly, to avoid having to join tables"""
         sorted_wps = text_database.get_sorted_text_wp_filtered_to_worker(
             self.worker,
             self.models,
             priority_user_ids=priority_user_ids,
             page=self.wp_page,
+            excluded_ids=self.read_wp_ids,
+            page_size=page_size or self.scan_page_sizes[0],
         )
         return sorted_wps
+
+    @override
+    def claim_wp(self, wp: Any) -> Any:
+        return text_database.claim_text_wp(wp, worker_id=self.worker.id)
 
 
 CHAT_SUBMIT_KEYS = (

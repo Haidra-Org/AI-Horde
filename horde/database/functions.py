@@ -7,7 +7,7 @@ import os
 import time
 import urllib.parse
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -15,8 +15,9 @@ from typing import Any
 
 import logfire
 from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField, ChatServiceGapKind
-from sqlalchemy import Boolean, and_, case, func, not_, null, or_, select
+from sqlalchemy import Boolean, and_, case, func, inspect, not_, null, or_, select
 from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload
+from sqlalchemy.orm.attributes import set_committed_value
 
 import horde.classes.base.stats as stats
 from horde import vars as hv
@@ -30,7 +31,7 @@ from horde.classes.base.kudos import KudosIdempotencyKey, kudos_event
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.base.style import Style, StyleCollection, StyleModel, StyleTag
 from horde.classes.base.user import KudosTransferLog, User, UserRecords, UserSharedKey
-from horde.classes.base.waiting_prompt import WaitingPrompt, WPAllowedWorkers, WPModels
+from horde.classes.base.waiting_prompt import WaitingPrompt, WPAllowedWorkers, WPModels, WPTrickedWorkers
 from horde.classes.base.worker import (
     StoredWorkerDeclaration,
     Worker,
@@ -1367,14 +1368,200 @@ def _wp_requests_post_processing():
     )
 
 
-def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, priority_user_ids=None, page=0):
+POP_SCAN_PAGE_SIZES: tuple[int, ...] = (10, 50, 200)
+"""How many image requests each page of a pop's queue scan reads, in page order. The last size repeats.
+
+The first page is small, so a pop that matches near the head of the queue reads few rows. Later pages grow, so a pop
+without a match reaches the end of a deep queue in a few round trips. The scan's depth is not limited, because a
+request that only one worker can serve has to stay reachable wherever it sits in the queue.
+"""
+
+TEXT_POP_SCAN_PAGE_SIZES: tuple[int, ...] = (3, 50, 200)
+"""How many text requests each page of a pop's queue scan reads, in page order. The last size repeats.
+
+The sizes grow for the reasons given for [`POP_SCAN_PAGE_SIZES`][horde.database.functions.POP_SCAN_PAGE_SIZES]. The
+first page is smaller than the image one because a text request's row holds its whole prompt, which can be far longer
+than an image prompt.
+"""
+
+
+def pop_scan_page_size(page_sizes: Sequence[int], page: int) -> int:
+    """Return how many requests page ``page`` of a pop's queue scan reads.
+
+    Args:
+        page_sizes: The scan's page sizes in page order. The last size repeats for every later page.
+        page: The zero-based page index.
+
+    Returns:
+        The page's row limit.
+    """
+    return page_sizes[min(page, len(page_sizes) - 1)]
+
+
+def queued_request_clauses(waiting_prompt_class: type[WaitingPrompt]) -> list[Any]:
+    """Return the clauses that limit a pop's queue scan and its claim to requests still waiting for a worker.
+
+    Args:
+        waiting_prompt_class: The request class being scanned or claimed.
+
+    Returns:
+        The clauses: jobs left to assign, active, not faulted and not expired.
+    """
+    return [
+        waiting_prompt_class.n > 0,
+        # The bare boolean forms match the predicate of the partial index ix_waiting_prompts_active_queue
+        # (active AND NOT faulted AND n > 0). PostgreSQL does not match ``active IS true`` or ``faulted IS false``
+        # to that predicate, and without it the planner falls back to an index over every stored request.
+        waiting_prompt_class.active,
+        not_(waiting_prompt_class.faulted),
+        waiting_prompt_class.expiry > datetime.utcnow(),
+    ]
+
+
+def read_pop_scan_page(
+    candidate_query: Any,
+    waiting_prompt_class: type[WaitingPrompt],
+    *,
+    excluded_ids: Collection[Any],
+    page_size: int,
+) -> list[Any]:
+    """Return the next page of a pop's queue scan, in queue order, without locking the rows read.
+
+    A pop claims a request with [`claim_waiting_prompt`][horde.database.functions.claim_waiting_prompt] only after
+    the request passes the eligibility rules, so the scan does not lock rows. Other workers' scans read the same
+    rows, and queue writers do not wait on them.
+
+    Args:
+        candidate_query: The worker's filtered candidate query, without ordering or limit.
+        waiting_prompt_class: The request class read by the query.
+        excluded_ids: The ids of the requests already read by this pop.
+        page_size: The most requests to return.
+
+    Returns:
+        The requests, highest ``extra_priority`` first, then oldest first. Fewer than ``page_size`` means the scan
+        reached the end of the worker's queue.
+    """
+    # Each page leaves out the requests already read. The priority thread can raise extra_priority for queued
+    # requests between two pages, in several commits, so an offset or a cursor on extra_priority could skip a
+    # request or return it twice. Excluding by id reads every matching request exactly once whatever happens to
+    # the sort columns.
+    if excluded_ids:
+        candidate_query = candidate_query.filter(waiting_prompt_class.id.not_in(list(excluded_ids)))
+    page_rows: list[Any] = (
+        candidate_query.order_by(waiting_prompt_class.extra_priority.desc(), waiting_prompt_class.created.asc())
+        .limit(page_size)
+        .populate_existing()
+        .all()
+    )
+    return page_rows
+
+
+CLAIM_RETAINED_COLLECTIONS: tuple[str, ...] = (
+    "models",
+    "workers",
+)
+"""The request collections that stay as loaded by the pop's scan when the request is claimed.
+
+A claim reads the request's columns again, which also resets the loaded collections. A request's model and worker
+rows are written only when the request is created, so the rows loaded by the scan are still current, and keeping
+them saves the assignment a SELECT for each. The tricked workers are not kept, because they change while the request
+is queued. The claim checks the popping worker against the stored rows.
+"""
+
+
+def claim_waiting_prompt(
+    waiting_prompt: WaitingPrompt,
+    *,
+    worker_id: Any,
+    loader_options: Sequence[Any] = (),
+) -> Any:
+    """Lock a request that passed the pop's eligibility rules, and return it with its columns read again.
+
+    The pop's scan read the request without a lock, so the request may have been served, cancelled, faulted or
+    expired since. The claim locks the row only when it still waits for a worker, and skips a row locked by another
+    transaction. The lock is held until the pop's next commit.
+
+    Args:
+        waiting_prompt: The request as loaded by the pop's scan.
+        worker_id: The id of the popping worker.
+        loader_options: Loader options that every load of the request class applies. They are applied again
+            because the claim replaces the loaded column values.
+
+    Returns:
+        The locked request, the same instance as ``waiting_prompt``. None when another worker holds or took it, or
+        when it is not waiting for a worker any more.
+    """
+    waiting_prompt_class = type(waiting_prompt)
+    unloaded_attributes: set[str] = inspect(waiting_prompt).unloaded
+    retained_collections = {
+        collection_name: list(getattr(waiting_prompt, collection_name))
+        for collection_name in CLAIM_RETAINED_COLLECTIONS
+        if collection_name not in unloaded_attributes
+    }
+    # Tricked-worker rows are written only by fake_generation, which commits while it holds the request's lock.
+    # A row added by a concurrent pop of the same worker is therefore committed before this claim can lock the
+    # request.
+    worker_was_tricked = (
+        db.session.query(WPTrickedWorkers.id)
+        .filter(WPTrickedWorkers.wp_id == waiting_prompt_class.id, WPTrickedWorkers.worker_id == worker_id)
+        .exists()
+    )
+    # One row by primary key. The clauses repeat the scan's liveness conditions against the row as committed now,
+    # and the tricked-worker check repeats the eligibility rule that reads the same rows.
+    # For a request served to n = 0 between the scan and the claim: no row, and the pop moves to its next candidate.
+    # For a request locked by another worker's claim: no row, for the same reason.
+    # For a request still waiting and unlocked: the row, locked, with n and the other columns as committed.
+    claimed_waiting_prompt = (
+        db.session.query(waiting_prompt_class)
+        .options(noload(waiting_prompt_class.processing_gens), *loader_options)
+        .filter(
+            waiting_prompt_class.id == waiting_prompt.id,
+            *queued_request_clauses(waiting_prompt_class),
+            ~worker_was_tricked,
+        )
+        .populate_existing()
+        .with_for_update(skip_locked=True, of=waiting_prompt_class)
+        .first()
+    )
+    if claimed_waiting_prompt is None:
+        return None
+    for collection_name, collection_rows in retained_collections.items():
+        set_committed_value(claimed_waiting_prompt, collection_name, collection_rows)
+    return claimed_waiting_prompt
+
+
+def get_sorted_wp_filtered_to_worker(
+    worker: Any,
+    models_list: Any = None,
+    blacklist: list[str] | None = None,
+    priority_user_ids: Collection[int] | None = None,
+    page: int = 0,
+    *,
+    excluded_ids: Collection[Any] = (),
+    page_size: int | None = None,
+) -> list[Any]:
+    """Return one page of image requests for a worker's pop to evaluate, in queue order, without locking them.
+
+    Args:
+        worker: The popping worker.
+        models_list: The models declared in the worker's pop.
+        blacklist: Unused. The eligibility rules apply the worker's blacklist.
+        priority_user_ids: When set, only these users' requests are returned.
+        page: The zero-based page index, recorded on the query duration metric.
+        excluded_ids: The ids of the requests already read by this pop.
+        page_size: The most requests to return. By default, the entry for ``page`` in
+            [`POP_SCAN_PAGE_SIZES`][horde.database.functions.POP_SCAN_PAGE_SIZES].
+
+    Returns:
+        The requests. Fewer than ``page_size`` means the worker's queue does not have more.
+    """
     import time as _time
 
     t0 = _time.monotonic()
-    # This is just the top 3 - Adjusted method to send ImageWorker object. Filters to add.
     # TODO: Filter by ImageWorker not in WP.tricked_worker
     # TODO: If any word in the prompt is in the WP.blacklist rows, then exclude it (L293 in base.worker.ImageWorker.gan_generate())
-    PER_PAGE = 10  # how many requests we're picking up to filter further
+    if page_size is None:
+        page_size = pop_scan_page_size(POP_SCAN_PAGE_SIZES, page)
     # The model constraint is a semi-join: joining wp_models returns one row per
     # matching model, and the page LIMIT below counts joined rows, so a WP
     # naming several of the worker's models would consume several page slots as
@@ -1403,10 +1590,7 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
             selectinload(ImageWaitingPrompt.workers),
         )
         .filter(
-            ImageWaitingPrompt.n > 0,
-            ImageWaitingPrompt.active.is_(True),
-            ImageWaitingPrompt.faulted.is_(False),
-            ImageWaitingPrompt.expiry > datetime.utcnow(),
+            *queued_request_clauses(ImageWaitingPrompt),
             ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
             or_(
                 wp_serves_model,
@@ -1575,19 +1759,13 @@ def get_sorted_wp_filtered_to_worker(worker, models_list=None, blacklist=None, p
                 ),
             )
 
-    # logger.debug(final_wp_list)
-    final_wp_list = (
-        final_wp_list.order_by(ImageWaitingPrompt.extra_priority.desc(), ImageWaitingPrompt.created.asc())
-        .offset(PER_PAGE * page)
-        .limit(PER_PAGE)
-    )
     with logfire.span(
         "horde.db.get_sorted_wp",
         worker_id=str(worker.id),
         page=page,
         has_priority=priority_user_ids is not None,
     ):
-        results = final_wp_list.populate_existing().with_for_update(skip_locked=True, of=ImageWaitingPrompt).all()
+        results = read_pop_scan_page(final_wp_list, ImageWaitingPrompt, excluded_ids=excluded_ids, page_size=page_size)
     pop_query_duration.record(_time.monotonic() - t0, {"horde.page": page})
     return results
 

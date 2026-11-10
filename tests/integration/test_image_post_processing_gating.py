@@ -83,14 +83,23 @@ def _candidate_ids_for_worker(app) -> set[str]:
     candidate_ids: set[str] = set()
     with app.app_context():
         worker = db.session.query(ImageWorker).filter_by(name=WORKER_NAME).one()
+        read_ids: set = set()
         for page in range(MAX_CANDIDATE_PAGES):
-            wp_list = database.get_sorted_wp_filtered_to_worker(worker, TEST_MODELS, [], page=page)
-            if not wp_list:
-                break
+            page_size = database.pop_scan_page_size(database.POP_SCAN_PAGE_SIZES, page)
+            wp_list = database.get_sorted_wp_filtered_to_worker(
+                worker,
+                TEST_MODELS,
+                [],
+                page=page,
+                excluded_ids=read_ids,
+                page_size=page_size,
+            )
+            read_ids.update(wp.id for wp in wp_list)
             candidate_ids.update(str(wp.id) for wp in wp_list)
+            if len(wp_list) < page_size:
+                break
         else:
             pytest.fail(f"worker candidate list exceeded {MAX_CANDIDATE_PAGES} pages")
-        # The candidate query locks the rows it returns.
         db.session.rollback()
     return candidate_ids
 
@@ -120,7 +129,7 @@ def test_post_processing_job_is_not_a_candidate_for_worker_that_disallows_it(
     request_headers: dict[str, str],
 ) -> None:
     # The candidate query must exclude the job itself. Leaving the rejection to the per-candidate
-    # check still withholds the job, but it fills candidate pages and locks rows the worker cannot use.
+    # check still keeps the job from the worker, but candidate pages fill with rows that the worker cannot use.
     check_in = client.post(
         "/api/v2/generate/pop",
         json=_pop_dict(allow_post_processing=False),

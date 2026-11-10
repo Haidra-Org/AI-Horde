@@ -172,7 +172,7 @@ with its charge.
 Cold and warm admissions match, because text admission does not read the active worker count.
 """
 
-IMAGE_POP_EMPTY_COLD = StatementBudget(selects=25, inserts=2, updates=3, deletes=1, commits=3, rollbacks=1)
+IMAGE_POP_EMPTY_COLD = StatementBudget(selects=24, inserts=2, updates=2, deletes=1, commits=3, rollbacks=1)
 """Bounds a new image worker's first pop on an empty queue: registration, model declaration and the check-in."""
 
 IMAGE_POP_EMPTY_WARM = StatementBudget(selects=10, inserts=0, updates=1, deletes=0, commits=1, rollbacks=1)
@@ -181,13 +181,14 @@ IMAGE_POP_EMPTY_WARM = StatementBudget(selects=10, inserts=0, updates=1, deletes
 IMAGE_POP_MATCH_WARM = StatementBudget(selects=14, inserts=1, updates=2, deletes=0, commits=2, rollbacks=1)
 """Bounds an existing image worker's pop that returns a job: the check-in, then the job with its model and lease.
 
-The job row, its model and its lease are written under one commit; the candidate page is unlocked by that commit.
+The scan reads the candidate page without locks. One SELECT claims the chosen request with a row lock, and the job
+row, its model and its lease are written in one commit, which releases that lock.
 """
 
-IMAGE_POP_MATCH_COLD = StatementBudget(selects=29, inserts=3, updates=4, deletes=1, commits=4, rollbacks=1)
+IMAGE_POP_MATCH_COLD = StatementBudget(selects=28, inserts=3, updates=3, deletes=1, commits=4, rollbacks=1)
 """Bounds a new image worker's first pop that returns a job, which adds registration to the warm case."""
 
-TEXT_POP_EMPTY_COLD = StatementBudget(selects=25, inserts=2, updates=3, deletes=1, commits=3, rollbacks=1)
+TEXT_POP_EMPTY_COLD = StatementBudget(selects=24, inserts=2, updates=2, deletes=1, commits=3, rollbacks=1)
 """Bounds a new text worker's first pop on an empty queue: registration, model declaration and the check-in."""
 
 TEXT_POP_EMPTY_WARM = StatementBudget(selects=9, inserts=0, updates=1, deletes=0, commits=1, rollbacks=1)
@@ -196,10 +197,11 @@ TEXT_POP_EMPTY_WARM = StatementBudget(selects=9, inserts=0, updates=1, deletes=0
 TEXT_POP_MATCH_WARM = StatementBudget(selects=15, inserts=1, updates=2, deletes=0, commits=2, rollbacks=1)
 """Bounds an existing text worker's pop that returns a job: the check-in, then the job with its model and lease.
 
-The job row, its model and its lease are written under one commit; the candidate page is unlocked by that commit.
+The scan reads the candidate page without locks. One SELECT claims the chosen request with a row lock, and the job
+row, its model and its lease are written in one commit, which releases that lock.
 """
 
-TEXT_POP_MATCH_COLD = StatementBudget(selects=31, inserts=3, updates=4, deletes=1, commits=4, rollbacks=1)
+TEXT_POP_MATCH_COLD = StatementBudget(selects=30, inserts=3, updates=3, deletes=1, commits=4, rollbacks=1)
 """Bounds a new text worker's first pop that returns a job, which adds registration to the warm case."""
 
 SUBMIT = StatementBudget(selects=8, inserts=7, updates=3, deletes=0, commits=3, rollbacks=0)

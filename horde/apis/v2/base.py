@@ -7,7 +7,7 @@ import json
 import os
 import random
 import time
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -82,6 +82,7 @@ from horde.metrics import (
     moderation_countermeasures,
     pop_candidates,
     pop_check_in_duration,
+    pop_claim_misses,
     pop_duration,
     pop_eval_duration,
     pop_pre_eval_duration,
@@ -1083,6 +1084,8 @@ class JobPopTemplate(Resource):
     stored_declaration: StoredWorkerDeclaration | None = None
     """The models and softprompts stored for the pop's worker, selected with its row, or None when the pop reads
     them from the caches. See [`StoredWorkerDeclaration`][horde.classes.base.worker.StoredWorkerDeclaration]."""
+    scan_page_sizes: tuple[int, ...] = database.POP_SCAN_PAGE_SIZES
+    """How many requests each page of the pop's queue scan reads, in page order. The last size repeats."""
 
     def post(self):
         t0 = time.monotonic()
@@ -1157,17 +1160,18 @@ class JobPopTemplate(Resource):
         worker_only_eligibility = self.worker.can_generate_any(self.worker_eligibility_inputs)
         self.wp_page = 0
         self.priority_wp_ids = set()
+        self.read_wp_ids = set()
+        queue_exhausted = True
         if worker_only_eligibility.eligible:
             with logfire.span("horde.pop.get_sorted_wp", priority=True, page=0):
                 wp_list = self.get_sorted_wp(self.priority_user_ids)
             self.priority_wp_ids = {wp.id for wp in wp_list}
-            for wp in wp_list:
-                self.prioritized_wp.append(wp)
+            self.read_wp_ids.update(self.priority_wp_ids)
+            self.prioritized_wp.extend(wp_list)
             ## End prioritize by bridge request ##
+            # The general scan leaves out the priority requests already read, so a request is not evaluated twice.
             with logfire.span("horde.pop.get_sorted_wp", priority=False, page=0):
-                for wp in self.get_sorted_wp():
-                    if wp.id not in [wp.id for wp in self.prioritized_wp]:
-                        self.prioritized_wp.append(wp)
+                queue_exhausted = self.read_next_scan_page()
         else:
             # Every candidate would be refused for this reason, so we record it once and skip further evaluation
             self.record_skipped_reason(worker_only_eligibility.skip_reason)
@@ -1187,21 +1191,32 @@ class JobPopTemplate(Resource):
                     if not check_gen.eligible:
                         self.record_skipped_reason(check_gen.skip_reason)
                         continue
-                    # There is a chance that by the time we finished all the checks, another worker picked up the WP.
-                    # So we do another final check here before picking it up to avoid sending the same WP to two workers by mistake.
-                    # time.sleep(random.uniform(0, 1))
-                    if not wp.needs_gen():  # this says if < 1
+                    # The scan read the request without a lock. The claim locks it only while it still waits for a
+                    # worker, so a request taken by another worker, or cancelled, faulted or expired since the scan,
+                    # is passed over.
+                    with logfire.span("horde.pop.claim", wp_id=str(wp.id)):
+                        claimed_wp = self.claim_wp(wp)
+                    if claimed_wp is None:
+                        # Concurrent pops read the same queue head without locks, so a rising count here means
+                        # pops are spending round trips on requests that other pops take first.
+                        pop_claim_misses.add(1, {"horde.gentype": self.gentype})
+                        continue
+                    if not claimed_wp.needs_gen():  # this says if < 1
+                        db.session.commit()
                         continue
                     sg_t0 = time.monotonic()
-                    with logfire.span("horde.pop.start_generation", wp_id=str(wp.id)):
+                    with logfire.span("horde.pop.start_generation", wp_id=str(claimed_wp.id)):
                         worker_ret = self.start_worker(
-                            wp,
-                            selected_from_priority_queue=wp.id in self.priority_wp_ids,
+                            claimed_wp,
+                            selected_from_priority_queue=claimed_wp.id in self.priority_wp_ids,
                         )
                     pop_start_gen_duration.record(time.monotonic() - sg_t0, {"horde.gentype": self.gentype})
                     pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "match", "horde.gentype": self.gentype})
                     # logger.debug(worker_ret)
                     if worker_ret is None:
+                        # start_generation and fake_generation commit before they return. The commit releases the
+                        # claimed row's lock if an override returns without committing.
+                        db.session.commit()
                         continue
                     worker_ret["messages"] = database.get_all_active_worker_messages(self.worker.id)
                     # logger.debug(worker_ret)
@@ -1212,11 +1227,12 @@ class JobPopTemplate(Resource):
                         {"horde.outcome": "match", "horde.gentype": self.gentype},
                     )
                     return worker_ret, 200
-                db.session.commit()  # Unlock all locked wp rows before picking up new ones
+                if queue_exhausted:
+                    break
                 self.wp_page += 1
-                self.priority_wp_ids = set()
+                self.prioritized_wp = []
                 with logfire.span("horde.pop.get_sorted_wp", priority=False, page=self.wp_page):
-                    self.prioritized_wp = self.get_sorted_wp()
+                    queue_exhausted = self.read_next_scan_page()
                 logger.debug(f"Couldn't find WP. Checking next page: {self.wp_page}")
             eval_span.set_attribute("horde.candidates_evaluated", candidates_evaluated)
             pop_candidates.record(candidates_evaluated, {"horde.gentype": self.gentype})
@@ -1250,13 +1266,39 @@ class JobPopTemplate(Resource):
         else:
             pop_skipped.add(1, {"horde.skip_reason": reason_key, "horde.gentype": self.gentype})
 
-    def get_sorted_wp(self, priority_user_ids=None):
-        """Extendable class to retrieve the sorted WP list for this worker"""
+    def read_next_scan_page(self) -> bool:
+        """Read page ``wp_page`` of the general queue scan and append its requests to ``prioritized_wp``.
+
+        Returns:
+            True when the page was short, which means the worker's queue does not have more requests.
+        """
+        page_size = database.pop_scan_page_size(self.scan_page_sizes, self.wp_page)
+        page_wps = self.get_sorted_wp(page_size=page_size)
+        self.read_wp_ids.update(wp.id for wp in page_wps)
+        self.prioritized_wp.extend(page_wps)
+        return len(page_wps) < page_size
+
+    def get_sorted_wp(self, priority_user_ids: Collection[int] | None = None, *, page_size: int | None = None) -> list[Any]:
+        """Extendable class to retrieve the sorted WP list for this worker.
+
+        The requests in ``read_wp_ids`` are left out. Without ``page_size``, the first page size of
+        ``scan_page_sizes`` applies.
+        """
         return database.get_sorted_wp_filtered_to_worker(
             self.worker,
             priority_user_ids=priority_user_ids,
             page=self.wp_page,
+            excluded_ids=self.read_wp_ids,
+            page_size=page_size or self.scan_page_sizes[0],
         )
+
+    def claim_wp(self, wp: Any) -> Any:
+        """Return ``wp`` locked for assignment to this worker, or None when it can no longer be assigned.
+
+        Subclass Integration:
+            Override when every load of the request class has to apply loader options.
+        """
+        return database.claim_waiting_prompt(wp, worker_id=self.worker.id)
 
     # Making it into its own function to allow extension
     def start_worker(self, wp, *, selected_from_priority_queue: bool = False):

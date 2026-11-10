@@ -683,6 +683,11 @@ pop_returned_jobs = _count_histogram(
     "horde.pop.returned_jobs",
     "Jobs returned to the worker per pop (0=no-match)",
 )
+pop_claim_misses = logfire.metric_counter(
+    "horde.pop.claim_misses",
+    unit="1",
+    description="Eligible WPs that a pop could not claim because another pop held or took them, or they stopped waiting",
+)
 pop_skipped = logfire.metric_counter(
     "horde.pop.skipped",
     unit="1",
