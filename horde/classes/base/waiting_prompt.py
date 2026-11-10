@@ -16,7 +16,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import logfire
-from sqlalchemy import JSON, case, func, inspect, or_, select
+from sqlalchemy import JSON, and_, case, func, inspect, not_, or_, select
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.mutable import MutableDict
@@ -282,12 +282,12 @@ class WaitingPrompt(db.Model):
     slow_workers = db.Column(db.Boolean, default=True, nullable=False, index=True)
     extra_slow_workers = db.Column(db.Boolean, default=False, nullable=False, index=True)
     worker_blacklist = db.Column(db.Boolean, default=False, nullable=False, index=True)
-    faulted = db.Column(db.Boolean, default=False, nullable=False, index=True)
-    active = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    faulted: Mapped[bool] = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    active: Mapped[bool] = db.Column(db.Boolean, default=False, nullable=False, index=True)
     consumed_kudos = db.Column(db.Integer, default=0, nullable=False)
     kudos = db.Column(db.Float, default=0, nullable=False, server_default=expression.literal(0))
     # The amount of jobs still to do
-    n = db.Column(db.Integer, default=0, nullable=False, index=True)
+    n: Mapped[int] = db.Column(db.Integer, default=0, nullable=False, index=True)
     # This stores the original amount of jobs requested
     jobs = db.Column(db.Integer, default=0, nullable=False)
     things = db.Column(db.BigInteger, default=0, nullable=False)
@@ -331,6 +331,25 @@ class WaitingPrompt(db.Model):
     created = db.Column(db.DateTime(timezone=False), default=datetime.utcnow, index=True)
     terminal_outcome = db.Column(db.String(32), nullable=True)
     terminal_recorded_at = db.Column(db.DateTime(timezone=False), nullable=True)
+
+    @classmethod
+    def live_queue_condition(cls) -> ColumnElement[bool]:
+        """Return the condition that limits a query to requests with jobs left to assign.
+
+        The condition is written in the same form as the predicate of the partial index
+        ``ix_waiting_prompts_active_queue``. PostgreSQL uses a partial index only when the query's condition matches
+        the index predicate in form, so ``active IS true`` or ``faulted IS false`` in a query does not match
+        ``active AND NOT faulted``, and the query then reads an index over every stored request. A query over the
+        live queue takes the condition from here so that it can use the index.
+
+        Returns:
+            One boolean expression: active, not faulted, and jobs left to assign.
+        """
+        return and_(
+            cls.active,
+            not_(cls.faulted),
+            cls.n > 0,
+        )
 
     def __init__(self, worker_ids, models, *args, **kwargs):
         """Prepare an inactive request with its workers, its models and its job payload, without committing.

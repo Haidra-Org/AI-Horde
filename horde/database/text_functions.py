@@ -34,7 +34,7 @@ from horde.database.functions import (
     claim_waiting_prompt,
     pop_scan_page_size,
     query_prioritized_wps,
-    queued_request_clauses,
+    queued_request_condition,
     read_pop_scan_page,
 )
 from horde.flask import SQLITE_MODE, db
@@ -149,7 +149,7 @@ def text_wp_offer_clauses(worker, models_list):
         # A chat-only worker may leave its text limits at the pop defaults, which are not a capacity it serves at.
         wp_fits_worker = or_(wp_fits_worker, wp_fits_chat_worker) if worker.accepts_prompt_jobs else wp_fits_chat_worker
     return [
-        *queued_request_clauses(TextWaitingPrompt),
+        queued_request_condition(TextWaitingPrompt),
         wp_fits_worker,
         or_(
             TextWaitingPrompt.safe_ip.is_(True),

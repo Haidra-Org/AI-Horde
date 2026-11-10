@@ -15,7 +15,7 @@ from typing import Any
 
 import logfire
 from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField, ChatServiceGapKind
-from sqlalchemy import Boolean, and_, case, func, inspect, not_, null, or_, select
+from sqlalchemy import Boolean, ColumnElement, and_, case, func, inspect, not_, null, or_, select
 from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -1095,9 +1095,7 @@ def _count_waiting_requests(user, models=None, request_type="image"):
             .filter(
                 WPModels.model.in_(models),
                 wp_class.user_id == user.id,
-                wp_class.faulted.is_(False),
-                wp_class.active.is_(True),
-                wp_class.n >= 1,
+                wp_class.live_queue_condition(),
             )
             .scalar()
         )
@@ -1178,9 +1176,7 @@ def count_totals():
             ),
         )
         .filter(
-            ImageWaitingPrompt.n > 0,
-            ImageWaitingPrompt.faulted.is_(False),
-            ImageWaitingPrompt.active.is_(True),
+            ImageWaitingPrompt.live_queue_condition(),
         )
         .group_by(ImageWaitingPrompt.id)
         .subquery("all_image_wp_counts")
@@ -1211,9 +1207,7 @@ def count_totals():
             ),
         )
         .filter(
-            TextWaitingPrompt.n > 0,
-            TextWaitingPrompt.faulted.is_(False),
-            TextWaitingPrompt.active.is_(True),
+            TextWaitingPrompt.live_queue_condition(),
         )
         .group_by(TextWaitingPrompt.id)
         .subquery("all_text_wp_counts")
@@ -1270,9 +1264,7 @@ def get_organized_wps_by_model(wp_class):
     all_wps = (
         db.session.query(wp_class)
         .filter(
-            wp_class.active.is_(True),
-            wp_class.faulted.is_(False),
-            wp_class.n >= 1,
+            wp_class.live_queue_condition(),
         )
         .options(selectinload(wp_class.models), selectinload(wp_class.processing_gens))
         .all()
@@ -1398,24 +1390,19 @@ def pop_scan_page_size(page_sizes: Sequence[int], page: int) -> int:
     return page_sizes[min(page, len(page_sizes) - 1)]
 
 
-def queued_request_clauses(waiting_prompt_class: type[WaitingPrompt]) -> list[Any]:
-    """Return the clauses that limit a pop's queue scan and its claim to requests still waiting for a worker.
+def queued_request_condition(waiting_prompt_class: type[WaitingPrompt]) -> ColumnElement[bool]:
+    """Return the condition that limits a pop's queue scan and its claim to requests still waiting for a worker.
 
     Args:
         waiting_prompt_class: The request class being scanned or claimed.
 
     Returns:
-        The clauses: jobs left to assign, active, not faulted and not expired.
+        One boolean expression: jobs left to assign, active, not faulted and not expired.
     """
-    return [
-        waiting_prompt_class.n > 0,
-        # The bare boolean forms match the predicate of the partial index ix_waiting_prompts_active_queue
-        # (active AND NOT faulted AND n > 0). PostgreSQL does not match ``active IS true`` or ``faulted IS false``
-        # to that predicate, and without it the planner falls back to an index over every stored request.
-        waiting_prompt_class.active,
-        not_(waiting_prompt_class.faulted),
+    return and_(
+        waiting_prompt_class.live_queue_condition(),
         waiting_prompt_class.expiry > datetime.utcnow(),
-    ]
+    )
 
 
 def read_pop_scan_page(
@@ -1516,7 +1503,7 @@ def claim_waiting_prompt(
         .options(noload(waiting_prompt_class.processing_gens), *loader_options)
         .filter(
             waiting_prompt_class.id == waiting_prompt.id,
-            *queued_request_clauses(waiting_prompt_class),
+            queued_request_condition(waiting_prompt_class),
             ~worker_was_tricked,
         )
         .populate_existing()
@@ -1590,7 +1577,7 @@ def get_sorted_wp_filtered_to_worker(
             selectinload(ImageWaitingPrompt.workers),
         )
         .filter(
-            *queued_request_clauses(ImageWaitingPrompt),
+            queued_request_condition(ImageWaitingPrompt),
             ImageWaitingPrompt.width * ImageWaitingPrompt.height <= worker.max_pixels,
             or_(
                 wp_serves_model,
@@ -1798,9 +1785,7 @@ def count_skipped_image_wp(worker, models_list=None, blacklist=None, priority_us
 
     # Base filters (shared across all counts)
     base_filters = [
-        ImageWaitingPrompt.n > 0,
-        ImageWaitingPrompt.active.is_(True),
-        ImageWaitingPrompt.faulted.is_(False),
+        ImageWaitingPrompt.live_queue_condition(),
         ImageWaitingPrompt.expiry > datetime.utcnow(),
     ]
 
@@ -2467,9 +2452,7 @@ def get_all_active_wps():
     return (
         db.session.query(ImageWaitingPrompt)
         .filter(
-            ImageWaitingPrompt.active.is_(True),
-            ImageWaitingPrompt.faulted.is_(False),
-            ImageWaitingPrompt.n > 0,
+            ImageWaitingPrompt.live_queue_condition(),
             ImageWaitingPrompt.expiry > datetime.utcnow(),
         )
         .all()
@@ -2746,9 +2729,7 @@ def _get_preceding_arrivals(
             WaitingPrompt.wp_type == waiting_prompt.wp_type,
             WaitingPrompt.created >= window_start,
             WaitingPrompt.created <= observed_at,
-            WaitingPrompt.n > 0,
-            WaitingPrompt.active.is_(True),
-            WaitingPrompt.faulted.is_(False),
+            WaitingPrompt.live_queue_condition(),
             or_(
                 WaitingPrompt.extra_priority > waiting_prompt.extra_priority,
                 WaitingPrompt.user_id.in_(owner_ids),

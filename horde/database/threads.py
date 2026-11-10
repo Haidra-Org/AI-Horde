@@ -1260,9 +1260,7 @@ def increment_extra_priority():
             last_id = None
             while True:
                 id_query = db.session.query(wp_class.id).filter(
-                    wp_class.n > 0,
-                    wp_class.faulted.is_(False),
-                    wp_class.active.is_(True),
+                    wp_class.live_queue_condition(),
                 )
                 if last_id is not None:
                     id_query = id_query.filter(wp_class.id > last_id)
