@@ -17,6 +17,16 @@ from horde.redis_ctrl import (
     is_redis_up,
 )
 
+LOCAL_CACHE_MAX_LIFETIME: timedelta = timedelta(seconds=5)
+"""The longest a value written with an expiry stays in the host-local redis.
+
+The local redis serves only the host it runs on, and a write on another host does not reach it, so a value kept
+there longer would be served stale after another host replaces it.
+"""
+
+LOCAL_CACHE_SET_LIFETIME: timedelta = timedelta(seconds=10)
+"""How long a value written without an expiry stays in the host-local redis."""
+
 
 class HordeRedis:
     def __init__(self):
@@ -68,7 +78,7 @@ class HordeRedis:
             except Exception as err:
                 logger.warning(f"Exception when writing in redis servers {hr}: {err}")
         if self.horde_local_r:
-            self.horde_local_r.setex(key, timedelta(10), value)
+            self.horde_local_r.setex(key, LOCAL_CACHE_SET_LIFETIME, value)
 
     def horde_r_setex(self, key, expiry, value):
         for hr in self._servers_primary_first():
@@ -76,11 +86,8 @@ class HordeRedis:
                 hr.setex(key, expiry, value)
             except Exception as err:
                 logger.warning(f"Exception when writing in redis servers {hr}: {err}")
-        # We don't keep local cache for more than 5 seconds
-        if expiry > timedelta(5):
-            expiry = timedelta(5)
         if self.horde_local_r:
-            self.horde_local_r.setex(key, expiry, value)
+            self.horde_local_r.setex(key, min(expiry, LOCAL_CACHE_MAX_LIFETIME), value)
 
     def horde_r_setex_json(self, key, expiry, value):
         """Same as horde_r_setex()
