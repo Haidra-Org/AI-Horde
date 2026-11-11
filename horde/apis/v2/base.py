@@ -7,7 +7,7 @@ import json
 import os
 import random
 import time
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -1161,13 +1161,13 @@ class JobPopTemplate(Resource):
         self.wp_page = 0
         self.priority_wp_ids = set()
         self.read_wp_ids = set()
+        priority_wps: list[Any] = []
         queue_exhausted = True
         if worker_only_eligibility.eligible:
             with logfire.span("horde.pop.get_sorted_wp", priority=True, page=0):
-                wp_list = self.get_sorted_wp(self.priority_user_ids)
-            self.priority_wp_ids = {wp.id for wp in wp_list}
+                priority_wps = self.get_sorted_wp(self.priority_user_ids)
+            self.priority_wp_ids = {wp.id for wp in priority_wps}
             self.read_wp_ids.update(self.priority_wp_ids)
-            self.prioritized_wp.extend(wp_list)
             ## End prioritize by bridge request ##
             # The general scan leaves out the priority requests already read, so a request is not evaluated twice.
             with logfire.span("horde.pop.get_sorted_wp", priority=False, page=0):
@@ -1176,66 +1176,33 @@ class JobPopTemplate(Resource):
             # Every candidate would be refused for this reason, so we record it once and skip further evaluation
             self.record_skipped_reason(worker_only_eligibility.skip_reason)
         # logger.warning(datetime.utcnow())
-        candidates_evaluated = 0
+        self.candidates_evaluated = 0
         pop_pre_eval_duration.record(time.monotonic() - pre_eval_t0, {"horde.gentype": self.gentype})
         eval_t0 = time.monotonic()
         with logfire.span("horde.pop.evaluate_candidates") as eval_span:
-            while len(self.prioritized_wp) > 0:
-                for wp in self.prioritized_wp:
-                    candidates_evaluated += 1
-                    check_gen = self.worker.can_generate_with_eligibility_inputs(
-                        wp,
-                        wp.get_eligibility_inputs(),
-                        self.worker_eligibility_inputs,
-                    )
-                    if not check_gen.eligible:
-                        self.record_skipped_reason(check_gen.skip_reason)
-                        continue
-                    # The scan read the request without a lock. The claim locks it only while it still waits for a
-                    # worker, so a request taken by another worker, or cancelled, faulted or expired since the scan,
-                    # is passed over.
-                    with logfire.span("horde.pop.claim", wp_id=str(wp.id)):
-                        claimed_wp = self.claim_wp(wp)
-                    if claimed_wp is None:
-                        # Concurrent pops read the same queue head without locks, so a rising count here means
-                        # pops are spending round trips on requests that other pops take first.
-                        pop_claim_misses.add(1, {"horde.gentype": self.gentype})
-                        continue
-                    if not claimed_wp.needs_gen():  # this says if < 1
-                        db.session.commit()
-                        continue
-                    sg_t0 = time.monotonic()
-                    with logfire.span("horde.pop.start_generation", wp_id=str(claimed_wp.id)):
-                        worker_ret = self.start_worker(
-                            claimed_wp,
-                            selected_from_priority_queue=claimed_wp.id in self.priority_wp_ids,
-                        )
-                    pop_start_gen_duration.record(time.monotonic() - sg_t0, {"horde.gentype": self.gentype})
-                    pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "match", "horde.gentype": self.gentype})
-                    # logger.debug(worker_ret)
-                    if worker_ret is None:
-                        # start_generation and fake_generation commit before they return. The commit releases the
-                        # claimed row's lock if an override returns without committing.
-                        db.session.commit()
-                        continue
-                    worker_ret["messages"] = database.get_all_active_worker_messages(self.worker.id)
-                    # logger.debug(worker_ret)
-                    eval_span.set_attribute("horde.candidates_evaluated", candidates_evaluated)
-                    pop_candidates.record(candidates_evaluated, {"horde.gentype": self.gentype})
-                    pop_returned_jobs.record(
-                        len(worker_ret.get("ids", []) or [worker_ret.get("id")]) if isinstance(worker_ret, dict) else 0,
-                        {"horde.outcome": "match", "horde.gentype": self.gentype},
-                    )
-                    return worker_ret, 200
-                if queue_exhausted:
+            # The priority requests are evaluated and claimed apart from the general scan. The claim takes the first free
+            # request in queue order, so a batch holding both would assign a general request with a higher
+            # extra_priority ahead of the requests of the worker's priority users.
+            worker_ret = self.assign_from_candidates(priority_wps)
+            while worker_ret is None and len(self.prioritized_wp) > 0:
+                worker_ret = self.assign_from_candidates(self.prioritized_wp)
+                if worker_ret is not None or queue_exhausted:
                     break
                 self.wp_page += 1
                 self.prioritized_wp = []
                 with logfire.span("horde.pop.get_sorted_wp", priority=False, page=self.wp_page):
                     queue_exhausted = self.read_next_scan_page()
                 logger.debug(f"Couldn't find WP. Checking next page: {self.wp_page}")
-            eval_span.set_attribute("horde.candidates_evaluated", candidates_evaluated)
-            pop_candidates.record(candidates_evaluated, {"horde.gentype": self.gentype})
+            eval_span.set_attribute("horde.candidates_evaluated", self.candidates_evaluated)
+            pop_candidates.record(self.candidates_evaluated, {"horde.gentype": self.gentype})
+            if worker_ret is not None:
+                pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "match", "horde.gentype": self.gentype})
+                worker_ret["messages"] = database.get_all_active_worker_messages(self.worker.id)
+                pop_returned_jobs.record(
+                    len(worker_ret.get("ids", []) or [worker_ret.get("id")]) if isinstance(worker_ret, dict) else 0,
+                    {"horde.outcome": "match", "horde.gentype": self.gentype},
+                )
+                return worker_ret, 200
             pop_eval_duration.record(time.monotonic() - eval_t0, {"horde.outcome": "no_match", "horde.gentype": self.gentype})
             pop_returned_jobs.record(0, {"horde.outcome": "no_match", "horde.gentype": self.gentype})
         # We report maintenance exception only if we couldn't find any jobs
@@ -1292,13 +1259,89 @@ class JobPopTemplate(Resource):
             page_size=page_size or self.scan_page_sizes[0],
         )
 
-    def claim_wp(self, wp: Any) -> Any:
-        """Return ``wp`` locked for assignment to this worker, or None when it can no longer be assigned.
+    def assign_from_candidates(self, candidates: Sequence[Any]) -> dict[str, Any] | None:
+        """Evaluate ``candidates`` in queue order and assign the first eligible request that this pop can claim.
 
-        Subclass Integration:
-            Override when every load of the request class has to apply loader options.
+        The eligible requests are claimed in batches of
+        [`POP_CLAIM_BATCH_SIZE`][horde.database.functions.POP_CLAIM_BATCH_SIZE], so requests that other transactions
+        took or hold cost one claim statement per batch, not one each.
+
+        Args:
+            candidates: Requests from one scan page or from the priority pass, in queue order.
+
+        Returns:
+            The job payload for the worker, or None when the pop did not assign a candidate.
         """
-        return database.claim_waiting_prompt(wp, worker_id=self.worker.id)
+        eligible_batch: list[Any] = []
+        for wp in candidates:
+            self.candidates_evaluated += 1
+            check_gen = self.worker.can_generate_with_eligibility_inputs(
+                wp,
+                wp.get_eligibility_inputs(),
+                self.worker_eligibility_inputs,
+            )
+            if not check_gen.eligible:
+                self.record_skipped_reason(check_gen.skip_reason)
+                continue
+            eligible_batch.append(wp)
+            if len(eligible_batch) == database.POP_CLAIM_BATCH_SIZE:
+                worker_ret = self.assign_from_batch(eligible_batch)
+                if worker_ret is not None:
+                    return worker_ret
+                eligible_batch = []
+        return self.assign_from_batch(eligible_batch)
+
+    def assign_from_batch(self, eligible_batch: Sequence[Any]) -> dict[str, Any] | None:
+        """Claim the first free request of ``eligible_batch`` and start its generation for this worker.
+
+        Args:
+            eligible_batch: Requests that passed the eligibility rules, in queue order.
+
+        Returns:
+            The job payload for the worker, or None when this pop could not claim and start any request of the batch.
+        """
+        unclaimed = list(eligible_batch)
+        while unclaimed:
+            # The scan read the requests without a lock. The claim locks the first one that is free and still waits
+            # for a worker, so requests taken, cancelled, faulted or expired since the scan, or locked by another
+            # transaction, are passed over.
+            with logfire.span("horde.pop.claim", candidates=len(unclaimed)):
+                claimed_wp = self.claim_first_wp(unclaimed)
+            # Concurrent pops read the same queue head without locks, so a rising count here means pops are evaluating
+            # requests that other pops or the priority thread hold or took first.
+            if claimed_wp is None:
+                pop_claim_misses.add(len(unclaimed), {"horde.gentype": self.gentype})
+                return None
+            claimed_position = unclaimed.index(claimed_wp)
+            if claimed_position > 0:
+                pop_claim_misses.add(claimed_position, {"horde.gentype": self.gentype})
+            # The requests ahead of the claimed one were passed over by the claim. A later claim from this batch
+            # starts after the claimed request.
+            unclaimed = unclaimed[claimed_position + 1 :]
+            if not claimed_wp.needs_gen():  # this says if < 1
+                db.session.commit()
+                continue
+            sg_t0 = time.monotonic()
+            with logfire.span("horde.pop.start_generation", wp_id=str(claimed_wp.id)):
+                worker_ret = self.start_worker(
+                    claimed_wp,
+                    selected_from_priority_queue=claimed_wp.id in self.priority_wp_ids,
+                )
+            pop_start_gen_duration.record(time.monotonic() - sg_t0, {"horde.gentype": self.gentype})
+            if worker_ret is None:
+                # start_generation and fake_generation commit before they return. The commit releases the claimed
+                # row's lock if an override returns without committing.
+                db.session.commit()
+                continue
+            return worker_ret
+        return None
+
+    def claim_first_wp(self, candidates: Sequence[WaitingPrompt]) -> WaitingPrompt | None:
+        """Return the first of ``candidates`` that this pop locked for assignment, or None when it could not lock any.
+
+        See [`claim_first_waiting_prompt`][horde.database.functions.claim_first_waiting_prompt].
+        """
+        return database.claim_first_waiting_prompt(candidates, worker_id=self.worker.id)
 
     # Making it into its own function to allow extension
     def start_worker(self, wp, *, selected_from_priority_queue: bool = False):

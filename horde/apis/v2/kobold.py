@@ -1838,10 +1838,6 @@ class TextJobPop(JobPopTemplate):
         )
         return sorted_wps
 
-    @override
-    def claim_wp(self, wp: Any) -> Any:
-        return text_database.claim_text_wp(wp, worker_id=self.worker.id)
-
 
 CHAT_SUBMIT_KEYS = (
     "message",

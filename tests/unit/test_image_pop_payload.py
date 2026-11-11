@@ -75,7 +75,8 @@ def test_pop_continues_after_an_assignment_returns_none(
     monkeypatch.setattr(pop, "validate", lambda: None)
     monkeypatch.setattr(pop, "check_in", lambda: None)
     monkeypatch.setattr(pop, "get_sorted_wp", Mock(side_effect=[candidates, [], []]))
-    monkeypatch.setattr(pop, "claim_wp", lambda wp: wp)
+    # The first candidate of each claim is free, so a refused assignment leads to a claim from the rest of the batch.
+    monkeypatch.setattr(pop, "claim_first_wp", lambda candidates: candidates[0])
     assigned = {"id": "second-job", "ids": ["second-job"]}
     start_worker = Mock(side_effect=[None, assigned if next_candidate_assignable else None])
     monkeypatch.setattr(pop, "start_worker", start_worker)

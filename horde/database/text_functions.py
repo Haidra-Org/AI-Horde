@@ -31,7 +31,6 @@ from horde.classes.kobold.worker import (
 )
 from horde.database.functions import (
     TEXT_POP_SCAN_PAGE_SIZES,
-    claim_waiting_prompt,
     pop_scan_page_size,
     query_prioritized_wps,
     queued_request_condition,
@@ -328,27 +327,14 @@ def get_sorted_text_wp_filtered_to_worker(
 
 
 def text_wp_loader_options() -> list[Any]:
-    """Return the loader options applied by every pop load of a text request, in the scan and in the claim.
+    """Return the loader options applied by the pop scan's load of a text request.
 
     Returns:
         The options. ``carries_chat_images`` is computed in the same statement, so eligibility does not load a
-        request's deferred messages. A load without the option would reset the attribute to None.
+        request's deferred messages. A load without the option would reset the attribute to None. The claim reads
+        columns only and does not reload the request, so the value from the scan is kept through assignment.
     """
     return [with_expression(TextWaitingPrompt.carries_chat_images, chat_images_clause())]
-
-
-def claim_text_wp(wp: TextWaitingPrompt, *, worker_id: Any) -> Any:
-    """Lock a text request that passed the pop's eligibility rules, and return it with its columns read again.
-
-    Args:
-        wp: The request as loaded by the pop's scan.
-        worker_id: The id of the popping worker.
-
-    Returns:
-        The locked request, or None in the cases listed for
-        [`claim_waiting_prompt`][horde.database.functions.claim_waiting_prompt].
-    """
-    return claim_waiting_prompt(wp, worker_id=worker_id, loader_options=text_wp_loader_options())
 
 
 def get_text_wp_by_id(wp_id, lite=False, *, chat=False):

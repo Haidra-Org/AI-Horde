@@ -15,7 +15,7 @@ from typing import Any
 
 import logfire
 from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField, ChatServiceGapKind
-from sqlalchemy import Boolean, ColumnElement, and_, case, func, inspect, not_, null, or_, select
+from sqlalchemy import Boolean, ColumnElement, and_, case, func, not_, null, or_, select
 from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -1368,12 +1368,14 @@ without a match reaches the end of a deep queue in a few round trips. The scan's
 request that only one worker can serve has to stay reachable wherever it sits in the queue.
 """
 
-TEXT_POP_SCAN_PAGE_SIZES: tuple[int, ...] = (3, 50, 200)
+TEXT_POP_SCAN_PAGE_SIZES: tuple[int, ...] = (3, 10, 50, 200)
 """How many text requests each page of a pop's queue scan reads, in page order. The last size repeats.
 
 The sizes grow for the reasons given for [`POP_SCAN_PAGE_SIZES`][horde.database.functions.POP_SCAN_PAGE_SIZES]. The
 first page is smaller than the image one because a text request's row holds its whole prompt, which can be far longer
-than an image prompt.
+than an image prompt. Concurrent text pops evaluate the same requests at the queue head, so a pop that loses those requests to
+other pops reads the second page. The second page is small for that reason, because every row of a page is loaded
+with its prompt.
 """
 
 
@@ -1414,9 +1416,10 @@ def read_pop_scan_page(
 ) -> list[Any]:
     """Return the next page of a pop's queue scan, in queue order, without locking the rows read.
 
-    A pop claims a request with [`claim_waiting_prompt`][horde.database.functions.claim_waiting_prompt] only after
-    the request passes the eligibility rules, so the scan does not lock rows. Other workers' scans read the same
-    rows, and queue writers do not wait on them.
+    A pop claims a request with
+    [`claim_first_waiting_prompt`][horde.database.functions.claim_first_waiting_prompt] only after the request passes
+    the eligibility rules, so the scan does not lock rows. Other workers' scans read the same rows, and queue writers
+    do not wait on them.
 
     Args:
         candidate_query: The worker's filtered candidate query, without ordering or limit.
@@ -1443,77 +1446,83 @@ def read_pop_scan_page(
     return page_rows
 
 
-CLAIM_RETAINED_COLLECTIONS: tuple[str, ...] = (
-    "models",
-    "workers",
-)
-"""The request collections that stay as loaded by the pop's scan when the request is claimed.
+POP_CLAIM_BATCH_SIZE: int = 8
+"""The largest number of eligible requests that one claim statement of a pop chooses from.
 
-A claim reads the request's columns again, which also resets the loaded collections. A request's model and worker
-rows are written only when the request is created, so the rows loaded by the scan are still current, and keeping
-them saves the assignment a SELECT for each. The tricked workers are not kept, because they change while the request
-is queued. The claim checks the popping worker against the stored rows.
+Concurrent pops read the same queue head without locks, so the same requests pass eligibility in each of them. The
+priority thread also holds chunks of the queue while it raises ``extra_priority``. A claim of one request at a time therefore costs a
+statement for every request that another transaction took or holds. Claiming the first free request of a batch costs
+one statement for all of them. The size covers a text pop's priority page and its first general page in at most two
+statements, and limits how many requests of a long page the pop evaluates before it claims.
 """
 
 
-def claim_waiting_prompt(
-    waiting_prompt: WaitingPrompt,
-    *,
-    worker_id: Any,
-    loader_options: Sequence[Any] = (),
-) -> Any:
-    """Lock a request that passed the pop's eligibility rules, and return it with its columns read again.
+def claim_first_waiting_prompt(waiting_prompts: Sequence[WaitingPrompt], *, worker_id: uuid.UUID) -> WaitingPrompt | None:
+    """Lock the first of a pop's eligible requests that still waits for a worker, and return it.
 
-    The pop's scan read the request without a lock, so the request may have been served, cancelled, faulted or
-    expired since. The claim locks the row only when it still waits for a worker, and skips a row locked by another
-    transaction. The lock is held until the pop's next commit.
+    The pop's scan read the requests without a lock, so each may since have been served, cancelled, faulted or expired,
+    or be locked by another transaction. The claim skips rows locked by another transaction, rechecks the liveness
+    conditions and the tricked-worker rule against each row as committed now, and locks the first row left in queue
+    order. The lock is held until the pop's next commit.
+
+    The claim reads only the columns that assignment needs as committed now: ``n``, which assignment decrements,
+    ``expiry``, which assignment can extend, and ``extra_priority``, which the dispatch observation records. The
+    other columns read by assignment, the models and the allowed workers are all written before the request is
+    activated, so the values loaded by the scan are current.
 
     Args:
-        waiting_prompt: The request as loaded by the pop's scan.
+        waiting_prompts: Requests of one class as loaded by the pop's scan, in queue order.
         worker_id: The id of the popping worker.
-        loader_options: Loader options that every load of the request class applies. They are applied again
-            because the claim replaces the loaded column values.
 
     Returns:
-        The locked request, the same instance as ``waiting_prompt``. None when another worker holds or took it, or
-        when it is not waiting for a worker any more.
+        The locked request, which is the member of ``waiting_prompts`` with the claimed id. None when every request
+        is locked by another transaction or no longer waits for this worker.
+
+    Side Effects:
+        Sets ``n``, ``expiry`` and ``extra_priority`` on the returned request to the locked row's values, as committed
+        state, so assignment writes its changes on top of them.
     """
-    waiting_prompt_class = type(waiting_prompt)
-    unloaded_attributes: set[str] = inspect(waiting_prompt).unloaded
-    retained_collections = {
-        collection_name: list(getattr(waiting_prompt, collection_name))
-        for collection_name in CLAIM_RETAINED_COLLECTIONS
-        if collection_name not in unloaded_attributes
-    }
-    # Tricked-worker rows are written only by fake_generation, which commits while it holds the request's lock.
-    # A row added by a concurrent pop of the same worker is therefore committed before this claim can lock the
-    # request.
+    if not waiting_prompts:
+        return None
+    waiting_prompt_class = type(waiting_prompts[0])
+    candidates_by_id = {waiting_prompt.id: waiting_prompt for waiting_prompt in waiting_prompts}
+    # Tricked-worker rows are written only by fake_generation, together with the fake generation and while it holds
+    # the request's lock. A row added by a concurrent pop of the same worker is therefore committed before this
+    # claim can lock the request. A claim statement that started before that commit and reaches the row after it
+    # still reads the row without the tricked worker, so the eligibility rules also check the tricked workers.
     worker_was_tricked = (
         db.session.query(WPTrickedWorkers.id)
         .filter(WPTrickedWorkers.wp_id == waiting_prompt_class.id, WPTrickedWorkers.worker_id == worker_id)
         .exists()
     )
-    # One row by primary key. The clauses repeat the scan's liveness conditions against the row as committed now,
-    # and the tricked-worker check repeats the eligibility rule that reads the same rows.
-    # For a request served to n = 0 between the scan and the claim: no row, and the pop moves to its next candidate.
-    # For a request locked by another worker's claim: no row, for the same reason.
-    # For a request still waiting and unlocked: the row, locked, with n and the other columns as committed.
-    claimed_waiting_prompt = (
-        db.session.query(waiting_prompt_class)
-        .options(noload(waiting_prompt_class.processing_gens), *loader_options)
+    # PostgreSQL sorts the candidates, skips rows locked by another transaction, and rechecks the conditions on each
+    # row that it locks, so LIMIT 1 returns the first candidate in queue order that is free and still waiting.
+    # For candidates served to n = 0, cancelled or faulted since the scan: those rows are left out.
+    # For candidates locked by another pop's claim or by the priority thread: those rows are skipped.
+    # For a free candidate still waiting: its id and the columns read by assignment, with the row locked.
+    claimed_row = (
+        db.session.query(
+            waiting_prompt_class.id,
+            waiting_prompt_class.n,
+            waiting_prompt_class.expiry,
+            waiting_prompt_class.extra_priority,
+        )
         .filter(
-            waiting_prompt_class.id == waiting_prompt.id,
+            waiting_prompt_class.id.in_(list(candidates_by_id)),
             queued_request_condition(waiting_prompt_class),
             ~worker_was_tricked,
         )
-        .populate_existing()
+        .order_by(waiting_prompt_class.extra_priority.desc(), waiting_prompt_class.created.asc())
+        .limit(1)
         .with_for_update(skip_locked=True, of=waiting_prompt_class)
         .first()
     )
-    if claimed_waiting_prompt is None:
+    if claimed_row is None:
         return None
-    for collection_name, collection_rows in retained_collections.items():
-        set_committed_value(claimed_waiting_prompt, collection_name, collection_rows)
+    claimed_waiting_prompt = candidates_by_id[claimed_row.id]
+    set_committed_value(claimed_waiting_prompt, "n", claimed_row.n)
+    set_committed_value(claimed_waiting_prompt, "expiry", claimed_row.expiry)
+    set_committed_value(claimed_waiting_prompt, "extra_priority", claimed_row.extra_priority)
     return claimed_waiting_prompt
 
 

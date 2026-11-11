@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Regressions for loaded generation rows racing a different submit session."""
+"""Regressions for loaded generation rows racing a different submit session, and for workers that pop together."""
 
 import uuid
 
@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from tests.integration.test_maintenance_threads import TEXT_MODEL, _queue_text_wp
+from tests.integration.test_maintenance_threads import AGENT, TEXT_MODEL, _headers, _queue_text_wp
 from tests.integration.test_maintenance_threads import _no_rate_limit as _no_rate_limit
 
 
@@ -115,3 +115,105 @@ def test_maintenance_cancellation_retains_partial_results(app, client, api_key, 
         assert wp.is_completed()
         assert wp.read_completion_snapshot().completed_jobs == 1
         assert gen.generation == "partial result"
+
+
+CONCURRENT_WORKERS: int = 4
+"""Workers that pop at the same moment. Each pop uses one database connection, and the test engine's pool has five."""
+
+CONCURRENTLY_POPPED_REQUESTS: int = 6
+"""Queued requests with one job each. There are more requests than workers, so fewer jobs than workers are left for
+the workers' second pops."""
+
+CONCURRENT_POP_ROUNDS: int = 3
+"""Pops sent by each worker. The first two rounds can assign every job, and the queue is empty for the last round."""
+
+MOST_LEFTOVER_JOBS: int = 50
+"""The limit on one worker's pops while it empties the queue of jobs left by earlier tests. The module queues far
+fewer jobs than this."""
+
+
+def test_workers_popping_at_the_same_moment_each_receive_a_different_job(app, client, api_key, make_api_user):
+    """Workers that pop together through the real assignment each receive a different job, every queued job is
+    assigned, and a request does not get more generations than it has jobs."""
+    import threading
+
+    from sqlalchemy import func
+
+    from horde.classes.kobold.processing_generation import TextProcessingGeneration
+    from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
+    from horde.flask import db
+
+    def pop_body(worker_name):
+        return {
+            "name": worker_name,
+            "models": [TEXT_MODEL],
+            "bridge_agent": AGENT,
+            "amount": 1,
+            "max_context_length": 4096,
+            "max_length": 512,
+        }
+
+    # Each worker pops until the queue is empty. The first pop registers the worker, and the others take the jobs
+    # left queued by earlier tests of the module, so the pops below can only receive this test's requests.
+    workers = []
+    for _ in range(CONCURRENT_WORKERS):
+        owner = make_api_user(trusted=True, kudos=100)
+        worker_name = "concurrent-pop-" + uuid.uuid4().hex[:12]
+        for _ in range(MOST_LEFTOVER_JOBS):
+            earlier_pop = client.post("/api/v2/generate/text/pop", json=pop_body(worker_name), headers=_headers(owner.api_key))
+            assert earlier_pop.status_code == 200, earlier_pop.get_data(as_text=True)
+            if earlier_pop.get_json()["id"] is None:
+                break
+        else:
+            pytest.fail("The queue still held jobs from earlier tests.")
+        workers.append((worker_name, owner))
+    request_ids = [_queue_text_wp(client, api_key) for _ in range(CONCURRENTLY_POPPED_REQUESTS)]
+    # Every worker sends its pop of a round only when all of them are ready, so the pops scan the same queue head.
+    all_ready = threading.Barrier(CONCURRENT_WORKERS, timeout=30)
+    pop_responses = []
+    pop_errors = []
+
+    def pop_each_round(worker_name, owner):
+        try:
+            for _ in range(CONCURRENT_POP_ROUNDS):
+                all_ready.wait()
+                # Each thread pushes an application context of its own, and so works on a database session of its own.
+                with app.app_context():
+                    pop_responses.append(
+                        client.post("/api/v2/generate/text/pop", json=pop_body(worker_name), headers=_headers(owner.api_key)),
+                    )
+        except Exception as error:
+            all_ready.abort()
+            pop_errors.append(error)
+
+    poppers = [threading.Thread(target=pop_each_round, args=worker) for worker in workers]
+    for popper in poppers:
+        popper.start()
+    for popper in poppers:
+        popper.join(timeout=120)
+
+    try:
+        assert pop_errors == []
+        assert [response.status_code for response in pop_responses] == [200] * (CONCURRENT_WORKERS * CONCURRENT_POP_ROUNDS)
+        job_ids = [response.get_json()["id"] for response in pop_responses if response.get_json()["id"] is not None]
+        assert len(job_ids) == CONCURRENTLY_POPPED_REQUESTS, job_ids
+        assert len(set(job_ids)) == CONCURRENTLY_POPPED_REQUESTS, job_ids
+        with app.app_context():
+            generations_per_request = dict(
+                db.session.query(TextProcessingGeneration.wp_id, func.count(TextProcessingGeneration.id))
+                .filter(
+                    TextProcessingGeneration.wp_id.in_([uuid.UUID(request_id) for request_id in request_ids]),
+                    TextProcessingGeneration.fake.is_(False),
+                )
+                .group_by(TextProcessingGeneration.wp_id)
+                .all(),
+            )
+            jobs_left = [
+                row.n for row in db.session.query(TextWaitingPrompt.n).filter(TextWaitingPrompt.id.in_(list(generations_per_request))).all()
+            ]
+        assert sorted(map(str, generations_per_request)) == sorted(request_ids)
+        assert set(generations_per_request.values()) == {1}, generations_per_request
+        assert jobs_left == [0] * CONCURRENTLY_POPPED_REQUESTS
+    finally:
+        for request_id in request_ids:
+            client.delete(f"/api/v2/generate/text/status/{request_id}", headers=_headers(api_key))

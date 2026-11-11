@@ -31,6 +31,7 @@ from horde.classes.base.waiting_prompt import WaitingPrompt, WPTrickedWorkers
 from horde.classes.base.worker import EligibilitySkipReason, EligibilityVerdict, WorkerModel
 from horde.classes.kobold.waiting_prompt import TextWaitingPrompt
 from horde.classes.kobold.worker import TextWorker
+from horde.classes.stable.processing_generation import ImageProcessingGeneration
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.classes.stable.worker import ImageWorker
 from horde.database import functions as database
@@ -267,7 +268,7 @@ def test_two_pops_cannot_claim_the_same_request_and_the_second_takes_the_next_on
 
     with _other_session() as other_pop_session:
         other_pop_session.query(ImageWaitingPrompt).filter(ImageWaitingPrompt.id == first.id).with_for_update().one()
-        assert database.claim_waiting_prompt(first, worker_id=worker.id) is None
+        assert database.claim_first_waiting_prompt([first], worker_id=worker.id) is None
         db.session.rollback()
         _run_pop(app, pop)
 
@@ -484,15 +485,18 @@ def test_a_text_pop_reads_a_deep_queue_once_and_finds_the_request_at_its_end(
     assert sorted(map(str, eligibility.evaluated_ids)) == sorted(str(request.id) for request in [*refused_requests, deep_request])
     scan_and_claim_locks = [statement for statement in queries.statements if "FOR UPDATE" in statement.upper()]
     assert len(scan_and_claim_locks) == 1, queries.describe()
+    # The priority page, the general pages of 3, 10, 50, 200 and the remaining 38 requests, and the claim.
+    assert queries.table_counts("SELECT")["waiting_prompts"] == 7, queries.describe()
 
 
-def test_a_text_claim_keeps_the_chat_images_expression(
+def test_a_text_claim_keeps_the_scanned_request_and_its_chat_images_expression(
     db_session: Any,
     fake_redis: Any,
     make_user: Any,
+    assert_query_count: Any,
 ) -> None:
-    """The text claim reads the request's columns again and computes ``carries_chat_images`` with them, so the
-    attribute is not reset to None."""
+    """The text claim returns the instance loaded by the scan, does not reload its columns, and leaves the
+    ``carries_chat_images`` value computed by the scan in place."""
     owner, requester = make_user(), make_user()
     worker = _make_text_worker(owner)
     (request,) = _queue_requests(_text_request_factory(requester), 1)
@@ -501,11 +505,213 @@ def test_a_text_claim_keeps_the_chat_images_expression(
     (scanned,) = text_database.get_sorted_text_wp_filtered_to_worker(worker, [_TEXT_MODEL])
     assert scanned.carries_chat_images is True
 
-    claimed = text_database.claim_text_wp(scanned, worker_id=worker.id)
+    with assert_query_count() as queries:
+        claimed = database.claim_first_waiting_prompt([scanned], worker_id=worker.id)
 
-    assert claimed is request
+    assert claimed is scanned
     assert claimed.carries_chat_images is True
+    (claim_statement,) = [statement for statement in queries.statements if "FOR UPDATE" in statement.upper()]
+    assert "waiting_prompts.prompt" not in claim_statement, claim_statement
+    assert "waiting_prompts.wp_type IN" in claim_statement, claim_statement
+    assert "FOR UPDATE OF waiting_prompts SKIP LOCKED" in claim_statement, claim_statement
     db.session.commit()
+
+
+@dataclass
+class _ClaimMissRecorder:
+    """Represents the claim-miss counter, recording each amount added."""
+
+    amounts: list[int] = field(default_factory=list)
+    """Each amount added, in order."""
+
+    def add(self, amount: int, attributes: Any = None) -> None:
+        self.amounts.append(amount)
+
+
+def _lock_rows(session: Session, waiting_prompts: Sequence[WaitingPrompt]) -> None:
+    """Lock the rows of ``waiting_prompts`` in ``session``, standing in for other pops' claims."""
+    session.query(ImageWaitingPrompt.id).filter(ImageWaitingPrompt.id.in_([wp.id for wp in waiting_prompts])).with_for_update().all()
+
+
+@pytest.mark.parametrize(
+    ("eligible_count", "locked_count", "claim_statements"),
+    [(5, 3, 1), (database.POP_CLAIM_BATCH_SIZE + 1, database.POP_CLAIM_BATCH_SIZE, 2)],
+    ids=["within_one_batch", "past_a_full_batch"],
+)
+def test_requests_locked_by_other_pops_cost_one_claim_statement_per_batch(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    assert_query_count: Any,
+    eligible_count: int,
+    locked_count: int,
+    claim_statements: int,
+) -> None:
+    """With the first eligible requests locked by other sessions, the pop assigns the first free one with one claim
+    statement per batch of eligible requests, and counts each locked request as a claim miss."""
+    owner, requester = make_user(), make_user()
+    worker = _make_image_worker(owner)
+    requests = _queue_requests(_image_request_factory(requester), eligible_count)
+    eligibility = _EligibilityStub(eligible_ids={request.id for request in requests})
+    pop = ImageJobPop()
+    assignment = _prepare_pop(pop, owner=owner, worker=worker, model_name=_IMAGE_MODEL, eligibility=eligibility, monkeypatch=monkeypatch)
+    claim_misses = _ClaimMissRecorder()
+    monkeypatch.setattr("horde.apis.v2.base.pop_claim_misses", claim_misses)
+
+    with _other_session() as other_pops_session:
+        _lock_rows(other_pops_session, requests[:locked_count])
+        with assert_query_count() as queries:
+            _run_pop(app, pop)
+
+    assert assignment.assignments == [(requests[locked_count].id, False)]
+    assert sum(claim_misses.amounts) == locked_count
+    claims = [statement for statement in queries.statements if "SKIP LOCKED" in statement.upper()]
+    assert len(claims) == claim_statements, queries.describe()
+
+
+def test_a_refused_assignment_claims_again_from_the_requests_after_the_claimed_one(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the first eligible request locked by another session, the claim takes the second. When its assignment is
+    refused, the pop claims again from the requests after it and assigns the third."""
+    owner, requester = make_user(), make_user()
+    worker = _make_image_worker(owner)
+    locked, refused, assigned = _queue_requests(_image_request_factory(requester), 3)
+    eligibility = _EligibilityStub(eligible_ids={locked.id, refused.id, assigned.id})
+    pop = ImageJobPop()
+    assignment = _prepare_pop(pop, owner=owner, worker=worker, model_name=_IMAGE_MODEL, eligibility=eligibility, monkeypatch=monkeypatch)
+    started_ids: list[uuid.UUID] = []
+
+    def refuse_first_assignment(waiting_prompt: Any, *, selected_from_priority_queue: bool = False) -> dict[str, Any] | None:
+        started_ids.append(waiting_prompt.id)
+        if len(started_ids) == 1:
+            db.session.commit()
+            return None
+        return assignment(waiting_prompt, selected_from_priority_queue=selected_from_priority_queue)
+
+    monkeypatch.setattr(pop, "start_worker", refuse_first_assignment)
+    claim_misses = _ClaimMissRecorder()
+    monkeypatch.setattr("horde.apis.v2.base.pop_claim_misses", claim_misses)
+
+    with _other_session() as other_pop_session:
+        _lock_rows(other_pop_session, [locked])
+        _run_pop(app, pop)
+
+    assert started_ids == [refused.id, assigned.id]
+    assert assignment.assignments == [(assigned.id, False)]
+    assert claim_misses.amounts == [1]
+
+
+def test_a_pop_whose_eligible_requests_are_all_locked_reads_on_and_returns_no_job(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When every eligible request is locked by another session, the pop counts a miss for each, reads the next page,
+    and returns the empty response at the end of the queue."""
+    owner, requester = make_user(), make_user()
+    worker = _make_image_worker(owner)
+    first_page_size = database.POP_SCAN_PAGE_SIZES[0]
+    requests = _queue_requests(_image_request_factory(requester), first_page_size + 2)
+    eligibility = _EligibilityStub(eligible_ids={request.id for request in requests})
+    pop = ImageJobPop()
+    assignment = _prepare_pop(pop, owner=owner, worker=worker, model_name=_IMAGE_MODEL, eligibility=eligibility, monkeypatch=monkeypatch)
+    claim_misses = _ClaimMissRecorder()
+    monkeypatch.setattr("horde.apis.v2.base.pop_claim_misses", claim_misses)
+
+    with _other_session() as other_pops_session:
+        _lock_rows(other_pops_session, requests)
+        response = _run_pop(app, pop)
+
+    assert response["ids"] == []
+    assert assignment.assignments == []
+    assert sorted(map(str, eligibility.evaluated_ids)) == sorted(str(request.id) for request in requests)
+    assert sum(claim_misses.amounts) == len(requests)
+
+
+def test_a_claim_reads_the_jobs_left_and_expiry_as_committed_now(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """A claim takes ``n``, ``expiry`` and ``extra_priority`` as committed after the scan, so an assignment does not
+    write back the scan's stale values and does not shorten an expiry extended after the scan."""
+    owner, requester = make_user(), make_user()
+    worker = _make_image_worker(owner)
+    (request,) = _queue_requests(_image_request_factory(requester), 1)
+    request.n = 3
+    # Shorter than the default request lifetime, so an assignment that kept the scan's expiry would extend it to the
+    # default and store that in place of the later expiry.
+    request.expiry = datetime.utcnow() + timedelta(minutes=5)
+    db.session.commit()
+    (scanned,) = database.get_sorted_wp_filtered_to_worker(worker, [_IMAGE_MODEL], [])
+    later_expiry = datetime.utcnow() + timedelta(hours=2)
+    with _other_session() as writer_session:
+        writer_session.execute(
+            update(ImageWaitingPrompt)
+            .where(ImageWaitingPrompt.id == request.id)
+            .values({ImageWaitingPrompt.n: 2, ImageWaitingPrompt.expiry: later_expiry, ImageWaitingPrompt.extra_priority: 7}),
+        )
+        writer_session.commit()
+
+    claimed = database.claim_first_waiting_prompt([scanned], worker_id=worker.id)
+
+    assert claimed is scanned
+    assert (claimed.n, claimed.expiry, claimed.extra_priority) == (2, later_expiry, 7)
+    claimed.n -= 1
+    claimed.refresh(worker, commit=False)
+    db.session.commit()
+    with _other_session() as reader_session:
+        stored = reader_session.query(ImageWaitingPrompt.n, ImageWaitingPrompt.expiry).filter(ImageWaitingPrompt.id == request.id).one()
+    assert (stored.n, stored.expiry) == (1, later_expiry)
+
+
+def test_a_fake_generation_commits_the_tricked_worker_with_the_generation(
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+) -> None:
+    """A paused worker's fake generation and its tricked-worker row are committed in one transaction, so the same
+    worker's next claim of the request returns None."""
+    owner, requester = make_user(), make_user()
+    worker = _make_image_worker(owner)
+    (request,) = _queue_requests(_image_request_factory(requester), 1)
+    (scanned,) = database.get_sorted_wp_filtered_to_worker(worker, [_IMAGE_MODEL], [])
+    claimed = database.claim_first_waiting_prompt([scanned], worker_id=worker.id)
+    assert claimed is not None
+    committed_rows: list[tuple[bool, bool]] = []
+
+    def record_committed_rows(committing_session: Session) -> None:
+        fake_generation_rows = committing_session.query(ImageProcessingGeneration.id).filter(
+            ImageProcessingGeneration.wp_id == request.id,
+            ImageProcessingGeneration.fake.is_(True),
+        )
+        tricked_rows = committing_session.query(WPTrickedWorkers.id).filter(
+            WPTrickedWorkers.wp_id == request.id,
+            WPTrickedWorkers.worker_id == worker.id,
+        )
+        committed_rows.append((fake_generation_rows.count() > 0, tricked_rows.count() > 0))
+
+    session = db.session()
+    event.listen(session, "before_commit", record_committed_rows)
+    try:
+        claimed.fake_generation(worker)
+    finally:
+        event.remove(session, "before_commit", record_committed_rows)
+
+    # Each pair is what one commit makes visible to other sessions: a fake generation and a tricked-worker row.
+    assert (True, False) not in committed_rows, committed_rows
+    assert committed_rows[-1] == (True, True), committed_rows
+    assert database.claim_first_waiting_prompt([claimed], worker_id=worker.id) is None
+    db.session.rollback()
 
 
 @contextmanager

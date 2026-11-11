@@ -825,10 +825,12 @@ class WaitingPrompt(db.Model):
     def fake_generation(self, worker):
         payload = self.get_job_payload(self.n)
         procgen_class = procgen_classes[self.wp_type]
+        # The tricked-worker row is added before the generation is built, because the generation's constructor
+        # commits. Both rows are then committed together while the pop's claim still holds the request's lock, so a
+        # concurrent pop of the same worker cannot claim the request after the fake generation and before the
+        # tricked-worker row.
+        db.session.add(WPTrickedWorkers(wp_id=self.id, worker_id=worker.id))
         new_gen = procgen_class(wp_id=self.id, worker_id=worker.id, fake=True, **self.get_generation_assignment(worker))
-        new_trick = WPTrickedWorkers(wp_id=self.id, worker_id=worker.id)
-        db.session.add(new_trick)
-        db.session.commit()
         logger.info(
             f"FAKE Procgen with ID {new_gen.id} popped from WP {self.id} by worker {worker.id} "
             f"('{worker.name}' / {worker.ipaddr}) - {self.n} gens left",
