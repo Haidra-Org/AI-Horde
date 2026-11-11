@@ -1164,6 +1164,7 @@ class JobPopTemplate(Resource):
         priority_wps: list[Any] = []
         queue_exhausted = True
         if worker_only_eligibility.eligible:
+            self.prepare_queue_scan()
             with logfire.span("horde.pop.get_sorted_wp", priority=True, page=0):
                 priority_wps = self.get_sorted_wp(self.priority_user_ids)
             self.priority_wp_ids = {wp.id for wp in priority_wps}
@@ -1244,6 +1245,15 @@ class JobPopTemplate(Resource):
         self.read_wp_ids.update(wp.id for wp in page_wps)
         self.prioritized_wp.extend(page_wps)
         return len(page_wps) < page_size
+
+    def prepare_queue_scan(self) -> None:
+        """Build the inputs shared by every page of this pop's queue scan. Runs once per pop, before the priority pass.
+
+        Subclass Integration:
+            Override when the scan's filter is costly to build and depends only on the worker and its declaration.
+            [`get_sorted_wp`][horde.apis.v2.base.JobPopTemplate.get_sorted_wp] then reads each page with the filter
+            built here.
+        """
 
     def get_sorted_wp(self, priority_user_ids: Collection[int] | None = None, *, page_size: int | None = None) -> list[Any]:
         """Extendable class to retrieve the sorted WP list for this worker.

@@ -200,6 +200,23 @@ def _text_request_factory(requester: User) -> Callable[[], WaitingPrompt]:
     return make_request
 
 
+def _chat_request_factory(requester: User) -> Callable[[], WaitingPrompt]:
+    def make_request() -> WaitingPrompt:
+        request = TextWaitingPrompt(
+            worker_ids=[],
+            models=[_TEXT_MODEL],
+            prompt="user: pop scan test",
+            user_id=requester.id,
+            params={"n": 1, "max_length": 80, "max_context_length": 2048},
+            is_chat=True,
+            messages=[{"role": "user", "content": "pop scan test"}],
+        )
+        request.validated_backends = False
+        return request
+
+    return make_request
+
+
 def _prepare_pop(
     pop: Any,
     *,
@@ -487,6 +504,55 @@ def test_a_text_pop_reads_a_deep_queue_once_and_finds_the_request_at_its_end(
     assert len(scan_and_claim_locks) == 1, queries.describe()
     # The priority page, the general pages of 3, 10, 50, 200 and the remaining 38 requests, and the claim.
     assert queries.table_counts("SELECT")["waiting_prompts"] == 7, queries.describe()
+
+
+@pytest.mark.parametrize("declares_chat", [False, True], ids=["text_worker", "chat_worker"])
+def test_a_text_pop_builds_its_scan_clauses_once_and_reads_what_a_fresh_scan_reads(
+    app: Any,
+    db_session: Any,
+    fake_redis: Any,
+    make_user: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    declares_chat: bool,
+) -> None:
+    """A text pop builds its scan clauses once and reuses them for the priority pass and every page. It evaluates the
+    same requests that one full-depth page with freshly built clauses returns, for a worker with and without a chat
+    declaration."""
+    owner, requester = make_user(), make_user()
+    worker = _make_text_worker(owner)
+    if declares_chat:
+        worker.accepts_chat_jobs = True
+        worker.chat_model_id = _TEXT_MODEL
+        worker.chat_max_length = 1024
+        worker.chat_max_context_length = 8192
+        db.session.commit()
+    owner_requests = _queue_requests(_text_request_factory(owner), 2)
+    text_requests = _queue_requests(_text_request_factory(requester), 20)
+    chat_requests = _queue_requests(_chat_request_factory(requester), 20)
+    fresh_page = text_database.get_sorted_text_wp_filtered_to_worker(worker, [_TEXT_MODEL], page_size=1000)
+    offered_ids = {request.id for request in fresh_page}
+    db.session.commit()
+    # The priority pass reads the owner's requests, and the general scan reads more than the first two text pages.
+    assert {request.id for request in [*owner_requests, *text_requests]} <= offered_ids
+    assert bool(offered_ids & {request.id for request in chat_requests}) is declares_chat
+    eligibility = _EligibilityStub(eligible_ids=set())
+    pop = TextJobPop()
+    _prepare_pop(pop, owner=owner, worker=worker, model_name=_TEXT_MODEL, eligibility=eligibility, monkeypatch=monkeypatch)
+    build_scan_clauses = text_database.text_wp_scan_clauses
+    clause_builds: list[Any] = []
+
+    def count_clause_build(popping_worker: Any, models_list: list[str] | None) -> list[Any]:
+        clause_builds.append(popping_worker)
+        return build_scan_clauses(popping_worker, models_list)
+
+    monkeypatch.setattr(text_database, "text_wp_scan_clauses", count_clause_build)
+
+    response = _run_pop(app, pop)
+
+    assert response["ids"] == []
+    assert clause_builds == [worker]
+    assert pop.wp_page >= 2
+    assert sorted(map(str, eligibility.evaluated_ids)) == sorted(map(str, offered_ids))
 
 
 def test_a_text_claim_keeps_the_scanned_request_and_its_chat_images_expression(

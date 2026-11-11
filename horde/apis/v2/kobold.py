@@ -19,6 +19,7 @@ from flask_restx.reqparse import ParseResult
 from horde_sdk.generation_parameters.text.chat_policy import ChatConformance, ChatLimitField
 from horde_sdk.worker.chat_declaration import ChatFinishReason
 from pydantic import ValidationError
+from sqlalchemy import ColumnElement
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 import horde.apis.limiter_api as lim
@@ -1721,6 +1722,9 @@ class TextJobPop(JobPopTemplate):
     decorators = [limiter.limit("60/second")]
     scan_page_sizes: tuple[int, ...] = database.TEXT_POP_SCAN_PAGE_SIZES
     """How many requests each page of the pop's queue scan reads, in page order. The last size repeats."""
+    scan_clauses: list[ColumnElement[bool]]
+    """The filter of the pop's queue scan, built once per pop by
+    [`prepare_queue_scan`][horde.apis.v2.kobold.TextJobPop.prepare_queue_scan]."""
 
     @api.expect(parsers.job_pop_parser, models.input_model_job_pop, validate=True)
     @api.response(200, "Generation Popped", models.response_model_job_pop)
@@ -1826,11 +1830,15 @@ class TextJobPop(JobPopTemplate):
         """Return the text worker with the pop's name and its stored declaration, selected in one statement."""
         return database.find_text_worker_by_name(self.worker_name)
 
+    @override
+    def prepare_queue_scan(self) -> None:
+        self.scan_clauses = text_database.text_wp_scan_clauses(self.worker, self.models)
+
+    @override
     def get_sorted_wp(self, priority_user_ids: Collection[int] | None = None, *, page_size: int | None = None) -> list[Any]:
-        """We're sending the lists directly, to avoid having to join tables"""
-        sorted_wps = text_database.get_sorted_text_wp_filtered_to_worker(
-            self.worker,
-            self.models,
+        """Read one page of the pop's text queue scan with the clauses built by ``prepare_queue_scan``."""
+        sorted_wps = text_database.read_text_scan_page(
+            self.scan_clauses,
             priority_user_ids=priority_user_ids,
             page=self.wp_page,
             excluded_ids=self.read_wp_ids,

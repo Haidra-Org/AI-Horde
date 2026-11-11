@@ -4,12 +4,12 @@
 
 import json
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import ColumnElement, and_, func, or_
 from sqlalchemy.orm import aliased, joinedload, noload, selectinload, with_expression
 
 import horde.classes.base.stats as stats
@@ -275,20 +275,45 @@ def worker_may_be_speed_gated(worker, models_list) -> bool:
     return get_text_worker_lease_capacity(worker.speed) < worker.chat_max_length
 
 
-def get_sorted_text_wp_filtered_to_worker(
-    worker: Any,
-    models_list: list[str] | None = None,
+def text_wp_scan_clauses(worker: Any, models_list: list[str] | None) -> list[ColumnElement[bool]]:
+    """Return the clauses that limit a text pop's scan to the requests offered to the worker.
+
+    A pop builds the clauses once and passes them to
+    [`read_text_scan_page`][horde.database.text_functions.read_text_scan_page] for its priority pass and for each
+    page. Building them is a measured part of a scan's CPU cost, because the offer clauses and the speed gate construct
+    several correlated subqueries and an alias of the worker table. The clauses depend on the popping worker and its
+    declared models, which do not change during the pop. They also compare each request's expiry with the time at
+    which they were built. A request that expires later in the pop can still be read and evaluated. The claim checks
+    expiry again and does not assign it.
+
+    Args:
+        worker: The popping text worker.
+        models_list: The worker's advertised models, in bridge preference order.
+
+    Returns:
+        The offer clauses and the speed gate.
+    """
+    # The speed gate is kept apart from the offer clauses so each rule can be read separately. A chat request that cannot
+    # finish inside the base lease at the worker's speed is not paged while a capable worker is online, so it does not
+    # take one of a page's slots.
+    return [
+        *text_wp_offer_clauses(worker, models_list),
+        text_wp_speed_gate_clause(worker, models_list),
+    ]
+
+
+def read_text_scan_page(
+    scan_clauses: Sequence[ColumnElement[bool]],
     priority_user_ids: Collection[int] | None = None,
     page: int = 0,
     *,
     excluded_ids: Collection[Any] = (),
     page_size: int | None = None,
 ) -> list[Any]:
-    """Return one page of text requests for a worker's pop to evaluate, in queue order, without locking them.
+    """Return one page of the text requests that pass ``scan_clauses``, in queue order, without locking them.
 
     Args:
-        worker: The popping text worker.
-        models_list: The worker's advertised models, in bridge preference order.
+        scan_clauses: The pop's clauses from [`text_wp_scan_clauses`][horde.database.text_functions.text_wp_scan_clauses].
         priority_user_ids: When set, only these users' requests are returned.
         page: The zero-based page index.
         excluded_ids: The ids of the requests already read by this pop.
@@ -313,17 +338,47 @@ def get_sorted_text_wp_filtered_to_worker(
             selectinload(TextWaitingPrompt.workers),
             *text_wp_loader_options(),
         )
-        # The speed gate is kept apart from the offer clauses so each rule reads on its own. A chat request the
-        # worker's speed cannot finish inside the base lease is not paged here while a capable worker is online, so it
-        # does not take one of the page's slots.
-        .filter(
-            *text_wp_offer_clauses(worker, models_list),
-            text_wp_speed_gate_clause(worker, models_list),
-        )
+        .filter(*scan_clauses)
     )
     if priority_user_ids:
         final_wp_list = final_wp_list.filter(TextWaitingPrompt.user_id.in_(priority_user_ids))
     return read_pop_scan_page(final_wp_list, TextWaitingPrompt, excluded_ids=excluded_ids, page_size=page_size)
+
+
+def get_sorted_text_wp_filtered_to_worker(
+    worker: Any,
+    models_list: list[str] | None = None,
+    priority_user_ids: Collection[int] | None = None,
+    page: int = 0,
+    *,
+    excluded_ids: Collection[Any] = (),
+    page_size: int | None = None,
+) -> list[Any]:
+    """Return one page of text requests for a worker, building the scan's clauses for this page alone.
+
+    A pop builds the clauses once with [`text_wp_scan_clauses`][horde.database.text_functions.text_wp_scan_clauses]
+    and reads its pages with [`read_text_scan_page`][horde.database.text_functions.read_text_scan_page]. This function
+    reads one page outside a pop.
+
+    Args:
+        worker: The popping text worker.
+        models_list: The worker's advertised models, in bridge preference order.
+        priority_user_ids: When set, only these users' requests are returned.
+        page: The zero-based page index.
+        excluded_ids: The ids of the requests already read.
+        page_size: The most requests to return. By default, the entry for ``page`` in
+            [`TEXT_POP_SCAN_PAGE_SIZES`][horde.database.functions.TEXT_POP_SCAN_PAGE_SIZES].
+
+    Returns:
+        The requests. Fewer than ``page_size`` means the worker's queue does not have more.
+    """
+    return read_text_scan_page(
+        text_wp_scan_clauses(worker, models_list),
+        priority_user_ids=priority_user_ids,
+        page=page,
+        excluded_ids=excluded_ids,
+        page_size=page_size,
+    )
 
 
 def text_wp_loader_options() -> list[Any]:
