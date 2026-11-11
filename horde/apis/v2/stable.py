@@ -344,7 +344,7 @@ class ImageAsyncGenerate(GenerateTemplate):
         # See GenerateTemplate.initiate_waiting_prompt for why this commit comes first.
         db.session.commit()
         generate_init_wp_build_duration.record(time.monotonic() - _tb, {})
-        self.upload_source_images_or_delete_waiting_prompt()
+        self.upload_source_images()
         _tk = time.monotonic()
         try:
             _, total_threads = database.count_active_workers("image")

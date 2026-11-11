@@ -130,7 +130,9 @@ same operation, and `model: "a"` gives the fingerprint of `models: ["a"]`. `stre
 
 The activation path commits in several places. The `WaitingPrompt` constructor does not commit.
 `initiate_waiting_prompt` commits the inactive row with its model rows and payload right after constructing it. The
-upfront kudos hold is committed before activation. Inside `WaitingPrompt._activate`, `record_usage` commits the activation and the tax through `WaitingPrompt.refresh`, and a
+row counts toward the user's concurrency limit only after activation, and an admission that fails before activation
+deletes it. Admissions that run at the same moment are not in each other's counts, so the limit is approximate for
+simultaneous submissions and the route rate limits bound the excess. The upfront kudos hold is committed before activation. Inside `WaitingPrompt._activate`, `record_usage` commits the activation and the tax through `WaitingPrompt.refresh`, and a
 final commit follows the style reward. The claim is set at the start of `TextWaitingPrompt._activate`, so the
 first of the two activation commits writes it. It is kept on the instance as a plain attribute, so a deadlock retry, which rolls
 back and runs `_activate` again, writes it again.

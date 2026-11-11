@@ -479,6 +479,57 @@ def test_an_activation_deadlock_retry_keeps_the_prepared_request(
     _cancel(client, ADMISSION_CASES[0], request_id, requester)
 
 
+@pytest.mark.parametrize("case", ADMISSION_CASES, ids=[case.label for case in ADMISSION_CASES])
+def test_a_request_whose_activation_fails_leaves_no_row(
+    app: Flask,
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    make_api_user: MakeApiUser,
+    monkeypatch: pytest.MonkeyPatch,
+    case: _AdmissionCase,
+) -> None:
+    """An admission that fails after the inactive row is committed deletes the row."""
+    from horde.classes.base import waiting_prompt as base_waiting_prompt
+
+    def fail_activation(waiting_prompt: Any, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("activation failed")
+
+    _bring_worker_online(client, request_headers, case)
+    monkeypatch.setattr(base_waiting_prompt.WaitingPrompt, "_activate", fail_activation)
+    requester = make_api_user()
+
+    with pytest.raises(RuntimeError, match="activation failed"):
+        client.post(case.path, json=case.body, headers=_headers(requester.api_key))
+
+    assert _count_request_rows(app, requester.id) == 0
+
+
+def test_a_failed_cleanup_does_not_replace_the_admission_failure(
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    make_api_user: MakeApiUser,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When deleting the row of a failed admission also fails, the client receives the admission's failure."""
+    from horde.apis.v2 import base
+    from horde.classes.base import waiting_prompt as base_waiting_prompt
+
+    def fail_activation(waiting_prompt: Any, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("activation failed")
+
+    def fail_cleanup(resource: Any) -> None:
+        raise RuntimeError("cleanup failed")
+
+    case = ADMISSION_CASES[0]
+    _bring_worker_online(client, request_headers, case)
+    monkeypatch.setattr(base_waiting_prompt.WaitingPrompt, "_activate", fail_activation)
+    monkeypatch.setattr(base.GenerateTemplate, "delete_unactivated_waiting_prompt", fail_cleanup)
+    requester = make_api_user()
+
+    with pytest.raises(RuntimeError, match="activation failed"):
+        client.post(case.path, json=case.body, headers=_headers(requester.api_key))
+
+
 def test_an_image_request_becomes_active_and_priced_in_one_statement(
     client: FlaskClient,
     request_headers: dict[str, str],

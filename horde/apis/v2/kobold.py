@@ -287,7 +287,7 @@ class TextAsyncGenerate(GenerateTemplate):
         db.session.commit()
         requested_max_length = self.wp.max_length
         self.refuse_over_kudos_cap()
-        self.upload_source_images_or_delete_waiting_prompt()
+        self.upload_source_images()
         # Measured once here, at the requested max_length, and reused by the check after activation.
         self.creation_availability = database.get_worker_availability_for_request(self.wp)
         # Kept apart from creation_availability, which a downgrade discards, for the kudos refusals below.

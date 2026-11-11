@@ -1643,6 +1643,31 @@ def test_a_repeated_operation_key_returns_the_first_request_after_its_model_went
     cancel_request(client, headers, "chat", first_submission["id"])
 
 
+def test_a_submission_that_loses_the_operation_key_at_activation_returns_the_winner(app, client, make_api_user, monkeypatch) -> None:
+    """Two submissions with one key can both pass the lookup in ``post``. The one whose activation loses the key's
+    unique index deletes its row and receives the winner's request, and the admission cleanup that runs for
+    any failed admission leaves the winner's row and charge in place."""
+    from horde.apis.v2.kobold import ChatAsyncGenerate
+
+    requester = make_api_user()
+    headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}
+    custom_model, _custom_worker = _serve_custom_chat_model(client, headers)
+    operation_key = str(uuid.uuid4())
+    first_response = _post_chat(client, headers, _chat_body(custom_model, operation_key=operation_key))
+    assert first_response.status_code == 202, first_response.get_data(as_text=True)
+    first_submission = first_response.get_json()
+    # The second submission passes the lookup as if it ran concurrently with the first, so it reaches activation.
+    monkeypatch.setattr(ChatAsyncGenerate, "find_existing_claim", lambda self: None)
+
+    losing_response = _post_chat(client, headers, _chat_body(custom_model, operation_key=operation_key))
+
+    assert losing_response.status_code == 200, losing_response.get_data(as_text=True)
+    assert losing_response.get_json() == {"id": first_submission["id"], "kudos": first_submission["kudos"]}
+    assert _count_chat_requests(app, requester.id) == 1
+    assert _count_generation_debits(app, requester.id) == 1
+    cancel_request(client, headers, "chat", first_submission["id"])
+
+
 def test_a_repeated_operation_key_with_a_changed_request_is_refused(app, client, make_api_user) -> None:
     requester = make_api_user()
     headers = {"apikey": requester.api_key, "Client-Agent": "aihorde_ci_client:1:test"}

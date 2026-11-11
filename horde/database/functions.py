@@ -1079,6 +1079,21 @@ def count_waiting_requests(user, models=None, request_type="image"):
 
 
 def _count_waiting_requests(user, models=None, request_type="image"):
+    """Return how many of the user's jobs count toward the user's concurrency limit.
+
+    A request counts while it is in the live queue: activated, not faulted, and with jobs left to assign. A request
+    that is still being admitted does not count, so a failed or abandoned admission does not use one of the user's
+    slots. Admissions that run at the same moment are not in each other's counts, so together they can exceed the
+    limit by the number of them that overlap. The rate limits on the generate routes bound that number.
+
+    Args:
+        user: The user whose requests are counted.
+        models: When given, only requests that list one of these models count.
+        request_type: "image" or "text".
+
+    Returns:
+        The sum of the jobs left to assign over the counted requests.
+    """
     wp_class = ImageWaitingPrompt
     if request_type == "text":
         wp_class = TextWaitingPrompt
@@ -1108,8 +1123,7 @@ def _count_waiting_requests(user, models=None, request_type="image"):
             db.session.query(func.sum(wp_class.n))
             .filter(
                 wp_class.user_id == user.id,
-                wp_class.faulted.is_(False),
-                wp_class.n >= 1,
+                wp_class.live_queue_condition(),
             )
             .scalar()
         )

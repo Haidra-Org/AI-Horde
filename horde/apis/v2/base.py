@@ -340,30 +340,59 @@ class GenerateTemplate(Resource):
             finally:
                 generate_validate_duration.record(time.monotonic() - tv, {"horde.gentype": self.gentype})
         self.downgrade_wp_priority = False
-        with logfire.span("horde.generate.initiate_wp", gentype=self.gentype):
-            ti = time.monotonic()
+        self.wp = None
+        try:
+            with logfire.span("horde.generate.initiate_wp", gentype=self.gentype):
+                ti = time.monotonic()
+                try:
+                    self.initiate_waiting_prompt()
+                finally:
+                    generate_initiate_wp_duration.record(time.monotonic() - ti, {"horde.gentype": self.gentype})
+            logfire.info(
+                "horde.generate.initiated",
+                wp_id=str(self.wp.id),
+                models=self.models,
+                n=getattr(self.wp, "n", None),
+            )
+            if self.args.dry_run:
+                self.kudos = self.extrapolate_dry_run_kudos()
+                self.wp.delete()
+                return
+            with logfire.span("horde.generate.activate_wp", wp_id=str(self.wp.id)):
+                ta = time.monotonic()
+                try:
+                    self.activate_waiting_prompt()
+                finally:
+                    generate_activate_wp_duration.record(time.monotonic() - ta, {"horde.gentype": self.gentype})
+        except Exception:
             try:
-                self.initiate_waiting_prompt()
-            finally:
-                generate_initiate_wp_duration.record(time.monotonic() - ti, {"horde.gentype": self.gentype})
-        logfire.info(
-            "horde.generate.initiated",
-            wp_id=str(self.wp.id),
-            models=self.models,
-            n=getattr(self.wp, "n", None),
-        )
-        if self.args.dry_run:
-            self.kudos = self.extrapolate_dry_run_kudos()
-            self.wp.delete()
-            return
-        with logfire.span("horde.generate.activate_wp", wp_id=str(self.wp.id)):
-            ta = time.monotonic()
-            try:
-                self.activate_waiting_prompt()
-            finally:
-                generate_activate_wp_duration.record(time.monotonic() - ta, {"horde.gentype": self.gentype})
+                self.delete_unactivated_waiting_prompt()
+            except Exception:
+                # The client receives the admission's failure. A row that could not be deleted here is removed by the
+                # stale-request cleanup after it expires.
+                logger.exception("Could not delete the waiting prompt of a failed admission.")
+            raise
         # We use the wp.kudos to avoid calling the model twice.
         self.kudos = self.wp.kudos
+
+    def delete_unactivated_waiting_prompt(self) -> None:
+        """Delete this request's waiting prompt when its admission failed before activating it.
+
+        ``initiate_waiting_prompt`` commits the inactive row before the uploads, the kudos checks and activation. A
+        row left behind by a failed admission would keep its upfront kudos hold and stay in the table until it
+        expired. A row already deleted by its refusal is skipped, and an activated row is kept.
+        """
+        if self.wp is None or self.wp.id is None:
+            return
+        waiting_prompt_id = self.wp.id
+        # The failure may have left the session's transaction unusable, and the admission does not have uncommitted
+        # work to keep, so the cleanup starts from a fresh transaction.
+        db.session.rollback()
+        unactivated_waiting_prompt = (
+            db.session.query(WaitingPrompt).filter(WaitingPrompt.id == waiting_prompt_id, WaitingPrompt.active.is_(False)).first()
+        )
+        if unactivated_waiting_prompt is not None:
+            unactivated_waiting_prompt.delete()
 
     def dry_run_answerable_from_cache(self):
         """Report whether a cached quote can answer this dry run without resolving the request.
@@ -755,31 +784,20 @@ class GenerateTemplate(Resource):
             traceparent=get_traceparent(),
         )
         db.session.commit()
-        self.upload_source_images_or_delete_waiting_prompt()
-
-    def upload_source_images_or_delete_waiting_prompt(self):
-        """Upload the request's source images, deleting the waiting prompt if any upload fails.
-
-        The waiting prompt is committed before the upload because the storage keys include its id. A row left behind
-        by a refused or unreadable source image is never faulted and counts toward the user's concurrency until
-        stale-request cleanup removes it, so repeated refusals would lock the user out of new requests.
-
-        Raises:
-            Exception: Whatever the upload raised (a URL refusal, an unreadable or oversized image, or a storage
-                error), re-raised unchanged once the waiting prompt is deleted.
-        """
-        try:
-            self.upload_source_images()
-        except Exception:
-            self.wp.delete()
-            raise
+        self.upload_source_images()
 
     def upload_source_images(self):
         """Upload the request's source images to object storage and replace them in the args with their references.
 
         Runs at the end of ``initiate_waiting_prompt``, before any kudos reservation: the uploads are network I/O
         that must not happen while the payer's advisory lock and the request's transaction are held. Dry runs
-        upload nothing. A request that fails after this point leaves its uploads behind, as before.
+        do not upload anything. A request that fails after this point leaves its uploads behind.
+
+        Raises:
+            Exception: Whatever the upload raised (a URL refusal, an unreadable or oversized image, or a storage
+                error). The admission's cleanup,
+                [`delete_unactivated_waiting_prompt`][horde.apis.v2.base.GenerateTemplate.delete_unactivated_waiting_prompt],
+                then deletes the request's row.
         """
         if self.args.dry_run:
             return
