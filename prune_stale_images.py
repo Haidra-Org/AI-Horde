@@ -13,6 +13,16 @@ from loguru import logger
 
 load_dotenv()
 
+PASS_INTERVAL_ENV = "IMAGE_PRUNER_PASS_INTERVAL_SECONDS"
+"""The environment variable holding the pruner's sleep between passes, in seconds."""
+
+PASS_INTERVAL_SECONDS = int(os.getenv(PASS_INTERVAL_ENV, "600"))
+"""How long the pruner sleeps between passes over the buckets.
+
+Every pass lists both buckets in full, and the object store bills each list request. Objects are pruned 120 minutes
+after their last write, so the default ten minute interval lets an object live at most ten minutes longer.
+"""
+
 r2_transient_account = os.getenv(
     "R2_TRANSIENT_ACCOUNT",
     "https://a223539ccf6caa2d76459c9727d276e6.r2.cloudflarestorage.com",
@@ -43,6 +53,7 @@ while True:
                 for future in futures:
                     future.result()
                 logger.info(f"Image Pruner: Bucket {bucket} Deleted: {len(futures)}")
-        time.sleep(30)
-    except Exception:
+        time.sleep(PASS_INTERVAL_SECONDS)
+    except Exception as e:
+        logger.exception(f"Image Pruner: Cleanup iteration failed with error: {e}, retrying in 30 seconds")
         time.sleep(30)
