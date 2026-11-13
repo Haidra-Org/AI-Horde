@@ -104,9 +104,21 @@ ARCHIVE_DELETE_BATCH_SIZE: Final[int] = 1000
 ARCHIVE_CONNECT_TIMEOUT_SECONDS: Final[int] = 5
 """How long an archive request waits to connect; the retention job retries on its next tick."""
 ARCHIVE_READ_TIMEOUT_SECONDS: Final[int] = 60
-"""How long an archive request waits for a response; one part upload carries ``ARCHIVE_PART_BYTES``."""
+"""How long an object request waits for a response. One part upload sends ``ARCHIVE_PART_BYTES``."""
 ARCHIVE_MAX_ATTEMPTS: Final[int] = 3
-"""The attempts per archive request, including the first."""
+"""The attempts per object request, including the first."""
+ARCHIVE_METADATA_READ_TIMEOUT_SECONDS: Final[int] = 60
+"""How long a listing or head request waits for a response.
+
+A listing page or a head response is small, so this limit can be lower than ``ARCHIVE_READ_TIMEOUT_SECONDS`` without
+affecting object transfers. A listing that times out fails the dump or export that sent it, so the limit is not set
+below the object limit without response times measured in ``horde.kudos.archive.operation.duration``.
+"""
+ARCHIVE_METADATA_MAX_ATTEMPTS: Final[int] = 3
+"""The attempts per listing or head request, including the first.
+
+Each attempt can wait the full ``ARCHIVE_METADATA_READ_TIMEOUT_SECONDS``.
+"""
 ZSTD_COMPRESSION_LEVEL: Final[int] = 12
 """The zstd level for new objects.
 
@@ -849,10 +861,19 @@ class KudosArchive:
     """Read and write kudos retention archive objects in one bucket.
 
     Thread Safety:
-        Methods share one boto3 client, which is thread-safe; the retention job calls them from one thread.
+        Methods share one boto3 client for object requests and one for listing and head requests. boto3 clients are
+        thread-safe, and the retention jobs call the methods from their own threads.
     """
 
-    def __init__(self, *, client: S3Client, bucket: str, codec: ArchiveCodec | None = None, prefix: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        client: S3Client,
+        bucket: str,
+        codec: ArchiveCodec | None = None,
+        prefix: str = "",
+        metadata_client: S3Client | None = None,
+    ) -> None:
         """Create an archive client.
 
         Args:
@@ -860,11 +881,14 @@ class KudosArchive:
             bucket: The archive bucket.
             codec: The codec for new objects; ``ZstdCodec`` when None.
             prefix: The key prefix of this deployment's objects; normalized by ``normalize_archive_prefix``.
+            metadata_client: The S3 client for listing and ``HeadObject`` requests, which can have its own timeout and
+                attempt limits. ``client`` is used when None.
 
         Raises:
             ValueError: The prefix is not a valid key prefix.
         """
         self._client = client
+        self._metadata_client = metadata_client if metadata_client is not None else client
         self._bucket = bucket
         self._prefix = normalize_archive_prefix(prefix)
         self._codec: ArchiveCodec = codec if codec is not None else ZstdCodec()
@@ -884,7 +908,8 @@ class KudosArchive:
         """Create the archive client, or return None unless the endpoint, bucket, access key id and secret are all set.
 
         A partial configuration builds no client, because boto3 would otherwise sign with the default credential
-        chain. Logs one warning naming the unset variables.
+        chain. Logs one warning naming the unset variables. Listing and head requests use a second client, limited by
+        ``ARCHIVE_METADATA_READ_TIMEOUT_SECONDS`` and ``ARCHIVE_METADATA_MAX_ATTEMPTS``.
 
         Args:
             environ: Variables to read; the process environment by default.
@@ -897,20 +922,29 @@ class KudosArchive:
         if missing:
             logger.warning(f"{', '.join(missing)} unset; kudos retention archive is not configured")
             return None
-        client = boto3.client(
-            "s3",
-            endpoint_url=environ[ARCHIVE_ACCOUNT_ENV],
-            aws_access_key_id=environ[ARCHIVE_ACCESS_KEY_ID_ENV],
-            aws_secret_access_key=environ[ARCHIVE_SECRET_ACCESS_KEY_ENV],
-            region_name=environ.get(ARCHIVE_REGION_ENV) or DEFAULT_ARCHIVE_REGION,
-            config=Config(
-                signature_version="s3v4",
-                connect_timeout=ARCHIVE_CONNECT_TIMEOUT_SECONDS,
-                read_timeout=ARCHIVE_READ_TIMEOUT_SECONDS,
-                retries={"max_attempts": ARCHIVE_MAX_ATTEMPTS},
-            ),
+
+        def build_client(*, read_timeout: int, max_attempts: int) -> S3Client:
+            client: S3Client = boto3.client(
+                "s3",
+                endpoint_url=environ[ARCHIVE_ACCOUNT_ENV],
+                aws_access_key_id=environ[ARCHIVE_ACCESS_KEY_ID_ENV],
+                aws_secret_access_key=environ[ARCHIVE_SECRET_ACCESS_KEY_ENV],
+                region_name=environ.get(ARCHIVE_REGION_ENV) or DEFAULT_ARCHIVE_REGION,
+                config=Config(
+                    signature_version="s3v4",
+                    connect_timeout=ARCHIVE_CONNECT_TIMEOUT_SECONDS,
+                    read_timeout=read_timeout,
+                    retries={"max_attempts": max_attempts},
+                ),
+            )
+            return client
+
+        return cls(
+            client=build_client(read_timeout=ARCHIVE_READ_TIMEOUT_SECONDS, max_attempts=ARCHIVE_MAX_ATTEMPTS),
+            bucket=environ[ARCHIVE_BUCKET_ENV],
+            prefix=prefix,
+            metadata_client=build_client(read_timeout=ARCHIVE_METADATA_READ_TIMEOUT_SECONDS, max_attempts=ARCHIVE_METADATA_MAX_ATTEMPTS),
         )
-        return cls(client=client, bucket=environ[ARCHIVE_BUCKET_ENV], prefix=prefix)
 
     def object_key(self, *, tier: ArchiveTier, source_range: str) -> str:
         """Return the key of a unit's object, written with this client's codec.
@@ -1119,7 +1153,7 @@ class KudosArchive:
         noncurrent_bytes = 0
         delete_markers = 0
         try:
-            paginator = self._client.get_paginator("list_object_versions")
+            paginator = self._metadata_client.get_paginator("list_object_versions")
             for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
                 for version in page.get("Versions", []):
                     if not version.get("IsLatest", True):
@@ -1304,7 +1338,7 @@ class KudosArchive:
             KudosArchiveError: The request failed for any reason other than a missing object.
         """
         try:
-            response = self._client.head_object(Bucket=self._bucket, Key=key)
+            response = self._metadata_client.head_object(Bucket=self._bucket, Key=key)
         except ClientError as err:
             if str(err.response.get("Error", {}).get("Code", "")) in _MISSING_OBJECT_CODES:
                 return None
@@ -1349,7 +1383,7 @@ class KudosArchive:
     def _list_multipart_uploads(self, prefix: str) -> list[_ListedUpload]:
         listed: list[_ListedUpload] = []
         try:
-            paginator = self._client.get_paginator("list_multipart_uploads")
+            paginator = self._metadata_client.get_paginator("list_multipart_uploads")
             for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
                 for entry in page.get("Uploads", []):
                     listed.append(
@@ -1377,7 +1411,7 @@ class KudosArchive:
     def _list_objects(self, tier: ArchiveTier) -> list[_ListedObject]:
         listed: list[_ListedObject] = []
         try:
-            paginator = self._client.get_paginator("list_objects_v2")
+            paginator = self._metadata_client.get_paginator("list_objects_v2")
             for page in paginator.paginate(Bucket=self._bucket, Prefix=f"{self._prefix}{tier}/"):
                 for entry in page.get("Contents", []):
                     object_key = str(entry["Key"])

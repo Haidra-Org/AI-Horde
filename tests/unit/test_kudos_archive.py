@@ -425,6 +425,54 @@ def test_abort_stale_multipart_uploads_reads_a_naive_initiated_time_as_utc() -> 
     assert archive.abort_stale_multipart_uploads(older_than=timedelta(days=1)) == 1
 
 
+class _RecordingClient:
+    """Pass every call to a fake store and record the name of each client method used."""
+
+    def __init__(self, store: _FakeS3) -> None:
+        self._store = store
+        self.operations: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        self.operations.append(name)
+        return getattr(self._store, name)
+
+
+def test_listing_and_head_requests_use_the_metadata_client() -> None:
+    store = _FakeS3()
+    store.objects[RESTORE_KEY] = b"x" * 42
+    store.uploads = [{"Key": "currency/old.csv.zst", "UploadId": "old", "Initiated": datetime.now(UTC) - timedelta(days=2)}]
+    object_client = _RecordingClient(store)
+    metadata_client = _RecordingClient(store)
+    archive = KudosArchive(client=object_client, bucket="archive", metadata_client=metadata_client)
+
+    assert archive.object_size(RESTORE_KEY) == 42
+    assert archive.abort_stale_multipart_uploads(older_than=timedelta(days=1)) == 1
+
+    assert metadata_client.operations == ["head_object", "get_paginator", "get_paginator"]
+    assert object_client.operations == ["abort_multipart_upload"]
+
+
+def test_object_listing_uses_the_metadata_client() -> None:
+    class _ObjectListingPaginator:
+        def paginate(self, *, Bucket: str, Prefix: str) -> Iterator[dict[str, Any]]:  # noqa: N803 (boto3 parameter names)
+            yield {"Contents": [{"Key": f"{Prefix}unit.csv.zst", "Size": 3}, {"Key": f"{Prefix}unit.csv.zst.manifest.json", "Size": 1}]}
+
+    class _ObjectListingClient:
+        def __init__(self) -> None:
+            self.listed: list[str] = []
+
+        def get_paginator(self, operation_name: str) -> _ObjectListingPaginator:
+            self.listed.append(operation_name)
+            return _ObjectListingPaginator()
+
+    metadata_client = _ObjectListingClient()
+    archive = KudosArchive(client=_FakeS3(), bucket="archive", metadata_client=metadata_client)  # type: ignore[arg-type]
+
+    assert archive.object_sizes(ArchiveTier.STATISTICS) == {"statistics/unit.csv.zst": 3}
+    assert archive.tier_bytes(ArchiveTier.CURRENCY) == 3
+    assert metadata_client.listed == ["list_objects_v2", "list_objects_v2"]
+
+
 def test_store_operations_run_in_spans_with_their_tier_and_key(monkeypatch: pytest.MonkeyPatch) -> None:
     import logfire
 
@@ -472,6 +520,33 @@ def test_store_operations_record_their_duration_and_whether_they_failed(monkeypa
         {"horde.kudos.archive.operation": "get_manifest", "horde.kudos.archive.failed": True},
     ]
     assert all(amount >= 0 for amount, _ in recordings)
+
+
+def test_from_environment_builds_a_metadata_client_with_its_own_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    import boto3
+
+    from horde import kudos_archive
+
+    built: list[Any] = []
+
+    def record_client(service_name: str, **kwargs: Any) -> object:
+        built.append(kwargs["config"])
+        return object()
+
+    monkeypatch.setattr(boto3, "client", record_client)
+    archive = KudosArchive.from_environment({variable: "x" for variable in ARCHIVE_REQUIRED_ENV})
+
+    assert archive is not None
+    object_config, metadata_config = built
+    assert (object_config.read_timeout, object_config.retries) == (
+        kudos_archive.ARCHIVE_READ_TIMEOUT_SECONDS,
+        {"max_attempts": kudos_archive.ARCHIVE_MAX_ATTEMPTS},
+    )
+    assert (metadata_config.read_timeout, metadata_config.retries) == (
+        kudos_archive.ARCHIVE_METADATA_READ_TIMEOUT_SECONDS,
+        {"max_attempts": kudos_archive.ARCHIVE_METADATA_MAX_ATTEMPTS},
+    )
+    assert metadata_config.connect_timeout == object_config.connect_timeout == kudos_archive.ARCHIVE_CONNECT_TIMEOUT_SECONDS
 
 
 def test_abort_stale_multipart_uploads_reports_a_store_without_the_listing() -> None:
