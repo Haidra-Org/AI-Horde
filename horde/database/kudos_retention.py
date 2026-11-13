@@ -26,10 +26,11 @@ the I/O returns, so a crash repeats the step instead of skipping it. The step th
 the unit's row count and highest id, and the drop recounts both before removing anything.
 
 Each archive tier has its own byte budget. The dump and the export each admit an upload only when the tier's stored
-bytes plus the estimate fit, and block the unit otherwise. Nothing is evicted by a tick. With an archive configured,
-every tick lists both tiers once, clears ``object_key`` on units whose object is not listed, and returns the tier sizes.
-``audit_archive_metadata`` checks every object's manifest and listed size for the scheduled audit, and
-``audit_archive_contents`` reads every object back against its manifest when an operator asks for it.
+bytes plus the estimate fit, and block the unit otherwise. Nothing is evicted by a tick, and a tick sends archive
+requests only for the step it makes. ``reconcile_archive_catalog`` lists both tiers on its own schedule, updates the
+units whose object is not listed, and returns the tier sizes. ``abort_stale_archive_uploads`` aborts multipart uploads
+that a killed process left open. ``audit_archive_metadata`` checks every object's manifest and listed size for the
+scheduled audit, and ``audit_archive_contents`` reads every object back against its manifest when an operator asks for it.
 
 ``KUDOS_RETENTION_POLICY`` is read from the environment at import, so an invalid setting fails startup. The pure
 helpers (``parse_partition_bound``, ``format_source_range``, ``legacy_unit_ranges``, ``select_next_unit``,
@@ -49,6 +50,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Final, TypedDict, cast
 
+import logfire
 from loguru import logger
 from sqlalchemy import Connection, CursorResult, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
@@ -67,7 +69,12 @@ from horde.classes.base.kudos import (
     KudosStatRollup,
     ensure_kudos_event_partitions,
 )
-from horde.database.kudos_db import begin_repeatable_read, release_retention_lock, try_acquire_retention_lock
+from horde.database.kudos_db import (
+    acquire_retention_lock_within,
+    begin_repeatable_read,
+    release_retention_lock,
+    try_acquire_retention_lock,
+)
 from horde.enums import KudosEntryType, KudosRetentionDataset, KudosRetentionState
 from horde.flask import SQLITE_MODE, db
 from horde.kudos_archive import (
@@ -126,7 +133,17 @@ _DETACHED_LATE_ROWS_HINT: Final[str] = "The partition is detached, reattach it w
 DUMP_RETRY_SPACING: Final[timedelta] = timedelta(minutes=15)
 """How long a ``DUMP_FAILED`` unit waits after its last attempt before the dump is tried again."""
 STALE_UPLOAD_AGE: Final[timedelta] = timedelta(days=1)
-"""How long an incomplete multipart upload stays open before a tick aborts it. It is far longer than any export."""
+"""How long an incomplete multipart upload stays open before ``abort_stale_archive_uploads`` aborts it.
+
+It is far longer than any export, so a running upload is never old enough to be aborted and the abort runs without the
+retention lock.
+"""
+RECONCILIATION_LOCK_WAIT: Final[timedelta] = timedelta(seconds=10)
+"""How long ``reconcile_archive_catalog`` waits for the retention lock before it skips its pass.
+
+A tick without a step holds the lock for well under a second, which is within the wait. A step or an operator command can
+hold the lock for minutes, and the next hourly pass is soon enough.
+"""
 FUTURE_REFERENCE_REFUSAL: Final[str] = "reference time is in the future. Pass --confirm-live-data-loss on a restored copy only"
 RESTORED_PARTITION_REFUSAL: Final[str] = "an attached partition has dropped catalog units"
 """The detail of a ``BLOCKED`` tick result for a dataset with an attached partition whose catalog units are ``DROPPED``.
@@ -532,9 +549,6 @@ class RetentionTickResult:
     from_state: KudosRetentionState | None = None
     to_state: KudosRetentionState | None = None
     detail: str = ""
-    archive_tier_bytes: dict[ArchiveTier, int] | None = None
-    """The stored bytes of each archive tier, listed after the step, or None without an archive or when the listing
-    failed."""
 
 
 class KudosRetentionHealth(TypedDict):
@@ -1962,9 +1976,9 @@ def _run_locked_tick(
 ) -> RetentionTickResult:
     ensure_kudos_event_partitions(until=now + 2 * policy.partition_width, width=policy.partition_width)
     db.session.commit()
-    expire_idempotency_keys(before=now - policy.key_lifetime, batch_size=EXPIRE_KEYS_BATCH_SIZE)
-    if archive is not None:
-        _abort_stale_uploads(archive)
+    # The delete's commit has no statement span, so this span shows the whole expiry in the tick's trace.
+    with logfire.span("horde.kudos.retention.expire_keys"):
+        expire_idempotency_keys(before=now - policy.key_lifetime, batch_size=EXPIRE_KEYS_BATCH_SIZE)
     if not policy.enabled:
         return RetentionTickResult(outcome=RetentionTickOutcome.IDLE, detail="retention disabled")
     partitions = discover_partitions()
@@ -2014,12 +2028,16 @@ def _run_locked_tick(
     return failures[0]
 
 
-def _abort_stale_uploads(archive: KudosArchive) -> None:
-    """Abort multipart uploads that a killed process left open, so their stored parts stop taking space."""
+def abort_stale_archive_uploads(archive: KudosArchive) -> None:
+    """Abort multipart uploads that a killed process left open, so their stored parts stop taking space.
+
+    Only uploads older than ``STALE_UPLOAD_AGE`` are aborted. That age is far longer than any export, so this runs
+    without the retention lock.
+    """
     try:
         aborted = archive.abort_stale_multipart_uploads(older_than=STALE_UPLOAD_AGE)
     except KudosArchiveError as err:
-        # Stale parts only cost space, so the tick's retention work goes ahead.
+        # Stale parts only cost space until the next run removes them.
         logger.warning(f"Kudos retention could not abort stale archive uploads: {err}")
         return
     if aborted:
@@ -2049,15 +2067,15 @@ def run_retention_tick(
         dataset: Step only this dataset's units, for the operator command; both datasets when None.
         confirm_live_data_loss: Accept a future ``now``, for a rehearsal on a restored copy.
 
-    With an archive, the tick lists both tiers after the step, still under the lock, so no step writes a key between
-    the listing and the catalog read. Units whose object is not listed lose their ``object_key``, and the result holds
-    the tier sizes.
+    The tick sends archive requests only for the step it makes, so a tick without a step does not wait on the store.
+    ``reconcile_archive_catalog`` and ``abort_stale_archive_uploads`` do the archive housekeeping on their own
+    schedules.
 
     Returns:
         What the tick did; ``REFUSED`` for an unconfirmed future ``now``.
 
     Raises:
-        sqlalchemy.exc.SQLAlchemyError: A database statement failed; the session is rolled back first.
+        sqlalchemy.exc.SQLAlchemyError: A database statement failed. The session is rolled back first.
     """
     real_now = _utcnow()
     if now is None:
@@ -2071,10 +2089,7 @@ def run_retention_tick(
             return RetentionTickResult(outcome=RetentionTickOutcome.SKIPPED_LOCK)
         try:
             datasets = list(KudosRetentionDataset) if dataset is None else [dataset]
-            result = _run_locked_tick(now, policy, archive, datasets, lock_connection)
-            if archive is None:
-                return result
-            return replace(result, archive_tier_bytes=_reconcile_archive_catalog(archive))
+            return _run_locked_tick(now, policy, archive, datasets, lock_connection)
         except BaseException:
             db.session.rollback()
             raise
@@ -2105,7 +2120,24 @@ def _currency_unit_awaiting_drop(unit: CatalogUnit) -> bool:
     return unit.dataset == KudosRetentionDataset.CURRENCY and unit.state in awaiting_states
 
 
-def _reconcile_archive_catalog(archive: KudosArchive) -> dict[ArchiveTier, int] | None:
+@dataclass(frozen=True, kw_only=True)
+class _CatalogRowVersion:
+    """Represents one catalog row as read at one moment, for comparison with a later read."""
+
+    unit: CatalogUnit
+    updated: datetime
+    """The row's ``updated`` time, which every catalog write sets."""
+
+
+def _catalog_versions() -> dict[int, _CatalogRowVersion]:
+    """Return every catalog row with its ``updated`` time, by unit id, as the database holds it at this read."""
+    # The session keeps loaded attributes across commits. Without ``populate_existing``, a row object that is still in
+    # the session from an earlier read would keep its old values, and a write by another session would not show.
+    statement = select(KudosRetentionUnit).execution_options(populate_existing=True)
+    return {row.id: _CatalogRowVersion(unit=_catalog_unit(row), updated=row.updated) for row in db.session.scalars(statement)}
+
+
+def reconcile_archive_catalog(archive: KudosArchive, *, lock_wait: timedelta = RECONCILIATION_LOCK_WAIT) -> dict[ArchiveTier, int] | None:
     """Update the units whose object is not in the archive, commit, and return each tier's stored bytes.
 
     ``archive evict`` clears the keys of the units it evicts, so a listed key without its object was removed outside
@@ -2114,20 +2146,71 @@ def _reconcile_archive_catalog(archive: KudosArchive) -> dict[ArchiveTier, int] 
     and the drop would otherwise remove them without a copy. A ``DUMPED`` statistics unit whose partition is attached
     becomes ``DUMP_FAILED``, so the next ticks dump its rows again within the dump retry window. A detached one
     becomes ``BLOCKED`` with ``ARCHIVE_OBJECT_MISSING``. A ``DROPPED`` statistics unit keeps its key, so the archive
-    audit keeps reporting the lost object. Every other unit loses the key. A listing failure skips the reconciliation
-    for this tick.
+    audit keeps reporting the lost object. Every other unit loses the key. A listing failure skips the pass.
+
+    The tiers are listed without the retention lock and without an open database transaction, so a slow store does not
+    hold back ticks or operator commands. A step can therefore record a key while the listing runs. The catalog is read
+    before the listing and again under the lock after it, and only units whose row did not change between the two reads
+    are updated. Every catalog write holds the retention lock and sets ``updated``, and a step records a key only after
+    its upload has completed. So when the key of an unchanged unit is not listed, its object was stored before the
+    listing started and has been removed since. A unit that changed is left for the next pass.
+
+    Args:
+        archive: The archive client.
+        lock_wait: How long to wait for the retention lock after the listing. When it stays held, the pass does not
+            update any unit.
 
     Returns:
-        Each tier's stored bytes, or None when a listing failed.
+        Each tier's stored bytes, or None when a listing failed. The sizes are returned when the lock stayed held too.
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: A database statement failed. The session is rolled back first.
     """
+    snapshot = _catalog_versions()
+    # The snapshot's values are detached copies. Release the ORM transaction before object-store I/O.
+    db.session.commit()
     try:
         sizes_by_tier = {tier: archive.object_sizes(tier) for tier in ArchiveTier}
     except KudosArchiveError as err:
         logger.warning(f"Kudos retention could not list the archive to reconcile object keys: {err}")
         return None
     listed_keys = {key for sizes in sizes_by_tier.values() for key in sizes}
+    tier_bytes = {tier: sum(sizes.values()) for tier, sizes in sizes_by_tier.items()}
+    with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as lock_connection:
+        if not acquire_retention_lock_within(connection=lock_connection, wait=lock_wait):
+            logger.info(
+                f"Kudos retention skipped the archive reconciliation, because the retention lock stayed held for "
+                f"{lock_wait.total_seconds():g} seconds",
+            )
+            return tier_bytes
+        try:
+            _update_units_without_objects(listed_keys, snapshot)
+        except BaseException:
+            db.session.rollback()
+            raise
+        finally:
+            _release_lock_connection(lock_connection)
+    return tier_bytes
+
+
+def _update_units_without_objects(listed_keys: Collection[str], snapshot: Mapping[int, _CatalogRowVersion]) -> None:
+    """Make the transitions of ``reconcile_archive_catalog`` for unchanged units whose key is not listed, and commit.
+
+    The caller holds the retention lock.
+
+    Args:
+        listed_keys: Every object key of both tiers, from one listing.
+        snapshot: The catalog as read before the listing.
+    """
+    current = _catalog_versions()
     for missing_unit in units_without_archive_objects(listed_keys):
         if missing_unit.dataset == KudosRetentionDataset.STATISTICS and missing_unit.state == KudosRetentionState.DROPPED:
+            continue
+        if current.get(missing_unit.id) != snapshot.get(missing_unit.id):
+            logger.info(
+                f"Kudos retention left {missing_unit.dataset} unit {missing_unit.id} ({missing_unit.source_range}) for the "
+                f"next archive reconciliation, because its catalog row changed during the listing",
+            )
             continue
         values: dict[str, object] = {"object_key": None, "updated": _utcnow()}
         if _holds_statistics_dump(missing_unit) and missing_unit.state == KudosRetentionState.DUMPED:
@@ -2168,7 +2251,6 @@ def _reconcile_archive_catalog(archive: KudosArchive) -> dict[ArchiveTier, int] 
             )
         db.session.execute(update(KudosRetentionUnit).where(KudosRetentionUnit.id == missing_unit.id).values(**values))
     db.session.commit()
-    return {tier: sum(sizes.values()) for tier, sizes in sizes_by_tier.items()}
 
 
 def _release_lock_connection(lock_connection: Connection) -> None:
@@ -2936,6 +3018,10 @@ __all__ = [
     "audit_archive_contents",
     "audit_archive_metadata",
     "units_without_archive_objects",
+    "reconcile_archive_catalog",
+    "abort_stale_archive_uploads",
+    "RECONCILIATION_LOCK_WAIT",
+    "STALE_UPLOAD_AGE",
     "RETENTION_BLOCKED_LOG_PREFIX",
     "RETENTION_DUMP_FAILED_LOG_PREFIX",
     "AccountingRetentionDisclosure",

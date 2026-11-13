@@ -1058,6 +1058,11 @@ kudos_archive_budget_bytes = logfire.metric_gauge(
     unit="By",
     description="The configured kudos archive byte budget, by horde.kudos.archive.tier, for each tier that has one",
 )
+kudos_archive_listing_age = logfire.metric_gauge(
+    "horde.kudos.archive.listing_age",
+    unit="s",
+    description="Seconds since the last successful kudos archive listing, which the tier bytes come from",
+)
 kudos_archive_operation_duration = _seconds_histogram(
     "horde.kudos.archive.operation.duration",
     "Duration of a KudosArchive operation, by horde.kudos.archive.operation and horde.kudos.archive.failed",

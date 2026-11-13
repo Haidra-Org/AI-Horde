@@ -11,6 +11,10 @@ SQL, dialect function names, or lock-key literals.
 
 from __future__ import annotations
 
+import time
+from datetime import timedelta
+from typing import Final
+
 from sqlalchemy import Connection, func, select
 
 from horde.flask import SQLITE_MODE, db
@@ -20,6 +24,13 @@ KUDOS_PAYER_LOCK_NAMESPACE = 0x4B554452  # "KUDR"
 KUDOS_RECONCILIATION_LOCK = 0x4B55445245434F  # "KUDRECO"
 KUDOS_MODE_GATE_LOCK = 0x4B55444D  # "KUDM"
 KUDOS_RETENTION_LOCK = 0x4B5544524554  # "KUDRET"
+
+RETENTION_LOCK_RETRY_INTERVAL: Final[timedelta] = timedelta(milliseconds=250)
+"""How long ``acquire_retention_lock_within`` sleeps between attempts.
+
+A tick without a step releases the lock in well under a second. With a few attempts per second, the lock is taken soon
+after that release.
+"""
 
 
 def try_acquire_applier_lock() -> bool:
@@ -51,6 +62,28 @@ def try_acquire_retention_lock(*, connection: Connection | None = None) -> bool:
     if connection is None:
         return bool(db.session.execute(statement).scalar_one())
     return bool(connection.execute(statement).scalar_one())
+
+
+def acquire_retention_lock_within(*, connection: Connection, wait: timedelta) -> bool:
+    """Try to own the kudos retention job for the session of ``connection``, retrying until ``wait`` has passed.
+
+    A job that needs the lock only briefly uses this, so that a tick holding the lock for a moment does not make the job
+    skip its run. The lock is session-level, as with ``try_acquire_retention_lock``.
+
+    Args:
+        connection: A dedicated autocommit connection whose database session takes the lock.
+        wait: How long to keep retrying. Zero makes a single attempt.
+
+    Returns:
+        True when the session holds the lock, False when another session held it for the whole wait.
+    """
+    deadline = time.monotonic() + wait.total_seconds()
+    while not try_acquire_retention_lock(connection=connection):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(RETENTION_LOCK_RETRY_INTERVAL.total_seconds(), remaining))
+    return True
 
 
 def release_retention_lock(*, connection: Connection | None = None) -> bool:

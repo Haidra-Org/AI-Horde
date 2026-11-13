@@ -1364,6 +1364,7 @@ def test_scheduled_tick_records_the_step_and_the_gauges(db_session: scoped_sessi
         monkeypatch.setattr(metrics, name, recorder)
     monkeypatch.setattr(threads, "_kudos_archive_loaded", True)
     monkeypatch.setattr(threads, "_kudos_archive", None)
+    monkeypatch.setattr(threads, "_kudos_archive_tier_bytes", None)
 
     threads.kudos_retention_tick()
 
@@ -1389,30 +1390,112 @@ def test_scheduled_tick_records_the_step_and_the_gauges(db_session: scoped_sessi
     assert recorders["kudos_archive_budget_bytes"].recordings == []
 
 
-def test_scheduled_tick_records_a_budget_per_configured_tier_and_the_listed_tier_bytes(
+def test_scheduled_tick_records_a_budget_per_configured_tier_and_the_last_listed_tier_bytes(
     db_session: scoped_session[Session],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The reconciliation job records the listed tier sizes, and every later tick records them again without a listing."""
     from horde import metrics
     from horde.database import kudos_retention, threads
 
-    recorders = {name: _MetricRecorder() for name in ("kudos_archive_tier_bytes", "kudos_archive_budget_bytes")}
+    recorders = {
+        name: _MetricRecorder()
+        for name in (
+            "kudos_archive_tier_bytes",
+            "kudos_archive_budget_bytes",
+            "kudos_archive_listing_age",
+        )
+    }
     for name, recorder in recorders.items():
         monkeypatch.setattr(metrics, name, recorder)
     store = _FakeObjectStore()
-    store.objects["statistics/kudos_stat_events_p_old__20200106T000000_20200113T000000.csv.zst"] = b"x" * 7
+    stored_key = "statistics/kudos_stat_events_p_old__20200106T000000_20200113T000000.csv.zst"
+    store.objects[stored_key] = b"x" * 7
     monkeypatch.setattr(threads, "_kudos_archive_loaded", True)
     monkeypatch.setattr(threads, "_kudos_archive", _fake_archive(store))
+    monkeypatch.setattr(threads, "_kudos_archive_job_last_runs", {})
+    monkeypatch.setattr(threads, "_kudos_archive_tier_bytes", None)
     monkeypatch.setattr(kudos_retention, "KUDOS_RETENTION_POLICY", _policy(currency_budget_bytes=1000))
+    listed_tier_bytes = [
+        (0, {"horde.kudos.archive.tier": "currency"}),
+        (7, {"horde.kudos.archive.tier": "statistics"}),
+    ]
 
     threads.kudos_retention_tick()
 
     # Only the currency tier has a budget, so the statistics tier has no budget series.
     assert recorders["kudos_archive_budget_bytes"].recordings == [(1000, {"horde.kudos.archive.tier": "currency"})]
-    assert recorders["kudos_archive_tier_bytes"].recordings == [
-        (0, {"horde.kudos.archive.tier": "currency"}),
-        (7, {"horde.kudos.archive.tier": "statistics"}),
-    ]
+    assert recorders["kudos_archive_tier_bytes"].recordings == []
+
+    threads.reconcile_kudos_archive_catalog()
+    assert recorders["kudos_archive_tier_bytes"].recordings == listed_tier_bytes
+
+    recorders["kudos_archive_tier_bytes"].recordings.clear()
+    del store.objects[stored_key]
+    threads.kudos_retention_tick()
+    assert recorders["kudos_archive_tier_bytes"].recordings == listed_tier_bytes
+    # The job and the later tick each record how long ago the sizes were listed.
+    listing_ages = [age for age, _ in recorders["kudos_archive_listing_age"].recordings]
+    assert len(listing_ages) == 2
+    assert 0 <= listing_ages[0] <= listing_ages[1]
+
+
+def test_archive_jobs_return_at_once_without_an_archive(monkeypatch: pytest.MonkeyPatch) -> None:
+    from horde import metrics
+    from horde.database import threads
+
+    recorder = _MetricRecorder()
+    monkeypatch.setattr(metrics, "kudos_archive_tier_bytes", recorder)
+    monkeypatch.setattr(threads, "_kudos_archive_loaded", True)
+    monkeypatch.setattr(threads, "_kudos_archive", None)
+    monkeypatch.setattr(threads, "_kudos_archive_tier_bytes", None)
+
+    threads.reconcile_kudos_archive_catalog()
+    threads.abort_stale_kudos_archive_uploads()
+
+    assert recorder.recordings == []
+    assert threads._kudos_archive_tier_bytes is None
+
+
+def test_archive_jobs_run_again_only_after_their_intervals(
+    db_session: scoped_session[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each archive job sends store requests on its first call and then not again until its interval has passed."""
+    from horde import metrics
+    from horde.database import threads
+
+    recorder = _MetricRecorder()
+    monkeypatch.setattr(metrics, "kudos_archive_tier_bytes", recorder)
+    store = _FakeObjectStore()
+    store.objects["statistics/first.csv.zst"] = b"x" * 7
+    store.uploads["stale"] = ("statistics/stale.csv.zst", datetime.now(UTC) - timedelta(days=2), {})
+    monkeypatch.setattr(threads, "_kudos_archive_loaded", True)
+    monkeypatch.setattr(threads, "_kudos_archive", _fake_archive(store))
+    monkeypatch.setattr(threads, "_kudos_archive_job_last_runs", {})
+    monkeypatch.setattr(threads, "_kudos_archive_tier_bytes", None)
+
+    def statistics_bytes() -> list[float]:
+        return [amount for amount, attributes in recorder.recordings if attributes == {"horde.kudos.archive.tier": "statistics"}]
+
+    threads.reconcile_kudos_archive_catalog()
+    threads.abort_stale_kudos_archive_uploads()
+    assert statistics_bytes() == [7]
+    assert set(store.uploads) == set()
+
+    store.objects["statistics/second.csv.zst"] = b"x" * 5
+    store.uploads["stale again"] = ("statistics/stale-again.csv.zst", datetime.now(UTC) - timedelta(days=2), {})
+    threads.reconcile_kudos_archive_catalog()
+    threads.abort_stale_kudos_archive_uploads()
+    assert statistics_bytes() == [7]
+    assert set(store.uploads) == {"stale again"}
+
+    threads._kudos_archive_job_last_runs["reconciliation"] -= threads.KUDOS_ARCHIVE_RECONCILIATION_INTERVAL.total_seconds()
+    threads._kudos_archive_job_last_runs["stale_uploads"] -= threads.KUDOS_ARCHIVE_STALE_UPLOAD_INTERVAL.total_seconds()
+    threads.reconcile_kudos_archive_catalog()
+    threads.abort_stale_kudos_archive_uploads()
+    assert statistics_bytes() == [7, 12]
+    assert set(store.uploads) == set()
 
 
 # Rehearsal time override
@@ -1517,6 +1600,12 @@ def _run(archive: Any, now: datetime = AFTER_WINDOW, **policy_overrides: Any) ->
     from horde.database.kudos_retention import run_retention_tick
 
     return run_retention_tick(now=now, policy=_policy(**policy_overrides), archive=archive)
+
+
+def _reconcile(archive: Any, lock_wait: timedelta = timedelta(0)) -> Any:
+    from horde.database.kudos_retention import reconcile_archive_catalog
+
+    return reconcile_archive_catalog(archive, lock_wait=lock_wait)
 
 
 def _unit_of(db_session: scoped_session[Session], partition: str) -> Any:
@@ -1916,7 +2005,7 @@ def test_verified_currency_unit_whose_object_vanishes_blocks_and_is_exported_aga
     make_user: MakeUser,
     hold_drops: bool,
 ) -> None:
-    """The drop's archive check blocks the unit, and with drops held the post-step listing blocks it instead."""
+    """The drop's archive check blocks the unit, and with drops held the archive reconciliation blocks it instead."""
     from horde.database.kudos_retention import unblock_unit
     from horde.kudos_archive import manifest_key
 
@@ -1924,7 +2013,9 @@ def test_verified_currency_unit_whose_object_vanishes_blocks_and_is_exported_aga
     key = _unit_of(db_session, partition).object_key
     del store.objects[key]
     del store.objects[manifest_key(key)]
-    _run(archive, hold_drops=hold_drops)
+    if not hold_drops:
+        assert _run(archive).outcome == RetentionTickOutcome.BLOCKED
+    _reconcile(archive)
     unit = _unit_of(db_session, partition)
     assert (unit.state, unit.error, unit.object_key) == (KudosRetentionState.BLOCKED, RetentionBlockReason.ARCHIVE_OBJECT_MISSING, None)
     assert _attached(db_session, partition)
@@ -2008,7 +2099,7 @@ def _delete_object(store: Any, key: str) -> None:
     del store.objects[manifest_key(key)]
 
 
-def test_tick_dumps_again_a_statistics_unit_whose_dump_vanished_and_reports_tier_bytes(
+def test_tick_dumps_again_a_statistics_unit_whose_dump_vanished_and_reconciliation_reports_tier_bytes(
     db_session: scoped_session[Session],
     make_partition: Callable[..., str],
 ) -> None:
@@ -2018,8 +2109,7 @@ def test_tick_dumps_again_a_statistics_unit_whose_dump_vanished_and_reports_tier
     assert key is not None
 
     _delete_object(store, key)
-    idle = _run(archive, hold_drops=True)
-    assert idle.archive_tier_bytes == {ArchiveTier.CURRENCY: 0, ArchiveTier.STATISTICS: 0}
+    assert _reconcile(archive) == {ArchiveTier.CURRENCY: 0, ArchiveTier.STATISTICS: 0}
     unit = _unit_of(db_session, partition)
     assert (unit.state, unit.object_key) == (KudosRetentionState.DUMP_FAILED, None)
     assert unit.error == f"{RetentionBlockReason.ARCHIVE_OBJECT_MISSING}: {key}"
@@ -2028,7 +2118,9 @@ def test_tick_dumps_again_a_statistics_unit_whose_dump_vanished_and_reports_tier
     redumped = _run(archive, hold_drops=True)
     assert redumped.to_state == KudosRetentionState.DUMPED
     assert _unit_of(db_session, partition).object_key == key
-    assert redumped.archive_tier_bytes is not None and redumped.archive_tier_bytes[ArchiveTier.STATISTICS] > 0
+    tier_bytes = _reconcile(archive)
+    assert tier_bytes is not None and tier_bytes[ArchiveTier.STATISTICS] > 0
+    assert _unit_of(db_session, partition).object_key == key
     assert _run(archive).to_state == KudosRetentionState.DROPPED
 
 
@@ -2069,7 +2161,7 @@ def test_detached_statistics_unit_whose_dump_vanished_blocks_until_reattached(
     partition, store, archive = _dumped_statistics_week(db_session, make_partition)
     assert _run(archive, drop_grace=timedelta(days=7)).to_state == KudosRetentionState.DETACHED
     _delete_object(store, _unit_of(db_session, partition).object_key)
-    _run(archive, drop_grace=timedelta(days=7))
+    _reconcile(archive)
     unit = _unit_of(db_session, partition)
     assert (unit.state, unit.error) == (KudosRetentionState.BLOCKED, RetentionBlockReason.ARCHIVE_OBJECT_MISSING)
     assert unit.detached_at is not None
@@ -2098,7 +2190,7 @@ def test_dropped_statistics_unit_keeps_the_key_of_a_vanished_dump_so_the_audit_r
     key = _unit_of(db_session, partition).object_key
     _delete_object(store, key)
     for _ in range(2):
-        _run(archive)
+        _reconcile(archive)
         assert _unit_of(db_session, partition).object_key == key
     missing = [record for record in audit_archive_metadata(archive) if isinstance(record, MissingArchiveObject)]
     assert [(record.object_key, record.state) for record in missing] == [(key, KudosRetentionState.DROPPED)]
@@ -2132,15 +2224,240 @@ def test_eviction_keeps_the_dumps_of_units_not_dropped_and_clears_the_keys_it_de
     assert _unit_of(db_session, held_partition).object_key == held_key
     assert [record for record in audit_archive_metadata(archive) if isinstance(record, MissingArchiveObject)] == []
     assert _run(archive, hold_drops=True).outcome == RetentionTickOutcome.IDLE
+    _reconcile(archive)
     assert _unit_of(db_session, held_partition).state == KudosRetentionState.DUMPED
+    assert _unit_of(db_session, dropped_partition).object_key is None
 
 
-def test_tick_aborts_multipart_uploads_older_than_a_day(db_session: scoped_session[Session]) -> None:
+def test_stale_upload_job_aborts_multipart_uploads_older_than_a_day_while_a_tick_holds_the_lock(
+    db_session: scoped_session[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from horde.database import threads
+    from horde.database.kudos_db import release_retention_lock, try_acquire_retention_lock
+    from horde.flask import db
+
     store = _FakeObjectStore()
     store.uploads["stale"] = ("statistics/stale.csv.zst", datetime.now(UTC) - timedelta(days=2), {})
     store.uploads["running"] = ("statistics/running.csv.zst", datetime.now(UTC), {})
-    assert _run(_fake_archive(store), enabled=False).outcome == RetentionTickOutcome.IDLE
+    monkeypatch.setattr(threads, "_kudos_archive_loaded", True)
+    monkeypatch.setattr(threads, "_kudos_archive", _fake_archive(store))
+    monkeypatch.setattr(threads, "_kudos_archive_job_last_runs", {})
+
+    with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as holder:
+        assert try_acquire_retention_lock(connection=holder)
+        threads.abort_stale_kudos_archive_uploads()
+        assert release_retention_lock(connection=holder)
     assert set(store.uploads) == {"running"}
+
+
+class _RecordingClient:
+    """Pass every call to an object store and record the name of each client method used."""
+
+    def __init__(self, store: _FakeObjectStore) -> None:
+        self._store = store
+        self.operations: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        self.operations.append(name)
+        return getattr(self._store, name)
+
+
+def test_tick_without_a_step_sends_no_archive_request(db_session: scoped_session[Session]) -> None:
+    from horde.kudos_archive import KudosArchive
+
+    store = _FakeObjectStore()
+    store.uploads["stale"] = ("statistics/stale.csv.zst", datetime.now(UTC) - timedelta(days=2), {})
+    client = _RecordingClient(store)
+    archive = KudosArchive(client=client, bucket="kudos-archive-fake")
+
+    assert _run(archive).outcome == RetentionTickOutcome.IDLE
+    assert _run(archive, enabled=False).outcome == RetentionTickOutcome.IDLE
+    assert client.operations == []
+    assert set(store.uploads) == {"stale"}
+
+
+def _seed_unit_with_key(
+    db_session: scoped_session[Session],
+    dataset: KudosRetentionDataset,
+    state: KudosRetentionState,
+    *,
+    week: int = 0,
+    object_key: str | None = None,
+    state_before_detach: KudosRetentionState | None = None,
+) -> int:
+    """Insert one catalog unit for the week ``week`` weeks after ``MONDAY`` and return its id."""
+    from horde.classes.base.kudos import KudosRetentionUnit
+
+    lower = MONDAY + week * WEEK
+    parent = "kudos_ledger" if dataset == CURRENCY else "kudos_stat_events"
+    now = datetime.now(UTC).replace(tzinfo=None)
+    row = KudosRetentionUnit(
+        dataset=dataset,
+        partition_name=f"{parent}_p_{lower:%Y%m%d}",
+        unit_lower=lower,
+        unit_upper=lower + WEEK,
+        state=state,
+        object_key=object_key,
+        row_count=1,
+        detached_at=now if state == KudosRetentionState.DETACHED else None,
+        state_before_detach=state_before_detach,
+        created=now,
+        updated=now,
+    )
+    db_session.add(row)
+    db_session.commit()
+    return int(row.id)
+
+
+def _catalog_row(db_session: scoped_session[Session], unit_id: int) -> Any:
+    from horde.classes.base.kudos import KudosRetentionUnit
+
+    db_session.expire_all()
+    return db_session.get(KudosRetentionUnit, unit_id)
+
+
+MISSING_OBJECT_TRANSITIONS: list[
+    tuple[KudosRetentionDataset, KudosRetentionState, KudosRetentionState | None, KudosRetentionState, str | None, bool]
+] = [
+    (STATISTICS, KudosRetentionState.DUMPED, None, KudosRetentionState.DUMP_FAILED, "archive object missing: {key}", False),
+    (STATISTICS, KudosRetentionState.DETACHED, KudosRetentionState.DUMPED, KudosRetentionState.BLOCKED, "archive object missing", False),
+    (STATISTICS, KudosRetentionState.DROPPED, None, KudosRetentionState.DROPPED, None, True),
+    (STATISTICS, KudosRetentionState.DUMP_WAIVED, None, KudosRetentionState.DUMP_WAIVED, None, False),
+    (CURRENCY, KudosRetentionState.EXPORTED, None, KudosRetentionState.BLOCKED, "archive object missing", False),
+    (CURRENCY, KudosRetentionState.VERIFIED, None, KudosRetentionState.BLOCKED, "archive object missing", False),
+    (CURRENCY, KudosRetentionState.DETACHED, KudosRetentionState.VERIFIED, KudosRetentionState.BLOCKED, "archive object missing", False),
+    (CURRENCY, KudosRetentionState.DROPPED, None, KudosRetentionState.DROPPED, None, False),
+]
+"""Per unit whose object is missing: dataset, state, state before the detach, expected state, expected error (with
+``{key}`` for the object key) and whether the key is kept."""
+
+
+@pytest.mark.parametrize(
+    ("dataset", "state", "state_before_detach", "expected_state", "expected_error", "key_kept"),
+    MISSING_OBJECT_TRANSITIONS,
+)
+def test_reconciliation_updates_each_unit_whose_object_is_missing(
+    db_session: scoped_session[Session],
+    dataset: KudosRetentionDataset,
+    state: KudosRetentionState,
+    state_before_detach: KudosRetentionState | None,
+    expected_state: KudosRetentionState,
+    expected_error: str | None,
+    key_kept: bool,
+) -> None:
+    key = f"{dataset}/missing.csv.zst"
+    unit_id = _seed_unit_with_key(db_session, dataset, state, object_key=key, state_before_detach=state_before_detach)
+
+    assert _reconcile(_fake_archive(_FakeObjectStore())) == {ArchiveTier.CURRENCY: 0, ArchiveTier.STATISTICS: 0}
+
+    row = _catalog_row(db_session, unit_id)
+    assert row.state == expected_state
+    assert row.error == (None if expected_error is None else expected_error.format(key=key))
+    assert row.object_key == (key if key_kept else None)
+
+
+def test_reconciliation_keeps_the_key_of_a_listed_object(db_session: scoped_session[Session]) -> None:
+    store = _FakeObjectStore()
+    key = "statistics/listed.csv.zst"
+    store.objects[key] = b"x" * 3
+    unit_id = _seed_unit_with_key(db_session, STATISTICS, KudosRetentionState.DUMPED, object_key=key)
+
+    assert _reconcile(_fake_archive(store)) == {ArchiveTier.CURRENCY: 0, ArchiveTier.STATISTICS: 3}
+    row = _catalog_row(db_session, unit_id)
+    assert (row.state, row.object_key) == (KudosRetentionState.DUMPED, key)
+
+
+def _write_during_listing(monkeypatch: pytest.MonkeyPatch, archive: Any, unit_id: int, **values: Any) -> None:
+    """Make the archive's statistics listing commit ``values`` to one catalog row after the listing is taken, from a
+    connection of its own, as a step running beside the reconciliation would."""
+    from sqlalchemy import update as sql_update
+
+    from horde.classes.base.kudos import KudosRetentionUnit
+    from horde.flask import db
+
+    listed_object_sizes = archive.object_sizes
+
+    def object_sizes_then_write(tier: ArchiveTier) -> dict[str, int]:
+        sizes: dict[str, int] = listed_object_sizes(tier)
+        if tier == ArchiveTier.STATISTICS:
+            with db.engine.begin() as connection:
+                connection.execute(sql_update(KudosRetentionUnit).where(KudosRetentionUnit.id == unit_id).values(**values))
+        return sizes
+
+    monkeypatch.setattr(archive, "object_sizes", object_sizes_then_write)
+
+
+def test_reconciliation_keeps_a_key_recorded_during_the_listing(
+    db_session: scoped_session[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    key = "statistics/dumped-during-the-listing.csv.zst"
+    unit_id = _seed_unit_with_key(db_session, STATISTICS, KudosRetentionState.ROLLED_UP)
+    _write_during_listing(monkeypatch, archive, unit_id, state=KudosRetentionState.DUMPED, object_key=key)
+
+    assert _reconcile(archive) == {ArchiveTier.CURRENCY: 0, ArchiveTier.STATISTICS: 0}
+
+    row = _catalog_row(db_session, unit_id)
+    assert (row.state, row.object_key, row.error) == (KudosRetentionState.DUMPED, key, None)
+
+
+def test_reconciliation_leaves_a_unit_changed_during_the_listing_for_the_next_pass(
+    db_session: scoped_session[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    key = "statistics/lost.csv.zst"
+    unit_id = _seed_unit_with_key(db_session, STATISTICS, KudosRetentionState.DUMPED, object_key=key)
+    _write_during_listing(monkeypatch, archive, unit_id, updated=datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=1))
+
+    _reconcile(archive)
+    row = _catalog_row(db_session, unit_id)
+    assert (row.state, row.object_key) == (KudosRetentionState.DUMPED, key)
+
+    monkeypatch.undo()
+    _reconcile(archive)
+    row = _catalog_row(db_session, unit_id)
+    assert (row.state, row.object_key) == (KudosRetentionState.DUMP_FAILED, None)
+
+
+def test_reconciliation_skips_its_pass_while_the_lock_is_held_and_still_returns_the_tier_bytes(
+    db_session: scoped_session[Session],
+) -> None:
+    from horde.database.kudos_db import release_retention_lock, try_acquire_retention_lock
+    from horde.flask import db
+
+    store = _FakeObjectStore()
+    store.objects["currency/other.csv.zst"] = b"x" * 5
+    archive = _fake_archive(store)
+    unit_id = _seed_unit_with_key(db_session, STATISTICS, KudosRetentionState.DUMPED, object_key="statistics/lost.csv.zst")
+
+    with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as holder:
+        assert try_acquire_retention_lock(connection=holder)
+        assert _reconcile(archive, lock_wait=timedelta(milliseconds=600)) == {ArchiveTier.CURRENCY: 5, ArchiveTier.STATISTICS: 0}
+        assert release_retention_lock(connection=holder)
+    assert _catalog_row(db_session, unit_id).state == KudosRetentionState.DUMPED
+
+    _reconcile(archive)
+    assert _catalog_row(db_session, unit_id).state == KudosRetentionState.DUMP_FAILED
+
+
+def test_reconciliation_skips_its_pass_when_the_listing_fails(db_session: scoped_session[Session]) -> None:
+    store = _FakeObjectStore()
+    archive = _fake_archive(store)
+    unit_id = _seed_unit_with_key(db_session, STATISTICS, KudosRetentionState.DUMPED, object_key="statistics/lost.csv.zst")
+
+    def failed_listing(tier: ArchiveTier) -> dict[str, int]:
+        from horde.kudos_archive import KudosArchiveError
+
+        raise KudosArchiveError(f"Archive listing of {tier} failed: simulated outage")
+
+    archive.object_sizes = failed_listing
+    assert _reconcile(archive) is None
+    assert _catalog_row(db_session, unit_id).state == KudosRetentionState.DUMPED
 
 
 def test_failed_dump_waits_out_the_spacing_while_later_statistics_proceed(

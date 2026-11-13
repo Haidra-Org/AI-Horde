@@ -6,6 +6,7 @@ import json
 import os
 import time
 from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import logfire
 
@@ -67,6 +68,9 @@ from horde.r2 import delete_source_image
 from horde.request_scheduling import record_request_expiry_forecast
 from horde.stripe_subs import stripe_subs
 from horde.vars import horde_instance_id
+
+if TYPE_CHECKING:
+    from horde.kudos_archive import ArchiveTier, KudosArchive
 
 # The quorum owner renews its claim every second (the Quorum thread's interval). The claim must outlive a
 # few missed renewals, since each renewal is a fanned-out redis write across the network: too short a TTL
@@ -872,11 +876,11 @@ def apply_kudos_ledger() -> None:
 
 _kudos_archive_loaded = False
 """Whether ``_kudos_archive`` was built from the environment in this process."""
-_kudos_archive = None
+_kudos_archive: "KudosArchive | None" = None
 """The kudos archive client for this process, or None when the archive is not configured."""
 
 
-def _get_kudos_archive():
+def _get_kudos_archive() -> "KudosArchive | None":
     """Return the process's kudos archive client, built from ``KUDOS_ARCHIVE_*`` on first use.
 
     Built once so an unconfigured archive logs its warning once per process, not once per tick.
@@ -888,6 +892,120 @@ def _get_kudos_archive():
         _kudos_archive = KudosArchive.from_environment()
         _kudos_archive_loaded = True
     return _kudos_archive
+
+
+KUDOS_ARCHIVE_RECONCILIATION_INTERVAL = timedelta(hours=1)
+"""How often ``reconcile_kudos_archive_catalog`` lists the archive.
+
+An object goes missing only through a delete outside the horde or an interrupted eviction, and the drop checks every
+object again before it removes anything. An hourly listing reports such a loss soon enough, and a slow store then costs
+one listing an hour.
+"""
+KUDOS_ARCHIVE_STALE_UPLOAD_INTERVAL = timedelta(days=1)
+"""How often ``abort_stale_kudos_archive_uploads`` lists the open multipart uploads.
+
+An upload counts as stale only after ``STALE_UPLOAD_AGE`` (one day), and its parts cost only storage until then, so a
+daily pass is enough.
+"""
+
+KUDOS_ARCHIVE_JOB_WAKE_INTERVAL = timedelta(seconds=60)
+"""How often the archive job threads wake to check whether a run is due.
+
+``PrimaryTimedFunction`` sleeps one whole interval while the node is not the quorum, and the quorum is usually not yet
+known when the threads start. With a job's own interval as the thread interval, the first run after a start or a quorum
+change would come an hour or a day late. The threads wake at this interval instead, and ``_kudos_archive_job_due``
+limits each job to its own interval.
+"""
+
+_kudos_archive_job_last_runs: dict[str, float] = {}
+"""The ``time.monotonic`` reading at each archive job's last run in this process, by job name."""
+
+
+def _kudos_archive_job_due(job_name: str, interval: timedelta) -> bool:
+    """Return whether ``interval`` has passed since the job's last run in this process, and record a run when it has.
+
+    A job without a recorded run is due, so each job runs within ``KUDOS_ARCHIVE_JOB_WAKE_INTERVAL`` of the node first
+    being the quorum. A run that fails is recorded as well, so a failing store is tried again after the job's interval.
+    """
+    now = time.monotonic()
+    last_run = _kudos_archive_job_last_runs.get(job_name)
+    if last_run is not None and now - last_run < interval.total_seconds():
+        return False
+    _kudos_archive_job_last_runs[job_name] = now
+    return True
+
+
+_kudos_archive_tier_bytes: "dict[ArchiveTier, int] | None" = None
+"""The stored bytes of each archive tier from the last successful archive reconciliation, or None before one.
+
+The SDK exports a synchronous gauge only for a collection in which it was set. ``kudos_retention_tick`` sets the tier
+bytes gauge from these values on every tick, so the series is exported between the hourly listings.
+"""
+
+
+_kudos_archive_listed_at: float | None = None
+"""The ``time.monotonic`` reading when ``_kudos_archive_tier_bytes`` was listed, or None before a listing.
+
+The listing age gauge is set from it, so a store that has stopped responding shows as a growing age while the tier bytes
+gauge still has its last values.
+"""
+
+
+def _record_kudos_archive_tier_bytes() -> None:
+    """Set the tier bytes gauge and the listing age gauge from the last listed tier sizes, when there are any."""
+    from horde.metrics import kudos_archive_listing_age, kudos_archive_tier_bytes
+
+    if _kudos_archive_tier_bytes is None or _kudos_archive_listed_at is None:
+        return
+    kudos_archive_listing_age.set(time.monotonic() - _kudos_archive_listed_at)
+    for tier, stored_bytes in _kudos_archive_tier_bytes.items():
+        kudos_archive_tier_bytes.set(stored_bytes, {"horde.kudos.archive.tier": str(tier)})
+
+
+@logger.catch(reraise=True)
+def reconcile_kudos_archive_catalog() -> None:
+    """Compare the kudos retention catalog with the archive listing and record the tier sizes (ADR 42).
+
+    Runs on the quorum node every ``KUDOS_ARCHIVE_RECONCILIATION_INTERVAL``. See
+    ``horde.database.kudos_retention.reconcile_archive_catalog``. Returns at once without an archive or in SQLite mode.
+    When the listing fails, the tick keeps setting the tier bytes gauge from the last listed sizes.
+    """
+    global _kudos_archive_tier_bytes, _kudos_archive_listed_at
+    if SQLITE_MODE:
+        return
+    archive = _get_kudos_archive()
+    if archive is None:
+        return
+    if not _kudos_archive_job_due("reconciliation", KUDOS_ARCHIVE_RECONCILIATION_INTERVAL):
+        return
+    from horde.database.kudos_retention import reconcile_archive_catalog
+
+    with get_app().app_context():
+        tier_bytes = reconcile_archive_catalog(archive)
+    if tier_bytes is None:
+        return
+    _kudos_archive_tier_bytes = tier_bytes
+    _kudos_archive_listed_at = time.monotonic()
+    _record_kudos_archive_tier_bytes()
+
+
+@logger.catch(reraise=True)
+def abort_stale_kudos_archive_uploads() -> None:
+    """Abort the kudos archive multipart uploads that a killed process left open (ADR 42).
+
+    Runs on the quorum node every ``KUDOS_ARCHIVE_STALE_UPLOAD_INTERVAL``, without the retention lock. See
+    ``horde.database.kudos_retention.abort_stale_archive_uploads``. Returns at once without an archive or in SQLite mode.
+    """
+    if SQLITE_MODE:
+        return
+    archive = _get_kudos_archive()
+    if archive is None:
+        return
+    if not _kudos_archive_job_due("stale_uploads", KUDOS_ARCHIVE_STALE_UPLOAD_INTERVAL):
+        return
+    from horde.database.kudos_retention import abort_stale_archive_uploads
+
+    abort_stale_archive_uploads(archive)
 
 
 @logger.catch(reraise=True)
@@ -910,7 +1028,6 @@ def kudos_retention_tick() -> None:
     from horde.kudos_archive import ArchiveTier
     from horde.metrics import (
         kudos_archive_budget_bytes,
-        kudos_archive_tier_bytes,
         kudos_retention_blocked_units,
         kudos_retention_dump_failures,
         kudos_retention_held_partitions,
@@ -971,11 +1088,9 @@ def kudos_retention_tick() -> None:
             tier_budget = KUDOS_RETENTION_POLICY.budget_for(tier)
             if tier_budget is not None:
                 kudos_archive_budget_bytes.set(tier_budget, {"horde.kudos.archive.tier": str(tier)})
-        # The tick lists the tiers after its step to reconcile object keys. When that listing failed, the gauges keep
-        # their last values and the next tick samples again.
-        if result.archive_tier_bytes is not None:
-            for tier, stored_bytes in result.archive_tier_bytes.items():
-                kudos_archive_tier_bytes.set(stored_bytes, {"horde.kudos.archive.tier": str(tier)})
+        # The tier sizes come from the hourly archive reconciliation. Setting them again here keeps the series exported
+        # between listings without an archive request from the tick.
+        _record_kudos_archive_tier_bytes()
 
 
 # How many performance samples per worker back the materialized ``workers.speed``

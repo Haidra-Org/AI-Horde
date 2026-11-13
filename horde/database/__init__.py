@@ -51,6 +51,18 @@ def start_background_threads():
     # Retention makes at most one partition transition per tick and holds its own
     # advisory lock, so a slow export never delays the applier above.
     PrimaryTimedFunction(60, threads.kudos_retention_tick, quorum=quorum)
+    # Archive housekeeping runs on its own threads, so a slow object store does not stretch the retention tick.
+    # The threads wake often and each job runs only when its interval has passed, see KUDOS_ARCHIVE_JOB_WAKE_INTERVAL.
+    PrimaryTimedFunction(
+        threads.KUDOS_ARCHIVE_JOB_WAKE_INTERVAL.total_seconds(),
+        threads.reconcile_kudos_archive_catalog,
+        quorum=quorum,
+    )
+    PrimaryTimedFunction(
+        threads.KUDOS_ARCHIVE_JOB_WAKE_INTERVAL.total_seconds(),
+        threads.abort_stale_kudos_archive_uploads,
+        quorum=quorum,
+    )
     # The quorum node is the only writer of workers.speed: submits merely append a
     # performance sample, and this folds the samples into the materialized rolling
     # average. The interval bounds how stale a pop-side speed reading can be.
