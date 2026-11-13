@@ -15,6 +15,15 @@ ANONYMOUS_API_KEY = "0000000000"
 
 HORDE_API_VERSION = "2.6"
 
+PEER_INSTANCE_CONTRACT_VERSION = "1.0"
+"""Instances of two AI-Horde versions can serve together only when this value matches.
+
+Bump it when the new version and the previous one must not serve at the same time, for example when the previous version
+cannot run against a schema change, or when running both could leave the database inconsistent. Deployments read it from
+the heartbeat to choose between replacing instances one at a time and replacing them all together. See CONTRIBUTING.md,
+"Peer instance contract version".
+"""
+
 WHITELISTED_SERVICE_IPS = {
     "212.227.227.178",  # Turing Bot
     "5.189.169.230",  # Discord Bot

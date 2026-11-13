@@ -56,7 +56,7 @@ from horde.classes.base.worker import (
     WorkerMessage,
     WorkerTemplate,
 )
-from horde.consts import HORDE_VERSION
+from horde.consts import HORDE_VERSION, PEER_INSTANCE_CONTRACT_VERSION
 from horde.countermeasures import REJECTION_WINDOW, CounterMeasures
 from horde.database import functions as database
 from horde.database import prompt_moderation
@@ -3911,6 +3911,7 @@ class Heartbeat(Resource):
         return {
             "message": health,
             "version": HORDE_VERSION,
+            "peer_instance_contract_version": PEER_INSTANCE_CONTRACT_VERSION,
             "queue": waitress_metrics.queue,
             "threads": waitress_metrics.threads,
             "active_count": waitress_metrics.active_count,

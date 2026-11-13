@@ -94,6 +94,21 @@ We use `.git-blame-ignore-revs` to ignore certain commits when using `git blame`
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
+### Peer instance contract version
+
+A deployment may run several AI-Horde instances, including the chat front, against one database and Redis, and replace
+them one at a time. `PEER_INSTANCE_CONTRACT_VERSION` in `horde/consts.py` lets the deployment check whether that is safe:
+instances of two versions can serve together only when the values match. The value is in the heartbeat
+(`/api/v2/status/heartbeat`) and in `/.well-known/serviceinfo`.
+
+Bump it in the same change when the new version and the previous one must not serve at the same time. Examples:
+
+- a schema change that the previous version cannot run against
+- a changed format of values in the database or Redis that the previous version cannot read, or would overwrite
+- a change to the native chat responses or chat Redis entries that the previous chat front cannot read
+
+When the values differ, a deployment replaces every instance together instead of one at a time.
+
 ## Documentation
 
 The `docs/` tree follows the [Haidra documentation standard](docs/haidra-assets/docs/meta/documentation.md), which

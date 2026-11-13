@@ -20,7 +20,7 @@ from horde.argparser import maintenance
 from horde.classes.base import settings
 from horde.classes.base.news import News
 from horde.classes.base.user import User
-from horde.consts import HORDE_API_VERSION, HORDE_VERSION
+from horde.consts import HORDE_API_VERSION, HORDE_VERSION, PEER_INSTANCE_CONTRACT_VERSION
 from horde.countermeasures import CounterMeasures
 from horde.database import functions as database
 from horde.flask import cache, db
@@ -572,6 +572,7 @@ def serviceinfo():
             "aihorde": {
                 "name": "AI Horde API",
                 "version": HORDE_API_VERSION,
+                "peer_instance_contract_version": PEER_INSTANCE_CONTRACT_VERSION,
                 "base_url": f"{horde_url}/api/v2",
                 "rel_url": "/api/v2",
                 "documentation": f"{horde_url}/api",

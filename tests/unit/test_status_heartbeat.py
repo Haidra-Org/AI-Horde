@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from horde.consts import PEER_INSTANCE_CONTRACT_VERSION
+
 if TYPE_CHECKING:
     from flask.testing import FlaskClient
     from flask_sqlalchemy.session import Session
@@ -60,6 +62,7 @@ class TestHeartbeatIsNodeLocal:
         assert payload["message"] == "OK"
         assert payload["db_connection"] is True
         assert payload["queue"] == 0
+        assert payload["peer_instance_contract_version"] == PEER_INSTANCE_CONTRACT_VERSION
         assert "kudos_ledger" not in payload
 
     def test_heartbeat_ignores_kudos_applier_backlog(
