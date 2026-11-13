@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Behavior of the chat front's root tiers: drain agent polling, tier selection, in-flight counts and ``/routing``."""
+"""Behavior of the chat front's Horde instance tiers: drain agent polling, tier selection, in-flight counts and ``/routing``."""
 
 from __future__ import annotations
 
@@ -21,26 +21,26 @@ from horde.oai.horde_client import (
     HordeClient,
     HordeCredentials,
     HordeUnavailableError,
-    RootTier,
+    InstanceTier,
 )
 from tests.unit.oai.conftest import CALL_WAIT_SECONDS, FAST_TEST_SETTINGS, REQUEST_ID, UNRECORDED_METRICS, StartFront, done_status
 
 pytestmark = pytest.mark.asyncio
 
 AGENT_HOST: str = "127.0.0.1"
-"""The host the fake drain agent listens on, which is also the host of every root in these tests."""
+"""The host the fake drain agent listens on, which is also the host of every Horde instance in these tests."""
 
 PRIMARY_PORT: int = 7004
-"""The port of the primary root."""
+"""The port of the primary Horde instance."""
 
 FALLBACK_PORT: int = 7104
-"""The port of the fallback root."""
+"""The port of the fallback Horde instance."""
 
 PRIMARY_URL: str = f"http://{AGENT_HOST}:{PRIMARY_PORT}/api"
-"""The primary Horde root."""
+"""The API root URL of the primary Horde instance."""
 
 FALLBACK_URL: str = f"http://{AGENT_HOST}:{FALLBACK_PORT}/api"
-"""The fallback Horde root."""
+"""The API root URL of the fallback Horde instance."""
 
 STATUS_PATH: str = f"/v2/generate/chat/status/{REQUEST_ID}"
 """The status route of the one request used in these tests."""
@@ -87,8 +87,8 @@ class FakeDrainAgent:
         """Read one port line, send the configured reply for that port and close."""
         received_line = await reader.readline()
         self.received_lines.append(received_line)
-        replica_port = int(received_line.strip())
-        writer.write(f"{self.replies.get(replica_port, DrainAgentState.READY)}\n".encode("ascii"))
+        instance_port = int(received_line.strip())
+        writer.write(f"{self.replies.get(instance_port, DrainAgentState.READY)}\n".encode("ascii"))
         await writer.drain()
         writer.close()
         await writer.wait_closed()
@@ -106,7 +106,7 @@ async def running_agent(replies: Mapping[int, str]) -> AsyncIterator[FakeDrainAg
 
 
 def tiered_client(http_client: httpx.AsyncClient) -> HordeClient:
-    """Return a client with the primary and the fallback root."""
+    """Return a client with the primary and the fallback Horde instance."""
     return HordeClient(
         horde_urls=(PRIMARY_URL,),
         fallback_horde_urls=(FALLBACK_URL,),
@@ -117,13 +117,13 @@ def tiered_client(http_client: httpx.AsyncClient) -> HordeClient:
 
 
 def agent_states(horde_client: HordeClient) -> dict[str, DrainAgentState]:
-    """Return each root's last drain agent state from the routing view."""
-    return {root.horde_url: root.agent_state for root in horde_client.routing_view().roots}
+    """Return the last drain agent state of each Horde instance from the routing view."""
+    return {instance.horde_url: instance.agent_state for instance in horde_client.routing_view().instances}
 
 
 def inflight_calls(horde_client: HordeClient) -> dict[str, int]:
-    """Return each root's calls in flight from the routing view."""
-    return {root.horde_url: root.inflight_calls for root in horde_client.routing_view().roots}
+    """Return the calls in flight of each Horde instance from the routing view."""
+    return {instance.horde_url: instance.inflight_calls for instance in horde_client.routing_view().instances}
 
 
 async def test_drained_primary_moves_calls_to_fallback() -> None:
@@ -146,12 +146,12 @@ async def test_drained_primary_moves_calls_to_fallback() -> None:
     assert calls_to_primary_before_poll == 1
     assert primary_route.call_count == 1
     assert fallback_route.call_count == 3
-    roots_by_url = {root.horde_url: root for root in routing_view.roots}
-    assert roots_by_url[PRIMARY_URL].tier == RootTier.PRIMARY
-    assert roots_by_url[PRIMARY_URL].agent_state == DrainAgentState.DRAIN
-    assert not roots_by_url[PRIMARY_URL].usable
-    assert roots_by_url[FALLBACK_URL].tier == RootTier.FALLBACK
-    assert roots_by_url[FALLBACK_URL].usable
+    instances_by_url = {instance.horde_url: instance for instance in routing_view.instances}
+    assert instances_by_url[PRIMARY_URL].tier == InstanceTier.PRIMARY
+    assert instances_by_url[PRIMARY_URL].agent_state == DrainAgentState.DRAIN
+    assert not instances_by_url[PRIMARY_URL].usable
+    assert instances_by_url[FALLBACK_URL].tier == InstanceTier.FALLBACK
+    assert instances_by_url[FALLBACK_URL].usable
     assert [drain_agent.agent_address for drain_agent in routing_view.drain_agents] == [agent_address]
     assert routing_view.drain_agents[0].last_success_unix_seconds is not None
 
@@ -181,12 +181,12 @@ async def test_refused_primary_moves_the_same_call_to_fallback() -> None:
     assert status.done
     assert primary_route.call_count == 1
     assert fallback_route.call_count == 1
-    primary_routing = next(root for root in routing_view.roots if root.horde_url == PRIMARY_URL)
+    primary_routing = next(instance for instance in routing_view.instances if instance.horde_url == PRIMARY_URL)
     assert primary_routing.unhealthy
     assert not primary_routing.usable
 
 
-async def test_every_root_drained_fails_unavailable_without_connecting() -> None:
+async def test_every_instance_drained_fails_unavailable_without_connecting() -> None:
     drained_replies = {PRIMARY_PORT: DrainAgentState.DRAIN, FALLBACK_PORT: DrainAgentState.DRAIN}
     async with running_agent(drained_replies) as agent:
         with respx.mock(assert_all_called=False) as router:
@@ -201,9 +201,11 @@ async def test_every_root_drained_fails_unavailable_without_connecting() -> None
                 await horde_client.poll_drain_agents(agent_port=agent.port, timeout_seconds=AGENT_TIMEOUT_SECONDS)
                 with pytest.raises(HordeUnavailableError) as status_error:
                     await horde_client.get_chat_status(request_id=REQUEST_ID, credentials=CREDENTIALS)
-                # A recovery may fall back to unhealthy roots. It does not fall back to drained roots.
+                # A recovery may fall back to unhealthy Horde instances. It does not fall back to drained Horde instances.
                 with pytest.raises(HordeUnavailableError) as recovery_error:
-                    await horde_client.submit_chat(request_body={"model": "m"}, credentials=CREDENTIALS, fall_back_to_unhealthy_roots=True)
+                    await horde_client.submit_chat(
+                        request_body={"model": "m"}, credentials=CREDENTIALS, fall_back_to_unhealthy_instances=True
+                    )
 
     assert not status_error.value.request_sent
     assert not recovery_error.value.request_sent
@@ -222,7 +224,7 @@ async def test_unreachable_or_unexpected_agent_does_not_change_the_state() -> No
                 agent.replies[PRIMARY_PORT] = "maint"
                 await horde_client.poll_drain_agents(agent_port=agent.port, timeout_seconds=AGENT_TIMEOUT_SECONDS)
                 states_after_unexpected_reply = agent_states(horde_client)
-                # The fallback root's reply from the same agent still counts as a success.
+                # The fallback Horde instance's reply from the same agent still counts as a success.
                 last_success_before_refusal = horde_client.routing_view().drain_agents[0].last_success_unix_seconds
                 stopped_agent_port = agent.port
 
@@ -264,7 +266,7 @@ async def test_agent_that_does_not_reply_in_time_does_not_change_the_state() -> 
     assert horde_client.routing_view().drain_agents[0].last_success_unix_seconds is None
 
 
-async def test_without_polling_every_root_is_ready_and_fallbacks_are_unused() -> None:
+async def test_without_polling_every_instance_is_ready_and_fallbacks_are_unused() -> None:
     with respx.mock(assert_all_called=False) as router:
         router.get(f"{PRIMARY_URL}{STATUS_PATH}").mock(return_value=httpx.Response(200, json=done_status()))
         async with httpx.AsyncClient() as http_client:
@@ -272,11 +274,11 @@ async def test_without_polling_every_root_is_ready_and_fallbacks_are_unused() ->
             await horde_client.get_chat_status(request_id=REQUEST_ID, credentials=CREDENTIALS)
             routing_view = horde_client.routing_view()
 
-    assert all(root.agent_state == DrainAgentState.READY and root.usable for root in routing_view.roots)
+    assert all(instance.agent_state == DrainAgentState.READY and instance.usable for instance in routing_view.instances)
     assert routing_view.drain_agents == []
 
 
-async def test_root_in_both_tiers_is_rejected() -> None:
+async def test_instance_in_both_tiers_is_rejected() -> None:
     async with httpx.AsyncClient() as http_client:
         with pytest.raises(ValueError, match="both primary and fallback"):
             HordeClient(
@@ -336,7 +338,7 @@ async def test_routing_route_serves_direct_requests_and_returns_404_to_forwarded
     assert direct_response.status_code == 200
     routing_body = direct_response.json()
     assert routing_body["drain_agents"] == []
-    assert routing_body["roots"] == [
+    assert routing_body["instances"] == [
         {
             "horde_url": FAST_TEST_SETTINGS.horde_urls[0],
             "tier": "primary",
@@ -374,5 +376,5 @@ async def test_front_lifespan_polls_the_drain_agents_only_when_a_port_is_set(sta
             routing_body = (await front.client.get("/routing")).json()
         poll_task_names_after_stop = {task.get_name() for task in asyncio.all_tasks()}
 
-    assert [root["usable"] for root in routing_body["roots"]] == [False, True]
+    assert [instance["usable"] for instance in routing_body["instances"]] == [False, True]
     assert "horde-oai-drain-agent-poll" not in poll_task_names_after_stop

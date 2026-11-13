@@ -90,7 +90,7 @@ async def test_first_try_submit_is_not_counted_as_a_claim_match(start_front: Sta
     assert recovered_claim_matches(front) == 0
 
 
-async def test_recovery_after_a_dropped_connection_retries_the_only_root(start_front: StartFront) -> None:
+async def test_recovery_after_a_dropped_connection_retries_the_only_instance(start_front: StartFront) -> None:
     async with start_front() as front:
         front.horde.status_payload = done_status()
         front.horde.submit_route.mock(

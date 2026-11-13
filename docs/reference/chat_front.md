@@ -789,7 +789,7 @@ The line does not include the messages, the reply or the reasoning.
 | Streamed chunks and keepalive | `horde/oai/sse.py` | `build_completion_events`, `build_delta_events`, `build_keepalive_event`, `build_error_events` |
 | Delta relay and reconciliation | `horde/oai/app.py`, `horde/oai/mapping.py` | `DeltaRelay`, `_relay_deltas`, `relays_deltas` |
 | `Client-Agent` attribution | `horde/oai/attribution.py` | `build_client_agent` |
-| Native HTTP client and root rotation | `horde/oai/horde_client.py` | `HordeClient`, `create_http_client`, `cancel_max_connections` |
+| Native HTTP client and instance rotation | `horde/oai/horde_client.py` | `HordeClient`, `create_http_client`, `cancel_max_connections` |
 | Completion signal subscription and liveness ping | `horde/oai/waiter.py` | `CompletionSignalListener` |
 | Delta stream reader | `horde/oai/waiter.py` | `DeltaStreamReader`, `DeltaSubscription`, `DeltaEntry` |
 | Per-request wait, poll and deadline | `horde/oai/waiter.py` | `ChatRequestWatcher`, `WaitBudget`, `WakeSource` |

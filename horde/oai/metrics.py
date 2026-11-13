@@ -309,11 +309,11 @@ class NativeCallOutcome(StrEnum):
     """How a native Horde call ended."""
 
     OK = "ok"
-    """The Horde answered below 400."""
+    """The Horde returned a status below 400."""
     REFUSED = "refused"
-    """The Horde answered 400 or above."""
+    """The Horde returned a status of 400 or above."""
     UNREACHABLE = "unreachable"
-    """No root accepted the connection, or the connection failed after the call was sent."""
+    """The call did not reach any Horde instance, or the connection failed after the call was sent."""
     ABANDONED = "abandoned"
     """The caller stopped waiting, such as at the end of the request's budget."""
 

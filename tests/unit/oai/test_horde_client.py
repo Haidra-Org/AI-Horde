@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Behavior of the chat front's Horde client: bounded concurrent calls and the backoff of a failing Horde root."""
+"""Behavior of the chat front's Horde client: bounded concurrent calls and the backoff of a failing Horde instance."""
 
 from __future__ import annotations
 
@@ -32,10 +32,10 @@ from tests.unit.oai.conftest import REQUEST_ID, UNRECORDED_METRICS, done_status,
 pytestmark = pytest.mark.asyncio
 
 FIRST_URL: str = "http://horde-first.test/api"
-"""The first Horde root in the rotation."""
+"""The API root URL of the first Horde instance in the rotation."""
 
 SECOND_URL: str = "http://horde-second.test/api"
-"""The second Horde root in the rotation."""
+"""The API root URL of the second Horde instance in the rotation."""
 
 CREDENTIALS: HordeCredentials = HordeCredentials(apikey="test-key", client_agent="test:1:test")
 """The identity every call in these tests is made with."""
@@ -138,7 +138,7 @@ async def test_concurrent_calls_beyond_the_limit_wait_outside_the_pool() -> None
 
 
 @pytest.mark.parametrize("connection_error", [httpx.ConnectError, httpx.ConnectTimeout])
-async def test_refused_root_is_left_out_of_the_rotation_until_its_backoff_ends(connection_error: type[httpx.TransportError]) -> None:
+async def test_refused_instance_is_left_out_of_the_rotation_until_its_backoff_ends(connection_error: type[httpx.TransportError]) -> None:
     clock = ManualClock()
     with respx.mock() as router:
         first_route = router.get(f"{FIRST_URL}{STATUS_PATH}").mock(side_effect=connection_error("refused"))
@@ -166,7 +166,7 @@ async def test_refused_root_is_left_out_of_the_rotation_until_its_backoff_ends(c
     assert second_route.call_count == 6
 
 
-async def test_every_root_in_backoff_fails_without_connecting() -> None:
+async def test_every_instance_in_backoff_fails_without_connecting() -> None:
     clock = ManualClock()
     with respx.mock() as router:
         only_route = router.get(f"{FIRST_URL}{STATUS_PATH}").mock(side_effect=httpx.ConnectError("refused"))

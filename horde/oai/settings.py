@@ -35,7 +35,7 @@ DEFAULT_HORDE_URL: str = "http://127.0.0.1:7001/api"
 """The Horde API root the front calls when ``HORDE_OAI_HORDE_URLS`` is unset: a Horde on the same host, default port."""
 
 HORDE_URL_SEPARATOR: str = ","
-"""The separator between roots in ``HORDE_OAI_HORDE_URLS`` and ``HORDE_OAI_FALLBACK_HORDE_URLS``."""
+"""The separator between URLs in ``HORDE_OAI_HORDE_URLS`` and ``HORDE_OAI_FALLBACK_HORDE_URLS``."""
 
 HIGHEST_PORT: int = 65535
 """The highest TCP port number."""
@@ -52,26 +52,29 @@ class FrontSettings(BaseSettings):
     )
 
     horde_urls: Annotated[tuple[str, ...], NoDecode] = Field(default=(DEFAULT_HORDE_URL,), min_length=1)
-    """The primary private Horde API roots (each ending in ``/api``), comma-separated, used round-robin.
+    """The API root URLs of the primary private Horde instances (each ending in ``/api``), comma-separated, used round-robin.
 
-    With more than one root, a call refused by one instance is sent to another instead of failing the request.
+    With more than one Horde instance, a call refused by one Horde instance is sent to another instead of failing the
+    request.
     """
 
     fallback_horde_urls: Annotated[tuple[str, ...], NoDecode] = ()
-    """The comma-separated Horde API roots used round-robin only while every primary root is unusable. Empty by default.
+    """The comma-separated API root URLs of the fallback Horde instances, used round-robin only while every primary Horde
+    instance is unusable. Empty by default.
 
-    A root may not be in both lists.
+    A URL may not be in both lists.
     """
 
     drain_agent_port: int | None = Field(default=None, ge=1, le=HIGHEST_PORT)
-    """The TCP port of the drain agent on each root's host. Unset turns polling off, and every root counts as ready.
+    """The TCP port of the drain agent on the host of each Horde instance. Unset turns polling off, and every Horde
+    instance counts as ready.
 
-    The agent replies ``ready`` or ``drain`` for the root's port, as it does for HAProxy's ``agent-check``. New calls
-    are not sent to a drained root.
+    The agent replies ``ready`` or ``drain`` for the Horde instance's port, the same replies sent to HAProxy's ``agent-check``. New
+    calls are not sent to a drained Horde instance.
     """
 
     drain_agent_poll_seconds: float = Field(default=1.0, gt=0)
-    """How often every root's drain agent is queried.
+    """How often the drain agent of every Horde instance is queried.
 
     One query may take [`DRAIN_AGENT_TIMEOUT_FRACTION`][horde.oai.horde_client.DRAIN_AGENT_TIMEOUT_FRACTION] of this,
     so a slow agent cannot make polls overlap.
@@ -215,11 +218,11 @@ class FrontSettings(BaseSettings):
     answered 503 ``no_eligible_worker``; long enough for a worker restart or a model load."""
 
     submit_recovery_attempts: int = Field(default=2, ge=0)
-    """How many times a submit whose answer was lost is sent again with the same operation key.
+    """How many times a submit whose response was lost is sent again with the same operation key.
 
-    Each attempt goes to the next healthy root within the request's total budget. The native route answers a repeated
-    key with the existing request, so a recovery cannot create a second job; the bound keeps a Horde that drops every
-    answer from holding the request until its deadline. 0 answers a lost submit with 502 at once.
+    Each attempt goes to the next healthy Horde instance within the request's total budget. For a repeated key, the native
+    route returns the existing request, so a recovery cannot create a second job. The bound stops a Horde that drops every
+    response from holding the request until its deadline. With 0, a lost submit gets a 502 response at once.
     """
 
     native_max_connections: int = Field(default=HTTP_MAX_CONNECTIONS, gt=SUBMIT_MAX_CONCURRENT_CALLS)
@@ -235,7 +238,7 @@ class FrontSettings(BaseSettings):
     @field_validator("horde_urls", "fallback_horde_urls", mode="before")
     @classmethod
     def parse_horde_urls(cls, horde_urls: object) -> object:
-        """Parse a comma-separated string of roots into a tuple, without trailing slashes or empty entries."""
+        """Parse a comma-separated string of URLs into a tuple, without trailing slashes or empty entries."""
         if isinstance(horde_urls, str):
             horde_urls = horde_urls.split(HORDE_URL_SEPARATOR)
         if isinstance(horde_urls, list | tuple):

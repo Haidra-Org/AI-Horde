@@ -5,23 +5,25 @@
 """Call the Horde's native chat and model routes over HTTP.
 
 [`HordeClient`][horde.oai.horde_client.HordeClient] wraps shared ``httpx.AsyncClient`` instances, normally made by
-[`create_http_client`][horde.oai.horde_client.create_http_client]. Calls rotate across the configured Horde API roots.
-A root that refuses the connection is skipped for that call. This is safe because the request did not reach it. Any
-root that refuses or drops a connection is left out of the rotation for
+[`create_http_client`][horde.oai.horde_client.create_http_client]. Calls rotate across the configured Horde instances.
+A Horde instance that refuses the connection is skipped for that call. This is safe because the request did not reach
+that Horde instance. Any Horde instance that refuses or drops a connection is left out of the rotation for
 [`UNHEALTHY_URL_BACKOFF_SECONDS`][horde.oai.horde_client.UNHEALTHY_URL_BACKOFF_SECONDS]. A Horde error response raises
 [`HordeAPIError`][horde.oai.horde_client.HordeAPIError] with the status, the Horde ``rc`` and the rate-limit headers.
-When every root fails to respond, the call raises [`HordeUnavailableError`][horde.oai.horde_client.HordeUnavailableError].
-Its ``request_sent`` is true when the call may have reached a Horde. A submit sent again to recover a lost response may
-fall back to roots left out of the rotation, since waiting out their backoff would spend the request's budget.
+When a call does not reach any Horde instance, the client raises [`HordeUnavailableError`][horde.oai.horde_client.HordeUnavailableError].
+The error's ``request_sent`` is true when the call may have reached a Horde instance. A submit sent again to recover a
+lost response may fall back to Horde instances left out of the rotation, since waiting out their backoff would spend the
+request's budget.
 
-The roots form two tiers. Calls rotate across the usable primary roots and reach the fallback roots only when every
-primary root is unusable. When a drain agent port is configured, the app's lifespan calls
-[`HordeClient.poll_drain_agents`][horde.oai.horde_client.HordeClient.poll_drain_agents] on an interval. Each root's
-host runs an agent that replies ``ready`` or ``drain`` for the root's port, the same replies read by HAProxy's
-``agent-check``. When a root is drained at its agent, the front and every listener that polls the same agent stop
-sending it new calls. The front does not call a drained root, even for a recovering submit.
-[`HordeClient.routing_view`][horde.oai.horde_client.HordeClient.routing_view] reports each root's tier, agent state,
-usability and calls in flight, so a deploy can confirm that a root has 0 calls in flight before it stops the root.
+The Horde instances form two tiers. Calls rotate across the usable primary Horde instances and reach the fallback Horde
+instances only when every primary Horde instance is unusable. When a drain agent port is configured, the app's lifespan
+calls [`HordeClient.poll_drain_agents`][horde.oai.horde_client.HordeClient.poll_drain_agents] on an interval. The host of
+each Horde instance runs an agent that replies ``ready`` or ``drain`` for the Horde instance's port, the same replies read
+by HAProxy's ``agent-check``. When a Horde instance is drained at its agent, the front and every listener that polls the
+same agent stop sending new calls to that Horde instance. The front does not call a drained Horde instance, even for a
+recovering submit. [`HordeClient.routing_view`][horde.oai.horde_client.HordeClient.routing_view] reports the tier, agent
+state, usability and calls in flight of each Horde instance, so a deploy can confirm that a Horde instance has 0 calls in
+flight before the deploy stops that Horde instance.
 
 Submits, status reads and model lists share one pool, sized by the caller (``HORDE_OAI_NATIVE_MAX_CONNECTIONS``).
 Submits wait on one semaphore ([`SUBMIT_MAX_CONCURRENT_CALLS`][horde.oai.horde_client.SUBMIT_MAX_CONCURRENT_CALLS])
@@ -71,8 +73,8 @@ __all__ = [
     "HordeClient",
     "HordeCredentials",
     "HordeUnavailableError",
-    "RootRouting",
-    "RootTier",
+    "InstanceRouting",
+    "InstanceTier",
     "RoutingView",
     "cancel_max_connections",
     "create_http_client",
@@ -156,16 +158,16 @@ the server drop them under a request about to be sent.
 """
 
 HTTP_CONNECT_TIMEOUT_SECONDS: float = 5.0
-"""How long a Horde call waits for a connection before the root counts as unreachable."""
+"""How long a Horde call waits for a connection before the Horde instance counts as unreachable."""
 
 HTTP_READ_TIMEOUT_SECONDS: float = 30.0
-"""How long a Horde call waits for its response; a submit runs moderation and kudos checks, so it is not instant."""
+"""How long a Horde call waits for its response. A submit runs moderation and kudos checks, so a submit is not instant."""
 
 UNHEALTHY_URL_BACKOFF_SECONDS: float = 3.0
-"""How long a Horde root that refused or dropped a connection is left out of the rotation.
+"""How long a Horde instance that refused or dropped a connection is left out of the rotation.
 
-Without it, every call that rotates onto a down or overloaded root opens a fresh connection to it at once, and the
-connect-and-drop churn exhausts the server's descriptors faster than it can recover.
+Without the backoff, every call that rotates onto a down or overloaded Horde instance opens a fresh connection to that
+Horde instance at once, and the connect-and-drop churn exhausts the server's descriptors faster than the server can recover.
 """
 
 DRAIN_AGENT_TIMEOUT_FRACTION: float = 0.5
@@ -182,7 +184,7 @@ DEFAULT_PORTS_BY_SCHEME: Mapping[str, int] = {
     "http": 80,
     "https": 443,
 }
-"""The default port of each URL scheme. It is sent to the drain agent when a root URL does not specify a port."""
+"""The default port of each URL scheme. The default port is sent to the drain agent when a Horde instance's URL does not specify a port."""
 
 
 def cancel_max_connections(max_inflight: int) -> int:
@@ -273,19 +275,19 @@ class HordeAPIError(Exception):
 
 
 class HordeUnavailableError(Exception):
-    """No configured Horde API root answered the call."""
+    """The call did not get a response from any configured Horde instance."""
 
     def __init__(self, message: str, *, request_sent: bool) -> None:
         """Create the error.
 
         Args:
             message: What failed.
-            request_sent: Whether the call may have reached a Horde: true after a transport failure once a connection
-                was made, false when no root accepted a connection.
+            request_sent: Whether the call may have reached a Horde instance. True after a transport failure once a
+                connection was made, false when every Horde instance refused the connection or was unusable.
         """
         super().__init__(message)
         self.request_sent: bool = request_sent
-        """Whether the call may have reached a Horde, which leaves a submit's outcome unknown."""
+        """Whether the call may have reached a Horde instance, which leaves a submit's outcome unknown."""
 
 
 class CancelSlotUnavailableError(Exception):
@@ -492,46 +494,46 @@ class HordeActiveModel(BaseModel):
     """What the model's online chat workers declare; present when the list was asked for with ``chat=true``."""
 
 
-class RootTier(StrEnum):
-    """The tier a Horde root belongs to."""
+class InstanceTier(StrEnum):
+    """The tier a Horde instance belongs to."""
 
     PRIMARY = "primary"
     """Tried first. Listed in ``HORDE_OAI_HORDE_URLS``."""
     FALLBACK = "fallback"
-    """Tried only when every primary root is unusable. Listed in ``HORDE_OAI_FALLBACK_HORDE_URLS``."""
+    """Tried only when every primary Horde instance is unusable. Listed in ``HORDE_OAI_FALLBACK_HORDE_URLS``."""
 
 
 class DrainAgentState(StrEnum):
     """The replies of a host's drain agent for a port, the same replies read by HAProxy's ``agent-check``."""
 
     READY = "ready"
-    """Calls may be sent to the root."""
+    """Calls may be sent to the Horde instance."""
     DRAIN = "drain"
-    """The root is about to stop. New calls are not sent to it."""
+    """The Horde instance is about to stop. The front does not send new calls to the Horde instance."""
 
 
-class RootRouting(BaseModel):
-    """Represents how calls are routed to one Horde root at the moment it is read."""
+class InstanceRouting(BaseModel):
+    """Represents how calls are routed to one Horde instance when the routing view is read."""
 
     model_config = ConfigDict(frozen=True)
 
     horde_url: str
-    """The Horde API root."""
+    """The URL of the Horde instance's API root."""
 
-    tier: RootTier
-    """Whether the root is a primary or a fallback root."""
+    tier: InstanceTier
+    """Whether the Horde instance is a primary or a fallback instance."""
 
     agent_state: DrainAgentState
-    """The last reply from the root's drain agent. It is ``ready`` until the agent first replies."""
+    """The last reply from the Horde instance's drain agent. The state is ``ready`` until the agent first replies."""
 
     usable: bool
-    """Whether a new call may be sent to the root: its agent state is ``ready`` and it is not marked unhealthy."""
+    """Whether a new call may be sent to the Horde instance: the agent state is ``ready`` and the Horde instance is not marked unhealthy."""
 
     unhealthy: bool
-    """Whether the root is left out of the rotation after a refused or dropped connection."""
+    """Whether the Horde instance is left out of the rotation after a refused or dropped connection."""
 
     inflight_calls: int
-    """The calls sent to the root that have not completed or failed yet."""
+    """The calls sent to the Horde instance that have not completed or failed yet."""
 
 
 class DrainAgentPoll(BaseModel):
@@ -547,19 +549,19 @@ class DrainAgentPoll(BaseModel):
 
 
 class RoutingView(BaseModel):
-    """Represents the front's routing to the Horde roots, served on ``GET /routing``."""
+    """Represents the front's routing to the Horde instances, served on ``GET /routing``."""
 
     model_config = ConfigDict(frozen=True)
 
-    roots: list[RootRouting]
-    """Every root, primaries first, in configuration order."""
+    instances: list[InstanceRouting]
+    """Every Horde instance, primaries first, in configuration order."""
 
     drain_agents: list[DrainAgentPoll]
     """Every drain agent polled at least once, by address. Empty when polling is off."""
 
 
-async def query_drain_agent(*, agent_host: str, agent_port: int, replica_port: int) -> DrainAgentState:
-    """Query the drain agent at ``agent_host:agent_port`` for the state of ``replica_port`` and return the reply.
+async def query_drain_agent(*, agent_host: str, agent_port: int, instance_port: int) -> DrainAgentState:
+    """Query the drain agent at ``agent_host:agent_port`` for the state of the Horde instance on ``instance_port``.
 
     The exchange is HAProxy's ``agent-check`` with ``agent-send "<port>\\n"``: one line out, one line back, after which
     the agent closes the connection. The caller bounds the whole exchange with a timeout.
@@ -567,7 +569,7 @@ async def query_drain_agent(*, agent_host: str, agent_port: int, replica_port: i
     Args:
         agent_host: The host the agent listens on.
         agent_port: The agent's TCP port.
-        replica_port: The Horde replica port sent to the agent.
+        instance_port: The port of the Horde instance, sent to the agent.
 
     Raises:
         OSError: The connection failed or was reset.
@@ -575,7 +577,7 @@ async def query_drain_agent(*, agent_host: str, agent_port: int, replica_port: i
     """
     reader, writer = await asyncio.open_connection(agent_host, agent_port, limit=DRAIN_AGENT_REPLY_MAX_BYTES)
     try:
-        writer.write(f"{replica_port}\n".encode("ascii"))
+        writer.write(f"{instance_port}\n".encode("ascii"))
         await writer.drain()
         try:
             reply_line = await reader.readline()
@@ -594,7 +596,7 @@ async def query_drain_agent(*, agent_host: str, agent_port: int, replica_port: i
 
 
 class HordeClient:
-    """Call the Horde's chat and model routes, rotating across the configured API roots.
+    """Call the Horde's chat and model routes, rotating across the configured Horde instances.
 
     Concurrency:
         Safe to share between concurrent requests on one event loop. The rotation counter, the unhealthy marks, the drain
@@ -621,12 +623,12 @@ class HordeClient:
         """Create the client.
 
         Args:
-            horde_urls: The primary Horde API roots, each ending in ``/api``.
+            horde_urls: The API root URLs of the primary Horde instances, each ending in ``/api``.
             http_client: The HTTP client for submits, status reads and model lists. The caller owns and closes it.
             proxy_passkey: The front operator's proxy passkey, or None to leave out ``Proxied-For``.
             front_metrics: Where each call's latency and outcome is recorded.
-            fallback_horde_urls: The roots used only when every primary root is unusable. A fallback root cannot also be
-                a primary root.
+            fallback_horde_urls: The API root URLs of the Horde instances used only when every primary Horde instance is
+                unusable. A URL cannot be in both lists.
             cancel_http_client: The HTTP client for cancels. None sends them through ``http_client`` under a separate
                 semaphore. The caller owns and closes it.
             max_concurrent_calls: The most status reads and model lists in flight at once.
@@ -637,7 +639,7 @@ class HordeClient:
             wall_clock: The clock used to report the drain agents' last replies, in Unix seconds.
 
         Raises:
-            ValueError: The primary root list is empty, or a root is both a primary and a fallback root.
+            ValueError: The list of primary URLs is empty, or a URL is in both lists.
         """
         if not horde_urls:
             raise ValueError("At least one Horde URL is required.")
@@ -645,7 +647,7 @@ class HordeClient:
         self._fallback_urls: tuple[str, ...] = tuple(fallback_horde_urls)
         repeated_urls = set(self._primary_urls) & set(self._fallback_urls)
         if repeated_urls:
-            raise ValueError(f"Horde URLs cannot be both primary and fallback roots: {sorted(repeated_urls)}")
+            raise ValueError(f"Horde URLs cannot be both primary and fallback URLs: {sorted(repeated_urls)}")
         self._http_client = http_client
         self._cancel_http_client = cancel_http_client if cancel_http_client is not None else http_client
         self._proxy_passkey = proxy_passkey
@@ -658,8 +660,8 @@ class HordeClient:
         self._wall_clock = wall_clock
         self._unhealthy_until: dict[str, float] = {}
         all_urls = self._primary_urls + self._fallback_urls
-        # A root counts as ready until its agent first replies. Without agents, or with an agent unreachable from the
-        # start, every root therefore stays usable.
+        # A Horde instance counts as ready until its agent first replies. Without agents, or with an agent unreachable from
+        # the start, every Horde instance therefore stays usable.
         self._drain_agent_states: dict[str, DrainAgentState] = dict.fromkeys(all_urls, DrainAgentState.READY)
         self._drain_agent_reachable: dict[str, bool] = dict.fromkeys(all_urls, True)
         self._drain_agent_last_success: dict[str, float | None] = {}
@@ -670,30 +672,30 @@ class HordeClient:
         *,
         request_body: Mapping[str, object],
         credentials: HordeCredentials,
-        fall_back_to_unhealthy_roots: bool = False,
+        fall_back_to_unhealthy_instances: bool = False,
     ) -> HordeAsyncSubmission:
         """Queue a chat request and return the Horde's acknowledgement.
 
         Args:
             request_body: The native chat request body, as JSON-ready values.
             credentials: Who the call is made for.
-            fall_back_to_unhealthy_roots: Whether to try the roots left out of the rotation when none is healthy; a
-                recovery sets it, since the dropped connection it recovers from marks a single root unhealthy. The
-                call is recorded as a recovery when it is set.
+            fall_back_to_unhealthy_instances: Whether to try the Horde instances left out of the rotation when every Horde
+                instance is unusable. A recovery sets this, because the dropped connection behind the recovery marks one
+                Horde instance unhealthy. When this is set, the call is recorded as a recovery.
 
         Raises:
             HordeAPIError: The Horde rejected the request.
-            HordeUnavailableError: No Horde root accepted the connection, or the connection failed after the call was
+            HordeUnavailableError: The call did not reach any Horde instance, or the connection failed after the call was
                 sent (``request_sent`` true), so a request may exist.
         """
         response = await self._send(
             "POST",
             CHAT_SUBMIT_PATH,
-            call_type=NativeCallType.RECOVERY if fall_back_to_unhealthy_roots else NativeCallType.SUBMIT,
+            call_type=NativeCallType.RECOVERY if fall_back_to_unhealthy_instances else NativeCallType.SUBMIT,
             credentials=credentials,
             json_body=request_body,
             call_slots=self._submit_slots,
-            fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots,
+            fall_back_to_unhealthy_instances=fall_back_to_unhealthy_instances,
         )
         submission = _parse_response(response, HordeAsyncSubmission)
         return submission.model_copy(update={"existing_claim": response.status_code == HTTPStatus.OK})
@@ -706,8 +708,8 @@ class HordeClient:
             credentials: Who the call is made for.
 
         Raises:
-            HordeAPIError: The Horde answered with an error, such as 404 once the request expired.
-            HordeUnavailableError: No Horde root accepted the connection.
+            HordeAPIError: The Horde returned an error, such as 404 once the request expired.
+            HordeUnavailableError: The call did not reach any Horde instance.
         """
         status_path = CHAT_STATUS_PATH_TEMPLATE.format(request_id=request_id)
         response = await self._send("GET", status_path, call_type=NativeCallType.STATUS, credentials=credentials)
@@ -724,27 +726,27 @@ class HordeClient:
         """Cancel a chat request through the cancel pool and return its last status.
 
         The wait for a cancel slot and the HTTP call have separate bounds, so a cancel queued behind a wave of others
-        is told apart from one the Horde was slow to answer.
+        can be told apart from a cancel that the Horde was slow to process.
 
         Args:
             request_id: The Horde request id.
             credentials: Who the call is made for.
-            slot_wait_seconds: How long to wait for a free cancel slot before giving up without sending anything.
+            slot_wait_seconds: How long to wait for a free cancel slot before giving up without sending the cancel.
             call_timeout_seconds: How long the HTTP call may take once a slot is held.
 
         Raises:
-            CancelSlotUnavailableError: No cancel slot became free within ``slot_wait_seconds``;
-                the cancel was not sent.
+            CancelSlotUnavailableError: A cancel slot did not become free within ``slot_wait_seconds``. The cancel was
+                not sent.
             TimeoutError: The call did not complete within ``call_timeout_seconds``.
-            HordeAPIError: The Horde answered with an error.
-            HordeUnavailableError: No Horde root accepted the connection.
+            HordeAPIError: The Horde returned an error.
+            HordeUnavailableError: The call did not reach any Horde instance.
         """
         status_path = CHAT_STATUS_PATH_TEMPLATE.format(request_id=request_id)
         try:
             async with asyncio.timeout(slot_wait_seconds):
                 await self._cancel_slots.acquire()
         except TimeoutError as error:
-            raise CancelSlotUnavailableError(f"No cancel slot became free within {slot_wait_seconds:g}s for {request_id}") from error
+            raise CancelSlotUnavailableError(f"A cancel slot did not become free within {slot_wait_seconds:g}s for {request_id}") from error
         try:
             async with asyncio.timeout(call_timeout_seconds):
                 response = await self._send_holding_slot(
@@ -759,14 +761,14 @@ class HordeClient:
         return _parse_response(response, HordeChatStatus)
 
     async def list_chat_models(self, *, credentials: HordeCredentials) -> list[HordeActiveModel]:
-        """Return the Horde's text models that an online chat worker serves, each with its ``chat`` object.
+        """Return the Horde's text models that are served by online chat workers, each with its ``chat`` object.
 
         Args:
             credentials: Who the call is made for.
 
         Raises:
-            HordeAPIError: The Horde answered with an error.
-            HordeUnavailableError: No Horde root accepted the connection.
+            HordeAPIError: The Horde returned an error.
+            HordeUnavailableError: The call did not reach any Horde instance.
         """
         response = await self._send(
             "GET",
@@ -781,10 +783,11 @@ class HordeClient:
             raise _unexpected_body_error(response) from error
 
     async def poll_drain_agents(self, *, agent_port: int, timeout_seconds: float) -> None:
-        """Query every root's drain agent for the root's state, concurrently, and record each reply.
+        """Query the drain agent of every Horde instance for that Horde instance's state, concurrently, and record each reply.
 
-        A root's agent listens on ``agent_port`` of the root URL's host. The query sends the root URL's port. When a
-        query fails, times out after ``timeout_seconds`` or returns any other reply, the root's state does not change.
+        The agent of a Horde instance listens on ``agent_port`` of the host in the Horde instance's URL. The query sends the
+        port from that URL. When a query fails, times out after ``timeout_seconds`` or returns any other reply, the Horde
+        instance's state does not change.
         HAProxy handles a failed agent check the same way. The queries use separate TCP connections outside the Horde HTTP
         pools.
 
@@ -794,20 +797,20 @@ class HordeClient:
         """
         await asyncio.gather(
             *(
-                self._poll_root_drain_agent(horde_url, agent_port=agent_port, timeout_seconds=timeout_seconds)
+                self._poll_instance_drain_agent(horde_url, agent_port=agent_port, timeout_seconds=timeout_seconds)
                 for horde_url in self._primary_urls + self._fallback_urls
             ),
         )
 
     def routing_view(self) -> RoutingView:
-        """Return the front's routing to the Horde roots.
+        """Return the front's routing to the Horde instances.
 
-        The view lists each root's tier, drain agent state, usability, unhealthy mark and calls in flight, and the time
+        The view lists the tier, drain agent state, usability, unhealthy mark and calls in flight of each Horde instance, and the time
         of each polled agent's last reply.
         """
         now = self._clock()
-        roots = [
-            RootRouting(
+        instances = [
+            InstanceRouting(
                 horde_url=horde_url,
                 tier=tier,
                 agent_state=self._drain_agent_states[horde_url],
@@ -815,14 +818,14 @@ class HordeClient:
                 unhealthy=self._is_unhealthy(horde_url, now),
                 inflight_calls=self._inflight_calls[horde_url],
             )
-            for tier, tier_urls in ((RootTier.PRIMARY, self._primary_urls), (RootTier.FALLBACK, self._fallback_urls))
+            for tier, tier_urls in ((InstanceTier.PRIMARY, self._primary_urls), (InstanceTier.FALLBACK, self._fallback_urls))
             for horde_url in tier_urls
         ]
         drain_agents = [
             DrainAgentPoll(agent_address=agent_address, last_success_unix_seconds=last_success_unix_seconds)
             for agent_address, last_success_unix_seconds in sorted(self._drain_agent_last_success.items())
         ]
-        return RoutingView(roots=roots, drain_agents=drain_agents)
+        return RoutingView(instances=instances, drain_agents=drain_agents)
 
     def _build_headers(self, credentials: HordeCredentials) -> dict[str, str]:
         """Return the headers a Horde call carries for ``credentials``."""
@@ -845,9 +848,9 @@ class HordeClient:
         json_body: Mapping[str, object] | None = None,
         query: Mapping[str, str] | None = None,
         call_slots: asyncio.Semaphore | None = None,
-        fall_back_to_unhealthy_roots: bool = False,
+        fall_back_to_unhealthy_instances: bool = False,
     ) -> httpx.Response:
-        """Send one call through the main client, trying each usable root in rotation until one accepts the connection.
+        """Send one call through the main client, trying each usable Horde instance in rotation until one accepts the connection.
 
         Args:
             method: The HTTP method.
@@ -857,15 +860,16 @@ class HordeClient:
             json_body: The JSON body, if any.
             query: The query parameters, if any.
             call_slots: The semaphore bounding the call. None uses the semaphore for status reads and model lists.
-            fall_back_to_unhealthy_roots: Whether to try every ready root in rotation order when every root is unusable.
+            fall_back_to_unhealthy_instances: Whether to try every ready Horde instance in rotation order when every Horde
+                instance is unusable.
 
         Returns:
             The Horde's successful response.
 
         Raises:
             HordeAPIError: The Horde returned a status of 400 or above.
-            HordeUnavailableError: Every usable root refused the connection, every root is unusable, or the connection
-                failed after the call was sent.
+            HordeUnavailableError: Every usable Horde instance refused the connection, every Horde instance is unusable, or
+                the connection failed after the call was sent.
         """
         async with call_slots if call_slots is not None else self._call_slots:
             return await self._send_holding_slot(
@@ -876,7 +880,7 @@ class HordeClient:
                 sending_client=self._http_client,
                 json_body=json_body,
                 query=query,
-                fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots,
+                fall_back_to_unhealthy_instances=fall_back_to_unhealthy_instances,
             )
 
     async def _send_holding_slot(
@@ -889,14 +893,14 @@ class HordeClient:
         sending_client: httpx.AsyncClient,
         json_body: Mapping[str, object] | None = None,
         query: Mapping[str, str] | None = None,
-        fall_back_to_unhealthy_roots: bool = False,
+        fall_back_to_unhealthy_instances: bool = False,
     ) -> httpx.Response:
-        """Send one call and record its latency and outcome; the caller holds the slot that bounds it.
+        """Send one call and record its latency and outcome. The caller holds the slot that bounds the call.
 
         Raises:
-            HordeAPIError: The Horde answered with a status of 400 or above.
-            HordeUnavailableError: No healthy root accepted the connection, or the connection failed after the call
-                was sent.
+            HordeAPIError: The Horde returned a status of 400 or above.
+            HordeUnavailableError: Every usable Horde instance refused the connection, every Horde instance is unusable, or
+                the connection failed after the call was sent.
         """
         # Timed after the caller took a call slot, so time queued on the semaphore is not part of the latency.
         started_at = time.perf_counter()
@@ -909,7 +913,7 @@ class HordeClient:
                 headers=self._build_headers(credentials),
                 json_body=json_body,
                 query=query,
-                fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots,
+                fall_back_to_unhealthy_instances=fall_back_to_unhealthy_instances,
             )
             outcome = NativeCallOutcome.OK
         except HordeAPIError:
@@ -935,16 +939,16 @@ class HordeClient:
         headers: Mapping[str, str],
         json_body: Mapping[str, object] | None,
         query: Mapping[str, str] | None,
-        fall_back_to_unhealthy_roots: bool,
+        fall_back_to_unhealthy_instances: bool,
     ) -> httpx.Response:
-        """Return the first response from the usable roots in rotation. The caller holds a call slot.
+        """Return the first response from the usable Horde instances in rotation. The caller holds a call slot.
 
         Raises:
             HordeAPIError: The Horde returned a status of 400 or above.
-            HordeUnavailableError: Every usable root refused the connection, every root is unusable, or the connection
-                failed after the call was sent.
+            HordeUnavailableError: Every usable Horde instance refused the connection, every Horde instance is unusable, or
+                the connection failed after the call was sent.
         """
-        for horde_url in self._usable_urls_in_rotation(fall_back_to_unhealthy_roots=fall_back_to_unhealthy_roots):
+        for horde_url in self._usable_urls_in_rotation(fall_back_to_unhealthy_instances=fall_back_to_unhealthy_instances):
             try:
                 response = await self._request_counting_inflight(
                     method,
@@ -956,13 +960,13 @@ class HordeClient:
                     query=query,
                 )
             except (httpx.ConnectError, httpx.ConnectTimeout) as error:
-                # A refused or timed-out connection can be retried on another root. The call did not reach that Horde, so a
-                # submit cannot be queued twice.
+                # A refused or timed-out connection can be retried on another Horde instance. The call did not reach this Horde
+                # instance, so a submit cannot be queued twice.
                 self._mark_unhealthy(horde_url, error)
                 continue
             except httpx.TransportError as error:
-                # The call may have reached the Horde, so it is not retried on another root. A timeout means the Horde
-                # is slow and still up, so the root stays in the rotation.
+                # The call may have reached this Horde instance, so it is not retried on another Horde instance. A timeout
+                # means this Horde instance is slow and still up, so it stays in the rotation.
                 if not isinstance(error, httpx.TimeoutException):
                     self._mark_unhealthy(horde_url, error)
                 raise HordeUnavailableError(
@@ -972,7 +976,7 @@ class HordeClient:
             if response.status_code >= HTTPStatus.BAD_REQUEST:
                 raise _api_error_from_response(response)
             return response
-        raise HordeUnavailableError(f"No usable Horde accepted the connection for {method} {path}.", request_sent=False)
+        raise HordeUnavailableError(f"Every usable Horde instance refused the connection for {method} {path}.", request_sent=False)
 
     async def _request_counting_inflight(
         self,
@@ -985,7 +989,7 @@ class HordeClient:
         json_body: Mapping[str, object] | None,
         query: Mapping[str, str] | None,
     ) -> httpx.Response:
-        """Return the response of one HTTP call to ``horde_url``, counted in flight on the root until it ends.
+        """Return the response of one HTTP call to ``horde_url``, counted in flight on that Horde instance until the call ends.
 
         The count is released whether the call succeeds or fails.
 
@@ -1004,20 +1008,21 @@ class HordeClient:
         finally:
             self._inflight_calls[horde_url] -= 1
 
-    def _usable_urls_in_rotation(self, *, fall_back_to_unhealthy_roots: bool = False) -> list[str]:
-        """Return the usable roots, primaries before fallbacks, each tier starting from the next one in the rotation.
+    def _usable_urls_in_rotation(self, *, fall_back_to_unhealthy_instances: bool = False) -> list[str]:
+        """Return the URLs of the usable Horde instances, primaries before fallbacks, each tier rotated by one position per call.
 
-        Fallback roots follow the primaries in one list. A call therefore reaches a fallback root only after every
-        primary root that was usable at the start of the call has refused the connection and been marked unhealthy. At
-        that point every primary root is unusable. With ``fall_back_to_unhealthy_roots``, when every root is unusable,
-        the roots whose agent last replied ``ready`` are returned in the same order. Drained roots are not returned.
+        The fallback Horde instances follow the primaries in one list. A call therefore reaches a fallback Horde instance only
+        after every primary Horde instance that was usable at the start of the call has refused the connection and been marked
+        unhealthy. At that point every primary Horde instance is unusable. With ``fall_back_to_unhealthy_instances``, when
+        every Horde instance is unusable, the Horde instances whose agent last replied ``ready`` are returned in the same
+        order. Drained Horde instances are not returned.
         """
         rotation_index = next(self._rotation)
         now = self._clock()
         rotated_urls = _rotated(self._primary_urls, rotation_index) + _rotated(self._fallback_urls, rotation_index)
         ready_urls = [horde_url for horde_url in rotated_urls if self._drain_agent_states[horde_url] == DrainAgentState.READY]
         usable_urls = [horde_url for horde_url in ready_urls if not self._is_unhealthy(horde_url, now)]
-        if not usable_urls and fall_back_to_unhealthy_roots:
+        if not usable_urls and fall_back_to_unhealthy_instances:
             return ready_urls
         return usable_urls
 
@@ -1028,25 +1033,26 @@ class HordeClient:
     def _is_usable(self, horde_url: str, now: float) -> bool:
         """Return whether a new call may be sent to ``horde_url`` at ``now``.
 
-        A root is usable when its agent last replied ``ready`` and it is not marked unhealthy.
+        A Horde instance is usable when its agent last replied ``ready`` and the Horde instance is not marked unhealthy.
         """
         return self._drain_agent_states[horde_url] == DrainAgentState.READY and not self._is_unhealthy(horde_url, now)
 
-    async def _poll_root_drain_agent(self, horde_url: str, *, agent_port: int, timeout_seconds: float) -> None:
-        """Query the drain agent on ``horde_url``'s host with the root's port and record the reply.
+    async def _poll_instance_drain_agent(self, horde_url: str, *, agent_port: int, timeout_seconds: float) -> None:
+        """Query the drain agent on the host in ``horde_url`` with the port from ``horde_url``, and record the reply.
 
         See [`poll_drain_agents`][horde.oai.horde_client.HordeClient.poll_drain_agents].
         """
-        root_url = httpx.URL(horde_url)
-        agent_host = root_url.host
-        replica_port = root_url.port if root_url.port is not None else DEFAULT_PORTS_BY_SCHEME[root_url.scheme]
+        parsed_url = httpx.URL(horde_url)
+        agent_host = parsed_url.host
+        instance_port = parsed_url.port if parsed_url.port is not None else DEFAULT_PORTS_BY_SCHEME[parsed_url.scheme]
         agent_address = f"{agent_host}:{agent_port}"
         self._drain_agent_last_success.setdefault(agent_address, None)
         try:
             async with asyncio.timeout(timeout_seconds):
-                agent_state = await query_drain_agent(agent_host=agent_host, agent_port=agent_port, replica_port=replica_port)
+                agent_state = await query_drain_agent(agent_host=agent_host, agent_port=agent_port, instance_port=instance_port)
         except (TimeoutError, OSError, DrainAgentReplyError) as error:
-            # Agents are polled every interval, so only the first failure in a row is logged. The root's state does not change.
+            # Agents are polled every interval, so only the first failure in a row is logged. The Horde instance's state does not
+            # change.
             if self._drain_agent_reachable[horde_url]:
                 logger.warning(
                     f"Drain agent {agent_address} did not reply for {horde_url} ({type(error).__name__}: {error}). "

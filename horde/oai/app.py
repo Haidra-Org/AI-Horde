@@ -13,7 +13,7 @@
 - ``GET /v1/models`` and ``GET /v1/models/{id}``: the text models served by online chat workers, in the OpenAI list
   shape with OpenRouter's limit and parameter fields. An id may contain slashes.
 - ``GET /healthz``: liveness, admission readiness and whether the completion signal subscription is up.
-- ``GET /routing``: each Horde root's tier, drain agent state, usability and calls in flight, for deploys that read
+- ``GET /routing``: each Horde instance's tier, drain agent state, usability and calls in flight, for deploys that read
   the front directly. A request with ``X-Forwarded-For`` came through a listener and gets a 404 response.
 - ``GET /docs``, ``GET /redoc`` and ``GET /openapi.json``: the interactive documentation and the OpenAPI description,
   built by [`horde.oai.openapi`][horde.oai.openapi] from the request and response models. ``GET /`` redirects to
@@ -384,7 +384,7 @@ FRONT_FULL_CODE: str = "FrontAtCapacity"
 """The error code of a request refused because the process or the request's source holds its maximum of requests."""
 
 HORDE_UNAVAILABLE_CODE: str = "HordeUnavailable"
-"""The error code of a request no Horde root answered."""
+"""The error code when a call did not reach any Horde instance."""
 
 INVALID_AUTHORIZATION_CODE: str = "InvalidAuthorizationHeader"
 """The error code of a request whose ``Authorization`` header is not ``Bearer <key>``."""
@@ -817,8 +817,8 @@ class ModelListCache:
         """Return the cached model list, fetching it when it is older than the cache period.
 
         Raises:
-            HordeAPIError: The Horde answered with an error.
-            HordeUnavailableError: No Horde root accepted the connection.
+            HordeAPIError: The Horde returned an error.
+            HordeUnavailableError: The call did not reach any Horde instance.
         """
         async with self._refresh_lock:
             if self._models is None or time.monotonic() - self._fetched_at >= MODEL_LIST_CACHE_SECONDS:
@@ -988,7 +988,7 @@ def create_app(
             with contextlib.suppress(asyncio.CancelledError):
                 await cancel_retry_task
             await _cancel_open_requests(front_state)
-            # The poll stops after the shutdown cancels, so a root drained while they run is still avoided.
+            # The poll stops after the shutdown cancels, so a Horde instance drained while the cancels run is still avoided.
             if drain_agent_poll_task is not None:
                 drain_agent_poll_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -1529,19 +1529,20 @@ async def _submit(
 ) -> HordeAsyncSubmission:
     """Submit a chat request within the time left in its budget and return the Horde's acknowledgement.
 
-    A refusal of the first submit, or no root accepting its connection, means the request was not queued. A submit
-    that was sent without an answer leaves the outcome unknown and is recovered by ``_recover_submit``.
+    When the first submit is refused, or when the submit does not reach any Horde instance, the request was not queued. A
+    submit that was sent without a response leaves the outcome unknown and is recovered by ``_recover_submit``.
 
     Args:
         front_state: The process state.
-        native_body: The native body, carrying ``operation_key`` as ``horde.operation_key``.
+        native_body: The native body, with ``operation_key`` as ``horde.operation_key``.
         operation_key: The key of this client request.
         credentials: Who the call is made for.
-        deadline: The monotonic time the request's total budget ends.
-        models: The models the request accepts, for the largest limit a size limit gap refusal states.
+        deadline: The monotonic time at which the request's total budget ends.
+        models: The models accepted by the request, used for the largest limit stated in a size limit gap refusal.
 
     Raises:
-        ChatFrontError: The Horde refused the request, no root accepted the connection, or the outcome stayed unknown.
+        ChatFrontError: The Horde refused the request, the submit did not reach any Horde instance, or the outcome
+            stayed unknown.
     """
     try:
         return await _send_submit(front_state, native_body=native_body, credentials=credentials, deadline=deadline, recovering=False)
@@ -1598,15 +1599,15 @@ async def _send_submit(
     """Send one submit, cut off at the end of the request's budget.
 
     Raises:
-        HordeAPIError: The Horde answered with an error.
-        HordeUnavailableError: No root accepted the connection, or the connection failed after the call was sent.
-        TimeoutError: The budget ended before the Horde answered.
+        HordeAPIError: The Horde returned an error.
+        HordeUnavailableError: The call did not reach any Horde instance, or the connection failed after the call was sent.
+        TimeoutError: The budget ended before the Horde responded.
     """
     async with asyncio.timeout(deadline - time.monotonic()):
         return await front_state.horde_client.submit_chat(
             request_body=native_body,
             credentials=credentials,
-            fall_back_to_unhealthy_roots=recovering,
+            fall_back_to_unhealthy_instances=recovering,
         )
 
 
@@ -1787,10 +1788,10 @@ async def _retry_failed_cancels_forever(front_state: FrontState) -> None:
 
 
 async def _poll_drain_agents_forever(front_state: FrontState, *, agent_port: int) -> None:
-    """Poll every root's drain agent every ``settings.drain_agent_poll_seconds`` until the task is cancelled.
+    """Poll the drain agent of every Horde instance every ``settings.drain_agent_poll_seconds`` until the task is cancelled.
 
-    The first poll runs at once, so a root that is drained when the front starts stops getting calls within one query
-    timeout.
+    The first poll runs at once, so a Horde instance that is drained when the front starts stops getting calls within one
+    query timeout.
     """
     poll_seconds = front_state.settings.drain_agent_poll_seconds
     timeout_seconds = poll_seconds * DRAIN_AGENT_TIMEOUT_FRACTION
@@ -3605,7 +3606,7 @@ async def _root() -> Response:
 
 
 async def _routing(request: Request) -> Response:
-    """Serve ``GET /routing``: each Horde root's routing state and each drain agent's last reply time.
+    """Serve ``GET /routing``: each Horde instance's routing state and each drain agent's last reply time.
 
     Deploys read it on the front's address. Every listener sets ``X-Forwarded-For``, so a request with that header came
     from outside and gets the same 404 response as an unknown path.
