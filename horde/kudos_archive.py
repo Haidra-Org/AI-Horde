@@ -18,6 +18,10 @@ dumps only when an operator runs it, and currency objects are never deleted.
 - ``ArchiveCodec`` is the streaming compression interface. ``ZstdCodec`` compresses new objects, and ``GzipCodec``
   stays readable. A reader picks the codec from the object key's extension, and the manifest records it.
 - ``KudosArchiveError`` wraps every object-store failure. Callers decide whether a failure blocks a step.
+
+Each public ``KudosArchive`` method that sends store requests runs in a ``horde.kudos.archive.<method>`` span, so
+archive time shows inside the trace of the job that called it. Its duration is also recorded in the
+``horde.kudos.archive.operation.duration`` histogram.
 """
 
 from __future__ import annotations
@@ -25,19 +29,23 @@ from __future__ import annotations
 import codecs
 import csv
 import enum
+import functools
 import hashlib
+import inspect
 import io
 import json
 import os
 import re
+import time
 import zlib
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Final, Protocol
+from typing import Any, Concatenate, Final, Protocol
 
 import boto3
+import logfire
 import zstandard
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
@@ -46,6 +54,7 @@ from psycopg2 import sql as psycopg2_sql
 from psycopg2.extensions import connection as PsycopgConnection
 
 from horde.enums import KudosRetentionDataset
+from horde.metrics import kudos_archive_operation_duration
 
 ARCHIVE_ACCOUNT_ENV: Final[str] = "KUDOS_ARCHIVE_ACCOUNT"
 """The environment variable holding the archive store's S3 endpoint URL."""
@@ -115,6 +124,11 @@ _MISSING_OBJECT_CODES: Final[frozenset[str]] = frozenset({"404", "NoSuchKey", "N
 """The error codes S3-compatible stores report for a missing object. A HEAD response has no body, so only the status."""
 _UNSUPPORTED_OPERATION_CODES: Final[frozenset[str]] = frozenset({"501", "NotImplemented", "MethodNotAllowed", "405"})
 """The error codes S3-compatible stores report for an operation they do not implement."""
+_SPAN_ATTRIBUTE_PARAMETERS: Final[Mapping[str, str]] = {
+    "tier": "horde.kudos.archive.tier",
+    "key": "horde.kudos.archive.key",
+}
+"""The span attribute of each ``KudosArchive`` method parameter that is recorded on the method's span when passed."""
 
 
 def normalize_archive_prefix(raw: str) -> str:
@@ -794,6 +808,43 @@ class _ChunkReader(io.RawIOBase):
         return result
 
 
+def _archive_span[**P, R](method: Callable[Concatenate[KudosArchive, P], R]) -> Callable[Concatenate[KudosArchive, P], R]:
+    """Return ``method`` wrapped in a ``horde.kudos.archive.<method name>`` span with its tier and key arguments.
+
+    Each call also records its duration in ``kudos_archive_operation_duration``, by method name and by whether it
+    raised, so the store's response times can be read per operation without a trace.
+
+    Only methods that return after their last store request are wrapped. A method that returned a generator would end
+    its span before the caller read anything.
+    """
+    signature = inspect.signature(method)
+    span_name = f"horde.kudos.archive.{method.__name__}"
+
+    @functools.wraps(method)
+    def wrapper(self: KudosArchive, /, *args: P.args, **kwargs: P.kwargs) -> R:
+        arguments = signature.bind(self, *args, **kwargs).arguments
+        attributes: dict[str, Any] = {
+            attribute: str(arguments[parameter]) for parameter, attribute in _SPAN_ATTRIBUTE_PARAMETERS.items() if parameter in arguments
+        }
+        started = time.monotonic()
+        failed = True
+        try:
+            with logfire.span(span_name, **attributes):
+                result = method(self, *args, **kwargs)
+            failed = False
+            return result
+        finally:
+            kudos_archive_operation_duration.record(
+                time.monotonic() - started,
+                {
+                    "horde.kudos.archive.operation": method.__name__,
+                    "horde.kudos.archive.failed": failed,
+                },
+            )
+
+    return wrapper
+
+
 class KudosArchive:
     """Read and write kudos retention archive objects in one bucket.
 
@@ -868,6 +919,7 @@ class KudosArchive:
         """
         return f"{self._prefix}{tier}/{source_range.replace('/', '__')}.csv.{self._codec.extension}"
 
+    @_archive_span
     def put_unit(
         self,
         *,
@@ -957,6 +1009,7 @@ class KudosArchive:
             per_user_totals=per_user_totals_to_manifest(fold.per_user_totals) if dataset == KudosRetentionDataset.CURRENCY else None,
         )
 
+    @_archive_span
     def put_manifest(self, key: str, manifest: ArchiveManifest) -> None:
         """Store ``manifest`` beside the object at ``key``.
 
@@ -973,6 +1026,7 @@ class KudosArchive:
         except (BotoCoreError, ClientError) as err:
             raise KudosArchiveError(f"Archive manifest upload for {key} failed: {err}") from err
 
+    @_archive_span
     def get_manifest(self, key: str) -> ArchiveManifest:
         """Return the manifest stored beside the object at ``key``.
 
@@ -986,6 +1040,7 @@ class KudosArchive:
             raise KudosArchiveError(f"Archive manifest read for {key} failed: {err}") from err
         return ArchiveManifest.from_json(raw)
 
+    @_archive_span
     def verify_unit(self, key: str, manifest: ArchiveManifest) -> VerificationReport:
         """Read the object at ``key`` back in full and compare its digest and control totals with ``manifest``.
 
@@ -1030,6 +1085,7 @@ class KudosArchive:
             mismatches=mismatches,
         )
 
+    @_archive_span
     def tier_bytes(self, tier: ArchiveTier) -> int:
         """Return the stored bytes of a tier's objects, excluding manifests.
 
@@ -1038,6 +1094,7 @@ class KudosArchive:
         """
         return sum(listed.size for listed in self._list_objects(tier))
 
+    @_archive_span
     def object_sizes(self, tier: ArchiveTier) -> dict[str, int]:
         """Return the stored size of each of a tier's objects by key, excluding manifests.
 
@@ -1046,6 +1103,7 @@ class KudosArchive:
         """
         return {listed.key: listed.size for listed in self._list_objects(tier)}
 
+    @_archive_span
     def version_usage(self, tier: ArchiveTier) -> ArchiveVersionUsage | None:
         """Return the noncurrent bytes and delete markers under a tier's prefix, or None when they cannot be listed.
 
@@ -1072,6 +1130,7 @@ class KudosArchive:
             return None
         return ArchiveVersionUsage(noncurrent_bytes=noncurrent_bytes, delete_markers=delete_markers)
 
+    @_archive_span
     def enforce_budget(self, *, budget_bytes: int, kept_keys: Collection[str] = frozenset()) -> list[str]:
         """Delete the oldest statistic objects, by unit upper bound, until the statistics tier fits ``budget_bytes``.
 
@@ -1118,6 +1177,7 @@ class KudosArchive:
             logger.warning(f"Kudos archive evicted {len(evicted)} statistic objects to fit {budget_bytes} bytes")
         return evicted
 
+    @_archive_span
     def check_object_metadata(self, key: str, *, tier: ArchiveTier, listed_size: int) -> ArchiveObjectAudit:
         """Return the check of the object at ``key`` against its manifest without reading the object's bytes.
 
@@ -1149,6 +1209,7 @@ class KudosArchive:
             problems.append(f"codec differs from the manifest (key {key_codec}, manifest {manifest.codec})")
         return ArchiveObjectAudit(key=key, tier=tier, problems=problems)
 
+    @_archive_span
     def audit_object(self, key: str, *, tier: ArchiveTier) -> ArchiveObjectAudit:
         """Return the read-back of the object at ``key`` against its manifest, with any failure recorded as a problem.
 
@@ -1175,6 +1236,7 @@ class KudosArchive:
             compressed_bytes=report.compressed_bytes,
         )
 
+    @_archive_span
     def restore_unit(self, key: str, *, table_name: str, connection: PsycopgConnection) -> int:
         """Copy the rows of the object at ``key`` into an existing table, verified against its manifest. Return the count.
 
@@ -1228,6 +1290,7 @@ class KudosArchive:
             raise KudosArchiveError(f"Archive object {key} does not match its manifest: {'; '.join(mismatches)}")
         return copied_rows
 
+    @_archive_span
     def object_size(self, key: str) -> int | None:
         """Return the stored size of the object at ``key``, or None when no object exists there.
 
@@ -1250,6 +1313,7 @@ class KudosArchive:
             raise KudosArchiveError(f"Archive object metadata read {key} failed: {err}") from err
         return int(response["ContentLength"])
 
+    @_archive_span
     def abort_stale_multipart_uploads(self, *, older_than: timedelta) -> int:
         """Abort the incomplete multipart uploads under this archive's tier prefixes started before now minus ``older_than``.
 

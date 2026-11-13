@@ -425,6 +425,55 @@ def test_abort_stale_multipart_uploads_reads_a_naive_initiated_time_as_utc() -> 
     assert archive.abort_stale_multipart_uploads(older_than=timedelta(days=1)) == 1
 
 
+def test_store_operations_run_in_spans_with_their_tier_and_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    import logfire
+
+    spans: list[tuple[str, dict[str, object]]] = []
+
+    @contextlib.contextmanager
+    def record_span(span_name: str, **attributes: object) -> Iterator[None]:
+        spans.append((span_name, attributes))
+        yield
+
+    monkeypatch.setattr(logfire, "span", record_span)
+    store = _FakeS3()
+    store.objects[RESTORE_KEY] = b"x" * 42
+    archive = KudosArchive(client=store, bucket="archive")  # type: ignore[arg-type]
+
+    assert archive.object_size(RESTORE_KEY) == 42
+    assert archive.abort_stale_multipart_uploads(older_than=timedelta(days=1)) == 0
+
+    assert spans == [
+        ("horde.kudos.archive.object_size", {"horde.kudos.archive.key": RESTORE_KEY}),
+        ("horde.kudos.archive.abort_stale_multipart_uploads", {}),
+    ]
+
+
+def test_store_operations_record_their_duration_and_whether_they_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from horde import kudos_archive
+
+    recordings: list[tuple[float, dict[str, object]]] = []
+
+    class _DurationRecorder:
+        def record(self, amount: float, attributes: dict[str, object]) -> None:
+            recordings.append((amount, attributes))
+
+    monkeypatch.setattr(kudos_archive, "kudos_archive_operation_duration", _DurationRecorder())
+    store = _FakeS3()
+    store.objects[RESTORE_KEY] = b"x" * 42
+    archive = KudosArchive(client=store, bucket="archive")  # type: ignore[arg-type]
+
+    assert archive.object_size(RESTORE_KEY) == 42
+    with pytest.raises(KudosArchiveError):
+        archive.get_manifest("statistics/missing.csv.zst")
+
+    assert [attributes for _, attributes in recordings] == [
+        {"horde.kudos.archive.operation": "object_size", "horde.kudos.archive.failed": False},
+        {"horde.kudos.archive.operation": "get_manifest", "horde.kudos.archive.failed": True},
+    ]
+    assert all(amount >= 0 for amount, _ in recordings)
+
+
 def test_abort_stale_multipart_uploads_reports_a_store_without_the_listing() -> None:
     client = _FakeS3()
     client.list_uploads_error = _client_error("NotImplemented", "ListMultipartUploads")
