@@ -335,7 +335,7 @@ from a single database snapshot. A fold or release committing mid-read cannot hi
 | Projection-target `FOR KEY SHARE` | Claimed users/workers | Projector | Prevent target deletion between validation and foreign-key child insertion without blocking ordinary non-key updates |
 | Reservation-row `FOR UPDATE` | Business ID | Consume/release | Serialize hold depletion/release |
 | Repeatable-read transaction | Snapshot/reconciliation command | Reconciliation helpers | Observe balances and applied totals from one consistent database snapshot |
-| Retention advisory session lock | Installation | `run_retention_tick` | At most one retention tick at a time. It is held on a dedicated autocommit connection, so a long export does not keep a transaction open |
+| Retention advisory session lock | Installation | `run_retention_tick`, `reconcile_archive_catalog` and the retention operator commands | At most one retention tick at a time. It is held on a dedicated autocommit connection, so a long export does not keep a transaction open. The archive reconciliation takes it only for its catalog updates, after its listing, and waits up to `RECONCILIATION_LOCK_WAIT` for it |
 
 Required accounting lock order is applier lock before exclusive mode-gate lock. Projection targets are visited in
 stable ID order. Code that needs another accounting lock must document where it fits before it is merged. The legacy
@@ -549,8 +549,14 @@ Units are selected by these rules:
   checks that the connection holding the retention lock is alive, and fails without dropping when it is not.
 - A tick whose reference time is later than the real clock is `refused` unless `confirm_live_data_loss` is set
   (`retention step --confirm-live-data-loss`).
-- When the archive is configured, each tick aborts multipart uploads under the deployment's prefix that were started
-  more than `STALE_UPLOAD_AGE` ago.
+- A tick sends archive requests only for the step it makes, so a tick without a step does not wait on the object
+  store. The archive housekeeping runs as separate jobs on the quorum node. `reconcile_kudos_archive_catalog` runs
+  every `KUDOS_ARCHIVE_RECONCILIATION_INTERVAL` (one hour), as described under [archive objects](#archive-objects).
+  `abort_stale_kudos_archive_uploads` runs every `KUDOS_ARCHIVE_STALE_UPLOAD_INTERVAL` (one day) and aborts multipart
+  uploads under the deployment's prefix that were started more than `STALE_UPLOAD_AGE` (one day) ago. It does not take
+  the retention lock, because that age is far longer than any export. Both jobs return at once without an archive.
+  Their threads wake every `KUDOS_ARCHIVE_JOB_WAKE_INTERVAL` (60 seconds) and each job runs only when its interval has
+  passed since its last run in the process, so the first run comes within a minute of the node becoming the quorum.
 - A step that raises an error does not make a transition. Examples are an unreachable archive during export or a
   rollup whose totals differ from the unit's totals. The tick outcome is `failed`, and the step runs again on the
   next tick.
@@ -570,7 +576,7 @@ The `error` of a blocked unit is one of the `RetentionBlockReason` values.
 | `online drift since export` | `currency`, at `exported` | The manifest's row count differs from `row_count`, or the row count, amount sum or per-user totals of the online rows differ from the archived object |
 | `late rows` | Both, at the drop | A unit's row count or highest `id` differs from `row_count` and `max_id`, or the unit has no recorded count |
 | `dump retries exhausted` | `statistics`, at `dump_failed` | A dump retry failed more than `KUDOS_RETENTION_DUMP_RETRY_DAYS` after the first failure |
-| `archive object missing` | `currency`, at `exported`, `verified` or `detached`, or at the drop. `statistics`, at `detached` with a `dumped` state before the detach, or at the drop | The tick's archive listing does not hold the unit's `object_key`, or the drop found a currency unit or a dumped statistics unit whose `object_key` or object is missing. A unit of a detached partition is reattached first. `retention unblock` then returns a currency unit to `checkpointed`, so it is exported and verified again, and a statistics unit to `pending`, so it is rolled up and dumped again. `retention unblock --waive-dump` drops a statistics unit without the dump |
+| `archive object missing` | `currency`, at `exported`, `verified` or `detached`, or at the drop. `statistics`, at `detached` with a `dumped` state before the detach, or at the drop | The archive reconciliation's listing does not hold the unit's `object_key`, or the `object_key` or the object of a currency unit or a dumped statistics unit was missing at the drop. A unit of a detached partition is reattached first. `retention unblock` then returns a currency unit to `checkpointed`, so it is exported and verified again, and a statistics unit to `pending`, so it is rolled up and dumped again. `retention unblock --waive-dump` drops a statistics unit without the dump |
 | `reattached by operator` | Both, at `detached` | `retention reattach` attached the unit's partition again. `retention unblock` returns the unit to `state_before_detach` |
 
 ### Reconciliation after retention
@@ -680,14 +686,22 @@ unit are deleted like dropped dumps. Currency objects are never deleted. The del
 fails, `ArchiveEvictionError` holds the keys deleted before it, and the command prints them. The command sets the
 `object_key` of each evicted unit to NULL, also after a failed batch, so an evicted dump is not reported as lost.
 
-With an archive configured, every tick lists both tiers after its step, while it still holds the retention lock. A
-unit whose `object_key` is not in the listing was removed outside the horde, or by an eviction that stopped before it
-updated the catalog. What the tick does depends on the unit:
+With an archive configured, `reconcile_kudos_archive_catalog` runs `reconcile_archive_catalog` every hour on the
+quorum node. It reads the catalog, lists both tiers without the retention lock and without an open transaction, then
+takes the retention lock, reads the catalog again and updates only the units whose row did not change between the two
+reads. Every catalog write holds the retention lock and sets `updated`, and a step records an `object_key` only after
+its upload has completed, so a key recorded during the listing is not treated as a missing object. A unit that changed
+is left for the next pass. When the lock stays held for `RECONCILIATION_LOCK_WAIT` (10 seconds), the pass logs
+`Kudos retention skipped the archive reconciliation` at info level and does not update any unit. When a listing fails,
+the pass logs a warning and does not update any unit.
+
+A unit whose `object_key` is not in the listing was removed outside the horde, or by an eviction that stopped before it
+updated the catalog. What the reconciliation does depends on the unit:
 
 | Unit | Change | Log line |
 | --- | --- | --- |
 | `currency` in `exported`, `verified` or `detached` | `blocked` with `archive object missing`, `object_key` NULL, because a drop would remove the only copy of its postings | `Kudos retention blocked <dataset> unit <source_range>: archive object missing: ...` |
-| `statistics` in `dumped` | `dump_failed`, `object_key` NULL, `error` `archive object missing: <key>`. The dump retry window starts at that tick, and the next tick dumps the rows again | `Kudos retention dump failed for <source_range>: the archive does not hold <key>, so the unit is dumped again` |
+| `statistics` in `dumped` | `dump_failed`, `object_key` NULL, `error` `archive object missing: <key>`. The dump retry window starts at that pass, and the next tick dumps the rows again | `Kudos retention dump failed for <source_range>: the archive does not hold <key>, so the unit is dumped again` |
 | `statistics` in `detached`, with `dumped` before the detach | `blocked` with `archive object missing`, `object_key` NULL | `Kudos retention blocked <dataset> unit <source_range>: archive object missing: ...` |
 | `statistics` in `dropped` | None. The unit keeps its `object_key`, so `archive audit` reports the lost object on every run | None |
 | Any other | `object_key` NULL | `Kudos retention cleared object key <key> of <dataset> unit <id> (<source_range>, <state>)` |
@@ -699,8 +713,9 @@ archive. For a currency unit, the object exists, its manifest is readable, the s
 with `archive object missing`, a currency mismatch blocks it with `archive mismatch`, and an unreachable store or
 unreadable manifest fails the tick so that a later tick retries. The check compares metadata only. The digest was
 verified at the `verified` step or by the dump's read-back, and `archive audit --read-back` re-reads objects. The
-post-step listing does not gate the drop.
-The tier sizes from the same listing are the `horde.kudos.archive.tier_bytes` values.
+reconciliation's listing does not gate the drop.
+The tier sizes from the reconciliation's listing are the `horde.kudos.archive.tier_bytes` values. The reconciliation
+job sets the gauge, and each tick sets it again from the last listed sizes without a listing of its own.
 
 ### Retention metrics and log lines
 
@@ -716,8 +731,10 @@ The tier sizes from the same listing are the `horde.kudos.archive.tier_bytes` va
 | `horde.kudos.retention.held_partitions` | Gauge, `{partition}` | None | `held_partitions` from `retention_health`. 0 when `KUDOS_RETENTION_HOLD_DROPS` is not `true` |
 | `horde.kudos.retention.pending_units` | Gauge, `{unit}` | `horde.kudos.dataset` | `pending_units_by_dataset` from `retention_health`. The units of the legacy partition are counted until the whole partition is dropped, so the value stays high for a whole catch-up |
 | `horde.kudos.retention.restored_partitions` | Gauge, `{partition}` | None | The number of `restored_partitions` from `retention_health`. Above 0, the tick does not make a transition in the dataset of each such partition |
-| `horde.kudos.archive.tier_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | Stored bytes of each tier, excluding manifests, from the tick's listing. Not recorded without an archive, and kept at the last value when the listing fails |
+| `horde.kudos.archive.tier_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | Stored bytes of each tier, excluding manifests, from the last successful listing of the hourly archive reconciliation. Each tick records the same values again. Not recorded without an archive or before the first successful listing, and kept at the last listed value when a listing fails |
 | `horde.kudos.archive.budget_bytes` | Gauge, `By` | `horde.kudos.archive.tier` | One series per tier that has a budget: `currency` from `KUDOS_ARCHIVE_BUDGET_BYTES`, `statistics` from `KUDOS_ARCHIVE_STATISTICS_BUDGET_BYTES`. Not recorded without an archive |
+| `horde.kudos.archive.listing_age` | Gauge, `s` | None | Seconds since the listing that the `tier_bytes` values come from. Each tick records it with the tier bytes. It grows past one hour when listings fail, while `tier_bytes` stays at the last listed values |
+| `horde.kudos.archive.operation.duration` | Histogram, `s` | `horde.kudos.archive.operation`, `horde.kudos.archive.failed` | Duration of each `KudosArchive` method that sends store requests, by method name and by whether it raised. The same calls run in `horde.kudos.archive.<method>` spans with `horde.kudos.archive.tier` and `horde.kudos.archive.key` attributes when the call has them. A method that calls another, such as `audit_object`, is recorded for both |
 
 The SDK exports a gauge point only for an export interval in which the gauge was set, and the counters are exported
 with delta temporality, so they too send a point only for an interval in which they were added to. Each tick records
@@ -737,7 +754,7 @@ Two warnings are under log contract. Log-based alerting matches their prefixes, 
 | Prefix | Constant | Logged when | Full line |
 | --- | --- | --- | --- |
 | `Kudos retention blocked` | `RETENTION_BLOCKED_LOG_PREFIX` | A unit becomes `blocked`, or a tick does not make a transition in a dataset because of a restored partition | `Kudos retention blocked <dataset> unit <source_range>: <error>`, optionally followed by `: <detail>`, or `Kudos retention blocked <dataset> dataset: an attached partition has dropped catalog units: <partitions>` |
-| `Kudos retention dump failed` | `RETENTION_DUMP_FAILED_LOG_PREFIX` | A statistics dump attempt fails and the unit stays `dump_failed`, the dump step waives a unit because no archive is configured, or the tick finds the dump of a `dumped` unit missing | `Kudos retention dump failed for <source_range>: <cause> (<n> consecutive failures since <first failure>)`, `...: archive not configured`, or `...: the archive does not hold <key>, so the unit is dumped again` |
+| `Kudos retention dump failed` | `RETENTION_DUMP_FAILED_LOG_PREFIX` | A statistics dump attempt fails and the unit stays `dump_failed`, the dump step waives a unit because no archive is configured, or the dump of a `dumped` unit is missing at an archive reconciliation | `Kudos retention dump failed for <source_range>: <cause> (<n> consecutive failures since <first failure>)`, `...: archive not configured`, or `...: the archive does not hold <key>, so the unit is dumped again` |
 
 The dump-failed warning is logged on every failed attempt. The attempt that exhausts the retry window logs the blocked
 warning instead, with `dump retries exhausted` and the same detail. Without an archive, the dump-failed warning is
@@ -837,12 +854,12 @@ old row or hold can indicate a poisoned path.
 | Accounting discriminators and metadata keys | `horde/enums.py` | `KudosEntryType`, `KudosLedgerMode`, `KudosAuditDetail` |
 | Initial schema and counter uniqueness | `sql_statements/5.1.0.txt` | SQL migration |
 | Quarantine columns and concurrent drainable-queue index replacement | `sql_statements/5.1.9.txt` | SQL migration. Run with psql autocommit |
-| Retention policy, tick, steps, catalog, health, statements, restore, archive audit and disclosure | `horde/database/kudos_retention.py` | `KudosRetentionPolicy`, `KUDOS_RETENTION_POLICY`, `run_retention_tick`, `select_next_unit`, `STEP_TABLE`, `RetentionBlockReason`, `retention_health`, `unblock_unit`, `reattach_partition`, `daily_statement`, `restore_archive_unit`, `audit_archive_metadata`, `audit_archive_contents`, `units_without_archive_objects`, `AccountingRetentionDisclosure` |
+| Retention policy, tick, steps, catalog, health, statements, restore, archive reconciliation, stale upload cleanup, archive audit and disclosure | `horde/database/kudos_retention.py` | `KudosRetentionPolicy`, `KUDOS_RETENTION_POLICY`, `run_retention_tick`, `select_next_unit`, `STEP_TABLE`, `RetentionBlockReason`, `retention_health`, `unblock_unit`, `reattach_partition`, `daily_statement`, `restore_archive_unit`, `audit_archive_metadata`, `audit_archive_contents`, `units_without_archive_objects`, `reconcile_archive_catalog`, `abort_stale_archive_uploads`, `AccountingRetentionDisclosure` |
 | Archive client, manifest, codecs, operator eviction, object audit and version usage | `horde/kudos_archive.py` | `KudosArchive`, `ArchiveManifest`, `ArchiveColumn`, `ArchiveObjectAudit`, `ArchiveVersionUsage`, `ArchiveTier`, `ZstdCodec`, `GzipCodec`, `KudosArchiveError`, `ArchiveEvictionError` |
 | Partition bootstrap and retention models | `horde/classes/base/kudos.py` | `ensure_kudos_event_partitions`, `KudosPartitioning`, `KudosStatRollup`, `KudosStatQuarantine`, `KudosLedgerCheckpoint`, `KudosLedgerDailyStatement`, `KudosIdempotencyKey`, `KudosRetentionUnit` |
-| Retention lock | `horde/database/kudos_db.py` | `try_acquire_retention_lock`, `release_retention_lock` |
+| Retention lock | `horde/database/kudos_db.py` | `try_acquire_retention_lock`, `acquire_retention_lock_within`, `release_retention_lock` |
 | Checkpoint plus online tail and repair key lifetime | `horde/database/kudos_reconciliation.py` | `_applied_totals_subquery`, `_refuse_snapshot_older_than_key_lifetime` |
-| Periodic retention tick, metrics and log contract lines | `horde/database/threads.py` | `kudos_retention_tick` |
+| Periodic retention tick, archive reconciliation, stale upload cleanup, metrics and log contract lines | `horde/database/threads.py` | `kudos_retention_tick`, `reconcile_kudos_archive_catalog`, `abort_stale_kudos_archive_uploads` |
 | Retention tables, key backfill and partition conversion | `sql_statements/5.1.16.txt` | SQL migration. Run with psql and `ON_ERROR_STOP=1` |
 | Status, drain, snapshot, reconciliation, repair, promotion-statistic backfill, mode, retention, statement and archive restore, evict and audit commands | `tools/kudos_ledger_admin.py` | `main` |
 

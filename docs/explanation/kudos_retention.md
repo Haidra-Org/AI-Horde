@@ -214,7 +214,7 @@ It costs these:
 | Archive client, manifest and budget | `horde/kudos_archive.py` | `KudosArchive`, `ArchiveManifest`, `ArchiveTier` |
 | Partitions and retention models | `horde/classes/base/kudos.py` | `ensure_kudos_event_partitions`, `KudosRetentionUnit`, `KudosStatRollup`, `KudosLedgerCheckpoint` |
 | Checkpoint plus online tail | `horde/database/kudos_reconciliation.py` | `_applied_totals_subquery` |
-| Scheduled tick | `horde/database/threads.py` | `kudos_retention_tick` |
+| Scheduled tick and archive housekeeping jobs | `horde/database/threads.py` | `kudos_retention_tick`, `reconcile_kudos_archive_catalog`, `abort_stale_kudos_archive_uploads` |
 | Operator commands | `tools/kudos_ledger_admin.py` | `main` |
 
 The full map, including the migration and the idempotency keys, is the

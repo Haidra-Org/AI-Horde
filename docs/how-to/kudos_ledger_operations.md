@@ -515,8 +515,8 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
      unblock the unit, which rolls it up again and retries the dump. Verify: the unit reaches `dumped` and its
      `object_key` is set. To drop the unit without a dump instead, run `retention unblock <unit-id> --waive-dump`.
    - `archive object missing`: the archive object of a currency unit past its export, or of a dumped statistics unit
-     before its drop, is missing. Either the tick's archive listing does not hold the unit's key, or the drop found
-     that the key or the object is missing. Eviction does not reach these units, so the object was removed some
+     before its drop, is missing. Either the hourly archive reconciliation's listing does not hold the unit's key, or
+     the key or the object was missing at the drop. Eviction does not reach these units, so the object was removed some
      other way. Nothing was dropped, and the rows are still online or in the detached table. Find out why the object is gone before going on. On a
      bucket with versioning, the object may still be stored as a noncurrent version. For a unit of a detached
      partition, `retention unblock` refuses, so run `retention reattach <unit-id>` first. Then unblock the unit. A
@@ -527,8 +527,9 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
      `missing_object` line for it.
 
      A `dumped` statistics unit in an attached partition whose dump is missing from the listing does not block. The
-     tick moves it to `dump_failed` and logs `Kudos retention dump failed for <source_range>: the archive does not hold
-     <key>, so the unit is dumped again`. The next tick dumps the rows again, and the usual dump retries apply.
+     reconciliation moves it to `dump_failed` and logs `Kudos retention dump failed for <source_range>: the archive
+     does not hold <key>, so the unit is dumped again`. The next tick dumps the rows again, and the usual dump retries
+     apply.
    - `archive mismatch`: the object read back does not match its manifest. The object is kept. The warning includes
      the mismatched fields. Check the object store, and restore the object into a scratch table if the rows need
      inspection.
