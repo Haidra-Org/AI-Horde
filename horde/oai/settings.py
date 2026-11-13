@@ -35,7 +35,7 @@ DEFAULT_HORDE_URL: str = "http://127.0.0.1:7001/api"
 """The Horde API root the front calls when ``HORDE_OAI_HORDE_URLS`` is unset: a Horde on the same host, default port."""
 
 HORDE_URL_SEPARATOR: str = ","
-"""The separator between roots in ``HORDE_OAI_HORDE_URLS``."""
+"""The separator between roots in ``HORDE_OAI_HORDE_URLS`` and ``HORDE_OAI_FALLBACK_HORDE_URLS``."""
 
 HIGHEST_PORT: int = 65535
 """The highest TCP port number."""
@@ -52,9 +52,29 @@ class FrontSettings(BaseSettings):
     )
 
     horde_urls: Annotated[tuple[str, ...], NoDecode] = Field(default=(DEFAULT_HORDE_URL,), min_length=1)
-    """The private Horde API roots (each ending in ``/api``), comma-separated, used round-robin.
+    """The primary private Horde API roots (each ending in ``/api``), comma-separated, used round-robin.
 
-    More than one root lets a refused connection move to another instance instead of failing the request.
+    With more than one root, a call refused by one instance is sent to another instead of failing the request.
+    """
+
+    fallback_horde_urls: Annotated[tuple[str, ...], NoDecode] = ()
+    """The comma-separated Horde API roots used round-robin only while every primary root is unusable. Empty by default.
+
+    A root may not be in both lists.
+    """
+
+    drain_agent_port: int | None = Field(default=None, ge=1, le=HIGHEST_PORT)
+    """The TCP port of the drain agent on each root's host. Unset turns polling off, and every root counts as ready.
+
+    The agent replies ``ready`` or ``drain`` for the root's port, as it does for HAProxy's ``agent-check``. New calls
+    are not sent to a drained root.
+    """
+
+    drain_agent_poll_seconds: float = Field(default=1.0, gt=0)
+    """How often every root's drain agent is queried.
+
+    One query may take [`DRAIN_AGENT_TIMEOUT_FRACTION`][horde.oai.horde_client.DRAIN_AGENT_TIMEOUT_FRACTION] of this,
+    so a slow agent cannot make polls overlap.
     """
 
     listen: str = "0.0.0.0"
@@ -212,7 +232,7 @@ class FrontSettings(BaseSettings):
     forwarded_allow_ips: str = "127.0.0.1"
     """The listener addresses uvicorn trusts for ``X-Forwarded-For``; the ASGI client address is then the end user."""
 
-    @field_validator("horde_urls", mode="before")
+    @field_validator("horde_urls", "fallback_horde_urls", mode="before")
     @classmethod
     def parse_horde_urls(cls, horde_urls: object) -> object:
         """Parse a comma-separated string of roots into a tuple, without trailing slashes or empty entries."""

@@ -57,6 +57,9 @@ def test_defaults_match_the_documented_values() -> None:
     assert settings.redis_url is None
     assert settings.redis_liveness_seconds == 30
     assert settings.proxy_passkey is None
+    assert settings.fallback_horde_urls == ()
+    assert settings.drain_agent_port is None
+    assert settings.drain_agent_poll_seconds == 1
 
 
 def test_settings_load_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,6 +69,9 @@ def test_settings_load_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("HORDE_OAI_FORWARDED_ALLOW_IPS", "10.0.0.1,10.0.0.2")
     monkeypatch.setenv("HORDE_OAI_PROXY_PASSKEY", "operator-passkey")
     monkeypatch.setenv("HORDE_OAI_REDIS_LIVENESS_SECONDS", "12.5")
+    monkeypatch.setenv("HORDE_OAI_FALLBACK_HORDE_URLS", "http://c.test:7004/api/, http://d.test:7005/api")
+    monkeypatch.setenv("HORDE_OAI_DRAIN_AGENT_PORT", "7900")
+    monkeypatch.setenv("HORDE_OAI_DRAIN_AGENT_POLL_SECONDS", "0.5")
 
     settings = load_settings()
 
@@ -75,6 +81,9 @@ def test_settings_load_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.forwarded_allow_ips == "10.0.0.1,10.0.0.2"
     assert settings.proxy_passkey == "operator-passkey"
     assert settings.redis_liveness_seconds == 12.5
+    assert settings.fallback_horde_urls == ("http://c.test:7004/api", "http://d.test:7005/api")
+    assert settings.drain_agent_port == 7900
+    assert settings.drain_agent_poll_seconds == 0.5
 
 
 @pytest.mark.parametrize(
@@ -88,6 +97,8 @@ def test_settings_load_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> 
         ("HORDE_OAI_CANCEL_RETRY_SECONDS", "0"),
         ("HORDE_OAI_NATIVE_MAX_CONNECTIONS", "32"),
         ("HORDE_OAI_HORDE_URLS", " , "),
+        ("HORDE_OAI_DRAIN_AGENT_PORT", "0"),
+        ("HORDE_OAI_DRAIN_AGENT_POLL_SECONDS", "0"),
     ],
 )
 def test_invalid_environment_value_fails_naming_the_setting(

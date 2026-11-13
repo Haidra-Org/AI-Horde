@@ -54,7 +54,10 @@ directory is read too. A variable that is set but invalid stops the start with a
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `HORDE_OAI_HORDE_URLS` | `http://127.0.0.1:7001/api` | Comma-separated horde API roots, used round-robin. A root that refuses the connection is skipped for that call. |
+| `HORDE_OAI_HORDE_URLS` | `http://127.0.0.1:7001/api` | Comma-separated primary horde API roots, used round-robin. A root that refuses the connection is skipped for that call. |
+| `HORDE_OAI_FALLBACK_HORDE_URLS` | empty | Comma-separated horde API roots used round-robin only when every primary root is unusable. A root cannot be in both lists. |
+| `HORDE_OAI_DRAIN_AGENT_PORT` | unset | TCP port of the drain agent on each root's host. The front sends the root's port and a newline, and reads `ready` or `drain`, as HAProxy's `agent-check` does. The front does not send new calls to a drained root. Unset, the front does not poll and every root counts as ready. |
+| `HORDE_OAI_DRAIN_AGENT_POLL_SECONDS` | `1` | How often every root's agent is polled, concurrently. One query may take half of this. |
 | `HORDE_OAI_LISTEN` | `0.0.0.0` | Address to bind. |
 | `HORDE_OAI_PORT` | `7002` | Port to bind. |
 | `HORDE_OAI_REDIS_URL` | unset | Redis URL of the horde's primary Redis, such as `redis://redis:6379/7`. Pub/sub ignores the logical database, so only the host matters. Unset, every request waits on the fallback poll alone. |
@@ -139,8 +142,8 @@ process is at `HORDE_OAI_MAX_INFLIGHT` or stopping. `signal_subscribed: false` m
 requests still complete, but only at the fallback poll interval.
 
 The interactive API documentation is at `http://127.0.0.1:7002/docs`, and `/` redirects there. `/redoc` shows the same
-description, and `/openapi.json` is the OpenAPI document itself. `/healthz` is left out of it, since only operators
-call it.
+description, and `/openapi.json` is the OpenAPI document itself. `/healthz` and `/routing` are left out of it, since
+only operators call them.
 
 Reversal: stop the process, or `docker compose stop aihorde_oai`. On a clean stop the front waits up to
 `HORDE_OAI_SHUTDOWN_DRAIN_SECONDS` for open requests, then cancels every request still open on the horde within
@@ -152,6 +155,25 @@ At most 10,000 requests with returned responses are held for this. Past that the
 
 After a crash, open connections are dropped. Their Horde jobs run to completion and are charged. Their replies
 are not collected.
+
+### Root routing
+
+A root is usable when its drain agent's last reply is `ready` and it is not left out of the rotation after a refused
+or dropped connection. Calls rotate across the usable primary roots. When every primary root is unusable, they rotate
+across the usable fallback roots. When every fallback root is unusable too, the call fails with `HordeUnavailable`. The
+front does not call a drained root, even for a recovering submit.
+
+Each root starts as `ready`. Only a `ready` or `drain` reply changes it. The state does not change on an unreachable
+agent, a timeout or any other reply. A warning is logged on the first failure in a row.
+
+```bash
+curl -s http://127.0.0.1:7002/routing
+```
+
+returns each root's `horde_url`, `tier` (`primary` or `fallback`), `agent_state`, `usable`, `unhealthy` and
+`inflight_calls`, which counts submits, status reads, model lists and cancels sent to that root and not yet finished.
+`drain_agents` lists each polled agent's `agent_address` and `last_success_unix_seconds`. A request with
+`X-Forwarded-For` gets a 404 response. Listeners set that header, so the view can only be read on the front's address.
 
 ## 3. Check the model list
 
@@ -326,7 +348,7 @@ retry into a second charged job. Errors before the submit do not include the hea
 | 413 | `RequestTooLarge` | | The body exceeds `HORDE_OAI_MAX_BODY_BYTES`. |
 | 502 | `ChatRequestFaulted` | `false` | The horde reports the request as faulted, or it expired on the horde. When the fault followed a refused worker reply, the message states the refusal and `metadata.rc` includes its return code. |
 | 502 | `ChatRequestNoGeneration` | `false` | The horde reported the request done without a generation and not faulted, after a short recheck or a `cancelled` signal, for example after a maintenance cancel. It is cancelled. |
-| 502 | `HordeUnavailable` | | No horde root in `HORDE_OAI_HORDE_URLS` accepted the connection. |
+| 502 | `HordeUnavailable` | | Every usable horde root in `HORDE_OAI_HORDE_URLS` and `HORDE_OAI_FALLBACK_HORDE_URLS` refused the connection, or every root is drained. |
 | 502 | `HordeUnavailable` | `false` | The submit was sent, a response did not arrive, and a recovery response did not arrive. The request may exist. `metadata` holds `submit_outcome: "unknown"` and `operation_key`. |
 | 502 | `OperationKeyConflict` | `false` | A recovery attempt was refused because the operation key holds a different request. The front re-sends the identical body, so this is a front defect. `metadata` holds the `rc` and `operation_key`. |
 | 503 | `FrontAtCapacity` | | The process or the client's address holds its maximum of open requests. `Retry-After: 5`. |

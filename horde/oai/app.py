@@ -8,24 +8,27 @@
 
 - ``POST /v1/chat/completions``: takes an inflight slot (per-source cap first, then the global cap), reads the body
   under a byte ceiling and a read timeout, screens and validates it, submits to the Horde's
-  ``/v2/generate/chat/async``, waits through [`ChatRequestWatcher`][horde.oai.waiter.ChatRequestWatcher] and answers
+  ``/v2/generate/chat/async``, waits through [`ChatRequestWatcher`][horde.oai.waiter.ChatRequestWatcher] and responds
   with a ``chat.completion`` body, or with server-sent events when ``stream`` is true.
-- ``GET /v1/models`` and ``GET /v1/models/{id}``: the text models an online chat worker serves, in the OpenAI list
-  shape with OpenRouter's limit and parameter fields; an id may contain slashes.
+- ``GET /v1/models`` and ``GET /v1/models/{id}``: the text models served by online chat workers, in the OpenAI list
+  shape with OpenRouter's limit and parameter fields. An id may contain slashes.
 - ``GET /healthz``: liveness, admission readiness and whether the completion signal subscription is up.
+- ``GET /routing``: each Horde root's tier, drain agent state, usability and calls in flight, for deploys that read
+  the front directly. A request with ``X-Forwarded-For`` came through a listener and gets a 404 response.
 - ``GET /docs``, ``GET /redoc`` and ``GET /openapi.json``: the interactive documentation and the OpenAPI description,
   built by [`horde.oai.openapi`][horde.oai.openapi] from the request and response models. ``GET /`` redirects to
   ``/docs``.
 
-Every error before headers is an OpenAI error envelope with a ``metadata`` object; after stream headers it is one SSE
-error event. Each client request gets a fresh operation key, sent as ``horde.operation_key``; a submit whose answer was
-lost is sent again with the same key and body, which the Horde answers with the request the key already claimed. Once
-the Horde holds a request, or may hold one, every error carries ``x-should-retry: false`` so a client SDK does not
-create a second charged job; a successful stream carries it too.
-Cancels on disconnect, deadline, fail-fast, a status read the wait cannot fix and shutdown are bounded, shielded from
-the client's disconnect and use the client's separate cancel pool. A request's handling sends at most one cancel and
-holds its in-flight slot until that cancel ends. A failed cancel is sent again every ``HORDE_OAI_CANCEL_RETRY_SECONDS``
-until the Horde would have expired the request, and once more by the shutdown drain, never alongside one in progress.
+Every error before headers is an OpenAI error envelope with a ``metadata`` object. After stream headers it is one SSE
+error event. Each client request gets a fresh operation key, sent as ``horde.operation_key``. A submit whose response
+was lost is sent again with the same key and body, and the Horde returns the request already claimed by that key. Once
+the Horde holds a request, or may hold one, every error has ``x-should-retry: false`` so a client SDK does not create a
+second charged job. A successful stream has it too.
+Cancels on disconnect, deadline, fail-fast, an unrecoverable status read and shutdown are bounded, shielded from the
+client's disconnect and use the client's separate cancel pool. A request's handling sends at most one cancel and holds
+its in-flight slot until that cancel ends. A failed cancel is sent again every ``HORDE_OAI_CANCEL_RETRY_SECONDS`` until
+the Horde would have expired the request, and once more by the shutdown drain. A retry is not sent while another cancel
+for the request is in progress.
 """
 
 from __future__ import annotations
@@ -84,6 +87,7 @@ from horde.chat_contract import (
 from horde.consts import ANONYMOUS_API_KEY, HORDE_VERSION
 from horde.oai.attribution import build_client_agent
 from horde.oai.horde_client import (
+    DRAIN_AGENT_TIMEOUT_FRACTION,
     SUBMIT_MAX_CONCURRENT_CALLS,
     UNEXPECTED_RESPONSE_CODE,
     CancelSlotUnavailableError,
@@ -212,6 +216,9 @@ longest value browsers honour."""
 
 RETRY_AFTER_HEADER: str = "Retry-After"
 """The response header telling a client how many seconds to wait before retrying."""
+
+FORWARDED_FOR_HEADER: str = "X-Forwarded-For"
+"""The request header set by every listener in front of the front. ``/routing`` returns 404 to requests with it."""
 
 STREAM_HEADERS: Mapping[str, str] = {
     "Cache-Control": "no-cache",
@@ -920,9 +927,9 @@ def create_app(
             ``logfire.configure`` installs.
 
     Returns:
-        The application; its lifespan starts the signal listener, the delta reader and the failed cancel retry sweep
-        and, on stop, cancels every open request within ``settings.shutdown_cancel_seconds`` before closing the
-        subscription and the reader.
+        The application. Its lifespan starts the signal listener, the delta reader, the failed cancel retry sweep and,
+        when ``settings.drain_agent_port`` is set, the drain agent poll. On stop, it cancels every open request within
+        ``settings.shutdown_cancel_seconds`` before closing the subscription and the reader.
     """
     cancel_connections = cancel_max_connections(settings.max_inflight)
     owned_http_clients: list[httpx.AsyncClient] = []
@@ -947,6 +954,7 @@ def create_app(
         settings=settings,
         horde_client=HordeClient(
             horde_urls=settings.horde_urls,
+            fallback_horde_urls=settings.fallback_horde_urls,
             http_client=http_client,
             cancel_http_client=cancel_http_client,
             proxy_passkey=settings.proxy_passkey,
@@ -966,6 +974,12 @@ def create_app(
         await front_state.listener.start()
         await front_state.delta_reader.start()
         cancel_retry_task = asyncio.create_task(_retry_failed_cancels_forever(front_state), name="horde-oai-cancel-retry")
+        drain_agent_poll_task: asyncio.Task[None] | None = None
+        if settings.drain_agent_port is not None:
+            drain_agent_poll_task = asyncio.create_task(
+                _poll_drain_agents_forever(front_state, agent_port=settings.drain_agent_port),
+                name="horde-oai-drain-agent-poll",
+            )
         try:
             yield
         finally:
@@ -974,6 +988,11 @@ def create_app(
             with contextlib.suppress(asyncio.CancelledError):
                 await cancel_retry_task
             await _cancel_open_requests(front_state)
+            # The poll stops after the shutdown cancels, so a root drained while they run is still avoided.
+            if drain_agent_poll_task is not None:
+                drain_agent_poll_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await drain_agent_poll_task
             await front_state.listener.stop()
             await front_state.delta_reader.stop()
             if owns_redis_client and redis_client is not None:
@@ -1009,6 +1028,7 @@ def create_app(
     app.add_api_route("/v1/models", _list_models, methods=["GET"], response_model=None, **list_models_route_options())
     app.add_api_route("/v1/models/{model_id:path}", _get_model, methods=["GET"], response_model=None, **get_model_route_options())
     app.add_api_route("/healthz", _health, methods=["GET"], response_model=None, include_in_schema=False)
+    app.add_api_route("/routing", _routing, methods=["GET"], response_model=None, include_in_schema=False)
     app.add_api_route("/", _root, methods=["GET"], response_model=None, include_in_schema=False)
     return app
 
@@ -1764,6 +1784,23 @@ async def _retry_failed_cancels_forever(front_state: FrontState) -> None:
             await _retry_failed_cancels(front_state)
         except Exception:
             logger.exception("Retrying failed chat request cancels raised; the next sweep tries again")
+
+
+async def _poll_drain_agents_forever(front_state: FrontState, *, agent_port: int) -> None:
+    """Poll every root's drain agent every ``settings.drain_agent_poll_seconds`` until the task is cancelled.
+
+    The first poll runs at once, so a root that is drained when the front starts stops getting calls within one query
+    timeout.
+    """
+    poll_seconds = front_state.settings.drain_agent_poll_seconds
+    timeout_seconds = poll_seconds * DRAIN_AGENT_TIMEOUT_FRACTION
+    while True:
+        poll_started_at = time.monotonic()
+        try:
+            await front_state.horde_client.poll_drain_agents(agent_port=agent_port, timeout_seconds=timeout_seconds)
+        except Exception:
+            logger.exception("Polling the drain agents raised an error. Polling continues at the next interval")
+        await asyncio.sleep(max(0.0, poll_seconds - (time.monotonic() - poll_started_at)))
 
 
 async def _retry_failed_cancels(front_state: FrontState) -> None:
@@ -3565,6 +3602,18 @@ async def _get_model(request: Request, model_id: str) -> Response:
 async def _root() -> Response:
     """Serve ``GET /``: redirect to the interactive API documentation, the front's only human-facing page."""
     return RedirectResponse(url=DOCS_PATH, status_code=HTTPStatus.FOUND)
+
+
+async def _routing(request: Request) -> Response:
+    """Serve ``GET /routing``: each Horde root's routing state and each drain agent's last reply time.
+
+    Deploys read it on the front's address. Every listener sets ``X-Forwarded-For``, so a request with that header came
+    from outside and gets the same 404 response as an unknown path.
+    """
+    if FORWARDED_FOR_HEADER in request.headers:
+        return JSONResponse(status_code=HTTPStatus.NOT_FOUND, content={"detail": HTTPStatus.NOT_FOUND.phrase})
+    routing_view = _front_state(request).horde_client.routing_view()
+    return JSONResponse(content=routing_view.model_dump(mode="json"))
 
 
 async def _health(request: Request) -> Response:
