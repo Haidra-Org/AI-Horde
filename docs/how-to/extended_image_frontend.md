@@ -526,12 +526,18 @@ Client-Agent: <frontend-name>:<version>:<project-url>
 Content-Type: application/json
 ```
 
-Store the returned `id`, then poll the interrogation endpoint rather than the generation endpoint:
+Check that submission succeeded with an `id`; display a refusal before starting a poll loop. Store that ID,
+then poll the interrogation endpoint rather than the generation endpoint:
 
 ```http
 GET <horde-base-url>/api/v2/interrogate/status/<request-uuid>
 Client-Agent: <frontend-name>:<version>:<project-url>
 ```
+
+While the aggregate state is `waiting` or `processing`, continue polling. Inspect each form's `state` too:
+`done` has a result, while `faulted` has failed. Aggregate `partial` can include finished and failed forms with
+no work remaining, so stop waiting when every requested form is terminal and show failures alongside successful
+results. A 404 needs ID/deployment or expiry diagnosis, rather than another submission.
 
 The completed payload identifies the form independently and returns a temporary image URL:
 
@@ -559,7 +565,8 @@ by `payload.control_type` rather than by position. Identical name and payload pa
 server without payload echoes omits `payload`. When a request included a single annotation form, the
 detector is the one you sent, so fall back to that rather than failing.
 
-Cancel an unfinished request with:
+Cancellation does not refund completed work. A form already processing is settled at cancellation, while
+queued forms release their reservations. Cancel an unfinished request with:
 
 ```http
 DELETE <horde-base-url>/api/v2/interrogate/status/<request-uuid>
@@ -614,16 +621,16 @@ frontend stores an origin or a versioned API base URL. For these examples, confi
 `/api/v2` again. A local frontend that still points at `https://aihorde.net/api/v2` can look correct
 while reading the production contract and submitting production work.
 
+If you use a project name, choose it before starting and use it for every Compose command. The supplied file
+also fixes container names and host ports, so a project name alone does not permit a second simultaneous stack.
+Stop a conflicting stack before starting this one; see [Docker setup](https://github.com/Haidra-Org/AI-Horde/blob/main/README_docker.md).
+
 For this repository's Docker Compose stack, create the ignored `.env_docker` described in
 `README_docker.md`, then start the API and its stores:
 
 ```console
 docker compose up --build -d
 curl http://localhost:7001/api/v2/status/sampler_constraints
-```
-
-```console
-docker compose -p aihorde-extended-frontend-test up --build -d
 ```
 
 Using the naming in this guide, change `apiOrigin` from `https://aihorde.net` to

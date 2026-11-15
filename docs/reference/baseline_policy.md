@@ -71,7 +71,8 @@ dispatch alone.
 
 ## The horde policy on a baseline
 
-Read with `policy(baseline)`, which returns the record's `horde_policy` or the par default.
+Read with `policy(baseline)`, which returns the record's `horde_policy` or the par default. Par means a multiplier
+of 1: the baseline policy adds no scaling to the underlying kudos, batching or lease calculation.
 
 | Field | Meaning |
 | --- | --- |

@@ -20,10 +20,10 @@ The concepts they assume (what a worker is, what a job's lifecycle means) are in
 | [Prompt provenance reference](prompt_provenance.md) | What each stored prompt value means, who may read the original submission, and why a missing original is never filled in. |
 | [Moderation operations reference](moderation_operations.md) | Moderation evidence, retention and object storage, with API fields for event review, promotion queues and worker suspicion history. |
 | [Kudos accounting reference](kudos_accounting.md) | The mutation and consumption contract: accounting events, projection targets, reservations, the lock order, the read models, and event retention. |
-| [Samplers and schedulers reference](samplers_and_schedulers.md) | What sampler_name and scheduler select, why deterministic samplers agree once converged, measured steps-to-converge and cost, and the combinations known to fail. |
+| [Samplers and schedulers reference](samplers_and_schedulers.md) | Sampler and scheduler controls, recorded SD1.5/SDXL measurements, compatibility caveats, work estimates, pricing and job leases. |
 | [Image baseline policy reference](baseline_policy.md) | The two authorities a baseline-dependent request is checked against, what each one decides, and what applies to a baseline with no record. |
-| [Image model reference loader reference](model_reference.md) | Where the image model reference comes from, how beta (pending) models are merged over it, the environment that configures both, and what the loader exposes. |
-| [Style contract reference](style_contract.md) | What an image or text style may declare about the params a request may set and the placeholders its prompt accepts, and how a text request is sized against the prompt it ends up sending. |
+| [Image model reference loader](model_reference.md) | Where the image model reference comes from, how beta (pending) models are merged over it, the environment that configures both, and what the loader exposes. |
+| [Style contract reference](style_contract.md) | Style parameter overrides, prompt placeholders and text context sizing, with endpoint validation, dry-run responses and implementation references. |
 | [Chat requests reference](chat_requests.md) | Native chat routes, request fields, worker declarations, job payloads, submissions, pricing and progress streams, with implementation and test references. |
 | [Chat wire examples](chat_wire_examples.md) | Checked JSON examples for native chat requests, OpenAI-compatible responses and worker pop, progress and submit routes. |
 | [Chat front reference](chat_front.md) | Routes, settings, OpenAI-compatible request and response formats, stream behavior, availability errors and telemetry of the horde.oai service. |

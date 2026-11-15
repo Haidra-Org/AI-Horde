@@ -22,7 +22,7 @@ the service picks it up. A new *architecture* needs a baseline record published 
 and a row in `horde/bridge_reference.py` only once a bridge release renders something on it. The
 [baseline policy reference](../reference/baseline_policy.md) documents what each authority decides.
 
-An uncatalogued baseline is priced at par and accepted for plain txt2img requests, so the models can
+An uncatalogued baseline uses a pricing multiplier of 1 (par) and accepted for plain txt2img requests, so the models can
 land before the record does.
 
 Before starting, have access to publish baseline records on the model reference and a checkout of this
@@ -31,8 +31,21 @@ and policy. New bridge features remain gated by the release that implements them
 
 ## 1. Publish the baseline record
 
-Submit the record through the model reference's baseline resource. Its `capabilities` state what
-exists for the family:
+Use the model-reference PRIMARY's v2 API, separate from the Horde generation API. You need a Horde key on that
+service's pending-queue requestor allowlist, and an approver must review the proposal before publication. The
+service must have writes and its pending queue enabled. Its deployed API schema is authoritative for its version.
+
+The Bash examples require `curl` and `jq`. Set `MODEL_REFERENCE_API` to the service API root, for example
+`https://models.aihorde.net/api`, and `APIKEY` to your requestor key. Save the current catalog before any change:
+
+```bash
+curl -fsS "$MODEL_REFERENCE_API/model_references/v2/image_generation/baselines/export" -o catalog-before.json
+jq -e 'has("baselines") and has("metadata")' catalog-before.json
+```
+
+Stop on a failed read or malformed response. Retain this file for comparison and recovery. Save the proposed record
+as `baseline-after.json`; its `capabilities` state what exists for the family. This example's policy values are
+illustrative and need review for the architecture:
 
 ```json
 {
@@ -57,15 +70,37 @@ exists for the family:
 ```
 
 Set each capability from the weights and mechanisms published for the architecture.
-`horde_policy` states only what departs from par. The fields are described in the
+`horde_policy` states only what departs from the default multiplier of 1 (par). The fields are described in the
 [reference page](../reference/baseline_policy.md#the-horde-policy-on-a-baseline).
 
-The record is served to every replica, so a pricing change reaches the API within the hour without a
-deployment.
+Build a change set with the saved record as `expected_before`. A new name has no previous record, so that field
+is null. Do not replace an existing record's expected value with null to bypass a conflict.
+
+```bash
+jq -n --slurpfile catalog catalog-before.json --slurpfile record baseline-after.json '
+  {title: "Update image baseline", changes: [{operation: "upsert", name: $record[0].name,
+    record: $record[0], expected_before: ($catalog[0].baselines[$record[0].name] // null)}]}
+' > baseline-change.json
+curl -fsS -X POST "$MODEL_REFERENCE_API/model_references/v2/image_generation/baselines/change-sets" \
+  -H "apikey: $APIKEY" -H "Content-Type: application/json" \
+  --data-binary @baseline-change.json
+```
+
+A 202 response is a queued proposal, not publication. Retain its returned queue record and have an authorized
+approver review it through the PRIMARY's pending queue. A 401/403 needs credential or allowlist diagnosis;
+a 409 needs a new catalog read and review of the competing change, rather than a blind resend.
+After approval, read `/model_references/v2/image_generation/baselines/<baseline>` from that API root and compare
+the published record with the proposal before checking Horde replicas.
+
+Healthy fleet publication normally refreshes hourly, without a Horde deployment. Fetch, validation or Redis
+failures retain the previous snapshot. If the change does not appear, inspect
+[snapshot health](../reference/model_reference.md#snapshot-health) and publisher logs.
 
 Verification: after refresh, `model_reference.baseline_record("<baseline>")` on an API instance returns the
-published capabilities and policy. To reverse a policy change, republish the previous values and verify them
-after refresh. Keep a baseline record while published models reference it.
+published capabilities and policy. To reverse a policy change, propose the saved previous record through the same
+queue, using the currently published record as `expected_before`, then verify approval and fleet refresh. This
+changes future policy; it does not reverse completed charges. Keep a new baseline record while published models
+reference it rather than treating deletion as an automatic undo.
 
 ## 2. Add the bridge row when a release renders a feature
 

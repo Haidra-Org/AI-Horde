@@ -18,7 +18,7 @@ Topics: [generation](../topics.md#generation), [requests](../topics.md#requests)
 <!-- END GENERATED: topics -->
 
 A native text request is a raw prompt with KoboldAI-style sampling parameters. The client submits it with
-`POST /v2/generate/text/async`, polls `GET /v2/generate/text/status/<id>` until `done` is true, and reads the text
+`POST /v2/generate/text/async`, polls `GET /v2/generate/text/status/<id>` until terminal status, checks `faulted`, and reads any returned text
 from `generations`. A `DELETE` on the same status path cancels the request. To send OpenAI-shaped chat messages, tools
 or images, use the chat front described in
 [Send chat completions through the OpenAI-compatible front](send_chat_completions.md).
@@ -29,8 +29,9 @@ Before starting, have:
 - A Horde API key, written in the examples as `HORDE_API_KEY`, or the anonymous key `0000000000`.
 - The Horde API base URL, written in the examples as `HORDE_URL`. The public service is `https://aihorde.net/api`.
 
-End state: the client submits a prompt, polls its status until `done` is true, reads the generated text, and cancels
-the request when it stops waiting.
+The client distinguishes successful results from faults and partial results, and cancels queued work when it
+stops waiting. The shell examples use Bash, `curl` and `jq`. Before running them, set the base URL and key,
+for example `HORDE_URL="https://aihorde.net/api"` and `HORDE_API_KEY="0000000000"` for anonymous public access.
 
 ## Set the headers
 
@@ -129,7 +130,8 @@ under `grow` it returns the raised context in `resolved.params.max_context_lengt
 
 ## Restrict the workers
 
-These top-level keys narrow which workers can pick up the request:
+These top-level keys narrow which workers can pick up the request. Eligible workers pass the known capability
+and selection checks; they may still be busy:
 
 | Key | Default | Effect |
 | --- | --- | --- |
@@ -188,7 +190,7 @@ Verification: the response is 202 with an `id`. `GET /v2/generate/text/request/<
 returns the submitted parameters with the defaults filled in. Another user's key gets 403, and so does the
 anonymous key.
 
-A queued request is stopped only by [cancelling it](#cancel-the-request).
+To stop waiting before completion or expiry, [cancel the request](#cancel-the-request).
 
 ## Poll the status
 
@@ -200,11 +202,11 @@ Reading the status does not require an API key, only the request id. The status 
 
 | Field | Meaning |
 | --- | --- |
-| `done` | `true` when every generation is finished. |
+| `done` | Terminal completion, including a fault or cancellation after assigned work settles. Check `faulted` and the returned generations. |
 | `faulted` | `true` when the request failed and will not be completed. |
 | `waiting`, `processing`, `finished` | Generations in each state. |
 | `restarted` | Generations that timed out or were reported failed by a worker and were queued again. |
-| `queue_position`, `wait_time` | Position in the Horde-wide queue and the estimated seconds to finish. |
+| `queue_position`, `wait_time` | Approximate position and delay from work competing for eligible text workers; falls back to the Horde-wide calculation with no eligible threads. |
 | `is_possible` | `false` when no online worker can serve the request. |
 | `eligible_workers`, `eligible_worker_threads` | Online workers and threads that pass the request's restrictions. They may be busy. |
 | `might_stall` | `true` when incoming work keeps taking the eligible workers ahead of this request. |
@@ -217,7 +219,11 @@ A slower interval, such as every 2 to 5 seconds, is enough for most requests.
 A request expires 20 minutes after it was created or after a worker last picked up or finished one of its
 generations. For an expired request or an unknown id, the status route returns 404 `RequestNotFound`.
 
-Verification: `done` becomes `true` and `generations` holds `n` entries.
+Continue polling while `done` and `faulted` are false. If `faulted` is true, stop and inspect the failure.
+A successful uncancelled request returns `n` generations. Cancellation can leave fewer results; retain completed
+entries and check whether `processing` is still non-zero. On 404, check the ID and deployment, then handle expiry
+or removal without automatic resubmission. For delays, inspect `is_possible` and eligible-worker counts using
+[Request feasibility and queue pressure](../explanation/request_feasibility_and_queue_pressure.md).
 
 ## Read the generations
 
@@ -255,8 +261,10 @@ curl -s -X DELETE -H "Client-Agent: my-app:1.2.0:dev@example.com" "$HORDE_URL/v2
 ```
 
 The response is 200 with the status as it was before the cancel, including the generations already finished.
-Generations that are waiting are not handed to workers after the cancel. A cancel cannot be undone. Submit the
-request again to restart it.
+Generations still waiting are removed from the queue. Work already assigned can finish and be charged when its
+worker submits; completed charges are not refunded by cancellation. Later status can include more results than
+the pre-cancel snapshot. Cancellation cannot be undone. Submitting again creates a new request and can produce
+additional charges.
 
 Verification: a later status read shows `waiting` at 0, or the server returns 404 once the request is removed.
 

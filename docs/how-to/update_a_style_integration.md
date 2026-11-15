@@ -31,24 +31,25 @@ already creates, reads or generates under styles keeps working, with these excep
 An image style that declares neither `parameter_policy` nor `template_fields` resolves a request
 exactly as before.
 
-Preconditions: a client that uses `/api/v2/styles/text`, `/api/v2/styles/image` or `/api/v2/collections`,
-or sends `style` on `/api/v2/generate/async` or `/api/v2/generate/text/async`. Checking the changes
-needs a deployment at 5.1.13 or later.
+These checks apply if your client uses `/api/v2/styles/text`, `/api/v2/styles/image` or `/api/v2/collections`,
+or sends `style` on `/api/v2/generate/async` or `/api/v2/generate/text/async`. Run them against a deployment
+at 5.1.13 or later.
 
-End state: the client paces style writes against the published limits, sends only changed fields on
-`PATCH`, reads `shared_key` as the owner, branches on the new return codes, and writes text templates
-that pass the placeholder rule.
+After the update, verify that the client respects the published write limits and handles partial updates without
+resetting other fields. Also check shared-key access and the revised template validation errors.
 
-Each action below is a client change, and reversing one means restoring the previous client code.
+Client changes can be reversed by restoring the previous client code. Checks that modify a server-side style
+need saved state; use a style owned by your test account.
 The [style contract reference](../reference/style_contract.md) holds the full rules, and [using the
 style endpoints](use_style_endpoints.md) walks through every endpoint with commands. A frontend adding
 the new declarations should follow [adding styles to a frontend](add_styles_to_a_frontend.md).
 
-Commands use two shell variables:
+Commands use Bash, `curl` and `jq`. Replace the quoted placeholders before running them.
+Set two shell variables:
 
 ```bash
 HORDE=https://aihorde.net/api/v2
-APIKEY=<your-api-key>
+APIKEY="<your-api-key>"
 ```
 
 ## Changes that need action
@@ -63,12 +64,11 @@ APIKEY=<your-api-key>
 | Patch or delete an image style | 20 an hour and 2 a second | 90 a minute and 2 a second |
 | List styles, read one style, read a collection | Held to the route's write limits | The app default, 90 a minute |
 
-Every limit is per address, method and request path, so the patch and delete limits count each style
-separately. A whitelisted service address gets more per second and per minute. The hourly create limit
-is the same for every address.
+The patch and delete limits apply to each style separately. [Write rate
+limits](../reference/style_contract.md#write-rate-limits) in the reference states the full rule.
 
-Action: a client that creates image styles in bulk paces creation at 20 an hour, and backs off on 429
-for the window the limit covers. Read the limits from the contract instead of hard-coding them:
+If your client creates image styles in bulk, limit creation to 20 an hour. After a 429 response, wait
+for the limit's window before retrying. Read the limits from the contract so the client can follow changes:
 
 ```bash
 curl -s "$HORDE/status/style_contract" | jq '{text: .text | {style_create_rate_limits, style_modify_rate_limits}, image: .image | {style_create_rate_limits, style_modify_rate_limits}}'
@@ -79,15 +79,23 @@ modification, for both types.
 
 ### Partial `PATCH`
 
-A `PATCH` used to reset every field it left out, so an omitted `prompt`, `name`, `public` or `nsfw`
-took the value a new style gets. A text style `PATCH` failed with 500 every time, and a
-`sharedkey` on any `PATCH` was refused as unknown.
+A `PATCH` used to reset every field that was left out of it. An omitted `prompt`, `name`, `public` or
+`nsfw` was set to the default value for a new style. A text style `PATCH` failed with 500 every time,
+and a `sharedkey` on any `PATCH` was refused as unknown.
 
 Action: send only the fields being changed. A client that worked around the reset by sending the whole
-style keeps working, since sending a field with its current value changes nothing. `parameter_policy`
-and `template_fields` are each replaced whole when sent, and cannot be cleared back to null.
+style keeps working. The rules for a partial `PATCH`, including how the declarations are replaced, are
+under [Partial PATCH](../reference/style_contract.md#partial-patch) in the reference.
 
-Check: patch one field and read the style back.
+Before PATCH, save the current style and extract the field this check replaces:
+
+```bash
+curl -fsS "$HORDE/styles/image/<style-id>" -H "apikey: $APIKEY" -o style-before.json
+jq -e 'has("info") and has("prompt") and has("public") and has("nsfw")' style-before.json
+jq '{info}' style-before.json > info-before.json
+```
+
+Stop if the read or field check fails. Inspect the saved file, then patch one field and read the style by ID:
 
 ```bash
 curl -s -X PATCH "$HORDE/styles/image/<style-id>" -H "apikey: $APIKEY" \
@@ -95,19 +103,26 @@ curl -s -X PATCH "$HORDE/styles/image/<style-id>" -H "apikey: $APIKEY" \
 curl -s "$HORDE/styles/image/<style-id>" | jq '{info, prompt, public, nsfw}'
 ```
 
-`info` is the new value and the other fields are unchanged.
+Compare readback with `style-before.json`: `info` has the new value and the other fields are unchanged.
+To restore the description, PATCH the saved field, then read the style by ID again:
+
+```bash
+curl -fsS -X PATCH "$HORDE/styles/image/<style-id>" -H "apikey: $APIKEY" \
+  -H "Content-Type: application/json" --data-binary @info-before.json
+```
+
+Restoration affects future requests; it does not undo generations already submitted.
 
 ### Shared key visibility
 
 Every read of a style used to include its shared key, which let any reader spend the key outside the
-style. Now the list routes serve `shared_key` as null to everyone, and the single-style routes
-(`/styles/<type>/<style-id>`, `/styles/<type>_by_name/<style-name>`) serve it only when the request
-includes the owner's API key in the `apikey` header. That response includes `Cache-Control: private,
-no-store`.
+style. Now only the single-style routes serve it, and only when the request includes the owner's API
+key in the `apikey` header. The list routes serve `shared_key` as null to everyone. [Shared key
+visibility](../reference/style_contract.md#shared-key-visibility) in the reference lists the routes and
+the cache header.
 
-Action: a client that shows or edits a style's shared key reads the single style with the owner's key.
-A client that took a shared key from someone else's style can no longer do so. A request under the
-style still runs under its shared key without the client seeing it.
+To display or edit a style's shared key, read the individual style with the owner's API key. Other users can
+still generate with the style and use its shared key to pay, but cannot retrieve the key for use outside the style.
 
 Check:
 
@@ -116,7 +131,8 @@ curl -s "$HORDE/styles/image/<style-id>" -H "apikey: $APIKEY" | jq .shared_key
 curl -s "$HORDE/styles/image/<style-id>" | jq .shared_key
 ```
 
-The first returns the key's details for the owner, and the second returns null.
+Use a test style with a valid shared key for this check. Its owner-authenticated read returns the key's details
+and the unauthenticated read returns null. Without a configured shared key, both reads can return null.
 
 ### Style return codes
 
@@ -135,7 +151,7 @@ These errors used to report `rc: BadRequest` or `rc: Forbidden`, and now report 
 The `message` text is unchanged. New codes for the new declarations are listed in [adding styles to a
 frontend](add_styles_to_a_frontend.md#recover-from-validation-errors).
 
-Action: branch on `rc`, and treat an unrecognised `rc` like the generic one the client already handles.
+Action: branch on `rc`, and treat an unrecognised `rc` like the generic code that the client already handles.
 Never parse `message`.
 
 Check: request a text style through the image route and read the code.
@@ -155,9 +171,9 @@ A text style's template is a Python format string, and its rules changed in two 
   koboldcpp.
 - A replacement field must be a bare name such as `{p}` or `{tone}`. A format spec (`{p:>20}`), a
   conversion (`{p!r}`), attribute or index access (`{p.x}`, `{p[0]}`), a positional field (`{}`, `{0}`)
-  or an unbalanced brace is refused with `StylePromptFieldInvalid` on create and on `PATCH`. A template
-  stored before this rule has such a field sent to the worker as written, and any later `PATCH` of that
-  style is refused until the prompt is corrected.
+  or an unbalanced brace is refused with `StylePromptFieldInvalid` on create and on `PATCH`. When a
+  template stored before this rule has such a field, the field is sent to the worker as written, and any
+  later `PATCH` of that style is refused until the prompt is corrected.
 
 Action: write literal braces in a text template as `{{` and `}}`, and keep placeholders bare. Image
 templates are unaffected, since every brace in them other than `{p}`, `{np}` and declared fields was
@@ -174,13 +190,13 @@ the styles alone was refused.
 
 Now a request with a collection in `style` draws one of the collection's styles at random and runs
 under it, including that style's shared key. The draw is only among the styles whose declared fields
-match the request's `template_fields`. When none match, the request is refused with
+match the request's `template_fields`. When no style matches, the request is refused with
 `TemplateFieldsMatchNoCollectionStyle`. A collection mixing text and image styles is refused with
-`StyleMismatch` when it is created or patched. Each request counts one use of the collection and one of
-the drawn style.
+`StyleMismatch` when it is created or patched. Each request counts as one use of the collection and one
+use of the drawn style.
 
-Action: a client offering collections reads `resolved.style` from a dry run to show which style a
-request ran under, and offers the template fields of the collection's styles as described in [adding
+If your client offers collections, use `resolved.style` from a dry run to display the selected style.
+Offer the template fields of the collection's styles as described in [adding
 styles to a frontend](add_styles_to_a_frontend.md#offer-collections).
 
 Check:
@@ -195,36 +211,38 @@ It returns the `id` and `name` of one of the collection's styles.
 ## Changes that need no action
 
 - **Two more keys on served styles.** `parameter_policy` and `template_fields` are present on every
-  served style, null when the style declares none. A text style's served `params` now include
+  served style, null when the style does not declare them. A text style's served `params` now include
   `max_length` and `max_context_length` when the style sets them, where they used to be dropped. A
   client that rejects unknown keys has to accept these. horde_sdk accepts them.
 - **`resolved` on dry runs.** Beside `kudos`, a dry run returns the prompt, params, models and style
-  the request resolved to. The queued 202 body is unchanged.
-- **Style surcharge and author credit.** A request under a style its requester authored no longer pays
-  the 2-kudo surcharge. A request under someone else's style pays it, and the author is credited what the
-  requester's debit collected, once the request is queued. Dry runs and refused requests credit
-  nothing, and neither does a request whose debit the minimum-balance floor forgives, such as an
-  anonymous one. The credit appears once the kudos applier folds the debit.
+  that the request resolved to. The queued 202 body is unchanged.
+- **Style surcharge and author credit.** A request under a style authored by the requester no longer
+  pays the 2-kudo surcharge. A request under someone else's style pays it. Once the request is queued,
+  the author is credited the amount collected by the requester's debit. Dry runs and refused requests do
+  not credit the author. Neither does a request whose debit is forgiven by the minimum-balance floor,
+  such as an anonymous one. The full rule is under [Style surcharge and author
+  credit](../reference/style_contract.md#style-surcharge-and-author-credit).
 - **Cached reads after a write.** An anonymous read of one style used to serve the old version for
   up to 30 seconds after a `PATCH` or `DELETE`. Reads by id, by name and by owner-qualified name now
   reflect the write at once. Listings and collections can still lag by up to 30 seconds.
 - **A primary first example.** Adding the first example with `primary: true` used to fail with 500.
-- **The contract endpoint.** `GET /api/v2/status/style_contract` is anonymous and unlimited, and
-  publishes what the style validators accept.
+- **The contract endpoint.** `GET /api/v2/status/style_contract` is anonymous and is not rate limited.
+  It publishes the rules applied by the style validators.
 
 ## What stays the same
 
 For a style that declares neither `parameter_policy` nor `template_fields`, a request resolves as it did:
 
 - The style's params replace the request's, except `n`, which comes from the request.
-- An image style that sets no `width` or `height` takes them from the request.
+- An image style that does not set `width` or `height` takes them from the request.
 - The request runs on the style's models, with its `nsfw` flag.
 - An image template fills `{p}` and `{np}` and leaves every other brace as written, with the request's
   prompt split at `###`.
 
 `TestImageDryRunResolvedRequest` in `tests/integration/test_image_style_application.py` and
 `TestTextStyleApplicationCompatibility` in `tests/integration/test_text_style_application.py` check that
-a style without declarations quotes and resolves as an unstyled request with the style's settings.
+a request under a style without declarations is quoted and resolved like an unstyled request with the
+style's settings.
 
 ## Verify the update
 

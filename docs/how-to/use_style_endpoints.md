@@ -17,50 +17,51 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [generation](../topics.md#generation), [requests](../topics.md#requests)
 <!-- END GENERATED: topics -->
 
-Before starting, use an account that is trusted or holds the customizer role, since only those may create a
-style. Have that account's API key and network access to a Horde deployment's `/api/v2` endpoints. The
-procedures below use `/api/v2/status/style_contract`, `/api/v2/styles/text`, `/api/v2/styles/image`,
-`/api/v2/generate/text/async` and `/api/v2/generate/async`.
+Create styles that control which settings a request can override, then use a dry run to inspect the result before
+generating. The text style also includes placeholders filled from the request.
 
-The procedures create text and image styles with `parameter_policy`, plus `template_fields` on the text style.
-You verify the resolved request with a dry run under each style, then keep or delete the styles.
+You need an API key for a trusted account or an account with the customizer role, since style creation requires one
+of those permissions. Run the commands against a Horde deployment with reachable `/api/v2` endpoints.
 
-The rules these procedures work within are in the [style contract
-reference](../reference/style_contract.md). A frontend building authoring controls and request forms
-from the contract follows [adding styles to a frontend](add_styles_to_a_frontend.md), and a client that
-integrated styles before the contract checks [the update for existing
-integrations](update_a_style_integration.md). [ADR
+The rules for these procedures are in the [style contract reference](../reference/style_contract.md).
+A frontend that builds authoring controls and request forms from the contract should follow [adding
+styles to a frontend](add_styles_to_a_frontend.md). A client that integrated styles before the contract
+should check [the update for existing integrations](update_a_style_integration.md). [ADR
 17](../decisions/0017-protect-koboldcpp-placeholders-and-publish-the-style-contract.md) records why
-the contract is published and why a text template protects instruct placeholders.
+the contract is published and why instruct placeholders in a text template are protected.
 
-Every command below uses two shell variables:
+The examples use Bash, `curl` and `jq`. Replace angle-bracket placeholders before running commands.
+Read the contract first, then choose the text or image example. Dry runs and policy updates are separate tasks.
+Every command uses two shell variables:
 
 ```bash
 HORDE=https://aihorde.net/api/v2
-APIKEY=<your-api-key>
+APIKEY="<your-api-key>"
 ```
 
-## 1. Read the contract before declaring anything
+## Read the style contract
 
-The contract states which params a policy of each type may hand over and cap, what the horde fills in
-a prompt template, and what becomes of the braces around it. Read it first and build the rest of the
-procedure from what it returns, rather than from values pasted from another deployment.
+For each style type, the contract lists the params that a policy may let the request set and the
+params that it may cap. It also lists the placeholders filled by the horde in a prompt template, and
+states how the other braces in the template are handled. Read it first and build the rest of the
+procedure from its response, rather than from values pasted from another deployment.
 
 ```bash
 curl -s "$HORDE/status/style_contract" | jq .
 ```
 
 Verification: the body includes `schema_version`, `text` and `image`. `jq '.text.overridable_parameters'`
-lists the params a text policy may hand over and `jq '.text.ceiling_parameters'` the params it may cap
-with the range each ceiling may take. `jq -r '.text.protected_patterns[0].pattern'` is the regular
-expression a text template's protected placeholders have to match.
+lists the params that a text policy may let the request set. `jq '.text.ceiling_parameters'` lists the
+params that it may cap, with the allowed range for each ceiling. `jq -r '.text.protected_patterns[0].pattern'`
+is the regular expression that a protected placeholder in a text template has to match.
 
-Reversal: none. The endpoint is read-only, needs no API key, and is exempt from the rate limiter.
+This read-only endpoint does not require an API key and is exempt from the rate limiter.
 
-## 2. Create a text style with a policy and placeholders
+## Create a text style with a policy and placeholders
 
-This style pins the sampler settings, hands `max_length` and `max_context_length` to the request under
-ceilings, and declares two placeholders its template fills from the request.
+This style fixes the sampling settings while allowing requests to choose output and context lengths within
+specified limits. The `tone` and `subject` placeholders let each request customize the prompt without changing
+the template.
 
 ```bash
 curl -s -X POST "$HORDE/styles/text" \
@@ -87,8 +88,11 @@ curl -s -X POST "$HORDE/styles/text" \
   }'
 ```
 
+If creation returns an error, resolve its `rc` and message before using an ID. For 401/403, check the key and
+account permissions; for 429, follow the write-limit guidance in [Traps](#traps).
+
 Verification: the response includes the new style's `id`. Read it back and confirm both declarations
-were stored, since a style that declares neither returns them as null:
+were stored, since both are null on a style that does not declare them:
 
 ```bash
 curl -s "$HORDE/styles/text/<style-id>" | jq '{parameter_policy, template_fields, prompt}'
@@ -97,9 +101,9 @@ curl -s "$HORDE/styles/text/<style-id>" | jq '{parameter_policy, template_fields
 The `prompt` comes back with `{{[INPUT]}}` and `{{[OUTPUT]}}` exactly as sent.
 
 Reversal: `curl -s -X DELETE "$HORDE/styles/text/<style-id>" -H "apikey: $APIKEY"`, which returns 200
-with an `OK` message. Deleting a style is final. There is no undelete.
+with an `OK` message. Deleting a style is final. A deleted style cannot be restored.
 
-## 3. Create an image style with a policy
+## Create an image style with a policy
 
 An image template's braces are all literal apart from `{p}`, `{np}` and its declared placeholders, so a
 wildcard or workflow string in braces passes through untouched.
@@ -131,15 +135,18 @@ Verification: read the style back and confirm the policy and the template:
 curl -s "$HORDE/styles/image/<style-id>" | jq '{parameter_policy, template_fields, prompt}'
 ```
 
-`template_fields` is null, since this style declares none. The `{dramatic|soft}` in the prompt is
+`template_fields` is null, since this style does not declare any. The `{dramatic|soft}` in the prompt is
 stored and sent as written.
 
 Reversal: `curl -s -X DELETE "$HORDE/styles/image/<style-id>" -H "apikey: $APIKEY"`.
 
-## 4. Dry run a request under the style and read `resolved`
+## Dry run a request under the style and read `resolved`
 
-A dry run prices the request and returns the request as the horde resolved it, without queueing
-anything. It is the way to confirm what a style does to a request before spending kudos on it.
+Use the text style ID from [Create a text style](#create-a-text-style-with-a-policy-and-placeholders)
+for this example. Keep image style IDs for image requests.
+
+A dry run returns a price quote and the request after applying the style. Use it to check the completed prompt and
+effective parameters before spending kudos. It does not queue generation work.
 
 ```bash
 curl -s -X POST "$HORDE/generate/text/async" \
@@ -167,15 +174,18 @@ Verification: the response is 200 with `kudos` and `resolved`. In `resolved`:
 - `style` includes the applied style's `id` and `name`.
 - `estimated_prompt_tokens` and `context_fit` report how the prompt was sized.
 
-The image equivalent posts the same `dry_run: true` to `$HORDE/generate/async`, and its `resolved`
-adds `negative_prompt`, the half of the prompt after the `###`.
+For the image alternative, use the image style ID, post to `$HORDE/generate/async`, omit `template_fields`,
+and use image params such as `{"width": 768, "height": 512, "n": 2}`. Its `resolved` also includes
+`negative_prompt`, the half of the prompt after `###`.
 
-Reversal: none. A dry run creates nothing, charges nothing, and increments nothing except the style's
-use count.
+A dry run does not create a generation request or charge kudos. It does increment the style's use count.
 
-## 5. Size a text request against its prompt
+## Size a text request against its prompt
 
-`context_fit` decides what happens when the prompt the style produces does not fit inside
+Use the text style created earlier. Replace `<a long prompt>` with enough text to exceed its initial context;
+a short literal placeholder does not exercise growth.
+
+`context_fit` sets what happens when the prompt produced by the style does not fit inside
 `max_context_length` alongside the tokens to be generated.
 
 ```bash
@@ -193,18 +203,35 @@ curl -s -X POST "$HORDE/generate/text/async" \
 ```
 
 Verification: under `grow`, `resolved.params.max_context_length` is the next power of two that fits,
-bounded by the style's ceiling and by the largest context an online worker serving the request's
-models advertises, and `kudos` is higher than the same request under `ignore`. Under `reject` an
-over-long prompt returns 400 with `PromptExceedsContext` and the three figures that did not add up.
-Under `ignore`, the default, the request goes as it is and the worker cuts the front of the prompt
-away.
+bounded by the style's ceiling and by the largest context advertised by an online worker that serves
+the request's models. If the existing context already fits, no growth is needed. Compare the resolved context and
+quote with
+the same prompt under `ignore` rather than expecting a price increase for every input. Under `reject`, an
+over-long prompt returns 400 with `PromptExceedsContext` and the prompt, output and context sizes involved.
+Under `ignore`, the default, the request is sent as it is, and the worker cuts away the front of the
+prompt.
 
-Reversal: none for a dry run. For a queued request, `DELETE /api/v2/generate/text/status/<request-id>`
-cancels it.
+If you queue the request instead of using a dry run, cancel it with
+`DELETE /api/v2/generate/text/status/<request-id>`.
 
-## 6. Change a style with PATCH
+## Change a style with PATCH
 
-A `PATCH` changes only the supplied fields. Anything left out keeps its stored value.
+A `PATCH` changes only the supplied top-level fields. Include the complete `parameter_policy` when changing it,
+since the server replaces the declaration rather than merging individual settings. See
+[Partial PATCH](../reference/style_contract.md#partial-patch) for the validation rules.
+
+Before changing the policy, save its current declaration. Use the style's ID for reads so a cached name lookup
+does not hide an update:
+
+```bash
+curl -fsS "$HORDE/styles/text/<style-id>" -o style-before.json
+jq -e 'has("parameter_policy")' style-before.json
+jq '{parameter_policy}' style-before.json > policy-before.json
+```
+
+Stop if the read fails or does not contain `parameter_policy`. Inspect `policy-before.json` before continuing.
+A previous non-null object can be restored with PATCH. If it is null, adding a declaration cannot be reversed
+by resetting it to null; create a separate style to experiment while preserving the original.
 
 ```bash
 curl -s -X PATCH "$HORDE/styles/text/<style-id>" \
@@ -227,55 +254,62 @@ Verification: read the style back. `parameter_policy` is the new object, and `pr
 curl -s "$HORDE/styles/text/<style-id>" | jq '{parameter_policy, template_fields, prompt, params}'
 ```
 
-Reversal: `PATCH` again with the previous `parameter_policy` object, so read the style and keep its
-current declarations before changing them. A `PATCH` replaces a JSON column whole rather than merging into it, and
-there is no way to clear `parameter_policy` or `template_fields` back to null through the endpoint;
-that takes a new style.
+If the saved policy was non-null, restore it with:
+
+```bash
+curl -fsS -X PATCH "$HORDE/styles/text/<style-id>" \
+  -H "apikey: $APIKEY" -H "Content-Type: application/json" \
+  --data-binary @policy-before.json
+```
+
+Read the style by ID again and compare `parameter_policy` with the saved object. Restoration affects future
+requests; it does not undo requests already submitted under the replacement policy.
 
 ## Traps
 
-- Two style writes a second per address and route, and on top of that 20 creations an hour, or 90
-  patches or deletions of one style a minute. A client creating several styles in a loop hits the
+- Style writes are rate limited per address, and a client creating several styles in a loop hits the
   per-second limit first and gets 429. Pace the writes against the `style_create_rate_limits` and
-  `style_modify_rate_limits` the contract publishes. Leave at least half a second between writes, and on
-  a 429 back off for the window the limit covers instead of retrying at once.
+  `style_modify_rate_limits` published in the contract, and leave at least half a second between
+  writes. On a 429, back off for the length of the limit's window instead of retrying at once. The
+  limits are listed under [Write rate limits](../reference/style_contract.md#write-rate-limits).
 - A style does not keep the order of its models. The list is trimmed to five and stored as a set, so
   the order read back is not the order sent. Text pricing uses whichever model comes first, so a
   multi-model text style can quote differently from one run to the next. Use one model per style where
   the price has to be stable.
-- An optional placeholder the request leaves out becomes the empty string, so a template reading
-  `about {subject}` produces the bare label `about ` when nothing fills it. Write the label into the
-  placeholder's value, or make the field required.
+- An optional placeholder that is left out of the request becomes the empty string. A template
+  containing `about {subject}` produces the bare label `about ` when the field is not filled. Write the
+  label into the placeholder's value, or make the field required.
 - A ceiling is only accepted on a param the request can set. Under `none`, and under `listed` for a
   param not in `overridable`, the style's value is always used, so a ceiling there is rejected with
   400 when the style is written. The one exception is `n`, which comes from the request under every
   mode and may be capped under every mode.
-- Under `listed`, a param the request sets that is not in `overridable` is ignored without an error,
-  the same as under `none`. A dry run's `resolved.params` shows which values the request kept.
-- `n` can never be handed over by a policy. It always comes from the request, defaults to 1, and
-  listing it in `overridable` is rejected.
-- Using someone else's style adds 2 kudos to the quote and credits that style's owner the part of
-  those 2 the request paid, once it is queued. A requester at their minimum balance, such as
-  the anonymous user, has the charge forgiven and credits the owner nothing. A dry run or a refused
-  request credits nothing, and cancelling a queued request does not refund the 2. A style you authored
-  costs nothing extra to use.
-- A text template's braces are format specifiers. `{{` is one literal brace, an unknown `{word}`
-  becomes the empty string, a placeholder with a format spec, a conversion, attribute or index access
-  or no name at all is refused with `StylePromptFieldInvalid`, and only `{{[NAME]}}` with uppercase letters and underscores between the
-  brackets is kept as written. `{{[input]}}` and `{{[IN PUT]}}` are not protected and collapse to one
-  brace each side. Check a template against the published `protected_patterns` regular expression
-  before sending it.
+- Under `listed`, a request param that is not in `overridable` is ignored without an error, the same as
+  under `none`. A dry run's `resolved.params` shows which of the request's values were kept.
+- `n` is not controlled by the policy. It always comes from the request and defaults to 1. Listing it
+  in `overridable` is rejected.
+- Using someone else's style adds 2 kudos to the quote, and cancelling a queued request does not
+  refund them. Using a style that you authored does not cost extra. When the style's owner is credited
+  is covered under [Style surcharge and author
+  credit](../reference/style_contract.md#style-surcharge-and-author-credit).
+- A text template's braces are format specifiers. `{{` is one literal brace, and an unknown `{word}`
+  becomes the empty string. A placeholder with a format spec, a conversion, attribute or index access,
+  or no name at all is refused with `StylePromptFieldInvalid`. Only `{{[NAME]}}`, with uppercase
+  letters and underscores between the brackets, is kept as written. `{{[input]}}` and `{{[IN PUT]}}`
+  are not protected and collapse to one brace each side. Check a template against the published
+  `protected_patterns` regular expression before sending it.
 
 ## Handling a `schema_version` change
 
-Pin the `schema_version` the client was written against and compare it on every read of the contract.
+Pin the `schema_version` that the client was written against, and compare it on every read of the
+contract.
 
-- A higher version can add fields and can change what an existing field means. Read the reference page
-  and the decision records for what moved before applying a version the client has not been updated
-  for. Until then, fall back to the client's own defaults rather than applying the new document.
-- Ignore keys the client does not recognise, at every level of the document. New keys are added inside
-  the existing sections, and a client that rejects unknown keys breaks on an additive change it could
-  have ignored.
-- The lists are the authority on what is accepted. Build authoring controls from
-  `overridable_parameters` and `ceiling_parameters` as served rather than from a copy, so a param
-  added to a params model reaches the client with no release on either side.
+- A higher version can add fields and can change what an existing field means. Before applying a
+  version that the client has not been updated for, read the reference page and the decision records
+  to see what changed. Until then, fall back to the client's defaults rather than applying the new
+  document.
+- Ignore keys that the client does not recognise, at every level of the document. New keys are added
+  inside the existing sections. A client that rejects unknown keys breaks on an additive change that it
+  could have ignored.
+- The lists define what is accepted. Build authoring controls from `overridable_parameters` and
+  `ceiling_parameters` as served rather than from a copy, so a param added to a params model reaches the
+  client without a release on either side.

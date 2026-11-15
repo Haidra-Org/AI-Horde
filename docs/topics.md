@@ -56,7 +56,7 @@ procedure for one subject sit together.
 - How-to: [Send text generation requests through the native API](how-to/send_text_generation_requests.md)
 - Reference: [Samplers and schedulers reference](reference/samplers_and_schedulers.md)
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
-- Reference: [Image model reference loader reference](reference/model_reference.md)
+- Reference: [Image model reference loader](reference/model_reference.md)
 - Reference: [Style contract reference](reference/style_contract.md)
 
 ### kudos
@@ -109,7 +109,7 @@ procedure for one subject sit together.
 - How-to: [Write a minimal chat worker](how-to/write_a_minimal_chat_worker.md)
 - How-to: [Serve chat jobs from a text worker](how-to/serve_chat_jobs.md)
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
-- Reference: [Image model reference loader reference](reference/model_reference.md)
+- Reference: [Image model reference loader](reference/model_reference.md)
 - Reference: [Chat requests reference](reference/chat_requests.md)
 - Reference: [Chat wire examples](reference/chat_wire_examples.md)
 - Tutorial: [Serve your first chat job with koboldcpp](tutorial/first_chat_worker.md)
