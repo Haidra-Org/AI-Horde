@@ -73,7 +73,9 @@ Chosen option: "Roll statistics up by day, archive currency rows, and checkpoint
 
 Both tables become range-partitioned by `created`, in UTC. The online window is at least 30 days for each dataset. It
 is configurable upward per dataset and is not shortened by capacity pressure. A partition is eligible for removal when
-its upper bound is older than the window, so partition width adds to the effective retention. `created` is assigned
+its upper bound is older than the window, so partition width adds to the effective retention.
+
+`created` is assigned
 when the row is written, so a row that commits late lands in the partition of its write time. A partition whose upper
 bound is 30 days in the past cannot receive a row from any transaction that is still open. Eligibility by age
 therefore does not need a writer barrier, sequence sealing or a drain under the mode gate.
@@ -81,10 +83,11 @@ therefore does not need a writer barrier, sequence sealing or a drain under the 
 The primary key becomes (`id`, `created`). No foreign key references either table. The existing heap becomes the
 first partition. A validated `CHECK` on `created` lets it attach without a scan, the swap is a rename under a brief
 exclusive lock with no copy, and its indexes attach to partitioned indexes created on the parent, including the partial
-unapplied and quarantine indexes. New partitions default to one week. Because the first partition holds the whole
-pre-swap history, its replacements are built in bounded `created` sub-ranges recorded in the catalog, each eligible
-on its own age, and the single drop waits for all of them, so it happens one window after the swap. The migration is rehearsed on a restored
-copy before production.
+unapplied and quarantine indexes. New partitions default to one week.
+
+The first partition holds the whole pre-swap history. Its replacements are built in bounded `created` sub-ranges
+recorded in the catalog, each eligible according to its own age. The single drop waits for all of them, so it happens
+one window after the swap. The migration is rehearsed on a restored copy before production.
 
 The retention job runs under its own advisory lock and processes one eligible partition at a time in ascending order.
 It records each transition in a catalog table so that a crash resumes the work instead of repeating it. A partition
@@ -97,7 +100,9 @@ Before a statistic partition is dropped, its rows are folded into `kudos_stat_ro
 `amount_sum`, `row_count`, `amount_min`, `amount_max` and `created_max`. Those aggregates reproduce every statistic
 projection. Counters and contributions fold by sum, user records fold by maximum, and last activity folds by the
 newest `created`. Attribution survives at full dimensionality. The per-job row is lost, together with its `job_id`,
-`event_id` and `detail`. The rollup for one source partition is written in one transaction that first deletes any
+`event_id` and `detail`.
+
+The rollup for one source partition is written in one transaction that first deletes any
 rollup rows already attributed to that partition, so a retried or rebuilt rollup cannot double-count. Its totals are
 compared with the partition's totals before the drop is allowed.
 
@@ -118,10 +123,12 @@ Before a currency partition is dropped, three replacements are committed and the
 `kudos_ledger_checkpoints` holds, per user, the cumulative applied balance and escrow totals through the partition's
 upper bound, excluding `RECONCILIATION` postings exactly as reconciliation does today. A checkpoint is the previous
 checkpoint plus the partition's applied sums, computed in one repeatable-read transaction that also verifies that the
-partition holds no unapplied row. Reconciliation becomes the latest checkpoint plus the applied online tail at or above
-its boundary. Existing `kudos_balance_snapshots` rows store the same cumulative all-time totals, so the present
-subtraction of a snapshot's `applied_balance_total` keeps working unchanged against the new sum. Checkpoints are sums
-of events, not copies of materialized balances, so drift present at checkpoint time stays visible as drift.
+partition holds no unapplied row.
+
+Reconciliation becomes the latest checkpoint plus the applied online tail at or above its boundary. Existing
+`kudos_balance_snapshots` rows store the same cumulative all-time totals, so the subtraction of a snapshot's
+`applied_balance_total` keeps working unchanged against the new sum. Checkpoints sum the events themselves, so drift
+in the materialized balances at checkpoint time stays visible as drift.
 
 `kudos_ledger_daily` holds, per user, `escrow`, `entry_type` and UTC day, the summed amount and the row count. It is an
 operator statement for disputes older than the window, read through the ledger administration command. It has no API
@@ -138,10 +145,14 @@ alerts, and statistics retention continues.
 A new `kudos_idempotency_keys` table records, for each transfer and each repair posting set, the scoped key's
 `event_id`, the kind, the parties, the amount and the outcome. The row is written in the same transaction as the
 postings. `transfer_kudos` and the repair path read this table instead of `kudos_ledger`, and both the
-parameter-conflict check and the second check under the payer lock are kept. Keys live for the online window and are
+parameter-conflict check and the second check under the payer lock are kept.
+
+Keys live for the online window and are
 deleted by the retention job. A retry after expiry is a new transfer, and the API documentation states the lifetime.
 Repair refuses a snapshot older than the key lifetime, so an expired repair key cannot produce a second
-`RECONCILIATION` posting. At migration, keys for the transfers and repairs inside the online window are backfilled from
+`RECONCILIATION` posting.
+
+At migration, keys for the transfers and repairs inside the online window are backfilled from
 the tables by `event_id`. Older keys would already have expired.
 
 ### Archive bucket and budget

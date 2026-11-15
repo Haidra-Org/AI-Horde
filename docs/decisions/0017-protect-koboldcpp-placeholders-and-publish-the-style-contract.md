@@ -25,9 +25,9 @@ placeholders the style declares, so a wildcard or workflow string in braces pass
 style types therefore treat the same template text differently, and neither rule is stated anywhere a
 client can read.
 
-A client offering style authoring has the same problem one level up. Which params a
-`parameter_policy` may hand over, which it may cap and between what bounds, which placeholders the
-horde fills, and what happens to braces are all decided in
+A client offering style authoring also needs the validation and formatting rules: which parameters a
+`parameter_policy` may let the requester override, which it may cap and within what bounds, which placeholders the
+Horde fills, and how braces are handled. Those rules are defined in
 `horde/classes/base/style_contract.py`, `horde/apis/v2/kobold_styles.py` and
 `horde/apis/v2/stable_styles.py`. A browser frontend cannot import any of it, so it hardcodes a copy
 and the copy drifts from what the endpoints accept.
@@ -85,13 +85,15 @@ An anonymous `GET /api/v2/status/style_contract` serves the document that
 `horde/style_contract_document.py` compiles from the per-type `StyleContractVocabulary` the style
 endpoints validate against and from the formatting constants the request path uses.
 
-It includes
-`schema_version`, starting at 1, and a section per style type holding the horde-filled placeholders,
-whether declared fields are placeholders, the protected patterns as regular expressions with a
-description each, one sentence of brace handling, the overridable params, the params a ceiling may
-cap with the range each ceiling may take, the context-fitting modes for text and null for image, and
-the rate limits a style write is held to. The document is compiled once per process and held, since
-it is a pure function of the installed code.
+The document includes `schema_version`, starting at 1, and a section per style type containing:
+
+- the Horde-filled placeholders and whether declared fields are placeholders;
+- the protected patterns as regular expressions, each with a description, and a sentence explaining brace handling;
+- the overridable parameters and the parameters a ceiling may cap, with the permitted range for each ceiling;
+- the context-fitting modes for text and null for image;
+- the rate limits for style writes.
+
+The document is compiled once per process and cached, since it is a pure function of the installed code.
 
 The registry stays in the horde rather than moving to the SDK. This is a difference from ADR 12 and is
 intended: a style's vocabulary is derived from the restx params models the horde already defines, it
@@ -103,9 +105,8 @@ context sizing all resolve before the waiting prompt is built, and the worker re
 payload. There is no worker behaviour to make a claim about.
 
 The surcharge decision moves out of `apply_style` into `GenerateTemplate.decide_style_surcharge`,
-which both gentypes call after `super().validate()` has resolved the user. A request under a style its
-requester authored is neither charged the 2 kudos nor credits the author, and a request under someone
-else's style does both.
+which both generation types call after `super().validate()` has resolved the user. Using one's own style
+incurs no 2-kudo surcharge and gives the author no credit. A request using someone else's style does both.
 
 The surcharge is included in the requester's activation debit, and the author is credited
 from that debit only the part of the surcharge it collected, so a dry run or a refused request pays

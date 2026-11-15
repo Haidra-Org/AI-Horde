@@ -33,7 +33,7 @@ in order. This record evaluates the primary database as the store for those batc
 Rejected. The evaluated option has the progress route insert each batch as a row with a unique index on generation
 id and sequence. An identical repeat returns the accepted sequence without a new row, changed content is refused, and
 a gap is refused with the expected sequence. The front reads the rows through a bounded native route, since it does
-not hold a database connection. Retention and row and byte limits cover the active stream and a cleanup grace.
+not hold a database connection. Retention, row limits and byte limits cover the active stream and a cleanup grace period.
 
 ### Consequences
 

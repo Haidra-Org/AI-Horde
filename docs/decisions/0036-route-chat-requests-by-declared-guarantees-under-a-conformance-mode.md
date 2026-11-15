@@ -14,10 +14,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 ## Context and Problem Statement
 
 A chat backend can accept every OpenAI chat completions field and still deviate from the contract on purpose.
-koboldcpp caps the temperature at 1.0 when tools are present, its Jinja tool strategy renders the same prompt for
-every `tool_choice` and ignores `parallel_tool_calls`, a JSON Schema it cannot compile to a grammar falls back to
-unconstrained text, and a prompt over the context length is trimmed, which the contract refuses. Each is a
-reasonable choice for a local user who can see the backend. Over the Horde the requester sees only the reply.
+For example, koboldcpp:
+
+- caps the temperature at 1.0 when tools are present;
+- renders the same prompt for every `tool_choice` and ignores `parallel_tool_calls` with its Jinja tool strategy;
+- falls back to unconstrained text when it cannot compile a JSON Schema to a grammar;
+- trims a prompt over the context length, which the contract requires it to refuse.
+
+Each is a reasonable choice for a local user who can see the backend. Over the Horde the requester sees only the reply.
 
 [ADR 0022](0022-declare-chat-capabilities-by-pop-fields.md) declares capabilities (the worker accepts an input) and
 does not address fidelity (the reply follows the contract). How does the Horde route a request that depends on
@@ -75,7 +79,7 @@ request requires:
 A `best_effort` request does not require a guarantee. Limits apply under both modes, because a clamped value changes
 the request.
 
-`single_tool_call_enforced` is part of the vocabulary so a worker can declare it, and a request does not require it. Under
+Workers can declare `single_tool_call_enforced`. Requests do not require it. Under
 `strict`, when `parallel_tool_calls` is false, the server keeps only the first call of a reply, so the client
 receives at most one call from any worker.
 

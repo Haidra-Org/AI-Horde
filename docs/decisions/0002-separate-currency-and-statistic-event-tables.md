@@ -68,8 +68,8 @@ currency credit reaches the owner through `User.modify_kudos`.
 
 A nullable target set (`user_id`, `worker_id`, `team_id`) plus a unit column.
 
-- Bad: conservation, reconciliation, and reporting all become ambiguous once unlike units and
-  unlike targets share a table, and the foreign-key policy conflict above has no resolution within one schema.
+- Bad: Conservation, reconciliation, and reporting all become ambiguous once unlike units and
+  unlike targets share a table. One schema also cannot resolve the conflict between the required foreign-key policies.
 
 ### Treat worker kudos as currency
 

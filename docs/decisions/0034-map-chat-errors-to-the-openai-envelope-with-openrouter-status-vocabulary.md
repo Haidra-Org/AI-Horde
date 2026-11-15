@@ -38,7 +38,7 @@ after the response headers are sent?
 Chosen option: "OpenAI envelope plus `metadata`, OpenRouter's statuses for routing failures, and OpenRouter's
 mid-stream error event", with finish reasons kept inside the OpenAI enum.
 
-Before headers the body is `{"error": {"message", "type", "param", "code", "metadata"}}`
+Before response headers are sent, the body has an `error` object containing `message`, `type`, `param`, `code` and `metadata`
 (`OpenAIError` in `horde/oai/schema.py`). The four OpenAI fields are always written, null included. `code` is the
 Horde return code when the Horde produced the error, and the front's own code otherwise. `metadata` holds only the
 details that are known: `request_id`, `rc` (the Horde return code), `retry_after`, `submit_outcome`,
@@ -62,8 +62,9 @@ Insufficient kudos is the native 403 `KudosUpfront`, passed through with its sta
 message states the free output allowance the request exceeded.
 
 `Retry-After` is sent where waiting can help: a 503, the 408 for a request that timed out waiting, and a 429 whose
-native response includes one. When a retry
-could create a second charged job, the response includes `x-should-retry: false`, which OpenAI SDKs honour by skipping
+native response includes one.
+
+When a retry could create a second charged job, the response includes `x-should-retry: false`, which OpenAI SDKs honour by skipping
 their automatic retry. Every streamed response includes it, since a job exists once the stream opens. The front
 retries its own submit under an operation key, as
 [ADR 0026](0026-classify-client-retries-and-recover-submits-by-operation-key.md) describes. A client's retry is a new

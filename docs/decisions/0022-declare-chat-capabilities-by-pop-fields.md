@@ -13,8 +13,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Context and Problem Statement
 
-A chat job needs facts about the worker that a text job does not: whether it accepts chat jobs, which model it serves
-them with, whether the loaded model has a projector, whether its template supports tools, its real context and output
+A chat job needs a worker declaration with details a text job does not require: whether the worker accepts chat jobs,
+which model it serves them with, whether the loaded model has a projector, whether its template supports tools, its real context and output
 limits, and how it accepts images. The Horde gates image features by parsing the bridge agent string against a version
 table in `horde/bridge_reference.py`, `BRIDGE_CAPABILITIES`. How should chat capability reach the scheduler?
 
@@ -36,7 +36,8 @@ table in `horde/bridge_reference.py`, `BRIDGE_CAPABILITIES`. How should chat cap
 Chosen option: "Pop fields: `chat_jobs`, `prompt_jobs`, `model_id`, `chat_features`, `chat_limits`,
 `image_transports`".
 
-A worker declares its chat capability on every pop, and `TextWorker.check_in` stores the declaration on the worker row.
+A worker declares its chat capability on every job-pop request, and `TextWorker.check_in` stores the declaration on
+the worker row.
 The declaration is replaced at each pop, so a worker that stops declaring chat stops receiving chat jobs at its next
 pop.
 

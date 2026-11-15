@@ -14,7 +14,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 ## Context and Problem Statement
 
 An OpenAI chat call holds one HTTP connection open until the completion exists. A Horde request can wait minutes
-for a worker. The Flask application runs under waitress with 45 threads per instance by default, shared with worker
+for a worker. The Flask application runs under waitress with 45 threads per Horde instance by default, shared with worker
 pops and submits (`horde/argparser.py`). Where does the waiting happen, and how does the waiter learn that a request
 finished?
 
@@ -38,7 +38,8 @@ finished?
 Chosen option: "A separate ASGI process that submits over HTTP, holds one Redis pattern subscription per process and
 polls as a fallback".
 
-The front is the `horde/oai` package, run as `python -m horde.oai` under uvicorn with one event loop. It submits to
+The OpenAI-compatible chat front is the `horde/oai` package, run as `python -m horde.oai` under uvicorn with one event
+loop. It submits to
 `POST /v2/generate/chat/async` and holds one pattern subscription to `horde:chat:*` (`horde/oai/waiter.py`). The
 native side publishes on `horde:chat:<request id>` (`horde/chat_signal.py`) when a generation lands, when the request
 is done, and when it is cancelled or faulted. A message includes the event and a generation count, without
@@ -52,9 +53,12 @@ The native cache in `horde/horde_redis.py` fans writes out to every configured s
 and stream keys are kept only on that host.
 
 Outside `horde.oai`, the front imports only `horde.chat_contract`, `horde.consts`, `horde.metrics` and
-`horde.telemetry`, and it does not hold a database connection. Its native calls go through one HTTP client with a connection limit (`HTTP_MAX_CONNECTIONS`) and a
-separate bound on concurrent submits (`SUBMIT_MAX_CONCURRENT_CALLS`) in `horde/oai/horde_client.py`. When the front
-holds a proxy passkey it forwards the client's address in `Proxied-For`, so native limits and countermeasures apply to
+`horde.telemetry`, and it does not hold a database connection.
+
+Its native calls go through one HTTP client with a connection limit (`HTTP_MAX_CONNECTIONS`) and a
+separate bound on concurrent submits (`SUBMIT_MAX_CONCURRENT_CALLS`) in `horde/oai/horde_client.py`.
+
+When the front holds a proxy passkey it forwards the client's address in `Proxied-For`, so native limits and countermeasures apply to
 the client's address. Chat submits have their own per-address limits,
 `HORDE_CHAT_REQUEST_2SEC_LIMIT_PER_IP` and `HORDE_CHAT_REQUEST_90MIN_LIMIT_PER_IP`
 (`get_chat_request_2sec_limit_per_ip` and `get_chat_request_90min_limit_per_ip`), which default to the text submit

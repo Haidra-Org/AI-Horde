@@ -52,9 +52,9 @@ Each event decays by age from capture. `HORDE_MODERATION_IPADDR_RETENTION_DAYS` 
 until the ceiling, so evidence no moderator has reviewed yet stays reviewable for the whole evidence period. Either
 window can be `none`, and an operator can set a shorter text window.
 
-`HORDE_MODERATION_EVIDENCE_CEILING_DAYS` (default
-365, at most 365, never disabled) anonymizes every event of every reason that is not under moderation action: it
-clears the account, proxied account, address, address pseudonym, request and job identifiers and prompt stages. The
+`HORDE_MODERATION_EVIDENCE_CEILING_DAYS` sets the anonymization ceiling. It defaults to 365, permits at most 365,
+and cannot be disabled. At that age, retention anonymizes every event of every reason that is not under moderation
+action. It clears the account, proxied account, address, address pseudonym, request and job identifiers and prompt stages. The
 reason, outcome, models, capture time, truncation flag, reporting worker and notes remain. A window longer than the
 ceiling, or any malformed value, stops startup.
 

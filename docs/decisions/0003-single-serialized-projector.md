@@ -37,7 +37,8 @@ deadlock class, so a concurrent set of appliers would rebuild that lock graph on
 
 Chosen option: "Fold events with one database-serialized projector".
 
-One projector owns projection in `ledger` mode. Each cycle acquires the PostgreSQL transaction advisory lock
+One projector owns projection in `ledger` mode, applying event deltas to the materialized read models. Each cycle
+acquires the PostgreSQL transaction advisory lock
 `KUDOS_APPLIER_LOCK` in `horde/database/kudos_db.py`, which is held for the transaction and is independent of
 the process quorum. Under that lock it claims bounded, ID-ordered batches of currency and statistic rows with
 `FOR UPDATE SKIP LOCKED`, groups deltas by target, visits materialized targets in stable primary-key order,
@@ -46,7 +47,9 @@ in one transaction.
 
 `applied = false` is the work queue. A row is selected by its flag, never by `id > watermark`, so a
 late-committing lower ID is claimed by a later cycle instead of being skipped. `kudos_ledger_applier_state`
-holds a heartbeat for observability and is not consulted when choosing work. Batches are
+holds a heartbeat for observability and is not consulted when choosing work.
+
+Batches are
 `KUDOS_APPLIER_BATCH_SIZE` rows; the background task runs every three seconds and keeps folding within a tick
 while batches come back full, up to `KUDOS_APPLIER_MAX_CATCHUP_CYCLES`, so a backlog clears at many batches
 per tick while each transaction stays small.

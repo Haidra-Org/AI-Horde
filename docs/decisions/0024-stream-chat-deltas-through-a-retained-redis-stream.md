@@ -15,8 +15,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 OpenAI clients expect tokens as they are generated. The Horde's submit is one-shot: a worker reports a finished reply.
 A worker such as koboldcpp can read its local token stream and post batches while it generates. Where do those batches
-go, so that the front can forward them in order, detect a lost batch, and avoid splicing a reissued job into a reply
-the client already holds part of?
+go, so that the front can forward them in order, detect a lost batch, and avoid mixing output from a reissued job
+into a reply the client has already begun receiving?
 
 ## Decision Drivers
 
@@ -39,7 +39,9 @@ Chosen option: "One Redis stream per request, appended by a native progress rout
 
 A request sent with `stream: true` stores the stream hint, `stream_progress`, in `chat_extras`, and its job payload
 includes it. The front sends `stream: true` only for a request whose text it can relay as it arrives: one without
-tools and without a structured response format, on a front configured with Redis. At pop the Horde writes a lease,
+tools and without a structured response format, on a front configured with Redis.
+
+At pop the Horde writes a lease,
 `horde:chat:lease:<generation id>`, holding the request, worker, model, owner, a digest of the owner's key and the byte
 cap. The worker posts each batch to `POST /v2/generate/text/progress` with the generation id and a sequence number
 starting at 1, and still submits the whole reply to the submit route.
@@ -59,10 +61,12 @@ When a generation faults, its stream gets an `ended` marker and its lease is del
 post can also renew the job lease, which is the only case in which it writes Postgres
 ([ADR 0038](0038-lease-text-jobs-for-a-fixed-term-renewed-by-progress.md)).
 
-The front reads every registered request's stream with one `XREAD` per process. The first entry with sequence 1 pins
-its generation, and the first chunk sent to the client exposes the stream. After exposure, an entry from another
-generation, the pinned generation's `ended` marker, or a sequence out of order ends the client's stream with the SSE
-error `ChatStreamDiverged`, and the front cancels the request. The final reply completes the stream when it starts
+The front reads every registered request's stream with one `XREAD` per process. The first entry with sequence 1 selects
+the generation to relay, and the first chunk sent to the client exposes the stream. After exposure, an entry from another
+generation, the selected generation's `ended` marker, or a sequence out of order ends the client's stream with the SSE
+error `ChatStreamDiverged`, and the front cancels the request.
+
+The final reply completes the stream when it starts
 with the relayed text, and ends it with the same error when it does not. Before exposure, the front drops such entries
 and can deliver the reply whole.
 

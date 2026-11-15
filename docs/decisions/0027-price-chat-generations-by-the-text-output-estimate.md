@@ -41,11 +41,13 @@ Chosen option: "The text output estimate, with the charge basis recorded per gen
 A chat generation is charged and rewarded as a text generation with the same reply: the text kudos formula over
 ceil(output characters / 4), floored at 20 and capped at the requested `max_length`. The reply's characters are its
 content, its reasoning, and each tool call's function name and arguments (`chat_reply_characters`), so tool calls and
-reasoning are charged as output. `TextProcessingGeneration.get_charge_basis` returns the basis, `output_estimate`, for every text generation,
+reasoning are charged as output.
+
+`TextProcessingGeneration.get_charge_basis` returns the basis, `output_estimate`, for every text generation,
 and a submitted chat generation stores it in the `charge_basis` column.
 
-The reported prompt, completion and reasoning
-token counts are optional, stored, and shown on the status route and in the OpenAI `usage` object. They do not change
+Reported prompt, completion and reasoning token counts are optional. When present, they are stored and shown on the
+status route and in the OpenAI `usage` object. They do not change
 the charge or the reward.
 
 The activation tax and upfront kudos follow the text path. A choice that is not dispatched does not incur a

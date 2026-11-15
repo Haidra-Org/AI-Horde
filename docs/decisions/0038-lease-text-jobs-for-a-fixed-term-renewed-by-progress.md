@@ -52,19 +52,22 @@ lease to 150 s after the post. The lease never extends beyond a cap measured fro
 `TRUSTED_TEXT_JOB_LEASE_CAP_SECONDS` (600 s) for a worker owned by a trusted user and
 `UNTRUSTED_TEXT_JOB_LEASE_CAP_SECONDS` (200 s) otherwise. A post that repeats the last one does not renew, and a post
 after the lease has lapsed does not revive it. Posts past the cap are accepted and relayed to the client but do not
-extend the lease. The lease state lives with the stream lease in Redis. A granted renewal writes the new `job_ttl` to
+extend the lease.
+
+The lease state lives with the stream lease in Redis. A granted renewal writes the new `job_ttl` to
 the generation row.
 
 The pop offers a chat job to a worker only when the worker's measured speed can produce the job's `max_length` inside
-the base lease after the preparation allowance, that is when `speed × 120 s` is at least `max_length`. ADR 0041
+the base lease after the preparation allowance, that is when `speed × 120 s` is at least `max_length`.
+
+ADR 0041
 scopes this gate: a chat job goes first to workers that pass it and to a slower worker when no capable chat worker is
 online, a legacy text job is offered whatever its length, and an assignment over the worker's capacity is recorded
 with its outcome.
 
-A worker that has
-not recorded a speed yet is taken to run at `UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND` (10 tokens per second) until
-its completed jobs record a measured speed. The same rule
-is applied in the pop query and in the eligibility check that the status route and ADR 0040 use, so a worker that
+A worker without speed measurements is assumed to run at `UNMEASURED_TEXT_WORKER_TOKENS_PER_SECOND`
+(10 tokens per second) until its completed jobs record a measured speed. The same rule is applied in the pop query
+and in the eligibility check that the status route and ADR 0040 use, so a worker that
 cannot be offered a chat job is not counted as capacity for it either.
 
 A job past its lease is aborted as stale and restarted at the next pass of the stale-generation thread, which runs

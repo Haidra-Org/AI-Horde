@@ -13,10 +13,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Context and Problem Statement
 
-Kudos mutations edited the materialized balance and aggregate columns inline, inside whatever request
-transaction needed them. That made frequently used user rows part of many otherwise unrelated transaction lock
-graphs: concurrent activation, settlement, and transfer paths reached the same rows in different orders, which
-produced a recurring deadlock class that could only be papered over with retries. Separately, the current
+Kudos mutations edited the materialized balance and aggregate columns inline, inside the request
+transaction that needed them. That made frequently used user rows part of many otherwise unrelated transaction lock
+graphs. Concurrent activation, settlement, and transfer paths reached the same rows in different orders,
+producing recurring deadlocks that could only be mitigated with retries. Separately, the current
 column value was the only accounting record. There was no audit trail, no replay, and no way to repair a bad
 balance other than overwriting the one visible number.
 
@@ -40,8 +40,9 @@ Chosen option: "Record kudos movements as events; keep balances as projections".
 
 Every kudos-moving business event appends signed, typed rows to permanent event tables: `kudos_ledger` for
 currency, `kudos_stat_events` for display totals and counters. The existing balance and aggregate columns are
-retained as denormalized read models, folded from those events. Producers stop editing the materialized
-columns inside request transactions. Spend admission is protected by payer reservations
+retained as denormalized read models, updated by applying the events' deltas, a process called folding.
+Producers stop editing the materialized columns inside request transactions. Spend admission is protected by payer
+reservations
 ([ADR 4](0004-payer-reservations-for-spend-admission.md)), projection is owned by a single serialized projector
 ([ADR 3](0003-single-serialized-projector.md)), and cutover happens through shadow mode
 ([ADR 5](0005-shadow-mode-cutover.md)).

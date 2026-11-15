@@ -57,8 +57,8 @@ The caps are defined in `horde/chat_contract.py` and shared by the front and the
 | Prompt tokens each image adds to the fit estimate                    | 512    | `CHAT_IMAGE_PROMPT_TOKENS`             |
 | Request body                                                         | 36 MiB | `MAX_CHAT_BODY_BYTES`                  |
 
-The per-request totals apply to the images as sent and again to the JPEGs they are stored as, since storage,
-transfer and the worker's download cost the stored bytes. The per-image tokens match what koboldcpp's worker adds in
+The per-request totals apply both to the submitted images and to their stored JPEG versions, since storage,
+transfer and worker download costs depend on the stored bytes. The per-image token allowance matches what koboldcpp's worker adds in
 its own context overflow estimate, so a request with many images is not estimated to fit a context the worker then
 refuses. The body cap fits a request at every cap as base64 data URLs plus the text allowance.
 
@@ -87,8 +87,10 @@ Messages offload is off by default (`HORDE_CHAT_MESSAGES_OFFLOAD_ENABLED`). When
 as compact JSON with images inline, are larger than `HORDE_CHAT_MESSAGES_OFFLOAD_BYTES` (256 KiB by default) has them
 stored as one object at submit. This applies to text-only requests too. With `HORDE_CHAT_MESSAGES_OFFLOAD_GZIP` set,
 the object is stored gzipped with `Content-Encoding: gzip` when that makes it smaller. A worker that does not declare
-`messages_url` receives an offloaded request inline by its image transport. One fetch per job, bounded by a JSON
-parser, spares the worker managing several partial downloads.
+`messages_url` receives an offloaded request inline by its image transport.
+
+Offloaded messages need one fetch per job, bounded by a JSON parser, so the worker does not have to manage several
+partial downloads.
 
 koboldcpp's embedded worker declares `messages_url` and `base64`, so it receives images inline in the pop response or
 in the offloaded messages. The `url` transport serves workers that declare it.

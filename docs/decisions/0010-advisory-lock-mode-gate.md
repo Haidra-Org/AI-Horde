@@ -20,10 +20,11 @@ rule becomes visible. The original mechanism was row locking on the `kudos_ledge
 
 PostgreSQL row locks do not queue fairly across those modes. A new `FOR KEY SHARE` request checks for
 conflict only with current lock holders. Key-share does not conflict with key-share, so it acquires on the
-fast path without joining the wait queue behind a blocked `FOR UPDATE`. Whenever writer pins overlap without
-a gap, the transition's exclusive lock waits for the holders present at each retry, new pins arrive in the
-meantime, and acquisition never completes. Under sustained production write load, gapless overlap is the
-normal case.
+fast path without joining the wait queue behind a blocked `FOR UPDATE`.
+
+Whenever writer pins overlap without a gap, the transition's exclusive lock waits for the holders present at each
+retry. New pins arrive in the meantime, and acquisition never completes. Under sustained production write load,
+gapless overlap is the normal case.
 
 A deterministic reproduction
 (`test_mode_transition_is_not_starved_by_gapless_writer_pins`) holds two lock-step writer pins with
@@ -47,8 +48,10 @@ guaranteed overlap and starves the transition until its statement timeout on eve
 Chosen option: "Advisory shared/exclusive lock as the mode gate".
 
 `get_kudos_ledger_mode` takes `pg_advisory_xact_lock_shared` on a dedicated key and then reads the control
-row plainly. `set_kudos_ledger_mode` takes the same key with `pg_advisory_xact_lock`, after the applier lock
-as before. Advisory locks are heavyweight locks with fair queueing: a shared request that arrives while an
+row without a row lock. `set_kudos_ledger_mode` takes the same key with `pg_advisory_xact_lock`, after the applier lock
+as before.
+
+Advisory locks are heavyweight locks with fair queueing: a shared request that arrives while an
 exclusive request waits queues behind it. The transition therefore admits as soon as the pins held at
 queue time drain, and every ADR 5 guarantee (pin until commit, transition waits out old-mode writers, final
 fold inside the transition transaction) is preserved with the same acquisition points and the same

@@ -44,10 +44,10 @@ and suspicious accounts. It grants the `TRUSTED` role and unpauses the user's wo
 
 `_drain_trusted_escrow` then scans for trusted users with positive escrow and emits an
 `EVALUATION_PROMOTION` pair for the full amount under one event ID, together with the user's `accumulated`
-statistic event for the released amount, matching the inline promotion path's statistic behaviour. A later cycle folds that pair, the escrow
-reaches zero, and the scan stops finding the user.
+statistic event for the released amount, matching the inline promotion path's statistic behaviour.
+A later cycle folds that pair, the escrow reaches zero, and the scan stops finding the user.
 
-It reads trust state and the drain amount from committed
+The drain scan reads trust state and the drain amount from committed
 columns rather than ORM instances, because the role write does not refresh a loaded role collection. A user
 with an unapplied `EVALUATION_PROMOTION` posting is skipped: without that guard, a cycle that emitted a pair
 but could not fold it would emit a second pair, over-crediting the balance once the backlog folds.

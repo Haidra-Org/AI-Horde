@@ -24,8 +24,7 @@ nothing about the filter, and the negative prompt after `###` is kept verbatim. 
 prompts at the generate endpoint's rate limit, 90 a minute per address, each holding over 30 KB of text, and the rows
 stay for a year.
 
-Two questions follow. Where should the text live so the database stays light, and what bounds a flood of rejections
-in the first place.
+Where should the text live so the database stays small, and what bounds a flood of rejections?
 
 ## Decision Drivers
 
@@ -61,8 +60,8 @@ object key is derived from the event id, so retention can delete an object for a
 locally without a network call, with `private, no-store` response headers. A pending event still returns its text
 inline. The client fetches the object and reads the digest beside it. On an expired link it refetches the event.
 
-**Retention.** The text window and the ceiling delete the object for every row in their batch in one bulk call,
-inside the row-locked transaction, and flag only the rows whose delete succeeded. A missing key counts as deleted. When
+**Retention.** At the text window and the ceiling, the retention pass deletes the objects for its batch in one bulk
+call, inside the row-locked transaction. It flags only the rows whose delete succeeded. A missing key counts as deleted. When
 the store fails, rows whose text is `stored` wait for a later pass and the rest of the batch is flagged, so an
 outage never holds back removal of identity from rows without a stored object. The digest and character count leave with the text.
 There is no bucket lifecycle rule, because a rule cannot see the moderation-action exemption.
@@ -74,9 +73,9 @@ every model rejection does. Moderators are exempt on both paths, since they prob
 timeout of a subject in an hour sends moderators one Discord notice identifying the subject by its pseudonym prefix, never
 by prompt or address. Every event keeps its text until retention removes it.
 
-**Detection and levers.** The applier samples the capture rate and the number of distinct rejecting subjects over the
+**Detection and controls.** The applier samples the capture rate and the number of distinct rejecting subjects over the
 last five minutes, the pending backlog and its oldest age, and the upload and write failures. Alerts on those gauges
-tell one contained abuser from a distributed flood. The levers are manual: raid mode, the threshold, the IP
+distinguish one contained abuser from a distributed flood. The controls are manual: raid mode, the threshold, the IP
 timeout endpoints, rate limits at the deployment's edge, and maintenance mode.
 
 ### Consequences

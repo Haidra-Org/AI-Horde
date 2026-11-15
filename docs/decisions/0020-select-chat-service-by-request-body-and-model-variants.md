@@ -14,8 +14,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 ## Context and Problem Statement
 
 A chat client must be able to choose Horde service behaviour, such as trusted workers, validated backends or a
-worker allow list, without a Horde-specific client. OpenAI clients expose three places such a choice can travel: the
-model id, extra request body fields, and the base URL. Which of these specifies service selection?
+worker allow list, without a Horde-specific client. OpenAI clients can express that choice in the
+model id, extra request body fields, or the base URL. Which of these specifies service selection?
 
 ## Decision Drivers
 

@@ -14,9 +14,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 ## Context and Problem Statement
 
 A request ends in one of three ways: its results are stored, its client cancels it, or its jobs fault often enough
-that the horde gives up. Cancellation also happens without the client when the stale-request cleanup expires a
-request. Each ending has to leave the status route, the queue and the worker accounting in a consistent state, and the
-clients that poll `done` need a reading they can act on.
+that the Horde gives up. Cancellation also happens without the client when the stale-request cleanup expires a
+request. Each ending has to leave the status route, the queue and the worker accounting in a consistent state.
+Clients that poll `done` need a value they can act on.
 
 Three gaps had to be closed. A cancelled request kept reading `done: false` until it expired, although nothing more
 would ever arrive. A job that faulted after its request had been cancelled was put back in the queue, creating work

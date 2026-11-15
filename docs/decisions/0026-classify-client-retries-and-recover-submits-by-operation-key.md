@@ -38,7 +38,13 @@ avoid duplicate work, and what happens when the front does not learn whether a s
 Chosen option: "Retry classification with `x-should-retry: false` plus a front-generated operation key claimed at
 activation".
 
-The front distinguishes three states: not submitted, submitted with an id, and outcome unknown. Once the Horde holds a
+The front distinguishes three submission states:
+
+- not submitted;
+- submitted with an id;
+- outcome unknown.
+
+Once the Horde holds a
 request, or may hold one, every response includes `x-should-retry: false`, including a successful stream, a timeout
 after submission and a transport failure after the request was sent. A response sent before submission, such as a
 refused connection or the 408 for a slow request body, stays retriable.

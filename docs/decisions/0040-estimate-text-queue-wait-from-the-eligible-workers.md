@@ -45,9 +45,8 @@ could take".
 The eligible workers for a request are those whose declarations and measured speed pass the eligibility check used
 by the pop: model, chat opt-in, length and context limits, slow-worker and trust settings, and for a chat request
 the speed gate of ADR 0038. ADR 0041 leaves legacy text requests ungated, so slow workers count toward them, and
-counts a slow worker for a chat request when no capable chat worker is online. Their
-availability is measured when the request is created and cached for a short time for the status
-polls that follow.
+counts a slow worker for a chat request when no capable chat worker is online. Worker availability is measured when
+the request is created and cached for a short time for subsequent status polls.
 
 A queued request ahead of this one counts as competing when at least one of the eligible workers could take it,
 judged per worker from the stored queue's fields: its models, whether it is a chat request, and its
@@ -55,8 +54,9 @@ judged per worker from the stored queue's fields: its models, whether it is a ch
 count against a plain text request whose eligible workers do not take chat jobs.
 
 The throughput is the sum over the eligible workers of their measured tokens per second times their threads. A worker
-that has not recorded a speed yet counts at the assumed 10 tokens per second that ADR 0038 sets for such a worker. When fewer jobs are queued than
-there are threads, the throughput is scaled to the threads the jobs occupy, since a single job runs on one thread.
+that has not recorded a speed yet counts at the assumed 10 tokens per second set by ADR 0038.
+When fewer jobs are queued than there are threads, the throughput is scaled to the threads the jobs occupy, since a
+single job runs on one thread.
 
 The estimated wait is the competing output ahead, divided by that throughput. The status route reports it as
 `wait_time` for the work up to and including the request, and `queue_position` as the number of competing requests
@@ -75,7 +75,9 @@ status route falls back to the horde-wide figures, and the allowance takes its f
 ### Limitations
 
 The estimate counts queued work only. With every eligible thread busy and nothing queued it does not report a wait, so it
-understates the wait by up to one job per thread. The measured speed it divides by is the lease-time speed (the
+understates the wait by up to one job per thread.
+
+The measured speed it divides by is the lease-time speed (the
 speed that admitted the running jobs), which biases the estimate the other way when a worker slows under load. The
 shadow records of the speed gate (ADR 0041) and the `horde.text.queue_wait_seconds` histogram, which measures the
 wait a request had from creation to assignment, give the data for revisiting both.

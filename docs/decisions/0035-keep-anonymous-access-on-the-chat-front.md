@@ -34,7 +34,7 @@ including automated agent loops and scrapers. Does the chat front require a regi
 
 Chosen option: "Keep anonymous access, bounded by the native limits and per-source caps on the front".
 
-A missing `Authorization` header is the anonymous key. A header that is present but is not `Bearer <key>` is refused
+A request without an `Authorization` header uses the anonymous key. A header that is present but is not `Bearer <key>` is refused
 with 401 `InvalidAuthorizationHeader`.
 
 The anonymous account does not have kudos to hold, so an anonymous chat request is served free up to the free output

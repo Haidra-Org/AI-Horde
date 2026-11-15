@@ -14,7 +14,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 ## Context and Problem Statement
 
 A text request from a requester who does not have kudos (the anonymous account, or a registered account with an
-empty balance) is served without a kudos hold up to a number of output tokens called the free output allowance. Above it the request
+empty balance) is served without a kudos hold up to an output-token limit called the free output allowance. Above it the request
 is refused with `KudosUpfront`, or lowered to the allowance when the client allows a downgrade. The allowance decides
 what a casual user can ask for without earning kudos first, and how much free work the fleet accepts when it is busy.
 
@@ -47,9 +47,11 @@ Chosen option: "Estimated wait on the request's eligible workers".
 The allowance is `HORDE_TEXT_FREE_OUTPUT_CEILING` (4096 tokens) when the request's estimated wait is at or below
 `HORDE_TEXT_FREE_OUTPUT_WAIT_FULL_SECONDS` (60 s). It falls linearly to `HORDE_TEXT_FREE_OUTPUT_FLOOR` (512 tokens)
 at `HORDE_TEXT_FREE_OUTPUT_WAIT_FLOOR_SECONDS` (300 s) and stays at the floor beyond that. A request with no eligible
-worker gets the floor. A request the floor would refuse for kudos, when no online worker can serve it, is refused as
-`NoEligibleWorker` instead, with the declaration gap when there is one, since kudos do not help it and a kudos message
-would mislead the requester. A funded request with no eligible worker is admitted and queued.
+worker gets the floor.
+
+When no online worker can serve a request that the floor would refuse for insufficient kudos, the refusal is
+`NoEligibleWorker`, with the declaration gap when there is one. Additional kudos cannot make that request serviceable,
+so a kudos message would mislead the requester. A funded request with no eligible worker is admitted and queued.
 
 The estimated wait is the one ADR 0040 defines: the queued output ahead of the request that its eligible workers could
 take, divided by the combined measured speed of those workers. It is the same figure the status route reports as

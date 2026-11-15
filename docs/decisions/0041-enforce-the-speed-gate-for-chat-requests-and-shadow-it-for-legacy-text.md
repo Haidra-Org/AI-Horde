@@ -72,10 +72,13 @@ measured?
 
 Chosen option: "Prefer capable workers for chat requests and record every over-capacity assignment".
 
-A capable worker for a chat request is an online chat worker for one of the request's models, not in maintenance or
-paused, whose declared chat limits admit the request, which declares every chat feature the request requires and the
-`url` or `base64` image transport when the request requires `vision`, and whose capacity is at least its `max_length`
-(`capable_chat_worker_clauses`).
+A capable worker for a chat request must meet all of these conditions (`capable_chat_worker_clauses`):
+
+- It is an online chat worker for one of the request's models, outside maintenance and unpaused.
+- Its declared chat limits admit the request.
+- It declares every chat feature the request requires.
+- It declares the `url` or `base64` image transport when the request requires `vision`.
+- Its capacity is at least the request's `max_length`.
 
 `TextWorker.can_generate_with_eligibility_inputs` refuses a chat request over the
 worker's capacity with `lease_speed` while a capable worker is online, and admits it when none is. In the pop query,
@@ -83,8 +86,7 @@ worker's capacity with `lease_speed` while a capable worker is online, and admit
 passes every legacy text request. The feature test is `TextArrayContainsAll`, which compiles to `@>` on PostgreSQL
 and to a `json_each` anti-join on SQLite.
 
-The status
-route, worker availability and the wait estimate of ADR 0040 read the same eligibility check. Slow workers count as
+The status route, worker availability and the wait estimate of ADR 0040 read the same eligibility check. Slow workers count as
 capacity for legacy requests, and for chat requests that no capable worker can take. A chat request over every online
 chat worker's capacity is therefore possible and is not refused as `no_eligible_worker`.
 
@@ -92,11 +94,15 @@ chat worker's capacity is therefore possible and is not refused as `no_eligible_
 
 When a legacy text or chat job is assigned to a worker whose capacity is below its `max_length`, the generation row
 stores `over_capacity_at_assignment`, the counter `horde.text.gate_shadow.assignments` is incremented and an INFO log
-line records the generation, request and worker ids with the `max_length`, capacity and speed. The marker fixes the
-record at assignment, since the worker's measured speed moves between pop and submit. The job's end is counted by
+line records the generation, request and worker ids with the `max_length`, capacity and speed. The marker preserves the
+assignment-time assessment, since the worker's measured speed changes between pop and submit.
+
+The job's end is counted by
 `horde.text.gate_shadow.outcomes` as `completed` at a stored submit, `faulted` at the submit that faults it, or
 `aborted` when its lease lapses. A completed job's pop to submit time is recorded in
-`horde.text.gate_shadow.service_seconds`. Every record has `horde.worker_trusted`, `horde.size_bucket` (`<=512`,
+`horde.text.gate_shadow.service_seconds`.
+
+Every record has `horde.worker_trusted`, `horde.size_bucket` (`<=512`,
 `513-1024`, `1025-2048`, `2049-4096`, `>4096`) and `horde.chat`. A fake generation is not recorded.
 
 ### Consequences

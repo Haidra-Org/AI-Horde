@@ -14,8 +14,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 ## Context and Problem Statement
 
 Under inline mutation the current column was the only accounting record, so correcting a wrong balance meant
-overwriting the one visible number and leaving no trace of the error or the correction. Event tables make a
-better answer possible, and a worse one tempting: an operator facing drift can reach for
+overwriting the one visible number and leaving no trace of the error or the correction. Event tables allow
+corrections to be recorded as additional postings. They also tempt an operator facing drift to reach for
 `UPDATE kudos_ledger SET applied = true`, a `DELETE` of a suspect posting, or a direct balance assignment.
 
 ## Decision Drivers

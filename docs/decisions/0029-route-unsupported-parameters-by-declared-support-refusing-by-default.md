@@ -61,7 +61,9 @@ Unknown keys are refused at the top level and inside every object except message
 `tools` definitions and the `tool_choice` object, which drop them. Inside those objects a dropped key is one outside
 the role's set, or outside the served fields of a tool call, its function object, a content part, an image part's
 `image_url` object, a `tools` entry, its `function` object, the `tool_choice` object or its `function` object. A
-dropped key is not forwarded. A function's `parameters` schema is client data and is forwarded unchanged. Served
+dropped key is not forwarded.
+
+A function's `parameters` schema is client data and is forwarded unchanged. Served
 keys are validated. An unserved role, content part type or tool type is refused, and so is `tool_calls` on a
 message other than an assistant message. The `horde` extension object, `stream_options` and `response_format`
 refuse unknown keys.
@@ -79,7 +81,9 @@ A served field that needs a worker to act on it becomes a requirement stored on 
 each penalty whose value is not 0, `vision` for an image part, `tools`, `json_object` or `json_schema` by the response
 format, and `tools_with_response_format` when both are forwarded. A penalty at 0 is not a requirement, so a request
 that sends the default is served by any chat worker. Only workers that declare every requirement are eligible, as
-[ADR 0022](0022-declare-chat-capabilities-by-pop-fields.md) describes. When the eligible workers do not cover the
+[ADR 0022](0022-declare-chat-capabilities-by-pop-fields.md) describes.
+
+When the eligible workers do not cover the
 request, the front responds according to the cause (`horde/oai/app.py`, `horde/oai/waiter.py`):
 
 | Cause                                                                                           | Answer                                                                 |

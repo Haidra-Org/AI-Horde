@@ -50,7 +50,9 @@ into the job payload, with the client's value where it sent one:
 | `min_p`             | 0.0     |
 
 The first four are OpenAI's defaults. OpenAI does not have a key for `rep_pen`, `top_k` or `min_p`, so they are set
-to their neutral values. `stop_sequence` and `seed` are written only when the client sent them. KoboldAI samplers
+to values that disable their filtering or penalty. `stop_sequence` and `seed` are written only when the client sent them.
+
+KoboldAI samplers
 outside the table, such as `top_a`, `typical`, `tfs` and `rep_pen_range`, are not written, so the worker's own
 defaults apply to them. The table applies to chat jobs only. Native text jobs do not use it.
 

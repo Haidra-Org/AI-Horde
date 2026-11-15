@@ -46,8 +46,9 @@ single database snapshot. Queued credits are deliberately excluded: unprojected 
 An accepted operation calls `reserve_kudos` with a stable `business_id` in the same transaction as its
 posting, and attaches the reservation ID to the debit's `detail`. The business IDs are `upfront:<wp-id>`,
 `interrogation:<form-id>`, and `transfer:<source-user-id>:<event-id>`. Uniqueness on `business_id` makes a
-retry reactivate the existing hold rather than add one, and reactivation may not change the payer. The
-projector consumes a request hold as its debit folds, and releases a transfer hold once no unapplied posting
+retry reactivate the existing hold rather than add one, and reactivation may not change the payer.
+
+The projector consumes a request hold as its debit folds, and releases a transfer hold once no unapplied posting
 remains for the event.
 
 `effective_kudos` remains available: materialized balance plus all committed unapplied deltas, clamped to the

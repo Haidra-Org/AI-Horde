@@ -17,7 +17,7 @@ An OpenAI chat request is a `messages` array with sampling fields. The native te
 the same sampling fields, queued in `waiting_prompts`, priced by `max_length`, matched to workers by
 `horde/database/text_functions.py`, `get_sorted_text_wp_filtered_to_worker`, and settled by
 `horde/classes/kobold/processing_generation.py`. Chat requires messages sent to the worker and the structured
-reply, usage and finish reason returned, with the existing queue and accounting reused. Where should a chat
+reply, usage and finish reason returned. It also needs to reuse the existing queue and accounting. Where should a chat
 request live?
 
 ## Decision Drivers
@@ -41,8 +41,8 @@ Chosen option: "A `TextWaitingPrompt` with a nullable `messages` column, chat to
 `POST /v2/generate/chat/async` creates a `TextWaitingPrompt` whose `messages` column holds the OpenAI array and whose
 `prompt` column holds a flattened rendering of the conversation. The flattened prompt feeds the token estimate,
 kudos, moderation and the request's record of what was submitted. Workers receive the messages. A boolean `is_chat`
-column is the discriminator. Because chat-ness reads that column, `messages` and `chat_extras` (tools, tool choice,
-response format and the stream hint) are deferred and loaded only for the request a worker is assigned.
+column identifies chat requests. This lets `messages` and `chat_extras` (tools, tool choice,
+response format and the stream hint) remain deferred and be loaded only for the request a worker is assigned.
 
 Workers opt in to chat on pop ([ADR 0022](0022-declare-chat-capabilities-by-pop-fields.md)). The pop query admits a
 chat row only to a worker that declared chat for the request's model, and a text row only to a worker that still

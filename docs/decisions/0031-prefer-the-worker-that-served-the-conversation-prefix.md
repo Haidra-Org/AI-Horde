@@ -27,7 +27,9 @@ served the previous turn?
 
 ## Decision Outcome
 
-Chosen option: "No affinity". Chat turns are assigned like any other request, and the scheduler does not prefer a previous worker. OpenAI clients may send
+Chosen option: "No affinity". Chat turns are assigned like any other request, and the scheduler does not prefer a previous worker.
+
+OpenAI clients may send
 `prompt_cache_key` for the same purpose; it is not a field of the request model, so the front refuses it with 400
 `UnsupportedChatParameter` (`tests/unit/oai/test_request_screening.py`).
 
