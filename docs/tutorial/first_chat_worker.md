@@ -1,6 +1,6 @@
 ---
 title: "Serve your first chat job with koboldcpp"
-summary: "Start koboldcpp as a Horde chat worker, verify registration and complete a chat request followed by a tool request."
+summary: "Start koboldcpp as a Horde chat worker, verify registration and complete a chat request, then try a best-effort tool request."
 topics: [chat, workers]
 order: 20
 ---
@@ -18,8 +18,8 @@ Topics: [chat](../topics.md#chat), [workers](../topics.md#workers)
 <!-- END GENERATED: topics -->
 
 In this tutorial you run koboldcpp as a chat worker on the AI Horde, watch the horde list its model as a chat model,
-send it one chat request and one tool request with curl, and read the structured replies submitted by the worker. Each step
-ends with the output that shows it worked.
+send it one chat request and one tool request with curl, and read the structured replies submitted by the worker.
+The first completed chat reply is the core result. The optional tool exercise can return a call or plain text.
 
 The procedure behind each step, with every option, is [Serve chat jobs from a text worker](../how-to/serve_chat_jobs.md).
 To send chat requests through the OpenAI-compatible front instead of the native route, follow
@@ -32,26 +32,26 @@ To send chat requests through the OpenAI-compatible front instead of the native 
 - An instruction-tuned GGUF model whose file includes a chat template. A small one (a few billion parameters) is
   enough.
 - A registered AI Horde API key, written `<api-key>`. The worker needs one, and the same key can send the requests.
-- `curl` and `jq`.
+- Bash, `curl` and `jq`. Replace angle-bracket placeholders before running the commands.
 
 Set the values once in your shell:
 
 ```bash
 export HORDE_URL=https://aihorde.net
-export HORDE_API_KEY=<api-key>
-export MODEL_NAME=koboldcpp/<model-name>
+export HORDE_API_KEY="<api-key>"
+export MODEL_NAME="koboldcpp/<model-name>"
 ```
 
 koboldcpp prefixes its registered model name with `koboldcpp/`, so `MODEL_NAME` is `<model-name>` with that prefix.
-Choose a `<model-name>` that is not served by any other worker, so the requests below reach your worker. Leave out the colon: the
-OpenAI-compatible front reserves it and does not route to a model whose name contains one.
+Choose a `<model-name>` that is not served by any other worker, so the requests below reach your worker. Leave out
+colons from the name, since the OpenAI-compatible front reserves that character and cannot route to names containing it.
 
 ## 1. Start koboldcpp as a chat worker
 
 ```bash
-koboldcpp --model <model.gguf> --contextsize 4096 --jinja \
-  --hordekey "$HORDE_API_KEY" --hordeworkername <worker-name> \
-  --hordemodelname <model-name> --hordemaxctx 4096 --hordegenlen 512
+koboldcpp --model "<model.gguf>" --contextsize 4096 --jinja \
+  --hordekey "$HORDE_API_KEY" --hordeworkername "<worker-name>" \
+  --hordemodelname "<model-name>" --hordemaxctx 4096 --hordegenlen 512
 ```
 
 `--hordekey` and `--hordeworkername` start the embedded worker, which accepts chat jobs and text jobs. `--jinja` formats
@@ -76,7 +76,7 @@ curl -s "$HORDE_URL/api/v2/status/models?type=text&chat=true" \
   | jq --arg name "$MODEL_NAME" '.[] | select(.name == $name) | .chat'
 ```
 
-The model list refreshes every few seconds. Repeat the command until it prints:
+The model list refreshes every 10 seconds. Repeat the query while the worker is running. A registration can look like:
 
 ```json
 {
@@ -88,7 +88,12 @@ The model list refreshes every few seconds. Repeat the command until it prints:
 }
 ```
 
-`created` differs. The worker declared what it serves: up to 4096 tokens of context, up to 512 tokens of reply, the
+Worker count, features and `created` can differ with the worker version and configuration. Check that the
+model name matches and the declared limits cover the requests in this tutorial. If no entry appears, inspect the
+koboldcpp log for authentication or pop errors, confirm the `koboldcpp/` prefix in `MODEL_NAME`, and query
+[the worker declaration](../how-to/serve_chat_jobs.md#declaration-checks-and-withdrawal) before submitting a request.
+
+The worker declared what it serves: up to 4096 tokens of context, up to 512 tokens of reply, the
 optional features `seed`, `presence_penalty`, `tools`, `json_object`, `json_schema` and `reasoning_effort`, and the
 guarantee `prompt_overflow_refused`, a promise to fault a conversation that does not fit instead of trimming it. A
 request that needs a feature or guarantee not declared by the worker waits for another worker.
@@ -125,9 +130,10 @@ The Horde returns `202` with the request id and kudos cost:
 {"id": "<request-id>", "kudos": <kudos>}
 ```
 
-`REQUEST_ID` holds the id.
+Check that `REQUEST_ID` is a non-empty ID, rather than `null`. A response with `rc` or `message` instead of `id`
+is a refusal: fix the reported key, model or request error before polling. The tool submission uses the same check.
 
-Within a few seconds the koboldcpp log shows the job arriving and the reply going back:
+After assignment, the koboldcpp log shows the job arriving and the reply going back:
 
 ```text
 Job <job-id> received from https://aihorde.net for 64 tokens and <context> max context. Starting generation...
@@ -143,10 +149,11 @@ Ask for the request's status:
 
 ```bash
 curl -s "$HORDE_URL/api/v2/generate/chat/status/$REQUEST_ID" -H "apikey: $HORDE_API_KEY" \
-  | jq '{done, generations: [.generations[] | {worker_name, message, finish_reason, prompt_tokens, completion_tokens, charge_basis}]}'
+  | jq '{done, faulted, waiting, processing, is_possible, generations: [.generations[] | {worker_name, message, finish_reason, prompt_tokens, completion_tokens, charge_basis}]}'
 ```
 
-When `done` is true, the output looks like:
+When `done` is true, `faulted` is false and a generation is present, the output can look like this
+(the query also prints the progress fields):
 
 ```json
 {
@@ -164,7 +171,16 @@ When `done` is true, the output looks like:
 }
 ```
 
-While `done` is false, run the command again. Each field came from the worker's submit:
+While `done` and `faulted` are false, repeat the status query. If `faulted` is true, stop polling and inspect
+the worker's fault or submit-refusal log; a fault is not a successful completion. If `done` is true without a
+generation, stop and inspect cancellation or expiry rather than reading an empty result. A 404 means the ID is
+unavailable; check that submission succeeded and that the same Horde deployment is being queried.
+If work stays waiting, compare `is_possible` with the worker declaration and inspect its pop log. See
+[status interpretation](../explanation/request_feasibility_and_queue_pressure.md) for changing availability.
+
+The reply text and token counts are illustrative. Another answer or `length` finish reason is acceptable.
+For the illustrated successful reply:
+
 
 - `message` is the reply as an assistant message, the format used by OpenAI clients.
 - `finish_reason` is `stop` because the model ended the reply. `length` would mean it used all 64 tokens.
@@ -172,9 +188,9 @@ While `done` is false, run the command again. Each field came from the worker's 
 - `charge_basis` `output_estimate` says the kudos were computed from the length of the reply text, as for any text
   request, and the token counts did not enter the charge.
 
-## 5. Send a tool request
+## 5. Optional: send a tool request
 
-Offer the model one function and require it to call a tool:
+Offer the model one function with `tool_choice: required`. This exercise uses `best_effort`, so a call is not guaranteed:
 
 ```bash
 TOOL_REQUEST_ID=$(curl -s "$HORDE_URL/api/v2/generate/chat/async" \
@@ -206,8 +222,11 @@ as before:
 
 ```bash
 curl -s "$HORDE_URL/api/v2/generate/chat/status/$TOOL_REQUEST_ID" -H "apikey: $HORDE_API_KEY" \
-  | jq '{done, generations: [.generations[] | {message, finish_reason}]}'
+  | jq '{done, faulted, waiting, processing, is_possible, generations: [.generations[] | {message, finish_reason}]}'
 ```
+
+Apply the same waiting, fault and empty-result checks as in step 4. If the model returns text instead of a call,
+that is an allowed best-effort result; do not try to execute a missing call.
 
 When `done` is true and the model produced a tool call, the reply looks like this:
 
@@ -233,10 +252,23 @@ The model chose `get_weather` and wrote its arguments as a JSON string. `content
 write text beside the call. Your application runs the function, then sends the conversation back with the assistant
 message above and a `tool` message whose `tool_call_id` is `<call-id>`, and the model answers from the result.
 
+## Stop the tutorial
+
+Stop koboldcpp when finished. To cancel a request that is still waiting, use its actual ID:
+
+```bash
+curl -s -X DELETE "$HORDE_URL/api/v2/generate/chat/status/$REQUEST_ID" -H "apikey: $HORDE_API_KEY"
+```
+
+For the optional tool request, use `$TOOL_REQUEST_ID` instead. Cancellation removes queued work; it does not
+reverse completed charges. An in-flight non-streamed job can still settle and be charged when the worker submits.
+See [Settlement on cancellation](../reference/chat_requests.md#settlement-on-cancellation).
+
 ## What you built
 
-A text worker that also serves chat jobs. The horde routed both requests to it because its pop declared chat jobs,
-the model, the limits and the required features. You read the worker's structured replies through the status route.
+A text worker that also serves chat jobs. The Horde routed the chat request to it because its pop declared chat
+jobs, the model, the limits and the required features. You read its structured reply through the status route.
+If you completed the optional tool exercise, you also inspected a best-effort tool response.
 The worker still serves ordinary text requests for the same model.
 
 Next:

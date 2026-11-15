@@ -26,6 +26,6 @@ The concepts they assume (what a worker is, what a job's lifecycle means) are in
 | [Style contract reference](style_contract.md) | What an image or text style may declare about the params a request may set and the placeholders its prompt accepts, and how a text request is sized against the prompt it ends up sending. |
 | [Chat requests reference](chat_requests.md) | Native chat routes, request fields, worker declarations, job payloads, submissions, pricing and progress streams, with implementation and test references. |
 | [Chat wire examples](chat_wire_examples.md) | Checked JSON examples for native chat requests, OpenAI-compatible responses and worker pop, progress and submit routes. |
-| [Chat front reference](chat_front.md) | OpenAI-compatible request and response formats, stream behavior, availability errors and telemetry for the horde.oai service. |
+| [Chat front reference](chat_front.md) | Routes, settings, OpenAI-compatible request and response formats, stream behavior, availability errors and telemetry of the horde.oai service. |
 | [Outbound requests reference](outbound_requests.md) | Which client-supplied URLs the horde requests, the address check every hop passes, and the timeouts, redirect limits and byte caps of image fetches and webhooks. |
 <!-- END GENERATED: documents -->

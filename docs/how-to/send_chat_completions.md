@@ -17,21 +17,23 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [chat](../topics.md#chat), [requests](../topics.md#requests)
 <!-- END GENERATED: topics -->
 
-Before starting, have:
+Connect an OpenAI-compatible client to the Horde to send chat requests and handle replies from volunteer workers.
+You need:
 
 - An OpenAI chat completions client with configurable base URL and bearer token.
 - A Horde chat front's base URL, used below as `OAI_BASE_URL`. The public service is `https://oai.aihorde.net/v1`.
 - A Horde API key, used below as `HORDE_API_KEY`, or the anonymous key `0000000000`.
 
-End state: the client sends `POST /v1/chat/completions` to the Horde, streamed or not, with tools, images and
-structured output where a served model supports them, and it handles the Horde's refusals and retry headers without
-creating duplicate charged jobs.
+Start by configuring the client and choosing an available model. The later sections cover optional features and
+error handling. Follow the retry rules before resending a failed request, since a retry can create another charged job.
 
 The front returns 400 for unsupported top-level parameters. Unknown keys inside messages, `tools` definitions
 and a `tool_choice` object are dropped, as OpenAI does. The reasons are in the
 [chat requests explanation](../explanation/chat_requests.md) and
 [ADR 0029](../decisions/0029-route-unsupported-parameters-by-declared-support-refusing-by-default.md). The
-[tutorial](../tutorial/first_chat_completion.md) walks the same features with the Python SDK from scratch.
+[tutorial](../tutorial/first_chat_completion.md) covers the same features with the Python SDK from scratch.
+
+The shell examples use Bash, `curl` and `jq`. Replace placeholders before running them.
 
 ## Configure base URL, key and attribution
 
@@ -46,12 +48,12 @@ client = OpenAI(base_url="<OAI_BASE_URL>", api_key="<HORDE_API_KEY>")
 
 A request without `Authorization` uses the anonymous key, and so does `Bearer 0000000000`. Anonymous requests are
 served after requests from users with kudos ([ADR 0035](../decisions/0035-keep-anonymous-access-on-the-chat-front.md)).
-An `Authorization` header that is not `Bearer <key>` is 401 `InvalidAuthorizationHeader`.
+An `Authorization` header that is not `Bearer <key>` gets 401 `InvalidAuthorizationHeader`.
 
-The Horde attributes traffic by `Client-Agent`, which the front composes from your headers as
-`<application>:<version>:<user agent> via horde-oai-front`. The application is your `X-Title` header, else
-`X-OpenRouter-Title`, else the host of `HTTP-Referer`, else the host of `Referer`. The user agent is your
-`User-Agent`. Send `X-Title` with your application's name so Horde statistics count your traffic under it:
+Send `X-Title` with your application's name so Horde statistics attribute traffic to it. The front uses this value
+when building the native `Client-Agent` header. Without `X-Title`, it uses `X-OpenRouter-Title`, then the host of
+`HTTP-Referer` or `Referer`, in that order. The resulting header is
+`<application>:<version>:<user agent> via horde-oai-front`, with the user agent from your `User-Agent` header:
 
 ```python
 client = OpenAI(base_url="<OAI_BASE_URL>", api_key="<HORDE_API_KEY>", default_headers={"X-Title": "<your-app>"})
@@ -67,9 +69,9 @@ prints `200`. A malformed header prints `401`.
 
 ## Choose a model from the model card
 
-`GET /v1/models` lists models served by at least one online chat worker. Models without an online worker are absent.
-Model ids are the Horde's model names and may contain slashes. An id containing `:` is 404 `model_not_found`, since
-the front does not serve model variants.
+`GET /v1/models` lists models served by at least one online chat worker. A model is not listed when it does not have
+an online worker. Model ids are the Horde's model names and may contain slashes. An id containing `:` gets 404
+`model_not_found`, because the front does not serve model variants.
 
 ```bash
 curl -s "$OAI_BASE_URL/models" | jq '.data[] | {id, context_length, max: .top_provider.max_completion_tokens, supported_parameters, x_horde}'
@@ -79,17 +81,18 @@ curl -s "$OAI_BASE_URL/models" | jq '.data[] | {id, context_length, max: .top_pr
 | --- | --- |
 | `x_horde.workers` | Online chat workers serving the model. |
 | `x_horde.queued` | The model's queued work, shared with text requests. |
-| `context_length` | The largest context any of those workers declares. |
-| `top_provider.max_completion_tokens` | The largest `max_tokens` any of those workers declares. |
+| `context_length` | The largest context declared by any of those workers. |
+| `top_provider.max_completion_tokens` | The largest `max_tokens` declared by any of those workers. |
 | `supported_parameters` | `max_tokens`, `temperature`, `top_p`, `stop`. Then `seed`, `frequency_penalty`, `presence_penalty`, `reasoning_effort`, `tools`, `response_format` when a worker declares the feature. `parallel_tool_calls` with `tools`. `tool_choice` only when a worker serving tools also declares the guarantee that enforces it (see [Conformance](#conformance)). |
 | `architecture.input_modalities` | Includes `image` when a worker accepts images. |
 
-The fields are the maxima and union across the model's workers, and they are availability hints: a request at the
-largest `max_tokens` fits only the workers that declare it, and the workers online can change before the request is
-picked up. A request for a model without an online worker ends at once with 503 `no_eligible_worker`. A request
-that cannot be served by the online workers ends with 503 `no_eligible_worker` after the front's grace, or at once with 404
-`no_worker_supports_features` when the model's online workers lack a declaration it needs (see
-[Errors and retries](#errors-and-retries)).
+The card combines declarations from all online workers for the model. Its limits are the largest declared values,
+and its feature list includes anything declared by at least one worker. A request at the
+largest `max_tokens` fits only the workers that declare it, and the online workers can change before the request is
+picked up. A request for a model without an online worker ends at once with 503 `no_eligible_worker`. A request that
+cannot be served by the online workers ends with 503 `no_eligible_worker` after the front's grace period. When the
+model's online workers do not have a declaration needed by the request, it ends at once with 404
+`no_worker_supports_features` instead (see [Errors and retries](#errors-and-retries)).
 
 Verification: your configured model appears in `.data[].id`, with `x_horde.workers` at least 1 and every optional
 parameter sent by your client listed in `supported_parameters`.
@@ -104,10 +107,10 @@ curl -s "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API_KE
   -d '{"models": ["<model-a>", "<model-b>"], "messages": [{"role": "user", "content": "Hi"}]}' | jq .model
 ```
 
-Every listed id has to exist on the Horde: an unknown one is 404 with `param` at its entry, such as `models[1]`, and
-the request is not queued. More than 5 ids, or an empty one, is 400 `UnsupportedChatParameter`. Sending both `model`
-and `models` is 400 `ChatRequestConflict`. The kudos quote uses the first listed model. The generation is charged at
-the model that served it.
+Every listed id has to exist on the Horde. An unknown id gets 404 with `param` set to its entry, such as `models[1]`,
+and the request is not queued. More than 5 ids, or an empty id, gets 400 `UnsupportedChatParameter`. Sending both
+`model` and `models` gets 400 `ChatRequestConflict`. The kudos quote uses the first listed model. The generation is
+charged at the model that served it.
 
 Verification: the printed `model` is one of the listed ids.
 
@@ -116,7 +119,7 @@ Verification: the printed `model` is one of the listed ids.
 | Keys | Handling |
 | --- | --- |
 | `model` or `models`, `messages` | Required: exactly one of `model` and `models` (see [Accept any of several models](#accept-any-of-several-models)). `messages` holds at least one message. |
-| `max_tokens`, `max_completion_tokens` | 16 to 16384, default 512. See [Completion limit](#completion-limit). |
+| `max_tokens`, `max_completion_tokens` | 16 to 16384. See [Completion limit](#completion-limit). |
 | `temperature`, `top_p`, `stop` | Forwarded. `temperature` ranges 0 to 2, `top_p` 0 to 1, and `stop` is a string or up to four strings. |
 | `seed`, `frequency_penalty`, `presence_penalty` | Forwarded. A worker has to declare the feature for `seed` (any value) or a non-zero penalty. Penalties range -2 to 2. |
 | `reasoning_effort` | Requested thinking budget. See [Reasoning effort values](#reasoning-effort-values). |
@@ -132,8 +135,15 @@ Verification: the printed `model` is one of the listed ids.
 when neither is sent. See [Deliberate deviations](#deliberate-deviations) for the minimum of 16.
 The limit covers both reasoning and the answer (see [Reasoning budget](#reasoning-budget)).
 
-A value above the largest length declared by an online worker for the model is lowered to that length and
-reported in `x_horde.context_adjustments`.
+`max_tokens` is the limit most often exceeded by clients. It is an upper bound in the OpenAI API, so a value above
+every online worker's declared length is not refused. It is lowered to the largest length declared by an online
+worker for the model, and so is the default of 512. `x_horde.context_adjustments` then holds
+`{"from": <requested>, "to": <declared>, "reason": "worker_max_length"}`. A reply that needs more tokens ends with
+`finish_reason` `length`. When the workers change their declarations after the submit, the request can still end
+with 400 `no_worker_supports_limit` and `param` `max_tokens`.
+
+Verification: a request above the card's `max_completion_tokens` is served, and its `x_horde.context_adjustments`
+holds a `worker_max_length` entry whose `to` is the card's value.
 
 Above the [free output allowance](../reference/chat_requests.md#free-output-allowance), the API key must have
 enough kudos to cover the request. Otherwise the request is refused with 403 `KudosUpfront`. The allowance is
@@ -141,12 +151,11 @@ enough kudos to cover the request. Otherwise the request is refused with 403 `Ku
 
 ### Reasoning effort values
 
-`none`, `minimal`, `low`, `medium`, `high` or `xhigh`, forwarded unchanged. A worker has to declare the
-`reasoning_effort` feature for any value, `none` included. When you leave it out, any chat worker may serve
-the request, and a worker that declares the feature receives `medium`, OpenAI's default, which koboldcpp
-applies as a thinking budget of about half of `max_tokens`. `none` disables thinking. How much reasoning the
-other values allow is the worker's mapping. Any other value is 400 `BadRequest` with `param`
-`reasoning_effort`.
+The accepted values are `none`, `minimal`, `low`, `medium`, `high` and `xhigh`, forwarded unchanged. A worker has to
+declare the `reasoning_effort` feature for any value, `none` included. When you leave it out, any chat worker may
+serve the request. A worker that declares the feature then receives `medium`, OpenAI's default. On koboldcpp,
+`medium` is a thinking budget of about half of `max_tokens`. `none` disables thinking. How much reasoning the other
+values allow depends on the worker's mapping. Any other value gets 400 `BadRequest` with `param` `reasoning_effort`.
 
 ### Message roles
 
@@ -162,8 +171,9 @@ A `developer` message is sent to the worker as `system`. Content is a string or 
 message may also include `image_url` parts.
 
 Any other key on a message, and any unknown key inside a tool call, its `function` object or a content part, is
-dropped and not forwarded, as OpenAI ignores it. A `name` on a `tool` message is dropped. `tool_calls` on a message
-other than an assistant message is refused, as OpenAI refuses it.
+dropped and not forwarded, as OpenAI ignores it. A `name` on a `tool` message is dropped. The exception is
+`tool_calls` on a message other than an assistant message, which is refused (see
+[Keys the front refuses](#keys-the-front-refuses)).
 
 ### Client defaults
 
@@ -181,21 +191,22 @@ containing the key's path. Examples include `logit_bias`, `logprobs: true`, `fun
 `modalities`, `prediction`, `web_search_options` and sampler extras such as `rep_pen`, `top_k` and `min_p`.
 
 An unknown key inside `stream_options` or `response_format` is refused at its path, as OpenAI refuses it.
-`tool_calls` on a message other than an assistant message is refused at `messages[<i>].tool_calls`, and an
-unsupported role at `messages[<i>].role`. A refused content part is reported with its type, such as
+`tool_calls` on a message other than an assistant message is refused at `messages[<i>].tool_calls`, as OpenAI refuses
+it. An unsupported role is refused at `messages[<i>].role`. A refused content part is reported with its type, such as
 `messages[0].content[0].type=input_audio`.
 
-A value OpenAI refuses by range is 400 with OpenAI's message and `param`: `temperature` outside 0 to 2, `top_p`
-outside 0 to 1, a penalty outside -2 to 2, `n` or a token limit below 1, and more than four stop sequences are
-`UnsupportedChatParameter`, such as `Invalid 'temperature': decimal above maximum value. Expected a value <= 2, but got
-2.5 instead.` An empty `messages` is `BadRequest` with OpenAI's message. A token limit from 1 to 15 is refused with
-the Horde floor of 16.
+OpenAI refuses some values because they are out of range. The front returns 400 for these, with OpenAI's message and
+`param`. The code is `UnsupportedChatParameter` for `temperature` outside 0 to 2, `top_p` outside 0 to 1, a penalty
+outside -2 to 2, `n` or a token limit below 1, and more than four stop sequences. An example message is `Invalid
+'temperature': decimal above maximum value. Expected a value <= 2, but got 2.5 instead.` An empty `messages` gets
+`BadRequest` with OpenAI's message. A token limit from 1 to 15 is refused, and the message states the Horde floor of
+16.
 
 Other 400 codes:
 
 | `code` | Cause |
 | --- | --- |
-| `ChatRequestConflict` | `max_tokens` and `max_completion_tokens` differ. `model` and `models` are both set. `horde.only` and `horde.ignore` are both set. A `tool_choice` (`none` included) or `parallel_tool_calls` without tools, as OpenAI refuses them. A forced function the tools do not define. Under `horde.openai_guards`, a `json_object` request without the word "json" in its messages. |
+| `ChatRequestConflict` | `max_tokens` and `max_completion_tokens` differ. `model` and `models` are both set. `horde.only` and `horde.ignore` are both set. A `tool_choice` (`none` included) or `parallel_tool_calls` without tools, as OpenAI refuses them. A forced function that is not defined in `tools`. Under `horde.openai_guards`, a `json_object` request without the word "json" in its messages. |
 | `BadRequest` | The body is not a JSON object, a value has the wrong type or range, neither `model` nor `models` is set, `models` lists a model twice, `messages` is empty, or a `json_schema` response format has no `schema`. |
 
 Each refusal happens before the request is queued, so it is not charged and is safe to correct and resend.
@@ -214,10 +225,10 @@ with `param == "logit_bias"`.
 
 The worker receives every sampling value, so the worker's defaults do not apply. An omitted key is sent with the neutral
 value: `temperature` 1.0, `top_p` 1.0, `frequency_penalty` 0, `presence_penalty` 0, and no repetition penalty,
-`top_k` or `min_p` filtering. `max_tokens` defaults to 512. Send `temperature` and `top_p` explicitly when the model's
-recommended settings differ.
+`top_k` or `min_p` filtering. Send `temperature` and `top_p` explicitly when the model's recommended settings
+differ.
 
-The `horde` object includes the Horde options OpenAI does not have a key for:
+The `horde` object includes the Horde options that do not have an OpenAI key:
 
 | Key | Default | Effect |
 | --- | --- | --- |
@@ -225,14 +236,14 @@ The `horde` object includes the Horde options OpenAI does not have a key for:
 | `ignore` | none | A non-empty list of worker ids. These workers do not serve the request. Cannot be combined with `only`. |
 | `trusted_workers` | `false` | `true` restricts the request to trusted workers. |
 | `validated_backends` | `false` | `true` restricts the request to workers on validated backends. |
-| `slow_workers` | `true` | `false` excludes workers the Horde marks slow. |
+| `slow_workers` | `true` | `false` excludes workers marked slow by the Horde. |
 | `max_context_length` | none | An explicit context length. A worker serves the request only when its declared chat context is at least this. |
 | `context_fit` | `truncate_oldest` | Context sizing policy. See [Context fitting options](#context-fitting-options). |
-| `conformance` | `strict` | `strict` sends the request only to workers that follow every part of the OpenAI contract it relies on. `best_effort` also accepts workers that may deviate. See [Conformance](#conformance). |
-| `openai_guards` | `false` | `true` turns on the request refusals OpenAI applies and the Horde relaxes on purpose: a `json_object` response format whose messages do not mention "json" is 400 `ChatRequestConflict`. |
+| `conformance` | `strict` | `strict` sends the request only to workers that follow every part of the OpenAI contract that the request relies on. `best_effort` also accepts workers that may deviate. See [Conformance](#conformance). |
+| `openai_guards` | `false` | `true` turns on the request refusals that OpenAI applies and the Horde relaxes on purpose. A `json_object` response format whose messages do not mention "json" then gets 400 `ChatRequestConflict`. |
 | `include_reasoning` | `true` | `false` hides the model's reasoning, which is otherwise returned as `reasoning_content`. See [Reasoning](#reasoning). |
 | `max_kudos` | none | Positive integer cap on the estimate. See [Kudos estimate cap](#kudos-estimate-cap). |
-| `availability_mode` | `wait` | `wait` queues the request for the front's budget. `fail_fast` refuses it at once with 503 `queue_unavailable` and a `Retry-After` when the online pool has zero eligible worker threads, or when the Horde's estimated wait exceeds the budget. See [Errors and retries](#errors-and-retries). |
+| `availability_mode` | `wait` | `wait` queues the request for the front's budget. `fail_fast` refuses it at once with 503 `queue_unavailable` and a `Retry-After` in two cases: the online pool has zero eligible worker threads, or the Horde's estimated wait exceeds the budget. See [Errors and retries](#errors-and-retries). |
 
 Any other key in `horde`, including `dry_run` and `operation_key`, is 400 `UnsupportedChatParameter`.
 With the Python SDK, send the object as `extra_body={"horde": {...}}`. Other clients add it to the JSON body.
@@ -241,24 +252,23 @@ Restrictions narrow the eligible workers, so a combination that is not supported
 
 ### Context fitting options
 
-`truncate_oldest` grows the context as `grow` does, then drops whole turns from the oldest forward until the
-messages fit, keeping every system and developer message and the latest user message with what follows it.
-`grow` raises the context to fit the messages, up to the largest chat context an online worker for the model
-declares, and refuses messages that do not fit at that bound. `reject` refuses messages that do not fit the
-context.
+`truncate_oldest` grows the context as `grow` does. It then drops whole turns from the oldest forward until the
+messages fit. It keeps every system and developer message, and the latest user message with everything after it.
+`grow` raises the context to fit the messages, up to the largest chat context declared by an online worker for the
+model. It refuses messages that do not fit at that bound. `reject` refuses messages that do not fit the context.
 
 ### Kudos estimate cap
 
-A positive integer cap on the request's kudos estimate. A request whose estimate at current pricing exceeds it
+Set `horde.max_kudos` to a positive integer to cap the request's estimated cost. A request whose estimate at current pricing exceeds it
 is refused with 400 `max_kudos_exceeded` before it is queued, so it is not charged. `metadata.kudos_estimate`
-and `metadata.max_kudos` hold both values. The estimate assumes the full `max_tokens` is generated, while the
-charge is for the output estimate, so the check is conservative.
+and `metadata.max_kudos` hold both values. The estimate assumes that the full `max_tokens` is generated. The charge
+is for the output estimate, so the check is conservative.
 
 ### Check Horde options
 
-Verification: `x_horde.worker_id` of the response is one of the `only` ids, and `x_horde.context_adjustments` lists
-a `worker_max_length` entry when `max_tokens` was lowered, `{"from", "to", "reason": "grow"}` when the context grew
-and a `truncate_oldest` entry when the oldest turns were dropped, null otherwise.
+Verification: `x_horde.worker_id` of the response is one of the `only` ids. `x_horde.context_adjustments` lists a
+`worker_max_length` entry when `max_tokens` was lowered, a `{"from", "to", "reason": "grow"}` entry when the context
+grew, and a `truncate_oldest` entry when the oldest turns were dropped. It is null otherwise.
 
 A long conversation can be sent whole. Under the default `truncate_oldest`, the Horde drops what does not fit:
 
@@ -274,10 +284,10 @@ for adjustment in completion.x_horde["context_adjustments"] or []:
 
 ## Reasoning
 
-A reasoning model, such as Qwen3, generates reasoning before the reply. The answer in `content` does not include that reasoning.
-When the worker submitted reasoning, the assistant message has it in `reasoning_content` beside `content`, as
-DeepSeek and OpenRouter return it. A stream sends it as `delta.reasoning_content` chunks before the content of the
-same worker post, so a client that reads the field shows progress during a long reasoning phase. The OpenAI SDK
+A reasoning model, such as Qwen3, generates reasoning before the reply. The answer in `content` does not include that
+reasoning. When the worker submitted reasoning, the assistant message has it in `reasoning_content` beside `content`,
+as DeepSeek and OpenRouter return it. A stream sends it as `delta.reasoning_content` chunks before the content of the
+same worker post. A client that reads the field can therefore show progress during long reasoning. The OpenAI SDK
 keeps the field in `model_extra`, streamed and whole. To hide the reasoning, as OpenAI's chat API does, send:
 
 ```json
@@ -285,8 +295,8 @@ keeps the field in `model_extra`, streamed and whole. To hide the reasoning, as 
 ```
 
 Either way, `usage.completion_tokens_details.reasoning_tokens` reports how many of the completion tokens were
-reasoning when the worker counted them. The option does not change the work, its cost or the operation the request
-is for.
+reasoning when the worker counted them. The option does not change the work, its cost or the
+request's operation fingerprint.
 
 Verification: a request to a reasoning model returns `choices[0].message.reasoning_content`. The same request with
 `include_reasoning: false` returns a message without a `reasoning_content` key.
@@ -296,16 +306,15 @@ Verification: a request to a reasoning model returns `choices[0].message.reasoni
 The model generates its reasoning within `max_tokens`, together with the answer, and the reasoning is charged like the
 answer. Set `max_tokens` large enough for both.
 
-When you leave out `reasoning_effort`, a worker that declares the feature receives `medium`. On koboldcpp that is a
-thinking budget of about half of `max_tokens`. When the reasoning reaches it, the thinking is closed and the answer
-follows. A worker that does not declare the feature does not receive a value, and the model reasons without a cap. An
-omitted `max_tokens` defaults to 512 in both cases.
+When you leave out `reasoning_effort`, a worker that declares the feature receives `medium`
+(see [Reasoning effort values](#reasoning-effort-values)). When the reasoning reaches the thinking budget, the
+thinking is closed and the answer follows. A worker that does not declare the feature does not receive a value, and
+the model reasons without a cap.
 
 A reply with `finish_reason` `length`, an empty `content` and reasoning in `reasoning_content` ran out of tokens while
-thinking.
-It cannot be continued, because the OpenAI API cannot resume reasoning. Reasoning sent back inside an assistant
-message becomes a previous turn, and `reasoning_content` on a request message is dropped. Send a fresh request with a
-larger `max_tokens` or a lower `reasoning_effort`. `none` disables thinking.
+thinking. It cannot be continued, because the OpenAI API cannot resume reasoning. Reasoning sent back inside an
+assistant message becomes a previous turn, and `reasoning_content` on a request message is dropped. Send a fresh request
+with a larger `max_tokens` or a lower `reasoning_effort`. `none` disables thinking.
 
 ## Images
 
@@ -320,12 +329,12 @@ worker. Send images only to a model whose `architecture.input_modalities` includ
 | At most 25 MiB of images in all, decoded or fetched and again as the JPEGs the Horde stores, for trusted users and patrons. 5 MiB for anyone else | 400 `SourceImageSizeExceeded`. The message states the total and the cap, and `param` is the `url` of the data URL part that passes 25 MiB |
 | At most 3072 by 3072 pixels | 400 `SourceImageResolutionExceeded` |
 | A URL at a private, loopback or reserved address | 400 `SourceImageUrlRefused` |
-| A URL answering other than 200 | 400 `SourceImageUrlInvalid` |
+| A URL that returns a status other than 200 | 400 `SourceImageUrlInvalid` |
 | Not readable as an image | 400 `SourceImageUnreadable` |
 
-The Horde fetches a URL once at submit, with 2-second timeouts and at most 3 redirects, and stores each image for
-the worker. Each image adds 5 kudos to the request's cost. Image parts in any other role are refused with their path,
-such as `messages[1].content[0].type=image_url`.
+The Horde fetches a URL once at submit and stores each image for the worker. The fetch has 2-second connect and
+low-speed timeouts, a 10-second deadline per URL and at most 3 redirects. Each image adds 5 kudos to the request's
+cost. Image parts in any other role are refused with their path, such as `messages[1].content[0].type=image_url`.
 
 Verification: the reply describes the image, and `x_horde.kudos` is higher than for the same request without it.
 
@@ -335,41 +344,47 @@ Verification: the reply describes the image, and `x_horde.kudos` is higher than 
 "strict"}}`, each `name` 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. Other keys on an entry or its
 `function` are dropped. The `parameters` schema is forwarded unchanged.
 
-`tool_choice` is `none`, `auto`,
-`required`, or `{"type": "function", "function": {"name": "<name>"}}` to force one function. Other keys in that
-object are dropped. `parallel_tool_calls` is a boolean forwarded to the worker with the tools. `tool_choice` and
-`parallel_tool_calls` without `tools` are 400 `ChatRequestConflict`, as under OpenAI. A `parameters` schema may nest
-at most 10 levels below its root. A model's card lists `tools` when a worker serves them.
+`tool_choice` is `none`, `auto`, `required`, or `{"type": "function", "function": {"name": "<name>"}}` to force one
+function. Other keys in that object are dropped. `parallel_tool_calls` is a boolean forwarded to the worker with the
+tools. `tool_choice` and `parallel_tool_calls` without `tools` get 400 `ChatRequestConflict`, as under OpenAI. A
+`parameters` schema may nest at most 10 levels below its root. A model's card lists `tools` when a worker serves them.
 
 A tool round:
 
 1. Send the request with `tools`. A reply with calls has `finish_reason` `tool_calls` (or `stop` under a forced
    `tool_choice`), `message.content` null when there is no text, and `message.tool_calls`, each `{"id", "type":
    "function", "function": {"name", "arguments"}}` with `arguments` a JSON string.
-2. Run each call.
+2. If calls are present, run each call. Under `auto`, a text-only reply completes the turn without a tool run.
 3. Send the history again with the assistant message replayed as `{"role": "assistant", "content": null,
    "tool_calls": [...]}`, then one `{"role": "tool", "tool_call_id": "<id>", "content": "<result>"}` per call.
 
-The tool history must follow OpenAI's rule: the `tool` messages come right after the assistant message and
-answer each of its call ids exactly once, in any order. A message arriving before every call is answered, a
-second answer to one id, or a `tool` message with no open calls is 400 `UnsupportedChatParameter` with `param`
-`messages[<i>].role`. An id that was not issued in the preceding assistant message has `param`
-`messages[<i>].tool_call_id`. The messages use OpenAI's format.
+The tool history must follow OpenAI's rule. The `tool` messages come right after the assistant message, with exactly
+one result for each of its call ids, in any order. A history that breaks the rule gets 400 `UnsupportedChatParameter`:
 
-With the Python SDK, appending the returned `message` object to the history replays it correctly, including a message returned by
-`get_final_completion()` from a stream: the front drops the fields added by the SDK (`refusal`, `parsed`,
-`tool_calls[].index`, `function.parsed_arguments` and similar).
+| Case | `param` |
+| --- | --- |
+| A message arrives before every call has a result | `messages[<i>].role` |
+| A second result for one id | `messages[<i>].role` |
+| A `tool` message without an open call | `messages[<i>].role` |
+| An id that was not issued in the preceding assistant message | `messages[<i>].tool_call_id` |
+| An id repeated within one assistant message | `messages[<i>].tool_calls` |
+| The history ends with calls that do not have results | `messages` |
 
-Verification: the first reply's `message.tool_calls[0].function.name` is the function asked for, and the follow-up
-reply has `finish_reason` `stop` with text and no `tool_calls`.
+With the Python SDK, appending the returned `message` object to the history replays it correctly. This includes a
+message returned by `get_final_completion()` from a stream. The front drops the fields added by the SDK (`refusal`,
+`parsed`, `tool_calls[].index`, `function.parsed_arguments` and similar).
+
+Verification: when a call is returned, its function is one of the offered tools, and a forced choice names the
+requested function. The follow-up can return more calls; repeat the round until no calls remain or the client
+stops. Inspect `error.param` on a history refusal before resending.
 
 ## Conformance
 
-By default (`"conformance": "strict"`) a request goes only to workers that declare the guarantees it relies on: an
-enforced `tool_choice` for `required` or a forced function, schema
-adherence for a `json_schema` format with `strict: true`, and refusal of a prompt that does not fit (the worker does
-not trim it). A request requiring a guarantee that is not declared by any online worker serving the model ends at once with 404
-`no_worker_supports_features`, and the message lists the guarantee.
+By default (`"conformance": "strict"`) a request goes only to workers that declare the guarantees the request relies
+on. These guarantees are an enforced `tool_choice` for `required` or a forced function, schema adherence for a
+`json_schema` format with `strict: true`, and refusal of a prompt that does not fit (the worker does not trim it). A
+request that requires a guarantee not declared by any online worker serving the model ends at once with 404
+`no_worker_supports_features`. The message lists the guarantee.
 
 To accept workers that may deviate, for example a backend that renders the same prompt for every `tool_choice`, send:
 
@@ -389,19 +404,19 @@ on a model whose card does not list `tool_choice`, is picked up under `best_effo
 
 `response_format` takes `{"type": "json_object"}` or `{"type": "json_schema", "json_schema": {"name", "schema",
 "description", "strict"}}`, with `schema` required. A model's card lists `response_format` when one of its workers
-serves either type. It does not say which, so a `json_schema` request can lack an eligible worker on a model whose
-workers serve only `json_object`.
+serves either type. The card does not say which type, so a `json_schema` request may not have an eligible worker on a
+model whose workers serve only `json_object`.
 
 With `"strict": true` the schema follows OpenAI's structural rules: every object schema, nested ones included, sets
-`"additionalProperties": false` and lists all its properties in `required`. A schema breaking them is 400
+`"additionalProperties": false` and lists all its properties in `required`. A schema breaking them gets 400
 `UnsupportedChatParameter` with `param` `response_format` and OpenAI's message. A tool with `"strict": true` in its
 `function` follows the same rules for its `parameters`, refused with `param` `tools[i].function.parameters`. A schema
 may nest at most 10 levels below its root, strict or not.
 
 A request may offer `tools` and set a `response_format` together. The format applies only to the final text answer,
-as under OpenAI. Only a worker declaring `tools_with_response_format` serves such a request,
-under either conformance mode. When the feature is not declared by any of the model's online workers, the request ends at once with
-404 `no_worker_supports_features`.
+as under OpenAI. Only a worker declaring `tools_with_response_format` serves such a request, under either conformance
+mode. When the feature is not declared by any of the model's online workers, the request ends at once with 404
+`no_worker_supports_features`.
 
 OpenAI refuses a `json_object` request whose messages do not mention JSON. The Horde serves it. To get OpenAI's
 refusal, send `{"horde": {"openai_guards": true}}`.
@@ -441,15 +456,15 @@ In the Python SDK, `client.chat.completions.stream(...)` with `get_final_complet
 
 A stream's headers go out after the front's first status read of the request. A refusal at that read
 (`queue_unavailable`, `no_worker_supports_features`, `no_worker_supports_limit`, or a Horde error such as 404) is an
-HTTP error with its status, body and `Retry-After`, as for a non-streamed request. Once the headers are out the status
-is 200 whatever the outcome, and a failure is one `data: {"error": {...}}` event, with the same envelope as an error
-response and no `choices`, followed by `data: [DONE]`. A hand-written parser checks each `data:` payload for a
-top-level `error`.
+HTTP error with its status, body and `Retry-After`, as for a non-streamed request. Once the headers are out, the
+status is 200 whatever the outcome. A failure is then one `data: {"error": {...}}` event, followed by `data: [DONE]`.
+The event has the same envelope as an error response and does not have `choices`. A hand-written parser should check
+each `data:` payload for a top-level `error`.
 
-Live content can end in such an event after some text arrived: code `ChatStreamDiverged` when the worker stopped and
-the Horde would start the reply over with another, or when the final reply does not continue the text sent, and
-`ChatRequestFaulted` when the request faults. Discard the partial text. The request is not retried on the same
-stream. The OpenAI SDKs raise on the event.
+Live content can end in such an event after some text has arrived. The code is `ChatStreamDiverged` in two cases. In
+the first, the worker stopped and the Horde would start the reply over with another worker. In the second, the final
+reply does not continue the text already sent. The code is `ChatRequestFaulted` when the request faults. Discard the
+partial text. The request is not retried on the same stream. The OpenAI SDKs raise on the event.
 
 Verification: a successful stream ends with a finish chunk containing `x_horde.request_id`, a usage chunk when
 `stream_options.include_usage` is true, and `data: [DONE]`. A buffered text reply without reasoning has four JSON
@@ -457,14 +472,14 @@ chunks (role, content, finish, usage). Live progress can produce more content an
 
 ## Errors and retries
 
-Every error is `{"error": {"message", "type", "param", "code", "metadata"}}`, with `param` and `code` null when they
-do not apply and `metadata` with the Horde's `request_id` and return code where known
+Every error is `{"error": {"message", "type", "param", "code", "metadata"}}`. `param` and `code` are null when they
+do not apply. `metadata` holds the Horde's `request_id` and return code where known
 ([ADR 0034](../decisions/0034-map-chat-errors-to-the-openai-envelope-with-openrouter-status-vocabulary.md)). A refusal
-from the Horde keeps its status and has its return code (see `README_return_codes.md` at the repository root) as
+from the Horde keeps its status and uses its return code (see `README_return_codes.md` at the repository root) as
 `code`.
 
-A Horde 429 keeps `Retry-After` and the `X-RateLimit-*` headers, and has code `rate_limit_exceeded` when the
-Horde does not send a return code. A native payload validation failure, which does not include a return code, is 400
+A Horde 429 keeps `Retry-After` and the `X-RateLimit-*` headers. Its code is `rate_limit_exceeded` when the Horde
+does not send a return code. A native payload validation failure does not include a return code. It becomes 400
 `BadRequest` with the failing key as `param`, such as `temperature` or `max_tokens`.
 
 The front's own codes:
@@ -478,7 +493,7 @@ The front's own codes:
 | 404 | `no_worker_supports_features` | `false` after queueing | Online workers serve the model, but required declarations are missing or every worker's tool temperature limit is exceeded. At the first status read, the request is cancelled without a grace period. A native admission refusal can return this error before queueing. |
 | 400 | `no_worker_supports_limit` | `false` after queueing | Only the output or context size exceeds every eligible worker's limits. `param` is `max_tokens` or `horde.max_context_length`. See [Size limit gaps](../reference/chat_front.md#size-limit-gaps). |
 | 408 | `RequestBodyTimeout` | | The body arrived too slowly. The request was not submitted. |
-| 408 | `ChatRequestTimeout` | `false` | The request was still waiting at the front's deadline and was cancelled. |
+| 408 | `ChatRequestTimeout` | `false` | The request was still waiting at the front's deadline and was cancelled. `Retry-After: 30`. |
 | 413 | `RequestTooLarge` | | The body exceeds the front's byte limit. |
 | 502 | `ChatRequestFaulted` | `false` | The Horde reports the request faulted or expired. When the Horde refused a worker's reply, the message ends with the refusal and its return code, and `metadata.rc` holds that code, such as `ChatSubmitNonconformant` for a reply that broke the request's `tool_choice` or `response_format`. When a worker reported why it faulted the job, the message ends with the Horde's sentence for that reason and `metadata.rc` is `ChatWorkerFault`. |
 | 502 | `ChatRequestNoGeneration` | `false` | The Horde ended the request without a reply and without a fault, such as a cancel by the Horde before any worker finished. It was cancelled. |
@@ -486,7 +501,7 @@ The front's own codes:
 | 502 | `HordeUnavailable` | `false` | The submit was sent and a response did not arrive. `metadata.submit_outcome` is `"unknown"`. |
 | 503 | `FrontAtCapacity` | | The front or your address holds its maximum of open requests. `Retry-After: 5`. |
 | 503 | `no_eligible_worker` | `false` | The model is not served by any online worker, so the submit is refused and the request is not created. Or the request could not be served by any online worker during the front's grace period, and it is cancelled. `Retry-After: 30`. |
-| 503 | `queue_unavailable` | `false` | Under `horde.availability_mode: "fail_fast"`, the first status read showed zero eligible worker threads, or an estimated wait over the time left in the budget. It is cancelled. A request just submitted may not report a queue position at first, so the front reads again for up to 2 s until one shows the queue. `Retry-After` is the estimated wait, or 30 with zero threads. `param` is `horde.availability_mode`. |
+| 503 | `queue_unavailable` | `false` | Under `horde.availability_mode: "fail_fast"`, the first status read showed zero eligible worker threads, or an estimated wait over the time left in the budget. It is cancelled. A request just submitted may not report a queue position at first, so the front reads again for up to 2 s until a read shows the queue position. `Retry-After` is the estimated wait capped at 600, or 30 with zero threads. `param` is `horde.availability_mode`. |
 
 A request that faulted after the Horde refused its workers' replies reports the last refusal:
 
@@ -524,13 +539,14 @@ Retry rules:
   request, or may have. A retry is a new request and can create a second charged job, since the front does not
   deduplicate client requests. The front also sets this header on `no_eligible_worker` refusals before queueing,
   to prevent immediate retries against an unchanged worker pool.
-- `no_eligible_worker` means the request as sent does not have a worker online: check the model card for the model's
-  workers and `supported_parameters`, and change the request or wait for workers. The same request fails the same
+- `no_eligible_worker` means the request as sent does not have a worker online. Check the model card for the model's
+  workers and `supported_parameters`, then change the request or wait for workers. The same request fails the same
   way until a worker comes online.
-- `queue_unavailable` states the pool at the first status read: eligible worker threads, the estimated wait and the
-  budget left. Retry after `Retry-After`, or send `availability_mode: "wait"` to queue for the budget.
-- `no_worker_supports_features` lists what is missing. Drop or change the feature, lower the temperature, or send
-  `horde.conformance: "best_effort"` when the missing values are guarantees. The same request fails the same way
+- The `queue_unavailable` message states the pool's state at the first status read: eligible worker threads, the
+  estimated wait and the budget left. Retry after `Retry-After`, or send `availability_mode: "wait"` to queue for the
+  budget.
+- The `no_worker_supports_features` message lists what is missing. Drop or change the feature, lower the temperature, or
+  send `horde.conformance: "best_effort"` when the missing values are guarantees. The same request fails the same way
   until a worker declaring them comes online.
 - A stream always includes `x-should-retry: false`.
 
@@ -549,50 +565,34 @@ curl -s -i "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API
 | Request body | 36 MiB by default. The deployment sets it | 413 `RequestTooLarge` |
 | Messages per request | 1024 | 400 `UnsupportedChatParameter` |
 | Message text | 1 MiB of UTF-8 across all text and the function names and arguments of replayed tool calls, image data URLs excluded | 400 `UnsupportedChatParameter` |
-| Images | 20 per request, 5 MiB and 3072 by 3072 pixels each, 25 MiB in all (5 MiB for untrusted users) | See [Images](#images) |
+| Images | 20 per request, 5 MiB and 3072 by 3072 pixels each, 25 MiB in all (5 MiB for users who are neither trusted nor patrons) | See [Images](#images) |
 | Tools, tool choice and response format | 256 KiB of compact JSON together. 128 tools. Schemas nested at most 10 levels | 400 `UnsupportedChatParameter` |
 | Tool calls replayed in one assistant message | 128 | 400 |
 | `max_tokens` | 16 to 16384 | 400 `UnsupportedChatParameter` |
 | `max_tokens` against workers | At most a worker's declared length. The card's `max_completion_tokens` is the largest | Not refused. It is lowered to the largest declared length and reported as a `worker_max_length` context adjustment |
 | Non-streamed and streamed wait | 300 and 600 seconds by default. The deployment sets them | 408 `ChatRequestTimeout`, or an in-stream error |
 
-`max_tokens` is the limit clients most often exceed. It is an upper bound in the OpenAI API. A client default above
-every online worker's declared length is lowered to the largest length declared by an online worker for the model.
-The same applies to the 512 sent when `max_tokens` is omitted. `x_horde.context_adjustments` then holds
-`{"from": <requested>, "to": <declared>, "reason": "worker_max_length"}`. A reply that needs more tokens ends with
-`finish_reason` `length`. When the workers change their declarations after the submit, the request can still end
-with 400 `no_worker_supports_limit` and `param` `max_tokens`.
-
-Verification: a request above the card's `max_completion_tokens` is served, and its `x_horde.context_adjustments`
-holds a `worker_max_length` entry whose `to` is the card's value.
+The [Completion limit](#completion-limit) section describes how `max_tokens` is lowered to what the workers declare.
 
 ## Deliberate deviations
 
-The front differs from OpenAI on purpose in these points:
+The front differs from OpenAI on purpose in a few points. The full list is in the
+[chat front reference](../reference/chat_front.md#deliberate-deviations). These change what a client sends or parses:
 
 - `max_tokens` and `max_completion_tokens` below 16 are refused, where OpenAI accepts any value from 1. 16 is the
   minimum generation length of the Horde's native text API, and raising a smaller limit would generate more tokens
   than the client asked for. The message states the floor.
-- `param` paths into messages are written `messages[2].role`, where OpenAI writes `messages.[2].role`. Paths into
-  tools match OpenAI's form, such as `tools[0].function.parameters`.
+- `param` paths into messages are written `messages[2].role`, where OpenAI writes `messages.[2].role`.
 - Refusals use the front's codes (`UnsupportedChatParameter`, `ChatRequestConflict`, `BadRequest`) in place of
   OpenAI's per-failure codes such as `decimal_above_max_value`. Message and `param` follow OpenAI's.
-- `system_fingerprint` is a short hash of the serving worker id and model, null when the reply does not include a worker id.
-  It changes when another worker serves the model. It does not change when a worker changes its backend under the
-  same id.
 - A stream includes each reply's tool calls whole in one chunk, where OpenAI streams the arguments in fragments.
-- The first streamed chunk includes only `role` in its `delta`, with no `content` key.
-- Live content arrives in batches of about a second, and only for requests without tools or structured output.
-- A `json_object` request whose messages do not mention JSON is served, where OpenAI refuses it, unless
-  `horde.openai_guards` is set.
-- Reasoning text is returned as `reasoning_content`, where OpenAI does not return it. The OpenAI SDK keeps the field in
-  `model_extra`, and `horde.include_reasoning: false` hides it.
+- Reasoning text is returned as `reasoning_content`, where OpenAI does not return it.
 
-## Reversal
+## Stop a request
 
-A client request does not change Horde state beyond the request itself. Point the client's base URL back at its
-previous provider to stop using the Horde. A request the client abandons by closing the connection is cancelled on
-the Horde. A streamed request cancelled while a worker generates is charged for the content the worker streamed
+Close the active response or stream to abandon the request. The front attempts cancellation on the Horde;
+a lost connection or failed cancel does not prove that work stopped. Completed work is not refunded.
+A streamed request cancelled while a worker generates is charged for the content the worker streamed
 before the cancel, priced as a reply of that length.
 
 ## Related
