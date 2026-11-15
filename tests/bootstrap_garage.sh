@@ -211,6 +211,16 @@ ensure_key() {
       return 1
     fi
   fi
+
+  # Garage reports KeyAlreadyExists for a deleted key too, and a deleted key ID cannot be imported again.
+  if ! garage_exec key info "$garage_access_key_id" >/dev/null 2>&1; then
+    cat >&2 <<EOF
+Garage key $garage_access_key_id was deleted from this Garage instance and cannot be imported again.
+Set new values for AI_HORDE_TEST_GARAGE_ACCESS_KEY_ID (GK followed by 24 hex characters) and
+AI_HORDE_TEST_GARAGE_SECRET_KEY (64 hex characters) in tests/garage/.test-credentials.env, then run this again.
+EOF
+    return 1
+  fi
 }
 
 ensure_buckets() {
@@ -232,7 +242,9 @@ ensure_buckets() {
       fi
     fi
 
-    garage_exec bucket allow --read --write --owner "$bucket" --key "$garage_access_key_name" >/dev/null
+    # Every checkout of the repository mints its own key under the same default name, and they can share one Garage
+    # instance. The key ID is unique, so the grant does not fail when several keys have the same name.
+    garage_exec bucket allow --read --write --owner "$bucket" --key "$garage_access_key_id" >/dev/null
   done
 }
 
