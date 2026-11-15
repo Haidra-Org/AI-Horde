@@ -234,15 +234,17 @@ NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS: int = 30
 """The ``Retry-After`` of a 503 for no eligible worker; long enough for a worker restart or model load to show."""
 
 TIMEOUT_RETRY_AFTER_SECONDS: int = NO_ELIGIBLE_WORKER_RETRY_AFTER_SECONDS
-
-QUEUE_UNAVAILABLE_RETRY_AFTER_CAP_SECONDS: int = 600
-"""The most ``Retry-After`` a ``fail_fast`` refusal over the wait estimate carries. The estimate is an approximation
-and the pool changes minute to minute, so a client is told to come back within the native ``NoValidWorkers`` interval
-rather than to sleep through the whole estimate."""
 """The ``Retry-After`` of a 408 ``ChatRequestTimeout``.
 
-A request that waited its whole budget usually met a stalled or saturated Horde; an immediate retry would join the same
-queue, so clients are asked to wait as long as for a missing worker.
+A request that timed out may still face the same queue pressure on retry. Use the missing-worker retry interval
+to delay automatic resubmission.
+"""
+
+QUEUE_UNAVAILABLE_RETRY_AFTER_CAP_SECONDS: int = 600
+"""Maximum ``Retry-After`` for a ``fail_fast`` refusal caused by an excessive wait estimate.
+
+Worker availability can change before the estimated wait ends. Capping the retry delay lets a client check again
+within the native ``NoValidWorkers`` interval.
 """
 
 HORDE_UNAVAILABLE_RETRY_AFTER_SECONDS: int = 30

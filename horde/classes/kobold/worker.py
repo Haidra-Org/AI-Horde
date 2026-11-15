@@ -130,7 +130,6 @@ def get_text_worker_lease_capacity(worker_speed: float) -> int:
 
     Args:
         worker_speed: The worker's stored ``speed``, in the raw units the column holds.
-        model_names: Models the worker advertises, in bridge preference order.
 
     Returns:
         The tokens the worker's effective speed produces in the base lease after the preparation allowance.

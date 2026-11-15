@@ -247,10 +247,10 @@ EXTENDED_SAMPLERS = {
     "sa_solver",
 }
 
-# The remainder of the image backend's non-`_gpu` solver list. Grouped apart from EXTENDED_SAMPLERS
-# because they need a newer bridge: the release that maps EXTENDED_SAMPLERS does not name these, and a
-# bridge that cannot name a solver falls back to its default one, returning an image from a sampler
-# nobody asked for.
+# These solvers are grouped separately from EXTENDED_SAMPLERS for readability. Both sets are supported
+# from CAPABILITY_EXPANDED_REGEN_VERSION through BRIDGE_SAMPLERS. A solver added in a later bridge
+# release needs a separate version-gated set, because unsupported names fall back to the bridge's
+# default solver without an error.
 #
 # The `_gpu` spellings the backend also offers are deliberately absent from every tier. They differ
 # from their counterparts only in which device draws the sampling noise, which is the worker's own

@@ -18,10 +18,11 @@ CAPABILITY_EXPANDED_REGEN_VERSION = 17
 - `extended_controlnet`: the extended controlnet control types, rather than deriving them from the `controlnet` flag
 - `scheduler`: the `scheduler` field, rather than deriving it from the `karras` flag
 - `extended_samplers`: the extended samplers, rather than deriving them from the `karras` flag
-- `solver_options`, `sigma_generators`, `flow_shift`, and `solver_knob_samplers` are advertised to
-    clients that can read them, and gated at dispatch to bridges that understand them. A bridge that does
-    not understand any one of them ignores it and renders something other than what was asked for rather
-    than reporting an error, which is why each is gated at dispatch rather than merely advertised.
+- `solver_options`, `sigma_generators` and `flow_shift` are advertised to clients and gated at dispatch.
+    Older bridges ignore unsupported fields without an error, producing an image with different settings.
+    Dispatch gating prevents these requests from reaching incompatible bridges.
+- `solver_knob_samplers` advertises sampler support to clients. `BRIDGE_SAMPLERS` controls dispatch of
+    these samplers from this version onward.
 """
 
 

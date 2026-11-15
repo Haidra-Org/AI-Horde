@@ -77,7 +77,10 @@ models = ImageModels(api)
 parsers = ImageParsers()
 
 STYLE_SIZE_FALLBACK_PARAMETERS = ("width", "height")
-"""The params an image style that sets neither of them takes from the request."""
+"""Image dimensions inherited from the request when a style omits them and does not declare a parameter policy.
+
+Width and height are filled independently, so a style can fix one dimension and inherit the other.
+"""
 
 PROMPT_SEPARATOR = "###"
 """What splits an image prompt into the part to generate from and the part to keep away from."""
@@ -535,8 +538,8 @@ class ImageAsyncGenerate(GenerateTemplate):
             defaultdict(str, resolved_template_fields.values, p=self.prompt, np=self.negprompt),
         )
         if self.style_parameter_policy is None:
-            # A style that sets neither width nor height takes them from the request, as it always
-            # has. A style that declares a policy decides through the policy instead.
+            # Without a policy, omitted dimensions inherit request values for compatibility.
+            # A declared policy controls dimension overrides along with the other parameters.
             for size_parameter in STYLE_SIZE_FALLBACK_PARAMETERS:
                 if size_parameter not in self.params and size_parameter in requested_params:
                     self.params[size_parameter] = requested_params[size_parameter]
