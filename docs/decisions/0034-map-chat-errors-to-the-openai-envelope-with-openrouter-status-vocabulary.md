@@ -107,3 +107,7 @@ After headers, an error is one SSE data event holding the same envelope at the t
 event and `[DONE]`. `tests/integration/test_chat_front_sdk.py` checks the shapes against the OpenAI SDK.
 `docs/reference/chat_front.md` (Response shape, No eligible worker, Kudos cap) and
 `docs/how-to/run_openai_chat_front.md` (Errors the front returns) record the public behaviour.
+
+## More Information
+
+For the current implementation's [front deadlines and capacity limits](../reference/service_limits.md#chat-front-deadlines-and-admission), see the constants reference.

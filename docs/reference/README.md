@@ -16,6 +16,8 @@ The concepts they assume (what a worker is, what a job's lifecycle means) are in
 <!-- BEGIN GENERATED: documents (gen_doc_index.py) -->
 | Document | Summary |
 | --- | --- |
+| [Service limits and behavioral constants](service_limits.md) | Request lifetimes, worker leases, admission thresholds, payload bounds, pricing units and retention rules, with rationale and implementation references. |
+| [Operational constants](operational_constants.md) | Process budgets, scheduling and cache intervals, projection batches, retention controls and storage timeouts, with implementation references and rationale. |
 | [Prompt provenance reference](prompt_provenance.md) | What each stored prompt value means, who may read the original submission, and why a missing original is never filled in. |
 | [Moderation operations reference](moderation_operations.md) | Moderation evidence, retention and object storage, with API fields for event review, promotion queues and worker suspicion history. |
 | [Kudos accounting reference](kudos_accounting.md) | The mutation and consumption contract: accounting events, projection targets, reservations, the lock order, the read models, and event retention. |

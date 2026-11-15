@@ -369,6 +369,9 @@ for the executable procedure.
 
 ## Event retention
 
+The [retention execution constants](operational_constants.md#accounting-retention-and-archives) collect partition
+widths, grace, retry spacing and archive budgets alongside their implementation references.
+
 `kudos_ledger` and `kudos_stat_events` keep exact events online for at least 30 days. After that window, statistic
 events are replaced by daily rollups. Currency postings are replaced by per-user checkpoints, daily statements and a
 verified archive object. The partition is then dropped. The reasons are recorded in
@@ -831,6 +834,9 @@ of Your Personal Data".
 | `oldest_reservation_seconds` | Age of the oldest active hold |
 
 ### Projector cadence and health sampling
+
+See [projection batches and maintenance intervals](operational_constants.md#accounting-projection-and-maintenance)
+for how the batch size, catch-up limit and tick interval bound work and affect lag.
 
 The background task runs every three seconds. Within a tick it keeps folding while full batches drain, up to a bounded
 number of catch-up cycles. A backlog therefore clears at many batches per tick, while each fold stays a small

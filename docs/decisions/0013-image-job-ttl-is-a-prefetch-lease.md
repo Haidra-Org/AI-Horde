@@ -112,3 +112,7 @@ minimum, LoRA download allowance, sampler scaling, assigned-model behavior, modi
 pop-response TTL.
 `docs/reference/samplers_and_schedulers.md` records the public formula and the distinction between an
 execution estimate and a maximum-work ceiling.
+
+## More Information
+
+For the current implementation's [image lease formula and allowances](../reference/service_limits.md#image-leases-and-sampler-work), see the constants reference.

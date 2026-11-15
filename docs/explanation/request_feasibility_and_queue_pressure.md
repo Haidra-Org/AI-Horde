@@ -59,6 +59,10 @@ availability changes.
 
 ### Eligible workers and threads
 
+The [worker eligibility constants](../reference/service_limits.md#worker-leases-and-eligibility) explain online
+windows and speed thresholds. [Cached availability and speed measurements](../reference/operational_constants.md#queue-scans-availability-and-worker-measurements)
+explain how quickly those observations can change.
+
 `eligible_workers` and `eligible_worker_threads` apply the same known capability gates used by the feasibility check.
 The first value counts matching workers, while the second sums their advertised generation concurrency. They are most
 useful as an indication of how widely the request is supported.

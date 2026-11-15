@@ -118,3 +118,5 @@ accepts, and `docs/explanation/chat_requests.md` explains service selection.
 
 [ADR 0021](0021-select-chat-service-by-base-url-profiles.md) records the base-URL profile option as a rejected
 alternative.
+
+For the current implementation's [chat payload limits and defaults](../reference/service_limits.md#payload-limits-and-defaults), see the constants reference.

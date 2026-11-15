@@ -146,3 +146,5 @@ the 404, 400 and 503 responses to a worker gap. `docs/reference/chat_front.md` (
 of dropping unsupported sampling values by default.
 [ADR 0036](0036-route-chat-requests-by-declared-guarantees-under-a-conformance-mode.md) adds guarantees and limits to
 the same declaration.
+
+For the current implementation's [chat payload and validation bounds](../reference/service_limits.md#text-and-chat), see the constants reference.

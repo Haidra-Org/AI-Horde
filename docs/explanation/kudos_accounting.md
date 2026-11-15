@@ -297,6 +297,9 @@ during projector lag, but it cannot authorize an overspend based on income that 
 
 #### Free output allowance
 
+The [free-output constants](../reference/service_limits.md#free-output-and-image-work) give the defaults, wait
+thresholds and rationale, with the defining configuration fields and admission paths.
+
 Not every request takes a hold. A text or chat request within its free output allowance is admitted without one and
 charged when its generations settle, so a requester with little or no balance can still use idle capacity. The
 allowance depends on the request's estimated wait on its eligible workers. This is the same estimate that the status

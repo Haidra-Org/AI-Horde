@@ -111,3 +111,5 @@ the migration is repeatable and that its drainable partial index excludes quaran
 This decision amends the queue membership and failure policy in
 [ADR 3](0003-single-serialized-projector.md) and the hard-deletion behavior in
 [ADR 7](0007-accounting-foreign-key-policy.md).
+
+For the current implementation's [projection batch controls](../reference/operational_constants.md#accounting-projection-and-maintenance), see the constants reference.

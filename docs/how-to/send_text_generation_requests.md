@@ -194,6 +194,9 @@ To stop waiting before completion or expiry, [cancel the request](#cancel-the-re
 
 ## Poll the status
 
+The [request lifetime and expiry rules](../reference/service_limits.md#request-lifetime-and-expiry) explain the
+20-minute default, refreshes and periodic cleanup. Polling does not itself extend the request's lifetime.
+
 ```bash
 curl -s -H "Client-Agent: my-app:1.2.0:dev@example.com" "$HORDE_URL/v2/generate/text/status/<request-id>" | jq
 ```

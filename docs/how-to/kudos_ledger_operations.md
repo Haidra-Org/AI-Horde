@@ -310,6 +310,9 @@ the swap is still in `<table>_p_legacy`.
 
 ## Enabling retention
 
+The [retention constants](../reference/operational_constants.md#accounting-retention-and-archives) explain how the
+online windows, partition width, drop grace, retry spacing and lock waits affect these operations.
+
 Preconditions: the event tables are converted and the release is deployed. End state: the quorum node's retention
 tick moves eligible units through their states, and the health fields show progress. The variables, states and
 metrics are listed in the [reference](../reference/kudos_accounting.md#event-retention).

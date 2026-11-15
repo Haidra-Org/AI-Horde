@@ -120,3 +120,5 @@ timeout, raid mode, the moderator exemption and the notice.
 The threshold is an env var read at startup, like the retention windows. The detection instruments are listed in `docs/reference/moderation_operations.md`. Alert thresholds and edge
 rate limits belong to each deployment. The disclosure in the privacy document states that prompt text in
 moderation records is held with the object storage provider.
+
+For the current implementation's [evidence upload and retention processing budgets](../reference/operational_constants.md#moderation-processing-and-evidence-storage), see the constants reference.

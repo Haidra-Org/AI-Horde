@@ -560,6 +560,9 @@ curl -s -i "$OAI_BASE_URL/chat/completions" -H "Authorization: Bearer $HORDE_API
 
 ## Limits
 
+The [service-limits inventory](../reference/service_limits.md) collects payload bounds, free-output thresholds,
+worker leases and HTTP budgets with their rationale and implementation references.
+
 | Limit | Value | Refusal |
 | --- | --- | --- |
 | Request body | 36 MiB by default. The deployment sets it | 413 `RequestTooLarge` |

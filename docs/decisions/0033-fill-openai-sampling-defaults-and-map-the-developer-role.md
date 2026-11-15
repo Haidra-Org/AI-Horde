@@ -109,3 +109,7 @@ this way, the chat features do not include one for preserving the `developer` ro
 defaults, the `reasoning_effort` default and the stored role. `tests/unit/oai/test_chat_front.py` fixes the front's forwarding of `developer`.
 `docs/reference/chat_requests.md` (Request body, Chat job pop response) and `docs/reference/chat_front.md` (Message
 roles) record the public behaviour.
+
+## More Information
+
+For the current implementation's [sampling and reasoning defaults](../reference/service_limits.md#text-and-chat), see the constants reference.

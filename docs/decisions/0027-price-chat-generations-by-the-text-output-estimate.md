@@ -111,3 +111,5 @@ unpaid. `docs/reference/chat_requests.md` records the pricing, and `docs/explana
 
 [ADR 0028](0028-price-chat-generations-on-reported-completion-tokens.md) records pricing on reported completion
 tokens as a rejected alternative.
+
+For the current implementation's [prompt-sizing and output-charging estimates](../reference/service_limits.md#accounting-units-floors-and-surcharges), see the constants reference.

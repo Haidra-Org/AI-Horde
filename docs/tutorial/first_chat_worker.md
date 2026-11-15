@@ -145,6 +145,9 @@ reply as an assistant message.
 
 ## 4. Read the structured reply
 
+The [request-expiry rules](../reference/service_limits.md#request-lifetime-and-expiry) explain the lifetime behind
+these polling outcomes; repeatedly reading status does not extend it.
+
 Ask for the request's status:
 
 ```bash

@@ -95,3 +95,7 @@ caps. `tests/integration/test_chat.py` fixes a free anonymous chat request withi
 `KudosUpfront` refusal above it, and `tests/unit/test_kobold_text_wp.py` fixes the allowance. `tests/unit/oai/test_errors.py`
 fixes the 401, 408 and 413 answers. `docs/reference/chat_requests.md` (Rate limits, Free output allowance) and
 `docs/how-to/run_openai_chat_front.md` record the public behaviour.
+
+## More Information
+
+For the current implementation's [free-output thresholds](../reference/service_limits.md#free-output-and-image-work), see the constants reference.

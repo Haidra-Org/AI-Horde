@@ -69,6 +69,10 @@ The output is the base URL you exported, with a trailing slash.
 
 ## 3. Pick a model with workers online
 
+The [worker online window](../reference/service_limits.md#text-and-chat-leases) explains what online means. A listed
+worker can still be busy, and the [free-output allowance](../reference/service_limits.md#free-output-and-image-work)
+can further bound an anonymous request.
+
 `GET /v1/models` lists only models that at least one online chat worker serves. Each entry includes the Horde's
 details beside the OpenAI fields. The SDK exposes them through `model_extra`.
 

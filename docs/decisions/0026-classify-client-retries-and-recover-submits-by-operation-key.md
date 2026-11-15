@@ -115,3 +115,7 @@ make two requests. A dry run does not claim. Two concurrent submits with one key
 one job. `tests/unit/oai/test_submit_recovery.py` pins the front's recovery, its bounds, a fresh key per client request
 and the retry-hint metric. `tests/unit/oai/test_errors.py` and `tests/unit/oai/test_chat_front.py` pin the
 `x-should-retry` header. `docs/reference/chat_requests.md` records the operation key and its fingerprint.
+
+## More Information
+
+For the current implementation's [front recovery and cancellation budgets](../reference/operational_constants.md#front-connections-and-cancellation), see the constants reference.

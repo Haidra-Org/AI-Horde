@@ -98,3 +98,7 @@ declares it, each pop is judged by its own declaration, and the assigned model a
 declaration. `tests/unit/test_text_worker_eligibility.py` pins the chat refusal reasons and the separation of chat
 limits from text limits. `docs/reference/chat_requests.md` records the declaration fields and eligibility, and
 `docs/how-to/serve_chat_jobs.md` shows a worker how to declare them.
+
+## More Information
+
+For the current implementation's [worker online windows and lease capacity](../reference/service_limits.md#text-and-chat-leases), see the constants reference.

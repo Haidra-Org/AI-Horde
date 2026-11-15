@@ -168,3 +168,5 @@ This record extends ADR 0022 with guarantees and limits. It relies on
 [ADR 0029](0029-route-unsupported-parameters-by-declared-support-refusing-by-default.md) for the strict request schema
 and on ADR 0027 for pricing. The `horde` body object is the one
 [ADR 0020](0020-select-chat-service-by-request-body-and-model-variants.md) defines.
+
+For the current implementation's [worker eligibility and lease thresholds](../reference/service_limits.md#worker-leases-and-eligibility), see the constants reference.

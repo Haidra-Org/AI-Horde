@@ -139,3 +139,5 @@ tables as the migration.
 The public privacy document states the windows, the exemption for moderation action, and that deleting an account
 does not remove these records. It links the source code at `HORDE_REPOSITORY`. [Moderation operations reference](../reference/moderation_operations.md) documents the variables and the
 pass.
+
+For the current implementation's [moderation retention windows and exemptions](../reference/service_limits.md#trust-moderation-and-retained-history), see the constants reference.

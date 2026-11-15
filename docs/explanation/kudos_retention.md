@@ -59,6 +59,9 @@ and the other options that were considered.
 
 ## Partitions by age
 
+See [accounting retention constants](../reference/operational_constants.md#accounting-retention-and-archives) for the
+online windows, partition width, grace and retry settings that govern this lifecycle.
+
 Both event tables are partitioned by `RANGE (created)`. `created` is set when the row is written, so a row that
 commits late still lands in the partition of its write time. A unit is eligible for removal once its upper bound
 is older than its dataset's window. A weekly partition is one unit. The legacy partition is processed sub-range by

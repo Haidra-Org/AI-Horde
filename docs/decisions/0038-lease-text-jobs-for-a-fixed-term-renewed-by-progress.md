@@ -130,3 +130,5 @@ describes progress-based renewal for worker authors.
 ADR 0013 sets the image job lease. ADR 0024 defines the progress posts that renew this lease. ADR 0040 uses the same
 speed gate when it selects the workers eligible for a request. ADR 0041 makes the speed gate a preference for chat
 requests and records the assignments over a worker's capacity.
+
+For the current implementation's [text leases, renewal caps and worker capacity](../reference/service_limits.md#text-and-chat-leases), see the constants reference.

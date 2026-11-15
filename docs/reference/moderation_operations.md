@@ -256,6 +256,10 @@ recorded on the worker.
 
 ## Retention
 
+The [retention policy constants](service_limits.md#trust-moderation-and-retained-history) collect windows,
+exemptions and capture bounds. [Evidence-processing controls](operational_constants.md#moderation-processing-and-evidence-storage)
+explain the batch and storage budgets that can delay a backlog beyond those windows.
+
 Retention removes prompt text, addresses and identifying fields on separate schedules measured from capture.
 The event row remains for aggregate reporting. These schedules and the final anonymization deadline apply to events
 that are not exempt under [Moderation action](#moderation-action):

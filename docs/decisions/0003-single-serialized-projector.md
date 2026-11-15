@@ -86,3 +86,5 @@ Track the highest folded ID and claim above it.
 [ADR 14](0014-quarantine-deterministically-invalid-statistic-events.md) amends the statistic queue membership and
 failure policy by removing deterministically invalid events from the drainable queue while retaining them as audit
 evidence.
+
+For the current implementation's [projection batches and maintenance intervals](../reference/operational_constants.md#accounting-projection-and-maintenance), see the constants reference.

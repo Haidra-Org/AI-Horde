@@ -23,6 +23,10 @@ The horde fetches client-supplied source and chat image URLs and sends webhooks 
 
 ## Code map
 
+See [URL and webhook limits](service_limits.md#rate-limits-and-retained-progress) for the cross-system inventory of
+deadlines, redirect and byte caps, and [webhook queue capacity](operational_constants.md#other-asynchronous-delivery-and-model-metadata)
+for the per-process delivery bounds.
+
 | Concept | File | Symbol |
 | --- | --- | --- |
 | Address-checked request | `horde/outbound.py` | `send_public_request`, `OutboundResponse` |

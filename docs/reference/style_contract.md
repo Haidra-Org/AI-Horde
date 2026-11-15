@@ -204,6 +204,9 @@ every param.
 
 ## `template_fields`
 
+See [payload and template limits](service_limits.md#images-and-styles) for field-count, name-length and supplied-word
+bounds, and [charging constants](service_limits.md#accounting-units-floors-and-surcharges) for the style surcharge.
+
 A style declares up to 16 placeholders, each an object with `name`, `description` (1 to 200 characters)
 and `required` (default false). A placeholder is 1 to 32 characters of lowercase letters, digits and
 underscores starting with a letter, so `str.format_map` can address it. `p` and `np` are filled by the

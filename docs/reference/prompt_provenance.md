@@ -79,6 +79,10 @@ client reproducing a styled request needs the style it originally specified.
 
 ## Sharp edges
 
+The [request-expiry rules](service_limits.md#request-lifetime-and-expiry) explain when transient request records can
+disappear. [Moderation evidence retention](service_limits.md#trust-moderation-and-retained-history) uses a separate
+clock and survives account wipes.
+
 - **A missing original stays missing.** Rows created before the column existed have `NULL`, and the response omits
   `prompt` entirely. Never write `submitted_prompt or prompt`, infer an original from a replacement, or backfill from
   `prompt`. The effective prompt reveals what the filters rewrote, which is the leak this column exists to close.

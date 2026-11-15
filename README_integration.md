@@ -41,6 +41,10 @@ These native async routes differ from the [OpenAI-compatible chat front](docs/re
 for a reply on the client connection. For text polling, expiry and cancellation charges, use the
 [native text procedure](docs/how-to/send_text_generation_requests.md#poll-the-status).
 
+The [service-limits reference](docs/reference/service_limits.md) collects request lifetimes, worker leases, admission
+thresholds, payload bounds and delivery limits, with their rationale and implementation symbols. In particular,
+[polling does not renew request expiry](docs/reference/service_limits.md#request-lifetime-and-expiry).
+
 ### Image Generation Endpoints
 
 Use these endpoints to generate images. Please use the `/check` endpoint for checking if a request is done, and the status endpoint for retrieving the full results.

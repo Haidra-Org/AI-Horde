@@ -522,6 +522,11 @@ Verification: a text request for the worker's model pops without a `chat` key an
 
 ## Time and speed limits
 
+The [lease and eligibility constants](../reference/service_limits.md#text-and-chat-leases) explain the base lease,
+preparation allowance, renewal caps and assumed speed. Keep the separate
+[request-expiry clock](../reference/service_limits.md#request-lifetime-and-expiry) in mind when diagnosing a job that
+no longer has a request.
+
 These rules apply to text and chat jobs alike. The exact rules are in
 [Job lease](../reference/chat_requests.md#job-lease).
 

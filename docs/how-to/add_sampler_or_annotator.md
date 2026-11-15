@@ -118,6 +118,9 @@ a new sampler or scheduler name.
 
 ## Add an annotation control type
 
+The [annotation pricing constants](../reference/service_limits.md#accounting-units-floors-and-surcharges) identify
+the per-tile cost classes and their fallback; adding a detector also requires choosing its cost class.
+
 An annotation control type appears in two places: the `control_type` of an image-generation request, and the payload
 of the Alchemy `annotation` form.
 

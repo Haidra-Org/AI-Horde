@@ -81,3 +81,7 @@ floor. It answers "what is my new balance?" for an admin adjustment response or 
 
 - Bad: it includes queued credits and represents no holds, so two concurrent admissions can both be funded by
   the same unprojected income.
+
+## More Information
+
+For the current implementation's [account floors and charging units](../reference/service_limits.md#accounting-units-floors-and-surcharges), see the constants reference.

@@ -145,6 +145,9 @@ gets the id of a request that is queued and charged.
 
 ### Rate limits
 
+The [rate-limit inventory](service_limits.md#rate-limits-and-retained-progress) collects these rates, their defining
+symbols and their relationship to retained progress limits.
+
 `POST /v2/generate/chat/async` limits each ordinary address to `HORDE_CHAT_REQUEST_2SEC_LIMIT_PER_IP` and
 `HORDE_CHAT_REQUEST_90MIN_LIMIT_PER_IP`, in flask-limiter notation such as `5/second` and `300/minute`. The address is
 the forwarded client address when the request includes a known proxy passkey. Clients behind one egress address, such
@@ -788,6 +791,10 @@ defaults do not apply to a chat job.
 
 ### Job lease
 
+See [worker leases and eligibility](service_limits.md#worker-leases-and-eligibility) for the values, rationale and
+implementation references, and [request lifetime](service_limits.md#request-lifetime-and-expiry) for the separate
+expiry clock that assignment can refresh.
+
 In short: a worker has 150 seconds from pop to submit. A streamed job's deadline moves forward with each progress
 post, up to 200 seconds from pop for an untrusted owner and 600 seconds for a trusted one. Jobs go first to workers
 fast enough to generate the requested `max_length` in 120 seconds. A worker-facing summary is in
@@ -1072,6 +1079,9 @@ the table in [Refusal record and worker counters](#refusal-record-and-worker-cou
 Faulted submits are counted by reason under [Worker fault metrics](#worker-fault-metrics).
 
 ## Pricing
+
+The [admission and charging constants](service_limits.md#admission-and-charging) collect free-output thresholds,
+token estimates, floors and surcharges, including the different units used for context sizing and settlement.
 
 A chat generation is charged and rewarded exactly as a text generation with the same reply, through the text kudos
 formula, and stores `charge_basis` `output_estimate`.

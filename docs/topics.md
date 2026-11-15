@@ -31,6 +31,7 @@ procedure for one subject sit together.
 - Explanation: [Kudos accounting, projection, and concurrency](explanation/kudos_accounting.md)
 - Explanation: [Kudos event retention](explanation/kudos_retention.md)
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
+- Reference: [Operational constants](reference/operational_constants.md)
 - Reference: [Kudos accounting reference](reference/kudos_accounting.md)
 
 ### chat
@@ -54,6 +55,7 @@ procedure for one subject sit together.
 - How-to: [Add style authoring and styled requests to a frontend](how-to/add_styles_to_a_frontend.md)
 - How-to: [Update an existing style integration](how-to/update_a_style_integration.md)
 - How-to: [Send text generation requests through the native API](how-to/send_text_generation_requests.md)
+- Reference: [Service limits and behavioral constants](reference/service_limits.md)
 - Reference: [Samplers and schedulers reference](reference/samplers_and_schedulers.md)
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
 - Reference: [Image model reference loader](reference/model_reference.md)
@@ -66,11 +68,14 @@ procedure for one subject sit together.
 - Explanation: [Kudos event retention](explanation/kudos_retention.md)
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
 - How-to: [Add an image baseline](how-to/add_image_baseline.md)
+- Reference: [Service limits and behavioral constants](reference/service_limits.md)
 - Reference: [Kudos accounting reference](reference/kudos_accounting.md)
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
 
 ### moderation
 
+- Reference: [Service limits and behavioral constants](reference/service_limits.md)
+- Reference: [Operational constants](reference/operational_constants.md)
 - Reference: [Prompt provenance reference](reference/prompt_provenance.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 
@@ -78,6 +83,7 @@ procedure for one subject sit together.
 
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
 - How-to: [Run the OpenAI-compatible chat front](how-to/run_openai_chat_front.md)
+- Reference: [Operational constants](reference/operational_constants.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 - Reference: [Request scheduling telemetry and forecasts](reference/request_scheduling.md)
 - Reference: [Chat front reference](reference/chat_front.md)
@@ -94,6 +100,8 @@ procedure for one subject sit together.
 - How-to: [Send chat completions through the OpenAI-compatible front](how-to/send_chat_completions.md)
 - How-to: [Send text generation requests through the native API](how-to/send_text_generation_requests.md)
 - How-to: [Add chat completions to a web frontend](how-to/add_chat_to_a_frontend.md)
+- Reference: [Service limits and behavioral constants](reference/service_limits.md)
+- Reference: [Operational constants](reference/operational_constants.md)
 - Reference: [Prompt provenance reference](reference/prompt_provenance.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
 - Reference: [Style contract reference](reference/style_contract.md)
@@ -111,6 +119,8 @@ procedure for one subject sit together.
 - How-to: [Add an image baseline](how-to/add_image_baseline.md)
 - How-to: [Write a minimal chat worker](how-to/write_a_minimal_chat_worker.md)
 - How-to: [Serve chat jobs from a text worker](how-to/serve_chat_jobs.md)
+- Reference: [Service limits and behavioral constants](reference/service_limits.md)
+- Reference: [Operational constants](reference/operational_constants.md)
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
 - Reference: [Image model reference loader](reference/model_reference.md)
 - Reference: [Chat requests reference](reference/chat_requests.md)

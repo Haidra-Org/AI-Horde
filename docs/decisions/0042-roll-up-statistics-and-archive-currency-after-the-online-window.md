@@ -251,3 +251,5 @@ while keeping compensation-only repair, the dataset split in
 [ADR 7](0007-accounting-foreign-key-policy.md), the mode gate in [ADR 10](0010-advisory-lock-mode-gate.md) and
 quarantine evidence in [ADR 14](0014-quarantine-deterministically-invalid-statistic-events.md). Its disclosure
 follows [ADR 15](0015-tiered-moderation-evidence-retention.md).
+
+For the current implementation's [accounting retention and archive controls](../reference/operational_constants.md#accounting-retention-and-archives), see the constants reference.

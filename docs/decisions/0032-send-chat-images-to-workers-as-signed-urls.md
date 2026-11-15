@@ -138,3 +138,7 @@ image caps. `tests/integration/test_chat_images.py` fixes the signed URL lifetim
 the lock is released, the offloaded messages fetch and inline delivery to a worker without `messages_url`.
 `docs/reference/chat_requests.md` (Images, Messages offload) and `docs/how-to/serve_chat_jobs.md` (Serve images)
 record the public behaviour.
+
+## More Information
+
+For the current implementation's [image byte limits, encoding and signed-URL lifetimes](../reference/service_limits.md#images-and-styles), see the constants reference.

@@ -105,3 +105,7 @@ bounded shutdown that cancels open requests. `tests/unit/oai/test_poll_cadence.p
 `tests/unit/test_chat_rate_limit.py` pins the chat submit limits apart from the text limits.
 `docs/reference/chat_requests.md` records the completion signal and the rate limits, `docs/reference/chat_front.md`
 the front, and `docs/how-to/run_openai_chat_front.md` its deployment.
+
+## More Information
+
+For the current implementation's [front response budgets and native request expiry](../reference/service_limits.md#chat-front-deadlines-and-admission), see the constants reference.

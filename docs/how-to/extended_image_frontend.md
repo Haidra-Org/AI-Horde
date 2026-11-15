@@ -379,6 +379,10 @@ controls, omit both fields, and continue sending `karras` to reverse this stage.
 
 ## Submit a generation request
 
+The [image payload limits](../reference/service_limits.md#images-and-styles) and
+[image admission budgets](../reference/service_limits.md#free-output-and-image-work) explain the fixed service
+bounds that apply alongside the selected sampler and model declarations.
+
 Apply styles, presets, restored settings, and ordinary form state first. Then perform one final
 normalization pass immediately before submission. That pass must derive effective models and
 baselines, remove inapplicable scheduler and flow-shift values, and replace all existing `sampler_*`

@@ -34,6 +34,10 @@ Every route, setting, error code and metric is listed in the [Chat front referen
 
 ## 1. Set the connection settings
 
+Review [process and connection budgets](../reference/operational_constants.md#process-capacity-and-connections)
+alongside the [front response deadlines](../reference/service_limits.md#chat-front-deadlines-and-admission) when sizing
+the deployment. Per-process caps multiply with the number of front processes.
+
 The front reads settings from environment variables and a `.env` file in the working directory at startup.
 Most settings have defaults, but these four need deployment-specific values:
 

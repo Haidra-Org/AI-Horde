@@ -112,6 +112,10 @@ each user without its key on stderr, and prints the keys as `export HORDE_WORKER
 `export HORDE_API_KEY=...` on stdout. `request` prints the submit response and one status line every 3 seconds,
 for up to 300 seconds.
 
+That 300-second polling limit belongs to this script. The [native request lifetime](../../docs/reference/service_limits.md#request-lifetime-and-expiry)
+and [front HTTP budgets](../../docs/reference/service_limits.md#chat-front-deadlines-and-admission) are separate;
+stopping a polling loop does not itself cancel native work.
+
 ### fake_chat_worker_driver.py
 
 Pops chat jobs as a worker and answers each with a scripted reply, without a model.

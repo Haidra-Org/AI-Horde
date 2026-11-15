@@ -94,3 +94,7 @@ sampler identity, so multiplying its result by operational work would count samp
 sites. `tests/unit/test_sampler_work_policy.py` fixes adaptive estimate, ceiling, compatibility, and
 budget behavior. Worker `limit_max_steps` coverage confirms that an adaptive request without a known
 execution contract fails closed.
+
+## More Information
+
+For the current implementation's [sampler work estimates and image lease constants](../reference/service_limits.md#image-leases-and-sampler-work), see the constants reference.

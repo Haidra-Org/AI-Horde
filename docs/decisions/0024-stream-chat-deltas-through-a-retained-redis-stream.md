@@ -125,3 +125,5 @@ cancelled streamed generation, and `docs/reference/chat_front.md` the relay.
 rejected alternative.
 [ADR 0038, Lease text jobs for a fixed term renewed by progress](0038-lease-text-jobs-for-a-fixed-term-renewed-by-progress.md)
 records the job lease and its renewal by progress posts.
+
+For the current implementation's [retained-progress limits and lease grace](../reference/service_limits.md#rate-limits-and-retained-progress), see the constants reference.

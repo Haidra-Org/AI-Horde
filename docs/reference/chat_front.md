@@ -616,6 +616,10 @@ validation error identifies the variable. The telemetry variables are listed in
 
 ### Admission and request limits
 
+See [front response budgets and caps](service_limits.md#chat-front-deadlines-and-admission) for their purpose and
+interaction with native request expiry, and [connection and cancellation controls](operational_constants.md#front-connections-and-cancellation)
+for the separate pools and retry budgets.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `HORDE_OAI_MAX_INFLIGHT` | `1000` | Open requests per process before 503 `FrontAtCapacity`. A request holds its slot until it ends, including its cancel. When the Horde stalls and requests wait to their deadline, the cap is reached once requests arrive faster than this value divided by the request budget (1000 over 300 seconds is 3.3 per second). The cap detects a stall and does not limit throughput. The value also sizes the cancel pool: one cancel slot per 20 open requests, at least 16 (`cancel_max_connections`). |
@@ -633,11 +637,14 @@ validation error identifies the variable. The telemetry variables are listed in
 | `HORDE_OAI_STREAM_TIMEOUT_SECONDS` | `600` | Total budget of a streamed request, from before the submit. |
 | `HORDE_OAI_FINAL_STATUS_TIMEOUT_SECONDS` | `2` | Allowance for the one status read made at the deadline. |
 | `HORDE_OAI_CANCEL_TIMEOUT_SECONDS` | `10` | Budget of one cancel's HTTP call. The wait for a free cancel slot is limited to the same length. A cancel that does not get a slot in time is not sent and is retried. |
-| `HORDE_OAI_CANCEL_RETRY_SECONDS` | `30` | How often cancels that failed, timed out or did not start are sent again, until 20 minutes after the submit, when the Horde has expired the request. |
+| `HORDE_OAI_CANCEL_RETRY_SECONDS` | `30` | How often cancels that failed, timed out or did not start are sent again, until the front's fixed cutoff 20 minutes after registering the submitted request. This cutoff does not track native request refreshes; see [cancellation controls](operational_constants.md#front-connections-and-cancellation). |
 | `HORDE_OAI_SHUTDOWN_DRAIN_SECONDS` | `30` | How long uvicorn waits for open requests on a clean stop before cancelling their handlers. |
 | `HORDE_OAI_SHUTDOWN_CANCEL_SECONDS` | `15` | Process-wide limit for cancelling every request still open at stop. |
 
 ### Streaming and status polling
+
+The [polling and stream-read constants](operational_constants.md#polling-signals-and-stream-reads) identify the
+fixed stretching, jitter and batching values used with these settings.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -751,9 +758,13 @@ request ids are not used as attributes.
 | `already_gone` | The Horde returned 404 because the request no longer exists. |
 
 Attempts ending in `failed`, `timed_out` or `not_started` are retried every
-`HORDE_OAI_CANCEL_RETRY_SECONDS` and once more during shutdown. Retries stop 20 minutes after submission
+`HORDE_OAI_CANCEL_RETRY_SECONDS` and once more during shutdown. Retries stop 20 minutes after the front registers the
+submitted request
 (`horde.oai.app.HORDE_CHAT_REQUEST_EXPIRY_SECONDS`). At most `horde.oai.app.MAX_FAILED_CANCELS` requests whose
 responses were already returned stay in the retry queue. The oldest entries are dropped first.
+
+That cutoff uses the front's registration timestamp, while [native request expiry](service_limits.md#request-lifetime-and-expiry) can
+be refreshed by assignment and settlement. Dropping a retry therefore does not establish that the request is gone.
 
 #### Refusal attributes
 

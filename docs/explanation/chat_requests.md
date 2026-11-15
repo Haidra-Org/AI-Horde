@@ -133,11 +133,16 @@ but would require separate handling wherever text request behaviour also applies
 
 #### A separate front woken by Redis
 
-An OpenAI call keeps its connection open until the reply is ready, and a horde request can wait minutes for a worker.
+An OpenAI call keeps its connection open until the reply is ready, and a horde request can wait minutes for a worker
+within its [20-minute request lifetime](../reference/service_limits.md#request-lifetime-and-expiry).
 Waiting inside the Flask application would hold one Waitress thread for each open call, leaving fewer threads for
 worker pops and submits. The front therefore runs as a separate ASGI process, where each waiting call uses a coroutine
 ([ADR 0023](../decisions/0023-run-the-chat-front-as-a-separate-asgi-process-woken-by-redis.md)). The front does not
 hold a database connection. The outcome is stored in Postgres, and the front reads it through the status route.
+
+Assignment and settlement can refresh that lifetime. The chat front's
+[HTTP response budgets](../reference/service_limits.md#chat-front-deadlines-and-admission) are separate and can end
+the client's wait sooner.
 
 The native side publishes a small event on `horde:chat:<request id>` when a generation is stored and when a request
 ends ([Completion signal](../reference/chat_requests.md#completion-signal)). These notifications do not contain the

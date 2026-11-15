@@ -206,3 +206,5 @@ differs from it on registry ownership and worker conformance, for the reasons gi
 [style contract reference](../reference/style_contract.md) states the enforced rules and the fields of
 the published document. [Use the style endpoints](../how-to/use_style_endpoints.md) is the procedure
 for declaring and using a style.
+
+For the current implementation's [style template and payload bounds](../reference/service_limits.md#images-and-styles), see the constants reference.

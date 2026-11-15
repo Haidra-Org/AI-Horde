@@ -33,6 +33,8 @@ nav = [
     ] },
     { "Reference" = [
         { "Overview" = "reference/README.md" },
+        { "Service limits" = "reference/service_limits.md" },
+        { "Operational constants" = "reference/operational_constants.md" },
         { "Kudos accounting" = "reference/kudos_accounting.md" },
         { "Samplers and schedulers" = "reference/samplers_and_schedulers.md" },
         { "Image baseline policy" = "reference/baseline_policy.md" },

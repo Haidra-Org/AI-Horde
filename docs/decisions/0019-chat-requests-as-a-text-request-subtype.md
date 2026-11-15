@@ -109,3 +109,5 @@ The text path changes made beside this decision are recorded separately:
 - [ADR 0038, Lease text jobs for a fixed term renewed by progress](0038-lease-text-jobs-for-a-fixed-term-renewed-by-progress.md)
 - [ADR 0039, Settle requests after cancellation and repeated faults](0039-settle-requests-after-cancellation-and-repeated-faults.md)
 - [ADR 0040, Estimate text queue wait from the request's eligible workers](0040-estimate-text-queue-wait-from-the-eligible-workers.md)
+
+For the current implementation's [request lifetimes and expiry clocks](../reference/service_limits.md#request-lifetime-and-expiry), see the constants reference.

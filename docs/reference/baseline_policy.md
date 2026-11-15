@@ -71,6 +71,10 @@ dispatch alone.
 
 ## The horde policy on a baseline
 
+The [image lease formula](service_limits.md#image-leases-and-sampler-work) shows where the baseline multiplier enters
+the calculation. [Image admission budgets](service_limits.md#free-output-and-image-work) explain how the resolution
+floor interacts with queue pressure and upfront kudos.
+
 Read with `policy(baseline)`, which returns the record's `horde_policy` or the par default. Par means a multiplier
 of 1: the baseline policy adds no scaling to the underlying kudos, batching or lease calculation.
 

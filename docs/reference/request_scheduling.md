@@ -24,12 +24,18 @@ public status response. For interpreting public status fields, see
 
 ## Stall signal inputs
 
+The [scheduling constants](operational_constants.md#assignment-pressure-and-shadow-forecasts) collect observation
+windows, minimum evidence duration and forecast retention, with their defining symbols.
+
 Incoming work uses the same normalized work units as completed batches. It adds two parts: the still-queued remainder
 of recent compatible arrivals, and their batches already assigned to eligible workers. Cancelled work that was not
 assigned is therefore not counted as continuing pressure. The observation window and event retention are finite.
 Every candidate inside the observation window is evaluated. The scan is not cut off at a fixed request count.
 
 ## Availability and pressure telemetry
+
+See [availability caches and speed measurements](operational_constants.md#queue-scans-availability-and-worker-measurements)
+for refresh intervals and the distinction between cache lifetime, worker online status and measured capacity.
 
 OpenTelemetry exports one assignment-pressure sample when the shared 60-second availability cache is populated.
 It does not export a sample on every client poll. The only labels on `horde.request.assignment_pressure.samples` are

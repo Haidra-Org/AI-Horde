@@ -189,6 +189,10 @@ returns text without calls, display it. A 400 history error needs corrected call
 
 ## Keep max_tokens within what is served
 
+See [free-output thresholds](../reference/service_limits.md#free-output-and-image-work) and
+[text/chat payload limits](../reference/service_limits.md#text-and-chat) for the service defaults behind the model
+declarations and the refusal messages.
+
 A chat request goes only to a worker whose declared output length is at least the request's `max_tokens`. When the
 model's online workers do not declare enough, the Horde lowers `max_tokens` to the largest declared value. The
 change is reported in `x_horde.context_adjustments` as a `worker_max_length` entry. A reply can then end with

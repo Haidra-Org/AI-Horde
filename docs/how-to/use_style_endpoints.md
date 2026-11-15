@@ -182,6 +182,9 @@ A dry run does not create a generation request or charge kudos. It does incremen
 
 ## Size a text request against its prompt
 
+The [context sizing and charging constants](../reference/service_limits.md#accounting-units-floors-and-surcharges)
+explain why the prompt-fit estimate and output-settlement estimate use different character-to-token ratios.
+
 Use the text style created earlier. Replace `<a long prompt>` with enough text to exceed its initial context;
 a short literal placeholder does not exercise growth.
 

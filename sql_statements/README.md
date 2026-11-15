@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## AI-Horde Database Information
 
+The [accounting maintenance constants](../docs/reference/operational_constants.md#accounting-retention-and-archives)
+identify partition widths, creation/drop lock waits and vacuum thresholds used by the event-table migrations and
+their ongoing maintenance.
+
 - postgresql >=15
 - [pg_cron](https://github.com/citusdata/pg_cron)
 - `5.1.16.txt` requires the `psql` client, because it uses `\gexec`. Apply it in one session with `-v ON_ERROR_STOP=1` and without `--single-transaction`, as described in [Kudos ledger operations](../docs/how-to/kudos_ledger_operations.md#converting-the-event-tables-to-partitions).

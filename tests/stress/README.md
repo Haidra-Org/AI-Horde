@@ -855,6 +855,11 @@ python tests/stress/check_smoke_results.py --stats run/chat_stats.csv
 
 ## Chat front scale demo
 
+When interpreting capacity refusals and timeouts, compare the scenario settings with the
+[front response budgets](../../docs/reference/service_limits.md#chat-front-deadlines-and-admission) and
+[process and connection limits](../../docs/reference/operational_constants.md#process-capacity-and-connections).
+The scenario's run duration and load stages are test inputs, separate from service deadlines.
+
 The chat front (`python -m horde.oai`) holds each open `/v1/chat/completions`
 request as an idle coroutine and wakes it on the Horde's Redis completion
 signal, so a waiting client should cost the Horde one submit, one or two status

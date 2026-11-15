@@ -116,3 +116,5 @@ explains the estimate and `docs/reference/chat_requests.md` records the status f
 
 ADR 0037 reads this estimate for the free output allowance. ADR 0038 defines the speed gate that is part of worker
 eligibility for chat requests, and ADR 0041 scopes it. ADR 0019 places chat requests in the text queue.
+
+For the current implementation's [availability-cache and worker-speed intervals](../reference/operational_constants.md#queue-scans-availability-and-worker-measurements), see the constants reference.

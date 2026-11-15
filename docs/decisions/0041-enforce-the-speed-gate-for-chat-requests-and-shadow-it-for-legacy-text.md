@@ -175,3 +175,5 @@ and refusal to assign a chat request to a slower worker when a capable worker ca
 ## More Information
 
 ADR 0038 defines the lease and the speed gate. ADR 0040 reads the eligibility check this record scopes.
+
+For the current implementation's [lease-capacity constants](../reference/service_limits.md#text-and-chat-leases), see the constants reference.

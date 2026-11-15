@@ -255,6 +255,9 @@ their work profile. Adaptive work requires an explicitly advertised backend exec
 
 ### Job lease allowances {#why-job-ttl-is-longer-than-isolated-inference}
 
+The [image lease constants](service_limits.md#image-leases-and-sampler-work) collect these allowances, their rationale
+and their defining and consuming symbols alongside the other worker deadlines.
+
 The lease policy and its alternatives are recorded in
 [ADR 13](../decisions/0013-image-job-ttl-is-a-prefetch-lease.md).
 

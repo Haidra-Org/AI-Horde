@@ -89,6 +89,9 @@ including the anonymous user, get `StylesRequiresCustomizer`. The anonymous user
 
 ### Template fields
 
+Use the [template limits](../reference/service_limits.md#images-and-styles) when validating field declarations and
+supplied text; they identify the fixed bounds and their enforcement symbols.
+
 `template_fields` is a list of placeholders in the template that are filled from the request, each with
 `name`, `description` and `required`. Names are lowercase snake case, and `p` and `np` are reserved.
 The reference lists the length and count limits. Check that each declared name appears in the template

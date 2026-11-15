@@ -93,6 +93,9 @@ the previous complete snapshot keeps serving traffic.
 
 ## Fleet distribution
 
+The [model-metadata constants](operational_constants.md#other-asynchronous-delivery-and-model-metadata) collect the
+publication interval, replica refresh interval and stale-snapshot warning thresholds with their source symbols.
+
 Redis key `image_model_reference:snapshot:v1` holds the fleet's last-known-good image reference. One document contains
 the final model view (canonical plus pending) and the baseline catalog, with a SHA-256 revision over both. Replacing
 that key is atomic, so consumers cannot read half a publication.

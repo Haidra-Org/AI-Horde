@@ -79,3 +79,7 @@ and the asynchronous projector's promotion duties do not run.
 ### Promote in the emitting transaction
 
 - Bad: it cannot observe the escrow its own credit will produce.
+
+## More Information
+
+For the current implementation's [trust thresholds and minimum account age](../reference/service_limits.md#trust-moderation-and-retained-history), see the constants reference.

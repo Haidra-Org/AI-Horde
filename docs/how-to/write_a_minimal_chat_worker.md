@@ -149,6 +149,9 @@ Reversal: stop the worker with Ctrl+C. A worker counts as online for 300 seconds
 
 ## 4. Check the declaration
 
+See [worker lease and speed constants](../reference/service_limits.md#text-and-chat-leases) when choosing advertised
+output lengths: a declaration alone does not establish measured capacity within the lease.
+
 ```bash
 curl -s "$HORDE_URL/api/v2/workers/name/<worker-name>" | jq '{accepts_chat_jobs, accepts_prompt_jobs, chat}'
 ```

@@ -93,3 +93,5 @@ pins the maintenance pass against these rules. `docs/reference/chat_requests.md`
 
 ADR 0027 records how a cancelled streamed chat generation is priced. ADR 0038 records when a job is aborted as stale,
 which is one source of the faults counted here.
+
+For the current implementation's [request expiry and fault limits](../reference/service_limits.md#request-lifetime-and-expiry), see the constants reference.

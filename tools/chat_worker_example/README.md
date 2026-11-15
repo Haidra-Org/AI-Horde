@@ -12,3 +12,7 @@ horde. [Write a minimal chat worker](../../docs/how-to/write_a_minimal_chat_work
 
 `--template-overhead` sets the tokens the fit check adds to every prompt count, for every `--token-counter`. It
 replaces the startup measurement: the probe's prompt count for `bytes`, and 0 for an exact counter.
+
+See [lease and speed constants](../../docs/reference/service_limits.md#text-and-chat-leases) when sizing the worker's
+advertised output limit. The [context sizing estimate](../../docs/reference/service_limits.md#accounting-units-floors-and-surcharges)
+is separate from the count used for settlement.
