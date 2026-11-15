@@ -17,10 +17,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [accounting](../topics.md#accounting), [kudos](../topics.md#kudos)
 <!-- END GENERATED: topics -->
 
-The maintainer contract for kudos mutation and consumption: the authoritative events, the materialized targets, the
-producers and consumers, the locks, and the tests that hold each rule. For design rationale, read [Kudos accounting,
-projection, and concurrency](../explanation/kudos_accounting.md). For deployment and incident procedures, follow
-[Kudos ledger operations](../how-to/kudos_ledger_operations.md).
+Kudos changes are recorded as events and applied to stored balances and statistics. This reference specifies how
+to write those events, authorize spending and read balances under each accounting mode. For design rationale, read
+[Kudos accounting, projection, and concurrency](../explanation/kudos_accounting.md). For deployment and incident
+procedures, follow [Kudos ledger operations](../how-to/kudos_ledger_operations.md).
 
 ## Source of truth by mode
 
@@ -31,11 +31,11 @@ projection, and concurrency](../explanation/kudos_accounting.md). For deployment
 | Materialized mutation owner | `kudos_legacy_projection` applies the historical inline change | `apply_pending_kudos` folds events asynchronously |
 | Spend authorization | Payer lock plus `available_kudos` and reservations | Payer lock plus `available_kudos` and reservations |
 | Ordinary balance reads | Materialized column, current after the transaction | Materialized column, eventually consistent |
-| Audit/replay role | Forward audit; opening balance predates it | Authoritative post-cutover movement history |
-| Default | Yes, for new/migrated installations | No; operator must explicitly cut over |
+| Audit/replay role | Forward audit. The opening balance predates it | Authoritative post-cutover movement history |
+| Default | Yes, for new/migrated installations | No. An operator must cut over explicitly |
 
-The existing balance at first deployment is the opening position. The ledger contains deltas from deployment onward,
-not a fabricated history of older movements.
+The existing balance at first deployment is the opening position. The ledger contains deltas from deployment onward.
+Changes before deployment are not reconstructed in the ledger.
 
 ## Vocabulary
 
@@ -45,9 +45,10 @@ not a fabricated history of older movements.
 | Display kudos | A worker/team attribution total. It describes earned work but is not spendable account currency. |
 | Counter | A value denominated in kudos, things, or count and projected into stats, records, or aggregates. |
 | Business event | One logical mutation such as a settlement or transfer, correlated by one `event_id`. |
-| Posting | One signed row affecting exactly one target balance or statistic. Direction comes from the amount's sign. |
+| Posting | One event row affecting exactly one balance or statistic. A positive amount adds to the value, and a negative amount subtracts from it. |
 | Projection | A denormalized current value maintained from postings for inexpensive reads. |
 | Hold/reservation | A temporary claim against one payer's available kudos. It is neither a debit nor a credit. |
+| Fold | Apply a batch of event rows to stored balances and statistics in a projection transaction. |
 | Applied | The posting was included in a committed projection transaction, or was projected inline in shadow mode. |
 | Available balance | Conservative spend capacity after floor, active reservations, and unreserved queued debits. |
 | Effective balance | Materialized balance plus all committed unapplied currency deltas, clamped to the account floor. |
@@ -82,16 +83,16 @@ surface in CI.
 
 | Field | Contract |
 | --- | --- |
-| `id` | Database identity used only for bounded claim order; it is not a transaction watermark. |
+| `id` | Database identity used only for bounded claim order. It is not a transaction watermark. |
 | `created` | Audit timestamp, queue-age source and partition key. The primary key is (`id`, `created`). |
 | `event_id` | UUID shared by related postings. A deterministic UUID is produced when an idempotency key is supplied. |
-| `entry_type` | Typed business classification from `KudosEntryType`; never encodes debit/credit direction. |
+| `entry_type` | Typed business classification from `KudosEntryType`. It does not encode debit or credit direction. |
 | `user_id` | Required currency owner. |
 | `escrow` | `false` targets spendable balance; `true` targets evaluation escrow. |
 | `amount` | Signed `NUMERIC(20,2)` delta. Positive credits and negative debits are separate postings. |
 | `applied` | Per-row work-queue state changed in the same transaction as its projection. |
 | `job_id`, `wp_type` | Optional correlation dimensions inherited from the active `kudos_event`. |
-| `detail` | Typed-key audit metadata. The applier only interprets documented keys. |
+| `detail` | Typed-key audit metadata. The applier interprets only documented keys. |
 
 ### `KudosStatEvent` fields
 
@@ -100,11 +101,11 @@ meaning as their currency counterparts. The remaining fields define a counter pr
 
 | Field | Contract |
 | --- | --- |
-| `user_id` | User counter target; mutually exclusive with `worker_id`. |
-| `worker_id` | Worker counter target; mutually exclusive with `user_id`. |
-| `worker_user_id` | Worker owner captured for audit; not itself a projection target. |
+| `user_id` | User counter target. Mutually exclusive with `worker_id`. |
+| `worker_id` | Worker counter target. Mutually exclusive with `user_id`. |
+| `worker_user_id` | Worker owner captured for audit. It is not itself a projection target. |
 | `team_id` | Team attribution captured when the event is emitted. |
-| `unit` | `kudos`, `things`, or `count`; consumers must not combine unlike units. |
+| `unit` | `kudos`, `things`, or `count`. Consumers must not combine unlike units. |
 | `stat_action` | Action/bucket dimension such as `generated`, `usage`, `contributions`, or `fulfilments`. |
 | `record` | Typed projector discriminator or user-record dimension. |
 | `quarantined`, `quarantine_reason`, `quarantined_at` | Durable poison-event isolation. Every claimed statistic row sharing a malformed event's `event_id` is quarantined together and retained for review. |
@@ -122,15 +123,15 @@ meaning as their currency counterparts. The remaining fields define a counter pr
 
 The three `style_*` keys appear together on a waiting-prompt activation debit whose request runs under someone else's
 style. They contain the author's user id, the part of the debit that is the style surcharge (a decimal string), and the
-style type (`text` or `image`), which is the user-record dimension the author's style count is kept under. They are written and
-read through `StyleReward.audit_detail` and `StyleReward.from_audit_detail`.
+style type (`text` or `image`). The style type is the user-record dimension under which the author's style count is
+kept. They are written and read through `StyleReward.audit_detail` and `StyleReward.from_audit_detail`.
 
-Do not add an untyped string discriminator when one of these axes describes it. Add or extend the enum and teach the
-projector and tests about the new value together.
+Do not add an untyped string discriminator when one of these axes describes it. Add or extend the enum, and update the
+projector and tests for the new value in the same change.
 
 ## Entry-type catalogue
 
-An entry type answers “why did this posting exist?” The sign and target answer “what did it do?”
+An entry type records why a posting exists. The sign and the target record what the posting did.
 
 | `KudosEntryType` | Expected use |
 | --- | --- |
@@ -151,7 +152,7 @@ An entry type answers “why did this posting exist?” The sign and target answ
 
 All new or modified kudos code must obey these rules.
 
-1. **Use the public producer surface.** User currency enters through `User.modify_kudos` or
+1. **Use the public event-writing methods.** User currency enters through `User.modify_kudos` or
    `User.modify_evaluating_kudos`. Derived events enter through `emit_kudos_stat_event`. Do not assign a materialized
    accounting column in a business path. Narrow exceptions are listed under [excluded kudos-like state](#excluded-kudos-like-state).
 2. **Group a logical event.** Wrap a settlement, transfer, activation tax, or other multi-posting mutation in
@@ -161,9 +162,9 @@ All new or modified kudos code must obey these rules.
    event UUID provides correlation only.
 4. **Commit business state and postings together.** Do not commit part of an event, perform network work, and append
    the rest later. Emission helpers flush by default so the caller owns the transaction boundary.
-5. **One currency row, one user balance.** Worker/team IDs and counter units never belong in `KudosLedger`. Emit
+5. **One currency row, one user balance.** Worker/team IDs and counter units do not belong in `KudosLedger`. Emit
    separate debit and credit rows. Do not encode a transfer as an opaque net amount.
-6. **Reserve before authorizing eventual spend.** Under `acquire_payer_lock`, call `reserve_kudos` with a stable
+6. **Reserve kudos before accepting a spend.** Under `acquire_payer_lock`, call `reserve_kudos` with a stable
    `business_id`. Attach that reservation ID to matching debit metadata. Never use `effective_kudos` to authorize a
    spend.
 7. **Do not fund from pending credits.** `available_kudos` deliberately ignores them. Changing that rule requires a
@@ -188,7 +189,7 @@ balance should assign it directly and commit rather than creating misleading led
 
 ## Producer inventory
 
-This is the current inventory of paths that create user currency or kudos-derived projection events.
+This is the inventory of paths that create user currency or kudos-derived projection events.
 
 | Business event | Entry types and targets | Primary code |
 | --- | --- | --- |
@@ -207,17 +208,17 @@ This is the current inventory of paths that create user currency or kudos-derive
 | Reconciliation repair | Deterministic `RECONCILIATION` user spendable/escrow delta and its idempotency key. Refused with `ValueError` when the snapshot is older than the key lifetime, and with `StaleCheckpointsError` while a currency retention unit is blocked with `late rows` or `online drift since export` or when the snapshot was created inside a `kudos_snapshot_invalidations` interval | `reconcile_balances(..., apply_repairs=True)` |
 
 `User.modify_kudos` also emits the matching per-action user-kudos statistics event. `WorkerTemplate.modify_kudos`
-emits worker display/stat events, not currency. Producer wrappers should retain that distinction.
+emits worker display/stat events, not currency. Producer wrappers should keep that distinction.
 
-Two interrogation contracts in that table correct behaviour the inline implementation had:
+Two interrogation contracts in that table correct the behaviour of the inline implementation:
 
-- An interrogation uptime crossing grants an untrusted owner exactly one reward, routed wholly to the spendable
-  balance by the alchemist bypass and minting no escrow, where the inline path credited both the balance and escrow
+- Each interrogation uptime crossing grants an untrusted owner exactly one reward. The alchemist bypass routes it
+  wholly to the spendable balance, and it does not mint escrow. The inline path credited both the balance and escrow
   for the same crossing (pinned by
   `tests/unit/test_kudos_invariants.py::test_interrogation_uptime_grants_untrusted_owner_exactly_one_reward`).
-- Cancelling an interrogation form a worker is still processing settles it like a submission, crediting the worker
-  and owner and debiting the requester the form kudos plus burn, where the inline path moved the form to `CANCELLED`
-  ahead of the settle check and so settled nothing (pinned by
+- Cancelling an interrogation form that a worker is still processing settles it like a submission. The worker and
+  owner are credited, and the requester is debited the form kudos plus burn. The inline path moved the form to
+  `CANCELLED` before the settle check, so it did not settle anything (pinned by
   `tests/unit/test_kudos_invariants.py::test_cancelling_in_flight_interrogation_form_settles_like_a_submit`).
 
 ## Projection target inventory
@@ -238,16 +239,16 @@ Two interrogation contracts in that table correct behaviour the inline implement
 | `teams.fulfilments` | Team-stamped fulfilment events | Sum per captured team ID |
 | Reservation remainder/release time | Currency debit metadata or completed transfer event | Consume request holds by debit; release transfer hold only after every event posting is applied |
 | Trusted user role and worker pause state | Projected escrow crossing threshold | Promote eligible mature user, unpause workers, then emit the escrow drain pair |
-| Style author credit | Activation debits carrying the `style_*` detail keys | After the user fold, attribute each requester's floor difference to their surcharges in id order, each absorbing up to its whole amount. Emit the author's `STYLE_REWARD` posting and style record for any remainder, folded by a later cycle |
+| Style author credit | Activation debits with the `style_*` detail keys | After the user fold, attribute each requester's floor difference to their surcharges in id order, each absorbing up to its whole amount. Emit the author's `STYLE_REWARD` posting and style record for any remainder, folded by a later cycle |
 
-A surcharge the floor forgave is not credited to the style's author, since the requester paid none of it and crediting
-it would create currency. The floor difference is computed per user per batch, so a requester's credits in the same
-batch reduce what the floor forgives. In shadow mode the same attribution runs inline during activation from the floor
-adjustment `User.modify_kudos` returns. In ledger mode that return is zero and only the applier credits, so a request
-never credits its author twice.
+A surcharge forgiven by the floor is not credited to the style's author, because the requester did not pay any of it
+and crediting it would create currency. The floor difference is computed per user per batch, so a requester's credits
+in the same batch reduce what the floor forgives. In shadow mode the same attribution runs inline during activation,
+from the floor adjustment returned by `User.modify_kudos`. In ledger mode that return value is zero and only the
+applier credits the author, so an author is not credited twice for one request.
 
 Currency rows and statistic rows are each claimed in a bounded batch. A single event may cross a batch boundary.
-Any event-wide side effect must query for remaining unapplied rows rather than assuming a batch contains the
+Any event-wide side effect must query for remaining unapplied rows instead of assuming that a batch contains the
 whole event.
 
 ## Consumer and read-model inventory
@@ -259,20 +260,20 @@ because account currency, queue priority, worker attribution, job price, and sha
 
 | Consumer | Current read | Consistency and rule |
 | --- | --- | --- |
-| Upfront image/text request admission | `reserve_kudos` -> `available_kudos` | Spend-safe and conservative; includes floor, holds, and queued debits; ignores queued credits |
-| Interrogation admission and interrogation-worker check | `reserve_kudos` / `available_kudos` | Spend-safe; retryable form reactivation reuses its business ID |
-| User transfer | `reserve_kudos` -> `available_kudos` | Payer-serialized; recipient is not locked; optional API idempotency key protects replay for the [key lifetime](#idempotency-key-lifetime) |
-| Admin adjustment “new balance” response | `effective_kudos` | Includes the just-committed/unapplied delta; not an authorization value |
-| Queue priority for image/text | `user.kudos` copied to `waiting_prompt.extra_priority` at activation | Snapshot of a potentially lagging projection; queue ordering thereafter uses `extra_priority` |
-| Queue priority for interrogation | `user.kudos` copied to `interrogations.extra_priority` at construction | Snapshot of a potentially lagging projection |
-| Stable worker's secondary upfront eligibility check | materialized `waiting_prompt.user.kudos` minus floor | Eventual legacy recheck; initial admission hold prevents overspend, but lag may transiently alter scheduling eligibility |
+| Upfront image/text request admission | `reserve_kudos` -> `available_kudos` | Spend-safe and conservative. Includes floor, holds, and queued debits. Ignores queued credits |
+| Interrogation admission and interrogation-worker check | `reserve_kudos` / `available_kudos` | Spend-safe. A retried form reactivation reuses its business ID |
+| User transfer | `reserve_kudos` -> `available_kudos` | Serialized on the payer. The recipient is not locked. An optional API idempotency key protects replay for the [key lifetime](#idempotency-key-lifetime) |
+| Admin adjustment “new balance” response | `effective_kudos` | Includes the just-committed, unapplied delta. Not an authorization value |
+| Queue priority for image/text | `user.kudos` copied to `waiting_prompt.extra_priority` at activation | Snapshot of a projection that may lag. Queue ordering then uses `extra_priority` |
+| Queue priority for interrogation | `user.kudos` copied to `interrogations.extra_priority` at construction | Snapshot of a projection that may lag |
+| Stable worker's secondary upfront eligibility check | materialized `waiting_prompt.user.kudos` minus floor | Eventually consistent legacy recheck. The initial admission hold prevents overspend, but lag may briefly change scheduling eligibility |
 | User details, login/welcome, status and ordinary API display | materialized `user.kudos`/`evaluating_kudos` | Eventually consistent in ledger mode |
 | Award endpoints returning `new_kudos` | generally materialized `user.kudos` | May return the pre-projection value unless the endpoint explicitly uses `effective_kudos` |
-| User listing/sorting and inactive-account heuristics | materialized `User.kudos` | Eventually consistent; intended for administrative/read-model behavior, not spend admission |
-| Trust promotion | materialized `evaluating_kudos` inside the serialized projector | Evaluated after fold; final qualifying event promotes without another request |
-| Snapshot/reconciliation | materialized user columns plus applied ledger totals | Repeatable-read baseline; repair only through compensating postings |
+| User listing/sorting and inactive-account heuristics | materialized `User.kudos` | Eventually consistent. Intended for administrative and read-model behavior, not spend admission |
+| Trust promotion | materialized `evaluating_kudos` inside the serialized projector | Evaluated after the fold. The final qualifying event promotes without another request |
+| Snapshot/reconciliation | materialized user columns plus applied ledger totals | Repeatable-read baseline. Repair only through compensating postings |
 
-The two legacy materialized reads in worker scheduling are documented rather than hidden. If they are changed, the
+The two legacy materialized reads in worker scheduling are documented here instead of hidden. If they are changed, the
 maintainer must decide the intended policy: `available_kudos` is conservative spend capacity. `effective_kudos`
 includes queued income. The materialized value is a cheap, lagging priority/display projection. They are not
 interchangeable.
@@ -290,7 +291,7 @@ interchangeable.
 | Applier heartbeat and queue/reservation ages | Quorum-node metrics, operator status command, cutover gates. Node-local `/api/v2/status/heartbeat` excludes these shared-database signals |
 
 All of these can lag in ledger mode. Consumers that need transaction-local proof of an accepted event should inspect
-the event/result they just created, not force the projector or assume a refreshed aggregate.
+the event or result that they created. They should not force the projector or assume a refreshed aggregate.
 
 ### Excluded kudos-like state
 
@@ -299,63 +300,66 @@ The following kudos-adjacent state is not a user currency projection and must no
 
 | State | Meaning and mutation rule |
 | --- | --- |
-| `UserSharedKey.kudos` and `utilized` | Per-key quota/budget, including `-1` for unlimited; consumed inline with the request, because the clamp at zero is an enforcement read in the request path and a separate endpoint sets the budget absolutely |
-| `WaitingPrompt.kudos`, `consumed_kudos`, generation/form kudos | Estimated price, accumulated job cost, or reward returned for one job; kept inline because they are per-prompt rows rather than shared aggregates and the same event already emits a currency posting |
-| `WorkerTemplate.kudos` | Worker-attributed display total; projected from `KudosStatEvent` |
-| `Team.kudos` | Team-attributed display total; projected from worker stat events stamped with `team_id` |
-| `Style.kudos`, `Style.contributions`, `Style.fulfilments` | Style-level popularity/contribution counters; still maintained by the style subsystem |
-| `KudosTransferLog` | Auxiliary transfer history and policy/audit record; does not replace the paired currency postings |
-| Test-user bootstrap balance | Absolute fixture/local-login opening state; direct assignment avoids inventing an accounting movement |
+| `UserSharedKey.kudos` and `utilized` | Per-key quota/budget, including `-1` for unlimited. Consumed inline with the request, because the clamp at zero is an enforcement read in the request path and a separate endpoint sets the budget absolutely |
+| `WaitingPrompt.kudos`, `consumed_kudos`, generation/form kudos | Estimated price, accumulated job cost, or reward returned for one job. Kept inline because they are per-prompt rows instead of shared aggregates, and the same event already emits a currency posting |
+| `WorkerTemplate.kudos` | Worker-attributed display total. Projected from `KudosStatEvent` |
+| `Team.kudos` | Team-attributed display total. Projected from worker stat events stamped with `team_id` |
+| `Style.kudos`, `Style.contributions`, `Style.fulfilments` | Style-level popularity/contribution counters. Maintained by the style subsystem |
+| `KudosTransferLog` | Auxiliary transfer history and policy/audit record. It does not replace the paired currency postings |
+| Test-user bootstrap balance | Absolute fixture/local-login opening state. Direct assignment avoids inventing an accounting movement |
 | `workers.last_reward_uptime` | An absolute cursor set to the worker's current uptime at each reward crossing, which a signed-delta fold cannot express |
-| `workers.aborted_jobs` | Resets to zero on hourly rollover and on tripping the drop threshold, so its value depends on event ordering and timing rather than a sum, and the threshold decision is read in the same path that increments it |
+| `workers.aborted_jobs` | Resets to zero on hourly rollover and on tripping the drop threshold, so its value depends on event ordering and timing instead of being a sum. The threshold decision is read in the same path that increments it |
 
 ## Reservation lifecycle
 
 | Operation | Stable business ID | Created/reactivated | Consumed/released |
 | --- | --- | --- | --- |
-| Image/text upfront admission | `upfront:<waiting-prompt-id>` | Before activation is accepted | Debit projection consumes it; prompt deletion/cancel paths and the expired-prompt cleanup release unused remainder |
-| Interrogation upfront admission | `interrogation:<form-id>` | When a worker claims a waiting form | Debit projection consumes it; cancellation/failure paths and the expired-interrogation cleanup release it; a retry reactivates the row |
-| Transfer | `transfer:<source-user-id>:<event-id>` | Before paired postings commit | Released only after no unapplied posting remains for the event |
+| Image/text upfront admission | `upfront:<waiting-prompt-id>` | Before activation is accepted | Debit projection consumes it. Prompt deletion/cancel paths and the expired-prompt cleanup release the unused remainder |
+| Interrogation upfront admission | `interrogation:<form-id>` | When a worker claims a waiting form | Debit projection consumes it. Cancellation/failure paths and the expired-interrogation cleanup release it. A retry reactivates the row |
+| Transfer | `transfer:<source-user-id>:<event-id>` | Before paired postings commit | Released only once every posting of the event is applied |
 
-`business_id` uniqueness supplies retry stability. Reactivation may not change payer. Reservation mutation uses row
-locks only after payer-scoped admission serialization. Release functions are idempotent and return zero when there
-is not an active hold. `available_kudos` reads the balance, active holds, and queued debits in one statement so all terms come
-from a single database snapshot. A fold or release committing mid-read cannot hide a debit from every term.
+The unique `business_id` keeps retries stable. Reactivation must not change the payer. Reservation changes take row
+locks only after the payer lock has serialized admission. Release functions are idempotent and return zero when there
+is not an active hold. `available_kudos` reads the balance, active holds, and queued debits in one statement, so all
+terms come from a single database snapshot. A fold or release that commits during the read cannot hide a debit from
+every term.
 
 ## Concurrency and lock reference
 
 | Primitive | Scope | Acquired by | Purpose |
 | --- | --- | --- | --- |
-| Applier advisory transaction lock | Installation | Projector and mode transition | At most one database projector; serialize final drain with projection |
+| Applier advisory transaction lock | Installation | Projector and mode transition | At most one database projector. Serializes the final drain with projection |
 | Payer advisory transaction lock | User ID | Reservations/transfers/admission | Prevent concurrent promises from overspending one payer without locking recipients |
 | Reconciliation advisory transaction lock | Installation | Repair mode | Prevent concurrent compensation emitters |
 | Mode-gate advisory transaction lock (shared) | Mutation transaction | `get_kudos_ledger_mode` | Pin mode until the writer commits |
-| Mode-gate advisory transaction lock (exclusive) | Installation | `set_kudos_ledger_mode` | Wait for every old-mode writer before ownership changes; fair queueing keeps new pins from starving a waiting transition |
-| Event-row `FOR UPDATE SKIP LOCKED` | Bounded batch | Projector; worker deletion for that worker | Claim exact unapplied work without a watermark; serialize worker deletion before child-counter writes |
+| Mode-gate advisory transaction lock (exclusive) | Installation | `set_kudos_ledger_mode` | Delays the ownership change until every writer that read the old mode has committed. Fair queueing keeps new pins from starving a waiting transition |
+| Event-row `FOR UPDATE SKIP LOCKED` | Bounded batch | Projector; worker deletion for that worker | Claim exact unapplied work without a watermark. Serialize worker deletion before child-counter writes |
 | Projection-target `FOR KEY SHARE` | Claimed users/workers | Projector | Prevent target deletion between validation and foreign-key child insertion without blocking ordinary non-key updates |
 | Reservation-row `FOR UPDATE` | Business ID | Consume/release | Serialize hold depletion/release |
 | Repeatable-read transaction | Snapshot/reconciliation command | Reconciliation helpers | Observe balances and applied totals from one consistent database snapshot |
 | Retention advisory session lock | Installation | `run_retention_tick`, `reconcile_archive_catalog` and the retention operator commands | At most one retention tick at a time. It is held on a dedicated autocommit connection, so a long export does not keep a transaction open. The archive reconciliation takes it only for its catalog updates, after its listing, and waits up to `RECONCILIATION_LOCK_WAIT` for it |
 
-Required accounting lock order is applier lock before exclusive mode-gate lock. Projection targets are visited in
-stable ID order. Code that needs another accounting lock must document where it fits before it is merged. The legacy
-`USE_SQLITE` runtime mode short-circuits PostgreSQL advisory locks and therefore cannot validate these concurrency
-properties.
+The required accounting lock order is the applier lock before the exclusive mode-gate lock. Projection targets are
+visited in stable ID order. Code that needs another accounting lock must document where it fits before it is merged.
+The legacy `USE_SQLITE` runtime mode short-circuits PostgreSQL advisory locks and therefore cannot validate these
+concurrency properties.
 
 ## Failure and recovery invariants
 
 - A projector cycle commits both target updates and exact applied flags, or neither.
-- Deterministically malformed statistic events are quarantined by business-event ID. Unrelated events in the batch continue, while infrastructure failures still roll back the whole cycle.
-- A row is selected by `applied = false`, never by `id > watermark`.
-- A stopped projector is a lag incident, not lost work. Restore it and drain in ledger mode.
+- Deterministically malformed statistic events are quarantined by business-event ID. Unrelated events in the batch
+  are still folded. An infrastructure failure rolls back the whole cycle.
+- A row is selected by `applied = false`. It is not selected by `id > watermark`.
+- A stopped projector delays work and does not lose it. Restore the projector and drain in ledger mode.
 - A transfer hold remains active until both sides of the event are materialized, even when a batch splits the event.
-- A trusted user's positive escrow with no in-flight promotion pair is self-healed by a later projector cycle.
+- When a trusted user has positive escrow and a promotion pair is not in flight, a later projector cycle drains the
+  escrow by emitting the escrow-debit/spendable-credit pair.
 - Minimum-balance flooring creates an explicit `FLOOR_ADJUSTMENT` so snapshot replay equals projection.
 - A snapshot records both opening columns and the applied totals visible at that instant.
 - Reconciliation excludes prior `RECONCILIATION` entries from its movement baseline and emits one deterministic repair
   event per snapshot/user.
-- Ledger-to-shadow transition owns the applier lock, waits for ledger-mode writers, drains the final tail, and changes
-  mode in one transaction.
+- The ledger-to-shadow transition holds the applier lock, waits for ledger-mode writers, drains the final tail, and
+  changes mode in one transaction.
 - Applied currency and statistic history stays online for the retention window. After the window, the retention job
   removes a partition only once its replacement is committed. See [event retention](#event-retention).
 
@@ -383,8 +387,9 @@ UTC.
 | `<table>_p_<YYYYMMDD>` | From the date in the name for one partition width | On a converted database, the eight weeks from the swap timestamp are created by `sql_statements/5.1.16.txt`. Later partitions are created ahead of time by `ensure_kudos_event_partitions` |
 
 `sql_statements/5.1.16.txt` creates eight weekly partitions because the release before it does not create
-partitions. After a rollback to that release, inserts keep finding a partition until eight weeks after the swap
-timestamp. Each of these partitions has the storage parameters of `KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS`.
+partitions. After a rollback to that release, every insert still has a partition to go into until eight weeks after
+the swap timestamp. Each of these partitions has the storage parameters of
+`KudosPartitioning.AUTOVACUUM_STORAGE_PARAMETERS`.
 
 `ensure_kudos_event_partitions` creates partitions until one covers the current time plus twice the partition width.
 It runs in `init_db` at startup with the default width, and on every retention tick with `KUDOS_PARTITION_WIDTH_DAYS`.
@@ -404,14 +409,14 @@ because of the CHECK, and attaches each copied index to the matching partitioned
 
 Reads and inserts through the parent do not wait for these locks. Writes to `users` queue behind the `users` request
 while it waits. Every wait ends after `KudosPartitioning.CREATE_LOCK_TIMEOUT` (3 seconds). On a timeout, the partition
-is not created, its standalone table is rolled back, and the call logs the warning
+is not created and its standalone table is rolled back. The call logs the warning
 `Deferred partition <partition> of <table> to the next call`, or `Deferred the partitions of <table> to the next call`
-when the parent lock timed out, and returns without raising. The partitions it created
-before the timeout are kept, and the next retention tick retries the rest. A range whose partition name already
-belongs to a table outside the partitioning, such as a detached partition, is skipped with a warning.
+when the parent lock timed out, and returns without raising an error. The partitions created before the timeout are
+kept, and the next retention tick retries the rest. A range whose partition name already belongs to a table outside
+the partitioning, such as a detached partition, is skipped with a warning.
 `kudos_stat_events_p_legacy` also has `ix_kudos_stat_events_legacy_created`. That index belongs to the legacy partition
-alone and is not attached to the parent. The retention job reads the legacy partition by `created` sub-range through
-it.
+alone and is not attached to the parent. The retention job uses it to read the legacy partition by `created`
+sub-range.
 
 ### Retention units
 
@@ -426,8 +431,8 @@ for `MINVALUE`), `unit_upper`, `state`, `object_key`, `error` and these bookkeep
 | `row_count`, `max_id` | Row count and highest `id` of the unit's range, with no filter. Recorded in the transaction that commits the replacement: the checkpoint for currency, the rollup for statistics. NULL before that |
 | `first_failed_at` | When the current run of failed statistics dumps began. NULL after a successful dump |
 | `consecutive_dump_failures` | Failed statistics dump attempts since the last success |
-| `last_dump_attempt_at` | When the statistics dump was last attempted, by the tick's reference time. Spaces the retries |
-| `detached_at` | The tick's reference time when the partition was detached, set on every unit before the recount that follows the detach. With `KUDOS_RETENTION_DROP_GRACE_DAYS` above 0 the drop is due once the grace has passed since it. A unit that recount blocks keeps it, so `retention reattach` finds the partition. NULL while the partition is attached. A `dropped` unit keeps the value it had |
+| `last_dump_attempt_at` | When the statistics dump was last attempted, by the tick's reference time. Used to space the retries |
+| `detached_at` | The tick's reference time when the partition was detached, set on every unit before the recount that follows the detach. With `KUDOS_RETENTION_DROP_GRACE_DAYS` above 0 the drop is due once the grace has passed since this time. A unit blocked by that recount keeps the value, so `retention reattach` can locate the partition. NULL while the partition is attached. A `dropped` unit keeps the value it had |
 | `state_before_detach` | The unit's state before that detach. It stays set while the unit is blocked with `reattached by operator`, and `retention unblock` restores it. NULL otherwise |
 
 A currency unit in `checkpointed`, `exported`, `verified`, `detached` or `dropped` records the checkpoint boundary at
@@ -440,10 +445,10 @@ the unit they came from. A retried step deletes the rows with its own `source_ra
 day can span two units, so readers sum across `source_range`.
 
 A unit is eligible when its upper bound is older than the dataset's window. A tick creates the catalog rows of a
-weekly partition, in state `pending`, once its upper bound is older than the window, and the rows of the legacy
-partition the first time it sees it attached, because the legacy sub-ranges age one by one and the partition's own
-upper bound, the swap time, is the bound of its last sub-range only. Units are processed in order of upper bound,
-oldest first.
+weekly partition, in state `pending`, once its upper bound is older than the window. It creates the rows of the legacy
+partition on the first tick that finds the legacy partition attached. This is because the legacy sub-ranges age one by
+one, and the partition's own upper bound, the swap time, is the bound of its last sub-range only. Units are processed
+in order of upper bound, oldest first.
 
 ### Retention states
 
@@ -455,8 +460,7 @@ The states are `KudosRetentionState` values. Each arrow is one transition, and a
 | `currency` | `pending` -> `checkpointed` -> `exported` -> `verified` -> `dropped` |
 
 With `KUDOS_RETENTION_DROP_GRACE_DAYS` above 0, the last arrow of both paths is two transitions: the drop-ready state
--> `detached` -> `dropped`. `retention reattach` moves a `detached` unit to `blocked` with `reattached by operator`,
-and `retention unblock` then returns it to its drop-ready state.
+-> `detached` -> `dropped`.
 
 | State | Dataset | Meaning |
 | --- | --- | --- |
@@ -468,44 +472,50 @@ and `retention unblock` then returns it to its drop-ready state.
 | `checkpointed` | `currency` | Per-user checkpoints at `unit_upper` and the unit's daily statements are committed in one repeatable-read transaction |
 | `exported` | `currency` | The unit's rows and manifest are in the currency tier of the archive |
 | `verified` | `currency` | The object was read back and matched its manifest, the online rows and the row count recorded at the checkpoint |
-| `detached` | Both | The partition is detached concurrently and kept as a standalone table, for the drop grace period or until the drop that follows on the same tick. The unit is drop-ready while every unit of the partition that is not `dropped` is `detached`, and `state_before_detach` holds its previous state. Its rows are no longer read through the parent table |
+| `detached` | Both | The partition is detached concurrently and kept as a standalone table, for the drop grace period or until the drop that follows on the same tick. The unit is drop-ready while every unit of the partition that is not `dropped` is `detached`, and `state_before_detach` holds its previous state. Its rows are not read through the parent table |
 | `dropped` | Both | The partition is detached concurrently and dropped |
 | `blocked` | Both | The unit is stopped until an operator resets it. The reason is in `error`. A unit blocked while its partition is detached has `detached_at` set, and `retention unblock` refuses it until `retention reattach` attaches the partition |
 
-Any state except `dropped` can become `blocked`. `retention unblock` returns a unit blocked with `reattached by operator` to `state_before_detach`.
-Otherwise it returns a blocked currency unit whose checkpoint
-is committed (`row_count` is set) to `checkpointed`, so export and verification run again against that checkpoint.
-Every other blocked unit returns to `pending`, and its steps run again from the start. Each step replaces what an
-earlier attempt wrote. `retention unblock --waive-dump` moves a `dump_failed` statistics unit, or one blocked for
-`dump retries exhausted`, `statistics tier would exceed budget` or `archive object missing`, to `dump_waived`. It
-refuses a unit of a detached partition until the partition is reattached.
+Any state except `dropped` can become `blocked`. Only these operator commands move a unit out of `blocked`, and
+`retention reattach` moves a `detached` unit into it:
 
-`retention unblock --recheckpoint` returns a blocked currency unit and every later currency unit to `pending`, and
-clears their `error`, `row_count`, `max_id` and `object_key`. In the same transaction it deletes the
-`kudos_ledger_checkpoints` rows at the boundary and the `kudos_ledger_daily` rows of the `source_range` of each reset
-unit with a recorded `row_count`. The latest checkpoint is then the last valid one, and reconciliation reads every
-later posting from `kudos_ledger`. The next ticks recompute each checkpoint, daily
-statement and recorded row count in upper-bound order, and each export replaces the object at its key. A blocked
-currency unit stops the currency dataset, so every later unit is still online. The command refuses when a later
-currency unit is `dropped`, because its rows can no longer be recounted, and when the unit's own partition is
-detached. Use it when a unit blocks with `late rows`
-or `online drift since export` because of rows committed after its checkpoint.
+| Command | Applies to | Result |
+| --- | --- | --- |
+| `retention unblock` | A blocked unit with `state_before_detach` set, which is a unit blocked with `reattached by operator` | Returns to `state_before_detach` and clears that column. The partition is drop-ready again, and the next tick detaches it with a new grace period |
+| `retention unblock` | A blocked currency unit with a committed checkpoint (`row_count` is set) | Returns to `checkpointed`, so export and verification run again against that checkpoint |
+| `retention unblock` | Any other blocked unit | Returns to `pending`, and its steps run again from the start. Each step replaces what an earlier attempt wrote |
+| `retention unblock --waive-dump` | A `dump_failed` statistics unit, or a statistics unit blocked with `dump retries exhausted`, `statistics tier would exceed budget` or `archive object missing` | Moves to `dump_waived`. The `error` text is kept |
+| `retention unblock --recheckpoint` | A blocked currency unit, together with every later currency unit | Each unit returns to `pending` with `error`, `row_count`, `max_id`, `object_key` and `state_before_detach` cleared |
+| `retention reattach` | The `detached` units of one partition | Each becomes `blocked` with `reattached by operator` and keeps `state_before_detach` |
 
-`retention reattach <unit-id>` attaches a `detached` partition back to its parent with
-`ALTER TABLE <parent> ATTACH PARTITION <partition> FOR VALUES FROM (<lower>) TO (<upper>)`. The bounds are the
-partition's recorded range: the lowest `unit_lower` (`MINVALUE` for the legacy partition) to the highest
-`unit_upper`. Each `detached` unit becomes `blocked` with `reattached by operator` and keeps
-`state_before_detach`, so the partition stays attached until an operator unblocks its units. A unit that the drop
-recount blocked after the detach keeps its own reason and loses `state_before_detach`. A partition whose units are
-all blocked that way, with no `detached` unit, is accepted too. The command clears
-`detached_at` and commits with the attach. It refuses when no unit of the partition has `detached_at` set, or its
-table no longer exists. `retention unblock` on a unit with `state_before_detach` set returns it to that state and clears the column,
-so the partition is drop-ready again and the next tick detaches it again with a new grace period.
-`retention unblock --recheckpoint` also accepts such a currency unit and clears the column. `retention unblock` refuses
-a unit of a detached partition, and `retention unblock --recheckpoint` refuses when a later currency unit is detached.
-Reattach those first.
+`retention unblock` without an option clears `error`. Each command takes the retention lock and exits with an error
+while a tick holds it. The refusals are:
 
-All four commands take the retention lock and exit with an error while a tick holds it.
+- `retention unblock`, with or without either option, refuses a unit whose partition is detached (`detached_at` is
+  set). `retention reattach` attaches it first.
+- `retention unblock --recheckpoint` also refuses when a later currency unit is `dropped`, because its rows can no
+  longer be recounted, or detached. A blocked currency unit stops the currency dataset, so a later dropped unit means
+  that the catalog was changed by hand.
+- `retention reattach` refuses when `detached_at` is not set on any unit of the partition, when a unit of the
+  partition that is not `dropped` is neither `detached` nor blocked after the detach, or when the partition's table no
+  longer exists.
+
+`retention unblock --recheckpoint` deletes, in the same transaction, the `kudos_ledger_checkpoints` rows at the
+boundary and the `kudos_ledger_daily` rows of the `source_range` of each reset unit with a recorded `row_count`. It
+also records a [snapshot invalidation](#reconciliation-after-retention). The latest checkpoint is then the last valid
+one, and reconciliation reads every later posting from `kudos_ledger`. The next ticks recompute each checkpoint,
+daily statement and recorded row count in upper-bound order, and each export replaces the object at its key.
+
+`retention reattach` runs `ALTER TABLE <parent> ATTACH PARTITION <partition> FOR VALUES FROM (<lower>) TO (<upper>)`
+over the partition's recorded range: the lowest `unit_lower` (`MINVALUE` for the legacy partition) to the highest
+`unit_upper`. A unit blocked by the drop recount after the detach keeps its own reason and loses
+`state_before_detach`, so `retention unblock` returns it to `checkpointed` or `pending`. A partition whose units were
+all blocked that way is accepted as well. The command clears `detached_at` on every unit and commits with the attach.
+
+The procedures are in [kudos ledger operations](../how-to/kudos_ledger_operations.md):
+[handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit),
+[recovering from a late-row or chain block](../how-to/kudos_ledger_operations.md#recovering-from-a-late-row-or-chain-block)
+and [rolling back a removed partition](../how-to/kudos_ledger_operations.md#rolling-back-a-removed-partition).
 
 Units are selected by these rules:
 
@@ -537,16 +547,17 @@ Units are selected by these rules:
   by a rehearsal tick is dropped only by a tick whose reference time is at least the grace later, and a tick at the
   real time does not drop it before the real clock reaches that point.
 - Before the detach, and again after it, the drop recounts each unit's rows and highest `id` and compares them with
-  `row_count` and `max_id`. A difference, or a unit with no recorded count, blocks that unit with `late rows` and
-  nothing is dropped. Every unit is marked `detached` with `detached_at` before the recount that follows the detach,
-  also without a grace period. A difference found then leaves the partition detached, the blocked unit keeps
-  `detached_at`, its siblings stay `detached`, and the partition is not drop-ready. Run `retention reattach` before
-  unblocking.
+  `row_count` and `max_id`. A difference, or a unit without a recorded count, blocks that unit with `late rows`, and
+  the partition is not dropped. Every unit is marked `detached` with `detached_at` before the recount that follows
+  the detach, also without a grace period. A difference found then leaves the partition detached, the blocked unit
+  keeps `detached_at`, its siblings stay `detached`, and the partition is not drop-ready. Run `retention reattach`
+  before unblocking.
 - The drop connection sets `lock_timeout` to `DROP_LOCK_TIMEOUT`. The connection is discarded afterwards instead of
-  returning to the pool, because the setting lasts for the database session. When another session holds a lock on the partition
-  or its parent in a transaction older than `KUDOS_RETENTION_DROP_DEFER_MINUTES`, or the timeout expires, the tick
-  outcome is `deferred` with the pid and transaction age, and the drop is tried again on the next tick. The drop also
-  checks that the connection holding the retention lock is alive, and fails without dropping when it is not.
+  returning to the pool, because the setting lasts for the database session. When another session holds a lock on the
+  partition or its parent in a transaction older than `KUDOS_RETENTION_DROP_DEFER_MINUTES`, or the timeout expires,
+  the tick outcome is `deferred` with the pid and transaction age, and the drop is tried again on the next tick. The
+  drop also checks that the connection holding the retention lock is alive, and fails without dropping when it is
+  not.
 - A tick whose reference time is later than the real clock is `refused` unless `confirm_live_data_loss` is set
   (`retention step --confirm-live-data-loss`).
 - A tick sends archive requests only for the step it makes, so a tick without a step does not wait on the object
@@ -554,7 +565,7 @@ Units are selected by these rules:
   every `KUDOS_ARCHIVE_RECONCILIATION_INTERVAL` (one hour), as described under [archive objects](#archive-objects).
   `abort_stale_kudos_archive_uploads` runs every `KUDOS_ARCHIVE_STALE_UPLOAD_INTERVAL` (one day) and aborts multipart
   uploads under the deployment's prefix that were started more than `STALE_UPLOAD_AGE` (one day) ago. It does not take
-  the retention lock, because that age is far longer than any export. Both jobs return at once without an archive.
+  the retention lock, because that age is far longer than any export. Without an archive, both jobs return at once.
   Their threads wake every `KUDOS_ARCHIVE_JOB_WAKE_INTERVAL` (60 seconds) and each job runs only when its interval has
   passed since its last run in the process, so the first run comes within a minute of the node becoming the quorum.
 - A step that raises an error does not make a transition. Examples are an unreachable archive during export or a
@@ -583,14 +594,14 @@ The `error` of a blocked unit is one of the `RetentionBlockReason` values.
 
 `_applied_totals_subquery` sums the latest checkpoint and the applied postings at or above its boundary. Before the
 first checkpoint, it sums every applied posting. Snapshots store cumulative applied totals, so a snapshot taken before
-a checkpoint stays comparable after it. A boundary without per-user rows occurs only when no contributing posting is
-older than it, so the latest boundary with rows, or none, still gives the right tail.
+a checkpoint stays comparable after it. A boundary lacks per-user rows only when there is not any contributing posting
+older than it. The latest boundary with rows, or no boundary, therefore still gives the right tail.
 
-`create_balance_snapshot` holds the retention lock, so a snapshot never crosses a tick or an operator recovery, and it
+`create_balance_snapshot` holds the retention lock, so a snapshot does not overlap a tick or an operator recovery. It
 raises `StaleCheckpointsError` while `stale_checkpoint_units` lists a unit. `retention unblock --recheckpoint` records,
 in the transaction that deletes the stale checkpoints, one `kudos_snapshot_invalidations` row from the earliest reset
 unit's catalog `created` time to the reset. A snapshot created inside such an interval stored applied totals from
-checkpoints that omitted late rows, so `reconcile_balances` refuses it with `StaleCheckpointsError` in read-only and
+checkpoints that left out late rows, so `reconcile_balances` refuses it with `StaleCheckpointsError` in read-only and
 repair modes alike. The snapshot's rows are kept as evidence. The interval is wider than the bad window. On a legacy
 sub-range unit it starts at the migration, so one legacy recheckpoint invalidates every snapshot taken since the
 cutover. Snapshots outside every interval stay usable, and a fresh snapshot after the recovery is the baseline for
@@ -610,8 +621,8 @@ lifetime, whether or not retention is enabled.
   a second `RECONCILIATION`.
 - `reconcile_balances(..., apply_repairs=True)` raises `StaleCheckpointsError`, a `ValueError`, while
   `stale_checkpoint_units` lists a currency unit blocked with `late rows` or `online drift since export`. That unit
-  holds rows its checkpoint and every later checkpoint omit, so a repair would compensate for drift that does not
-  exist. A read-only run still reports drift and logs a warning. The `reconcile` command lists the units in
+  holds rows that are missing from its checkpoint and every later checkpoint, so a repair would compensate for drift
+  that does not exist. A read-only run still reports drift and logs a warning. The `reconcile` command lists the units in
   `stale_checkpoint_units` and sets `drift_reliable` to `false`. `retention unblock --recheckpoint` deletes the stale
   checkpoints, and repairs are accepted again.
 - `sql_statements/5.1.16.txt` backfills the keys of `TRANSFER` and `RECONCILIATION` events created in the last
@@ -653,9 +664,9 @@ of the unit's rows in `id` order, and a JSON manifest stored beside it. Objects 
 
 | Item | Layout |
 | --- | --- |
-| Object key | `<prefix><tier>/<source_range>.csv.<ext>`, with each `/` in `source_range` replaced by `__`. `prefix` is `KUDOS_ARCHIVE_PREFIX`. `tier` is `currency` or `statistics`. The key has no dataset segment because the tier already names the dataset, and the manifest records it |
+| Object key | `<prefix><tier>/<source_range>.csv.<ext>`, with each `/` in `source_range` replaced by `__`. `prefix` is `KUDOS_ARCHIVE_PREFIX`. `tier` is `currency` or `statistics`. The key does not have a dataset segment, because the tier already identifies the dataset and the manifest records it |
 | Manifest key | The object key followed by `.manifest.json` |
-| Codec | zstd (`zst`) for new objects, at `ZSTD_COMPRESSION_LEVEL`. gzip (`gz`) objects stay readable. A reader selects the codec by the key's extension |
+| Codec | zstd (`zst`) for new objects, at `ZSTD_COMPRESSION_LEVEL`. gzip (`gz`) objects stay readable. The codec for reading an object is chosen by the key's extension |
 
 | Manifest field | Contents |
 | --- | --- |
@@ -681,10 +692,11 @@ retention lock, including `archive evict`.
 
 `archive evict --tier statistics --budget-bytes <n>` runs `evict_statistics_dumps`, which deletes the oldest
 statistics objects and their manifests, ordered by unit upper bound, until the statistics tier fits `<n>`. The dump of
-a statistics unit that is not `dropped` is kept, because its raw rows are still online. Objects that are not recorded by any
-unit are deleted like dropped dumps. Currency objects are never deleted. The deletes go out one batch at a time. When one
-fails, `ArchiveEvictionError` holds the keys deleted before it, and the command prints them. The command sets the
-`object_key` of each evicted unit to NULL, also after a failed batch, so an evicted dump is not reported as lost.
+a statistics unit that is not `dropped` is kept, because its raw rows are still online. Objects that are not recorded
+by any unit are deleted like dropped dumps. Currency objects are never deleted. The deletes are sent one batch at a
+time. When a batch fails, `ArchiveEvictionError` holds the keys deleted before it, and the command prints them. The
+command sets the `object_key` of each evicted unit to NULL, also after a failed batch, so an evicted dump is not
+reported as lost.
 
 With an archive configured, `reconcile_kudos_archive_catalog` runs `reconcile_archive_catalog` every hour on the
 quorum node. It reads the catalog, lists both tiers without the retention lock and without an open transaction, then
@@ -695,8 +707,8 @@ is left for the next pass. When the lock stays held for `RECONCILIATION_LOCK_WAI
 `Kudos retention skipped the archive reconciliation` at info level and does not update any unit. When a listing fails,
 the pass logs a warning and does not update any unit.
 
-A unit whose `object_key` is not in the listing was removed outside the horde, or by an eviction that stopped before it
-updated the catalog. What the reconciliation does depends on the unit:
+When a unit's `object_key` is not in the listing, the object was removed outside the horde, or by an eviction that
+stopped before it updated the catalog. The reconciliation's change depends on the unit:
 
 | Unit | Change | Log line |
 | --- | --- | --- |
@@ -713,9 +725,9 @@ archive. For a currency unit, the object exists, its manifest is readable, the s
 with `archive object missing`, a currency mismatch blocks it with `archive mismatch`, and an unreachable store or
 unreadable manifest fails the tick so that a later tick retries. The check compares metadata only. The digest was
 verified at the `verified` step or by the dump's read-back, and `archive audit --read-back` re-reads objects. The
-reconciliation's listing does not gate the drop.
-The tier sizes from the reconciliation's listing are the `horde.kudos.archive.tier_bytes` values. The reconciliation
-job sets the gauge, and each tick sets it again from the last listed sizes without a listing of its own.
+reconciliation's listing does not gate the drop. The tier sizes from the reconciliation's listing are the
+`horde.kudos.archive.tier_bytes` values. The reconciliation job sets the gauge, and each tick sets it again from the
+last listed sizes without a listing of its own.
 
 ### Retention metrics and log lines
 
@@ -736,17 +748,17 @@ job sets the gauge, and each tick sets it again from the last listed sizes witho
 | `horde.kudos.archive.listing_age` | Gauge, `s` | None | Seconds since the listing that the `tier_bytes` values come from. Each tick records it with the tier bytes. It grows past one hour when listings fail, while `tier_bytes` stays at the last listed values |
 | `horde.kudos.archive.operation.duration` | Histogram, `s` | `horde.kudos.archive.operation`, `horde.kudos.archive.failed` | Duration of each `KudosArchive` method that sends store requests, by method name and by whether it raised. The same calls run in `horde.kudos.archive.<method>` spans with `horde.kudos.archive.tier` and `horde.kudos.archive.key` attributes when the call has them. A method that calls another, such as `audit_object`, is recorded for both |
 
-The SDK exports a gauge point only for an export interval in which the gauge was set, and the counters are exported
-with delta temporality, so they too send a point only for an interval in which they were added to. Each tick records
-its metrics when it ends. A tick that runs longer than a query's lookback, such as a long statistics dump, therefore
-leaves these metrics without a recent sample, and an instant query returns nothing for them although nothing failed.
-Read the gauges with `last_over_time` and compare the age of the last sample with the tick interval.
+The SDK exports a gauge point only for an export interval in which the gauge was set. The counters are exported with
+delta temporality, so they also send a point only for an interval in which they were added to. Each tick records its
+metrics when it ends. A tick that runs longer than a query's lookback, such as a long statistics dump, therefore
+leaves these metrics without a recent sample. An instant query then does not return anything for them, although
+nothing failed. Read the gauges with `last_over_time` and compare the age of the last sample with the tick interval.
 
-Where the backend converts the deltas to a cumulative series, the first point of a new series already carries its
-first count, so `increase()` and `rate()` over that series miss the first event. Each `stepped` series of
-`horde.kudos.retention.steps` starts again when the quorum node restarts, so progress right after a deploy shows in
-the counter's value, not in its increase. Every tick adds 0 to the `blocked` and `failed` series, so they exist
-before their first event and that event counts.
+Where the backend converts the deltas to a cumulative series, the first point of a new series already includes its
+first count, so `increase()` and `rate()` over that series do not count the first event. Each `stepped` series of
+`horde.kudos.retention.steps` starts again when the quorum node restarts. Progress right after a deploy therefore
+shows in the counter's value and does not show in its increase. Every tick adds 0 to the `blocked` and `failed`
+series, so they exist before their first event and that event counts.
 
 Two warnings are under log contract. Log-based alerting matches their prefixes, and
 `tests/unit/test_kudos_retention.py::test_log_contract_prefixes_start_the_outcome_warnings` tests them.
@@ -811,27 +823,28 @@ of Your Personal Data".
 | `stat_pending_rows` | Drainable unapplied statistic event count |
 | `oldest_ledger_pending_seconds` | Age of the oldest drainable currency posting |
 | `oldest_stat_pending_seconds` | Age of the oldest drainable statistic event |
-| `quarantined_rows` | Total statistic rows retained outside the drainable queue; permanent evidence, not unresolved-incident state |
+| `quarantined_rows` | Quarantined rows still in `kudos_stat_events`, outside the drainable queue. They are kept as evidence, so a non-zero count does not indicate an unresolved incident. When retention retires their partition, the rows move to `kudos_stat_quarantine` and leave this count |
 | `oldest_quarantined_seconds` | Age of the oldest quarantined statistic row |
-| `newest_quarantined_seconds` | Age of the most recently quarantined statistic row; operationally useful for identifying a new incident |
-| `heartbeat_seconds` | Time since the projector last completed a cycle; may grow even when no rows are pending |
+| `newest_quarantined_seconds` | Age of the most recently quarantined statistic row. Useful for spotting a new incident |
+| `heartbeat_seconds` | Time since the projector last completed a cycle. It can grow even when no rows are pending |
 | `active_reservations` | Count of holds with positive remaining amount and no release time |
 | `oldest_reservation_seconds` | Age of the oldest active hold |
 
 ### Projector cadence and health sampling
 
-The background task runs every three seconds and keeps folding within a tick while full batches drain, up to a bounded
-number of catch-up cycles, so a backlog clears at many batches per tick while each fold stays a small transaction.
-Health is sampled once per tick, before the fold loop, and exported as current-value gauges. The combined queue and
-oldest-age gauges have currency/stat splits, while the quarantine gauges distinguish permanent evidence from the age
-of the newest incident. Phase histograms, cycles-per-tick and configured batch/catch-up gauges explain capacity limits.
+The background task runs every three seconds. Within a tick it keeps folding while full batches drain, up to a bounded
+number of catch-up cycles. A backlog therefore clears at many batches per tick, while each fold stays a small
+transaction. Health is sampled once per tick, before the fold loop, and exported as current-value gauges. The combined
+queue and oldest-age gauges have currency and statistics splits. The quarantine gauges separate the retained evidence
+from the age of the newest incident. Phase histograms, cycles-per-tick and configured batch/catch-up gauges explain
+capacity limits.
+
 ### Alerting and node health
 
-These metrics are recorded on the quorum node only. The per-node
-`/api/v2/status/heartbeat` endpoint deliberately excludes them, because a load balancer health check fed a
-shared-database signal would remove every node from rotation at once. Operators should alert on queue age and
-reservation age from the quorum telemetry, not only row count: a steady queue can be healthy under load, while one
-old row or hold can indicate a poisoned path.
+These metrics are recorded on the quorum node only. The per-node `/api/v2/status/heartbeat` endpoint deliberately
+does not include them. A load balancer health check that used a shared-database signal would remove every node from
+rotation at once. Operators should alert on queue age and reservation age from the quorum telemetry, in addition to
+row count. A steady queue can be healthy under load, while one old row or hold can indicate a poisoned path.
 
 ## Code map
 

@@ -25,21 +25,25 @@ We have multiple SDK for the AI horde
 
 ## The Basics
 
-The workflow to use the AI horde is fairly straightforward.
+Native generation uses an asynchronous submit-and-poll workflow.
 
 First choose what kind of generation you want to have. Image, Text, or Alchemy (Image interrogation/manipulation). Depending on which one you'll use, you have to then use a specific set of endpoints.
 
-They all work the same way. First send the payload which describes the generation you want to have. This is specific to the type of generation you want. This will return information about this request and will also even inform you if this request is even possible. You will receive an "id" here which you need to store to query in the next steps.
+First send the payload describing the generation you want. This is specific to the type of generation you want. This will return information about this request and will also even inform you if this request is even possible. You will receive an "id" here which you need to store to query in the next steps.
 
-Once the request is accepted and in-progress, periodically check its status, at most once a second. The image `check` endpoint is cached for 1 second, and the text status endpoint allows 60 reads a minute for each request. The status endpoint will inform you if it's done, how many underlying jobs are still in progress, waiting, or done.
+Acceptance queues the request; it does not mean a worker has accepted a job. After a successful submit returns an ID, periodically check status, at most once a second. The image `check` endpoint is cached for 1 second, and the text status endpoint allows 60 reads a minute for each request. The status endpoint will inform you if it's done, how many underlying jobs are still in progress, waiting, or done.
 
-If the request is done, retrieve the content from the `generations` key. This will either be a URL from which to download an image, or the resulting generation if it's text.
+For generation requests, check `faulted` before treating `done` as success. Cancellation can leave partial results. Retrieve completed content from the `generations` key. This will either be a URL from which to download an image, or the resulting generation if it's text.
 
-You can get the results faster by using the [webhooks](#Webhooks).
+[Webhooks](#webhooks) can deliver results without waiting for the next poll. Delivery is best effort; keep polling when every result must arrive.
+
+These native async routes differ from the [OpenAI-compatible chat front](docs/reference/chat_front.md), which waits
+for a reply on the client connection. For text polling, expiry and cancellation charges, use the
+[native text procedure](docs/how-to/send_text_generation_requests.md#poll-the-status).
 
 ### Image Generation Endpoints
 
-Use these endpoints to generate images. Please use the `/check` endpoint for checking if a request is done, and the statud endpoint for retrieving the full results.
+Use these endpoints to generate images. Please use the `/check` endpoint for checking if a request is done, and the status endpoint for retrieving the full results.
 
 1. Initiate the request: `api/v2/generate/async`
 2. Check the request status: `api/v2/generate/check`

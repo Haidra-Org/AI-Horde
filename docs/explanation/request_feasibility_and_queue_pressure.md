@@ -1,6 +1,6 @@
 ---
 title: "Request feasibility and queue pressure"
-summary: "Practical guidance for using request progress, worker compatibility, capacity counts, queue estimates, and stall warnings in API clients."
+summary: "Interpret request progress, worker compatibility, capacity counts, queue estimates and stall warnings."
 topics: [generation, requests, workers]
 order: 20
 ---
@@ -17,11 +17,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [generation](../topics.md#generation), [requests](../topics.md#requests), [workers](../topics.md#workers)
 <!-- END GENERATED: topics -->
 
-A request status draws on several parts of the scheduler. Check `done`, `faulted`, and `processing` first. While work
-is waiting, use `is_possible` to check whether the request can currently be served, the eligible-worker counts to
+A status response combines progress with estimates of worker availability and queue delay. Check `done`, `faulted`,
+and `processing` first. While work is waiting, use `is_possible` to check whether the request can currently be served, the eligible-worker counts to
 understand how much compatible capacity exists, and `might_stall` to decide whether the delay needs additional
-explanation. `queue_position` and `wait_time` describe queued work: the whole Horde's for an image
-request, and the part its eligible workers could take for a text request.
+explanation. `queue_position` and `wait_time` describe queued work. For an image request they cover the whole Horde's
+queue. For a text request they cover the part of the queue that its eligible workers could take.
 
 For the surrounding lifecycle, see [Job lifecycle](../haidra-assets/docs/job_lifecycle.md). The
 [Workers](../haidra-assets/docs/workers.md) overview explains why independently operated workers expose different
@@ -31,12 +31,12 @@ models and capabilities.
 
 AI Horde workers choose the models, capabilities, limits, concurrency, and types of work they support. A request's
 model, dimensions, context length, worker restrictions, safety requirements, and advanced controls determine which of
-those workers are eligible. Each eligible worker may also see a different set of competing requests.
+those workers are eligible. Each eligible worker may also have a different set of competing requests.
 
-Status values are collected from that changing environment. Worker availability is cached briefly, and a generation
-can start between the availability check and the progress check. A response may contain `processing > 0` and
-`eligible_workers == 0`, and worker counts may change between adjacent polls. When fields seem to conflict, lifecycle
-progress is the most useful current signal.
+Status values are collected from that changing environment. Worker availability is cached for up to 60 seconds, and
+a generation can start between the availability check and the progress check. A response may contain
+`processing > 0` and `eligible_workers == 0`, and worker counts may change between adjacent polls. When fields seem to
+conflict, lifecycle progress is the most useful current signal.
 
 ## Field guidance
 
@@ -52,9 +52,9 @@ show active progress and continue polling for completion.
 dispatch checks for the request. Those checks include the requested model and relevant capability, safety, size, and
 worker-selection constraints.
 
-The field reports feasibility at the time of the check. Worker time remains unreserved, and compatible threads may be
-busy. A request can remain possible while its eligible workers are selecting higher-priority work. When the value is
-false, the service has found no current route to execution. The request may become possible later when worker
+The field reports feasibility at the time of the check. Worker time is not reserved, and compatible threads may be
+busy. A request can remain possible while its eligible workers take higher-priority work. When the value is false,
+the request does not currently match any available worker. It may become possible later when worker
 availability changes.
 
 ### Eligible workers and threads
@@ -65,7 +65,7 @@ useful as an indication of how widely the request is supported.
 
 A small value means that worker churn or competing work can have a large effect on the request. A larger value means
 that more workers have the technical ability to accept it. The thread count is advertised capacity and can include
-threads that are already occupied. Current occupancy and reservations are outside the scope of both fields.
+threads that are already occupied. The fields do not report current occupancy or reservations.
 
 ### Queue position and wait time
 
@@ -74,55 +74,52 @@ estimates delay from the work queued ahead and the throughput of the horde's act
 supported by only a few workers may wait longer than this estimate. It may also start sooner when its compatible
 workers have little competing work.
 
-For a text or chat request, both values use the work that at least one eligible worker could take, based on models,
-chat opt-in and length limits. `queue_position` counts competing requests ahead. `wait_time` includes queued work
-through the current request and divides that work by the eligible workers'
-measured speed over `eligible_worker_threads`, capped at the number of generations counted. A request for a lightly
-queued model therefore reads a short estimate however long the horde's queue is. The free output allowance reads the
-same calculation for a request being created, excluding its own output because it is not queued yet.
+For a text or chat request, both values count only the work that at least one eligible worker could take, based on
+models, chat opt-in and length limits. `queue_position` counts the competing requests ahead. To calculate `wait_time`,
+the Horde:
 
-With zero eligible threads there is not a throughput value to divide by, so both values keep the Horde-wide
+- Adds the queued work up to and including the current request.
+- Divides that work by the eligible workers' measured speed across `eligible_worker_threads`.
+- Counts only as many threads as queued generations when there are fewer generations than threads.
+
+A request for a lightly queued model therefore gets a short estimate, however long the horde's queue is. The free
+output allowance uses the same calculation for a request being created. It leaves out the request's own output,
+because that output is not queued yet.
+
+With zero eligible threads there is not a throughput value to divide by, so both values use the Horde-wide
 calculation. `is_possible` and the thread count report that case.
 
-Both are estimates, and clients should label `wait_time` as one. Each eligible worker sees its own candidate queue, and
-an exact compatibility-specific position would require a separate scheduling calculation for every eligible worker.
-Their candidate queues overlap without being identical, and they change as workers and requests arrive. The
-per-worker check approximates them: a worker that serves several models can still prefer work this request cannot
-use.
+Both are estimates, and clients should label `wait_time` as one. Each eligible worker has its own candidate queue.
+An exact position that accounts for compatibility would require a separate scheduling calculation for every
+eligible worker. The candidate queues overlap without being identical, and they change as workers and requests
+arrive. The per-worker check is an approximation of those queues. A worker that serves several models can still pick
+up work for its other models before this request.
 
 ### `might_stall`
 
-`might_stall` is available when work is waiting and none of the request is processing. It compares newly arrived work
-that the scheduler places ahead of this request with capacity returned by workers that can currently serve it. The value
-becomes true only when arrivals strictly outpace returned eligible capacity in each half of the observation window,
-both halves contain a complete replacement wave, every observed opportunity goes to preceding work, and that work
-still occupies the compatible thread pool. Pre-existing backlog and a burst confined to one half cannot trigger it.
+`might_stall` indicates sustained competition for the workers that can serve a waiting request. It applies only while
+the request does not have any generations in progress. The calculation compares newly arrived work ahead of the
+request with work completed by eligible workers. The observation window is split into two halves, and the value is
+true only when all of these conditions hold:
 
-Incoming work is measured in the same normalized work units as completed batches. It combines the still-queued
-remainder of recent compatible arrivals with their batches already assigned to eligible workers. Consequently,
-cancelled unassigned work is not treated as continuing pressure. The observation window and event retention are
-finite. Missing events, capability changes, and transient bridge priorities that have not yet produced an observable
-pop all make the signal fail clear. Every candidate inside the observation window is evaluated. The scan is not
-truncated by a fixed request count.
+- In each half, the arriving work is strictly greater than the capacity returned by eligible workers.
+- Each half contains a complete replacement wave. That is, eligible workers returned at least as many batches as
+  they have threads.
+- Every observed dispatch opportunity went to work ahead of this request. A dispatch opportunity is a pop by an
+  eligible worker.
+- The batches of that preceding work still occupy all of the compatible threads.
+
+A backlog that existed before the window cannot make the value true. Neither can a burst confined to one half.
+
+The value stays false when events are missing or capabilities change. It also stays false when a bridge's transient
+priority has not yet led to an observable pop. How the inputs are measured is under
+[Stall signal inputs](../reference/request_scheduling.md#stall-signal-inputs).
 
 A true value is a reason to set expectations with the user or offer alternatives. The request may still start on the
-next worker cycle. A false value can mean either that arrival demand is not persistently exceeding clearance or that
-the service has not yet observed enough comparable work. It does not promise prompt assignment. History from a
-worker's old model, bridge, or softprompt state is ignored. The signal remains false while a generation is processing
-because active progress is more relevant at that point.
-
-## Availability and pressure telemetry
-
-OpenTelemetry exports one assignment-pressure sample when the shared 60-second availability cache is populated.
-It does not export a sample on every client poll. `horde.request.assignment_pressure.samples` includes only the bounded generation type, evidence,
-and `might_stall` labels. Companion histograms expose dispatch opportunities, lost opportunities, returned capacity,
-active preceding dispatches, and arriving versus returned normalized work. Request, worker, model, and prompt
-identifiers are deliberately excluded, keeping both cardinality and client influence bounded.
-
-`horde.worker_availability.cache_lookups` counts each availability cache read. `horde.outcome` is `hit` for a usable
-entry, `absent` when no entry exists, `generation_mismatch` when a text worker declaration changed after the entry was
-written, and `malformed` when the entry cannot be parsed. `horde.gentype` and the boolean `horde.chat` are the only
-other labels. Seeding the cache when a request is created is not a read and is not counted.
+next worker cycle. A false value can mean that new work is not persistently arriving faster than workers clear it. It
+can also mean that the service has not yet observed enough comparable work. It does not promise prompt assignment.
+History from a worker's old model, bridge, or softprompt state is ignored. The signal remains false while a generation
+is processing because active progress is more relevant at that point.
 
 ## Common response combinations
 
@@ -130,7 +127,7 @@ other labels. Seeding the cache when a request is created is not a read and is n
 | --- | --- |
 | `done` or `faulted` | Follow the normal result or error flow for a terminal request. |
 | `processing > 0` | Show active progress and continue polling, even when the eligible-worker count is low or zero. |
-| `waiting > 0` and `is_possible == false` | No recently observed worker can currently serve the request. Keep polling while the request is live, or offer cancellation and a replacement with different constraints. |
+| `waiting > 0` and `is_possible == false` | The request cannot currently be served by any recently observed worker. Keep polling while the request is live, or offer cancellation and a replacement with different constraints. |
 | `waiting > 0`, `is_possible == true`, and `might_stall == true` | The request is technically supported, with enough current pressure to make further delay plausible. Present a cautious status and treat the ETA as general guidance. |
 | `waiting > 0`, `is_possible == true`, and `might_stall == false` | The request is supported, but the signal may lack enough evidence. Continue polling and present the ETA as approximate. |
 
@@ -140,8 +137,8 @@ other labels. Seeding the cache when a request is created is not a read and is n
   client.
 - Use several consecutive polls before changing a user-facing warning. This prevents a worker check-in or cache
   refresh from causing the interface to flicker.
-- Use the eligible-worker fields to add context to the wait estimate. Free-slot calculations require current
-  occupancy data, which the response omits.
+- Use the eligible-worker fields to add context to the wait estimate. The response does not include current
+  occupancy, so free slots cannot be calculated from it.
 - When `might_stall` is true, explain that compatible capacity is limited or under pressure. Allow the request to keep
   running unless the user or the client's own policy decides otherwise.
 - Offer a replacement with different constraints only when the application can explain the effect. A more widely
@@ -159,61 +156,7 @@ Suitable user-facing messages might include:
 - `is_possible == false`: "No active worker currently supports this request. It can start if a compatible worker
   becomes available."
 
-## AI Horde maintainer guidance
+## Server measurements
 
-### Shadow scheduling forecasts
-
-AI Horde calculates a shadow forecast when a check or status call first finds a request waiting. This supports a
-future response with separate p50 and p90 remaining-time values for first worker assignment and full completion. The
-current API response remains unchanged while the forecast is measured against production outcomes.
-
-The first version of the shadow estimator, `compatible-queue-v1`, uses normalized queue work, recent horde-wide
-throughput, and the compatible thread count. Work belonging to the request is excluded from the first-assignment
-calculation and included in the completion calculation. The provisional `p90` value adds the larger of 60 seconds or
-50% of the `p50` value. It is a candidate upper estimate, not yet an empirical 90th percentile and therefore is not
-eligible for public promotion under that name. The global queue remains part of the calculation, also for text
-requests whose `wait_time` counts only the compatible part of it, because compatible workers do not share a single
-candidate queue. The validation loop measures whether later empirical calibration can
-support real percentile fields.
-
-#### Event delivery and retention
-
-Forecast and outcome events pass through a bounded local queue before a background thread stores them in Redis. This
-keeps Redis latency and failures away from status, worker-submit, cancellation, and cleanup responses. If the queue is
-full or an event cannot be processed, the event is dropped and a monitoring counter records the reason.
-
-Redis keeps one short-lived hash per request. Atomic first-write claims preserve the earliest forecast and prevent two
-application instances from recording the same validation twice. Events can arrive in either order, so a completion or
-expiry observed before its forecast can still be paired when the forecast arrives. A request refresh extends the
-record's lifetime far enough to include the current expiry time.
-
-Cancelled requests are excluded from completion and stall validation because cancellation prevents those outcomes
-from being observed. A start estimate can still be evaluated when assignment was observed before cancellation.
-Monitoring receives durations and bounded labels. Request and worker identifiers remain in Redis until the temporary
-record expires.
-
-#### Forecast validation
-
-Accuracy is calculated separately for image and text requests, and separately for first assignment and completion.
-Each of those four series uses a rolling 24-hour window with at least 10,000 paired forecasts. At least 80% of p50
-values must fall within 60 seconds or 50% of the observed duration, whichever is larger. The 90th percentile of
-absolute p50 error must remain within 120 seconds, and p90 coverage must remain between 85% and 95%. Monitoring reports
-`HordeRequestEstimatorPromotionApproved` after all four series hold those levels for 24 hours. A changed estimator name
-collects a separate series and is evaluated on its own results.
-
-#### Stall prediction validation
-
-The shadow stall calculation uses the same request snapshot. It predicts an unstarted expiry when compatible capacity
-is unavailable or the p90 first-assignment forecast reaches the request expiry. An observed stall is an expiry before
-the first real worker assignment. Evaluation requires 10,000 predictions and 500 observed stalls for both image and
-text, with at least 60% precision, 80% recall, and a false-positive rate no greater than 10%. Monitoring reports
-`HordeRequestStallSignalPromotionApproved` after those levels hold for 24 hours.
-
-### Implementation references
-
-The serialized field descriptions live in `horde/apis/models/v2.py`, `Models.response_model_wp_status_lite`. Status
-assembly lives in `horde/classes/base/waiting_prompt.py`, `WaitingPrompt.get_status`. Worker matching and its
-short-lived cache live in `horde/database/functions.py`,
-`get_worker_availability_for_request`. Shadow forecast calculation, temporary storage, and outcome pairing live in
-`horde/request_scheduling.py`, alongside the centralized assignment-pressure calculation. These implementations
-remain the authority for exact behavior.
+For assignment-pressure telemetry, Redis retention and shadow forecast validation, see
+[Request scheduling telemetry and forecasts](../reference/request_scheduling.md).

@@ -17,54 +17,57 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [accounting](../topics.md#accounting), [kudos](../topics.md#kudos)
 <!-- END GENERATED: topics -->
 
-A kudos-changing business transaction records signed, typed events instead of treating the balance columns as the
-complete history of what happened. Currency movements go to the append-only `kudos_ledger`. Display totals and
-non-currency statistics go to `kudos_stat_events`. In `ledger` mode, a database-serialized projector folds those
-events into the familiar user, worker, team, and statistics columns. Spend admission uses single-payer reservations
-so it remains safe while the visible balance is catching up.
+When a request spends kudos or a worker earns them, the Horde records the amount and reason in an event table.
+In `ledger` mode, a background task called the projector applies these events to the stored balances and statistics.
+The displayed balance can therefore lag behind recent transactions. Reservations prevent that delay from allowing
+a user to spend the same kudos twice.
 
-For field definitions and implementation symbols, see the
-[kudos accounting reference](../reference/kudos_accounting.md). For cutover and recovery procedures, see
-[kudos ledger operations](../how-to/kudos_ledger_operations.md).
+This page explains how events and reservations work together, and where their guarantees end. The exact mutation
+rules, field definitions and consumer inventory are in the [kudos accounting reference](../reference/kudos_accounting.md). The
+operator sequence for cutover, rollback, and repair is in
+[kudos ledger operations](../how-to/kudos_ledger_operations.md). For the user-facing purpose of kudos, see
+[What are kudos?](../haidra-assets/docs/kudos.md).
+
+## Inline mutation
+
+Under inline mutation, each request updates the balance columns itself. Request activation, settlement, transfers,
+uptime rewards, trust promotion, awards, and administrative adjustments change the stored rows directly inside their
+request transactions. The balance columns are then both the way kudos change and the only practical accounting
+record.
+
+Busy user rows are then locked by many otherwise unrelated transactions. Operations on several accounts become
+sensitive to lock order, and a detailed audit trail does not exist. Recording each movement as an event preserves
+the transaction history while allowing balances and statistics to be updated later
+([ADR 0001](../decisions/0001-event-sourced-kudos-accounting.md)). The temporary `shadow` mode records the same events
+while keeping the inline updates. This allows a comparison and an online, reversible cutover
+([ADR 0005](../decisions/0005-shadow-mode-cutover.md)).
 
 ## Accounting overview
 
-- The balance and aggregate columns (`users.kudos`, `workers.kudos`, team totals, stats) remain what ordinary read
-  sites consume. They are projections of the event history, and in `ledger` mode they can lag by a projector
-  interval.
+- API responses and other ordinary reads use the balance and aggregate columns (`users.kudos`, `workers.kudos`, team totals, stats).
+  These columns are projections: current values computed from the event history. In `ledger` mode they can lag behind
+  the events by one projector interval.
 - Currency movements are rows in `kudos_ledger`. Display totals and counters are rows in `kudos_stat_events`. Rows
-  from one business event share one `event_id`. Both tables keep exact rows for an online window, after which
+  from one business event share one `event_id`. Both tables keep exact rows for an online window. After that,
   [retention](#event-retention) replaces them with summaries and an archive.
-- Spend admission never trusts the raw balance column. It takes a payer lock and checks `available_kudos`,
-  which subtracts active reservations and queued debits and deliberately ignores queued credits.
-- One database-serialized projector folds unapplied events into the materialized columns. `applied = false` is
-  the work queue. A watermark cannot skip a row.
-- `shadow` mode is a temporary mode that preserves inline balance behavior.
-  `ledger` mode is an explicit, online-reversible operator cutover.
+- Spend admission does not use the raw balance column to decide whether a spend is allowed. It takes the payer lock,
+  a database lock on the paying user's ID, and checks `available_kudos`. That value subtracts active reservations and
+  queued debits and deliberately ignores queued credits.
+- The projector adds each unapplied event into the stored columns. This step is called folding. Rows with
+  `applied = false` are the work queue. The projector selects rows by that flag and does not keep a watermark (a saved
+  "highest ID processed" position), so a row that commits late is not skipped.
+- `shadow` mode is a temporary mode that keeps the inline balance updates. `ledger` mode is an explicit operator
+  cutover that can be reversed online.
 
-To dive into code, start with `horde/classes/base/kudos.py` (the models and the emission primitives every
-producer uses) and `horde/database/kudos_ledger.py` (the projector). The
+The models and shared event-writing functions are in `horde/classes/base/kudos.py`. The projector is in
+`horde/database/kudos_ledger.py`. The
 [code map](../reference/kudos_accounting.md#code-map) covers the rest.
 
-Under inline mutation, request activation, settlement, transfers, uptime rewards, trust promotion, awards, and
-administrative adjustments change the materialized rows directly inside their request transactions, which makes the
-balance columns both the mutation mechanism and the only practical accounting record.
+## Event history and projections
 
-Frequently used user rows then
-belong to many otherwise unrelated transaction lock graphs, multi-account operations become sensitive to lock order,
-and no detailed audit trail exists. Recording the movement as an event separates the durable fact that it occurred
-from the eventually updated read models ([ADR 0001](../decisions/0001-event-sourced-kudos-accounting.md)). The
-temporary `shadow` mode records the same events while retaining the inline projection, permitting comparison and an
-online, reversible cutover ([ADR 0005](../decisions/0005-shadow-mode-cutover.md)).
+### Shared mutable rows {#the-problem-shared-mutable-rows}
 
-This page explains why that shape exists and the limits of the guarantees. The exact mutation rules and the
-consumer inventory are in the [kudos accounting reference](../reference/kudos_accounting.md). The operator sequence
-for cutover, rollback, and repair is in [kudos ledger operations](../how-to/kudos_ledger_operations.md). For the
-user-facing purpose of kudos, see [What are kudos?](../haidra-assets/docs/kudos.md).
-
-## Shared mutable rows {#the-problem-shared-mutable-rows}
-
-A kudos settlement sounds like simple addition and subtraction, but one completed job updates a connected set of state:
+Settling one completed job updates several related records:
 
 - the requester's spendable balance, usage totals, records, and last-active time;
 - the worker owner's spendable or evaluation balance;
@@ -73,41 +76,41 @@ A kudos settlement sounds like simple addition and subtraction, but one complete
 - the waiting prompt, processing generation, reservation, and transfer metadata that make the business event valid.
 
 Inline mutation performs much of that work inside the request transaction. Concurrent activation and settlement
-transactions reach the same user and job rows through different paths, and a transfer necessarily involves two users.
-Even when every individual update is correct, inconsistent acquisition order forms a cycle: transaction A holds a
-prompt or source user while waiting for another user, while transaction B holds that user and waits for A's row.
-Retrying a deadlock victim prevents some user-visible failures without removing the contention or supplying an audit
-trail.
+transactions reach the same user and job rows through different paths, and a transfer always involves two users.
+Even when every update is correct, taking locks in an inconsistent order can form a cycle. Transaction A holds a
+prompt or source user row while it waits for another user row. Transaction B holds that user row and waits for A's
+row. Retrying the transaction that PostgreSQL cancels as the deadlock victim prevents some user-visible failures. It
+does not remove the contention or provide an audit trail.
 
-Inline mutation also couples correctness to timing. Read-then-insert statistics race on the first dimension row, a
-crash between related updates is difficult to explain after the fact, a retry repeats money when no stable business
-key exists, and correcting a balance overwrites the only visible value instead of adding an auditable compensating
-fact.
+With inline mutation, correctness also depends on timing. Statistics written by read-then-insert race when two
+transactions create the first row of a dimension. A crash between related updates is difficult to explain after the
+fact. A retry moves the money again when there is not a stable business key. Correcting a balance overwrites the only
+visible value instead of adding an auditable compensating fact.
 
-### Pre-ledger lock contention
+#### Pre-ledger lock contention
 
-Lock-chain and `pg_stat_statements` captures taken on the production primary on 2026-07-20 measured the cost. The
-anonymous requester row (`users.id = 0`) had `Lock:tuple` queues 15 waiters deep even during quiet periods, with a
-mean lock acquisition around one second, maxima in minutes, and single-row balance updates observed blocked for hours
-during incidents. The `FOR NO KEY UPDATE` acquisition was among the slowest operations in `pg_stat_statements`.
+Lock-chain and `pg_stat_statements` captures from the production primary measured the cost
+([ADR 0001](../decisions/0001-event-sourced-kudos-accounting.md) records when they were taken). The anonymous
+requester row (`users.id = 0`) had `Lock:tuple` queues 15 waiters deep even during quiet periods. The mean lock
+acquisition was around one second, maxima were in minutes, and at worst single-row balance updates were blocked for
+hours. The `FOR NO KEY UPDATE` acquisition was among the slowest operations in `pg_stat_statements`.
 
-Removing the
-users-row serialization moved the queue one level down rather than dissolving it: with balances appended instead of
-updated inline, load testing found the anonymous user's `user_stats` row queued 10 to 12 deep behind multi-second
-idle-in-transaction holders. Folding the statistics counters into the same event stream, so request transactions
-append and write no shared aggregate row, is what removes the remaining queue.
+Removing the serialization on the users row moved the queue one level down instead of removing it. With balances
+appended instead of updated inline, load testing found the anonymous user's `user_stats` row queued 10 to 12 deep
+behind multi-second idle-in-transaction holders. Folding the statistics counters into the same event stream removes
+the remaining queue, because request transactions then append rows and do not write any shared aggregate row.
 
 The design therefore addresses four related problems:
 
 1. shrink and standardize the lock graph for kudos mutations;
 2. make currency movement durable, typed, correlated, and replayable;
 3. preserve spend safety while projection is asynchronous;
-4. make cutover, rollback, diagnosis, and repair explicit operations rather than improvised database edits.
+4. make cutover, rollback, diagnosis, and repair explicit operations instead of improvised database edits.
 
-## Facts, holds and projections {#the-mental-model-facts-holds-and-projections}
+### Facts, holds and projections {#the-mental-model-facts-holds-and-projections}
 
-There are three different kinds of state. Treating them as interchangeable is the easiest way to introduce an
-accounting bug.
+Events record accepted changes, reservations hold spend capacity, and projections store totals for reads.
+Each has a different role in deciding what a user can spend.
 
 ```mermaid
 flowchart LR
@@ -131,19 +134,19 @@ flowchart LR
     L --> V
 ```
 
-**Facts** answer "what movement was accepted?" A `KudosLedger` row is one signed two-decimal currency delta against
-one user's spendable or evaluation balance. A `KudosStatEvent` row is one non-currency or display delta. Rows from the
-same business event share an `event_id`, but each row remains independently claimable and auditable.
+**Facts** record accepted changes. A `KudosLedger` row adds to or subtracts from one user's spendable or evaluation
+balance, with amounts stored to two decimal places. A `KudosStatEvent` row changes a statistic or display total.
+Rows from the same business event share an `event_id`, but each row can still be claimed and audited separately.
 
-**Holds** answer "what has already been promised?" A reservation belongs to exactly one payer and has a stable
-`business_id`. It prevents two concurrent admissions from both relying on the same not-yet-projected balance
-([ADR 0004](../decisions/0004-payer-reservations-for-spend-admission.md)). It is not currency and never credits a
+**Holds** record what has already been promised. A reservation belongs to exactly one payer and has a stable
+`business_id`. It prevents two concurrent admissions from both relying on the same balance before it is projected
+([ADR 0004](../decisions/0004-payer-reservations-for-spend-admission.md)). It is not currency and does not credit a
 recipient.
 
-**Projections** answer "what should existing readers see cheaply?" `users.kudos`, `workers.kudos`, the team totals,
-and the existing statistics tables remain denormalized read models. In ledger mode they can lag accepted events by a
-projector interval. They are not discarded because queueing, API responses, leaderboards, and existing integrations
-need inexpensive reads.
+**Projections** let API responses and other reads retrieve totals without summing the event history. These stored
+totals include `users.kudos`, `workers.kudos`, team totals and the existing statistics tables. In ledger mode they
+can lag behind accepted events by one projector interval. This delay allows request transactions to record events
+without updating the shared totals, while keeping reads inexpensive.
 
 This separation also explains why worker "kudos" do not belong in the currency ledger. `workers.kudos` is a display
 total attributed to a worker. The actual currency credit belongs to the worker owner in `users.kudos`. Likewise,
@@ -151,11 +154,11 @@ contributions and fulfilments are measured in things or counts. Mixing them into
 reconciliation, and future reporting ambiguous
 ([ADR 0002](../decisions/0002-separate-currency-and-statistic-event-tables.md)).
 
-## One business event, several postings
+### One business event, several postings
 
-The `kudos_event` context assigns a shared event UUID and optional job metadata to related postings. For example, a
-normal generation settlement can produce all of the following without directly editing the corresponding read-model
-rows in ledger mode:
+The `kudos_event` context assigns a shared event UUID and optional job metadata to related postings. For example, in
+ledger mode a normal generation settlement can produce all of the following without directly editing the
+corresponding read-model rows:
 
 ```mermaid
 flowchart TD
@@ -171,18 +174,19 @@ flowchart TD
 ```
 
 The exact set varies with trust, cancellation, fake generations, shared keys, and job type. The invariant is that the
-business transaction commits its job state and emitted facts together. The event UUID supplies correlation.
-it does not by itself make every producer retry idempotent. Transfers accept a caller idempotency key and validate a
-replay. Other producers still depend on their existing job-state transaction to prevent duplicate settlement.
+business transaction commits its job state and emitted facts together. The event UUID links the postings. It does not
+by itself make every producer retry idempotent. Transfers accept an idempotency key from the caller and reject a
+replay with different parameters. Other producers rely on their job-state transaction to prevent duplicate
+settlement.
 
-A streamed chat generation cancelled by its requester is settled through the same event, using the worker's
-posted content measured by the Horde before cancellation. The worker owner is credited and the requester debited for that
-content, and the cancel does not count as a dropped job for the worker. A later submit for the settled generation is
-refused, so the generation settles once. The Horde does not measure part of a non-streamed generation, so it settles
-on submit
+When the requester cancels a streamed chat generation, it is settled through the same event. The amount is based on
+the content that the worker posted before the cancel, as measured by the Horde. The worker owner is credited and the
+requester is debited for that content. The cancel does not count as a dropped job for the worker. A later submit for
+the settled generation is refused, so the generation settles once. The Horde does not measure part of a non-streamed
+generation, so a non-streamed generation settles on submit
 ([Chat requests: pricing](chat_requests.md#pricing-by-the-text-output-estimate)).
 
-## Projection: durable work queue
+### Projection: durable work queue
 
 In ledger mode, rows start with `applied = false`. The periodic projector:
 
@@ -194,31 +198,35 @@ In ledger mode, rows start with `applied = false`. The periodic projector:
 6. marks the exact claimed row IDs applied;
 7. commits all those changes in the same database transaction.
 
-If the process dies before commit, neither the projection nor the applied flags commit. A later cycle sees the rows
-again. If a lower numeric ID commits after a later row was already processed, it remains `applied = false` and is
-claimed by a later cycle. A high-water mark cannot skip it. "Exactly once" here means exactly one
-committed fold of an accepted row, not exactly-once creation of arbitrary business events.
+If the process dies before commit, neither the projection nor the applied flags commit, and a later cycle claims the
+rows again. A row with a lower ID can commit after a row with a higher ID was already processed. The lower row stays
+`applied = false`, and a later cycle claims it. Rows are not selected by a high-water mark (the highest ID processed so
+far), so the late row is not skipped. "Exactly once" here means that each accepted row is folded in exactly one
+committed transaction. It does not mean that every business event is created exactly once.
 
-The applier heartbeat is deliberately not a correctness watermark. It only makes a stopped or delayed projector
-observable.
+The applier heartbeat records when the projector last completed a cycle. It is deliberately not used as a watermark
+for correctness. It only makes a stopped or delayed projector visible.
 
-## Event retention
+### Event retention
 
 Exact events stay in PostgreSQL for an online window of at least 30 days. After that, statistic events are replaced
-by daily rollups and currency postings by per-user checkpoints, daily statements and a verified archive object, and
-the partition holding them is dropped. Reconciliation reads the latest checkpoint plus the online tail, and transfer
-and repair retries are checked against a key table that lives as long as the window. The design, its lifecycle and
-its costs are in [kudos event retention](kudos_retention.md). The decision is
-[ADR 0042](../decisions/0042-roll-up-statistics-and-archive-currency-after-the-online-window.md), which amends the
-storage meaning of permanence in [ADR 0006](../decisions/0006-permanent-archive-compensation-only-repair.md) and
+by daily rollups. Currency postings are replaced by per-user checkpoints, daily statements and a verified archive
+object. The partition holding the events is then dropped.
+
+Reconciliation reads the latest checkpoint plus the events still online after that checkpoint. Transfer and repair retries are checked against a key table whose rows last as long as the window.
+[Kudos event retention](kudos_retention.md) describes the design, the unit lifecycle and the costs. The decision is
+recorded in [ADR 0042](../decisions/0042-roll-up-statistics-and-archive-currency-after-the-online-window.md). It
+changes what permanent storage means in [ADR 0006](../decisions/0006-permanent-archive-compensation-only-repair.md) and
 keeps compensation-only repair.
 
-## Deadlock mitigation
+## Concurrency and spend admission
 
-The ledger design is better at preventing the deadlock class that motivated its creation because ordinary producers
-append new rows instead of acquiring write locks on hot user, worker, team, stats, and record rows. Multi-account
-transfers serialize on the payer only and never lock a recipient for admission. Projection belongs to one
-database-serialized writer, which accumulates a batch and applies each target class in a stable order
+### Deadlock mitigation
+
+Recording events reduces lock contention because ordinary transactions append new rows instead of taking write
+locks on shared balances and statistics. A transfer between accounts
+locks only the payer, and admission does not lock the recipient. Projection is done by a single writer, enforced by
+the database. It collects a batch and applies each kind of target in a stable order
 ([ADR 0003](../decisions/0003-single-serialized-projector.md)).
 
 ```mermaid
@@ -245,116 +253,116 @@ flowchart LR
     end
 ```
 
-The claim is intentionally narrower than "deadlocks are impossible." Activation and settlement still change job
-state, relationships, shared-key budgets, and other non-ledger rows. Database maintenance or unrelated code can also
-lock a projection target. The bounded PostgreSQL deadlock retry on waiting-prompt activation remains for those cases.
-The projector itself can be blocked, and its single-writer design trades write parallelism for a much simpler lock
+Deadlocks remain possible outside ledger projection. Activation and settlement still change job state and related
+non-ledger rows, including shared-key budgets. Database maintenance or unrelated code can also
+lock a projection target. The bounded PostgreSQL deadlock retry on waiting-prompt activation is kept for those cases.
+The projector itself can be blocked. Its single-writer design gives up write parallelism for a much simpler lock
 graph. Queue age, heartbeat age, and database deadlock metrics must therefore be monitored after cutover.
 
-The accounting-specific lock order is:
+The [concurrency reference](../reference/kudos_accounting.md#concurrency-and-lock-reference) owns the exact
+lock order and participating locks. The following mode-transition explanation describes why that order matters.
 
-```text
-mode transition: applier advisory lock -> exclusive mode-gate advisory lock -> final fold
-projector:        applier advisory lock -> event rows -> ordered projection targets -> reservations
-producer:         shared mode-gate advisory lock -> optional payer advisory lock -> appended rows
-reconciliation:  repeatable-read snapshot; repair emission also takes the reconciliation advisory lock
-```
+#### Mode transitions
 
-### Mode transitions
+Every mutation transaction holds the shared mode gate, a transaction-scoped advisory lock, until it commits. This
+pins the mode that the transaction read. A mode change takes the gate in exclusive mode, so it cannot proceed until
+the writers that read the old mode have committed. Only then does the changed ownership rule take effect. The gate is
+an advisory lock instead of a lock on the control row, because heavyweight locks queue fairly. A pin requested while a
+transition is waiting queues behind the transition, so the transition's delay is bounded by the longest mutation in
+progress.
 
-Every mutation transaction pins the observed mode by holding the shared mode gate, a transaction-scoped advisory
-lock, until commit. An exclusive mode change therefore waits for old-mode writers to finish before the changed
-ownership rule becomes visible. The gate is an advisory lock rather than a lock on the control row because
-heavyweight locks queue fairly: a pin requested while a transition is waiting queues behind it, so transition latency
-is bounded by the longest in-flight mutation.
+A row-level `FOR KEY SHARE` lock requested while a `FOR UPDATE` lock is queued takes the no-conflict fast path
+instead. Under sustained writer traffic with overlapping pins, the transition is then delayed indefinitely
+([ADR 0010](../decisions/0010-advisory-lock-mode-gate.md)).
 
-A row-level `FOR KEY SHARE` taken against a queued `FOR UPDATE` instead
-uses the no-conflict fast path, and sustained writer traffic with overlapping pins starves the transition
-indefinitely ([ADR 0010](../decisions/0010-advisory-lock-mode-gate.md)).
+The transition back to shadow takes the applier lock first and waits for transactions that read ledger mode.
+It applies their remaining unapplied events in the same transaction as the mode change. A ledger-mode posting therefore cannot appear after inline projection resumes.
 
-The transition back to shadow takes the
-applier lock first, waits for those writers, and folds the final ledger tail in the same transaction, so no
-ledger-mode posting can appear after inline projection resumes.
+### Reservations make eventual balances spend-safe
 
-## Reservations make eventual balances spend-safe
-
-Asynchronous projection means `users.kudos` alone cannot answer whether another debit may be accepted. A user could
-have 100 visible kudos, submit two simultaneous 80-kudos transfers, and appear solvent to both transactions if their
-debits only exist as pending ledger rows.
+Because projection is asynchronous, `users.kudos` alone cannot show whether another debit may be accepted. A user
+could have 100 visible kudos and submit two simultaneous 80-kudos transfers. If their debits exist only as pending
+ledger rows, the user would appear solvent to both transactions.
 
 Admission closes that window with a transaction-scoped advisory lock derived from the payer's ID. Under that lock,
-`available_kudos` subtracts the account floor, active holds, and ordinary queued debits while deliberately ignoring
-queued credits. The accepted operation creates or reactivates a uniquely named reservation in the same transaction
-as its ledger posting. Projection consumes request holds as their debits fold and releases transfer holds only when
-the complete event has folded, including a transfer split across batches.
+`available_kudos` subtracts the account floor, active holds, and ordinary queued debits, and deliberately ignores
+queued credits. The accepted operation creates or reactivates a reservation with a unique business ID in the same
+transaction as its ledger posting.
 
-This is conservative by design: a queued credit cannot fund a new spend until it is projected. Conservatism can delay
-work during projector lag, but it cannot authorize an overspend on the strength of unmaterialized income.
+Projection consumes a request hold as the corresponding debits are applied. It releases a transfer hold
+only when the complete event has been applied, including a transfer split across batches.
 
-### Free output allowance
+A queued credit cannot fund a new spend until it is projected. This can delay work
+during projector lag, but it cannot authorize an overspend based on income that is not yet projected.
 
-Not every request takes a hold. A text or chat request within its free output allowance is
-admitted without one and charged when its generations settle, so a requester with little or no balance can still use
-idle capacity. The allowance follows the request's estimated wait on the workers eligible for it, the same estimate
-the status route reports as `wait_time`: 4096 tokens up to a minute of queue ahead, falling linearly to 512 at five
-minutes. Free output is therefore generous while those workers keep up with their queue, however deep it is, and
-modest when they fall behind ([free output allowance](../reference/chat_requests.md#free-output-allowance)).
+#### Free output allowance
 
-A free request's charge can take the requester
-below the account floor. Projection then forgives the shortfall with a `FLOOR_ADJUSTMENT`, which is how free output is
-paid for.
+Not every request takes a hold. A text or chat request within its free output allowance is admitted without one and
+charged when its generations settle, so a requester with little or no balance can still use idle capacity. The
+allowance depends on the request's estimated wait on its eligible workers. This is the same estimate that the status
+route reports as `wait_time`: 4096 tokens up to a minute of queue ahead, falling linearly to 512 at five minutes. Free
+output is therefore generous while those workers keep up with their queue, however deep it is, and modest when they
+fall behind ([free output allowance](../reference/chat_requests.md#free-output-allowance)).
 
-### Effective balance reads
+A free request's charge can take the requester below the account floor. Projection then forgives the shortfall with a
+`FLOOR_ADJUSTMENT`, which is how free output is paid for.
 
-`effective_kudos` adds all committed, unprojected currency deltas to the materialized
-balance and clamps the result to the account floor. It is appropriate for a "new balance" response or diagnosis, not
-for spend authorization, because it includes queued credits and does not represent holds.
+#### Effective balance reads
 
-## Compatibility rules
+`effective_kudos` adds all committed, unprojected currency deltas to the materialized balance and clamps the result
+to the account floor. It is suitable for a "new balance" response or for diagnosis. It must not be used to authorize a
+spend, because it includes queued credits and does not account for holds.
 
-The ledger changes mutation mechanics and leaves the established economic policy intact:
+## Compatibility and recovery
+
+### Compatibility rules
+
+The ledger changes how kudos movements are written and keeps the established economic policy:
 
 - A debit cannot take an account below `get_min_kudos()`. If projection forgives part of a debit, it emits an already
-  applied `FLOOR_ADJUSTMENT` for the created amount so replay remains linear.
+  applied `FLOOR_ADJUSTMENT` for the created amount, so that replaying the events still gives the projected result.
 - Untrusted worker-owner rewards go wholly or partly to `evaluating_kudos`, depending on reward type. The projector
-  detects the final threshold-crossing contribution, grants trust, and emits an escrow-debit/spendable-credit pair,
-  so no later request is needed to trigger promotion
+  detects the final contribution that crosses the threshold, grants trust, and emits an escrow-debit/spendable-credit
+  pair. A later request is not needed to trigger promotion
   ([ADR 0008](../decisions/0008-trust-promotion-in-the-projector.md)).
-- Worker and team aggregates retain historical attribution. The producer stamps the worker's current `team_id` on
-  the event, so moving the worker before projection cannot move old credit to a new team.
+- Worker and team aggregates keep historical attribution. The producer stamps the worker's current `team_id` on the
+  event, so moving the worker before projection cannot move old credit to a new team.
 - Shared-key kudos remain an inline per-key quota. They are not user currency and are not projected by this ledger.
-- Job cost fields such as `waiting_prompts.kudos` and `consumed_kudos` are prices and job-local accounting, not account
-  balances.
+- Job cost fields such as `waiting_prompts.kudos` and `consumed_kudos` are prices and job-local accounting. They are
+  not account balances.
 
 Some ordinary reads intentionally remain eventually consistent. Queue priority is copied from the materialized user
-balance when a request or interrogation is activated. API and login display paths generally expose materialized
-balances. The image-worker upfront eligibility recheck still reads the materialized balance even though initial
+balance when a request or interrogation is activated. API and login display paths generally show materialized
+balances.
+
+The upfront eligibility recheck for image workers reads the materialized balance, although initial
 admission is protected by a reservation. Those paths can be stale by the projector lag. They do not authorize a
-second spend, but they can temporarily show an old value or make a conservative/optimistic scheduling decision. The
-[consumer inventory](../reference/kudos_accounting.md#consumer-and-read-model-inventory) records these sites so a
-future change can deliberately choose `available_kudos`, `effective_kudos`, or the projection rather than blindly
+second spend, but they can briefly show an old value or make a conservative or optimistic scheduling decision. The
+[consumer inventory](../reference/kudos_accounting.md#consumer-and-read-model-inventory) records these sites. A future
+change can then deliberately choose `available_kudos`, `effective_kudos`, or the projection instead of blindly
 replacing every `.kudos` read.
 
-## Shadow mode
+### Shadow mode
 
-Shadow mode is a migration mechanism, not a second architecture. Business methods always emit the typed events.
-A small compatibility projector applies the historical inline mutations and marks the emitted rows already applied.
-This provides permanent audit evidence without replaying a movement that already changed its target. The asynchronous
-projector's trust-promotion and escrow-drain duties run only in ledger mode. In shadow mode the compatibility projector
-owns them, preserving inline balance behavior.
+Shadow mode allows operators to compare event history with inline accounting before switching modes. Business
+methods emit the same typed events in both modes. In shadow mode, a compatibility projector updates balances inline
+and marks the events as applied, preventing the background projector from applying the same changes again.
+These events remain available as audit history for the retention window, and [retention](#event-retention) then
+replaces them with summaries and, for currency, an archive object. The asynchronous projector handles trust
+promotion and the escrow drain only in ledger mode. In shadow mode the compatibility projector handles them, which
+keeps the inline balance behavior.
 
-The mode branch is confined to `horde/database/kudos_legacy_projection.py`, the control helpers, and the
-applied-flag choice inside the two emission primitives. Removing the cutover period is therefore a small deletion:
-remove the compatibility calls/module and the shadow mode transition, while leaving producers, event schemas,
-reservations, and the ledger projector intact.
+Both modes retain the same event schemas and reservations, so the mode transition changes who applies the
+events. The [mutation contract](../reference/kudos_accounting.md#mutation-contract) describes the shared producers;
+[operator procedures](../how-to/kudos_ledger_operations.md#online-rollback) describe the reversible cutover.
 
 Shadow history records movements from deployment onward. It does not reconstruct earlier kudos movements.
-The existing materialized balances form the opening position. A transaction-consistent snapshot records that opening
+The existing materialized balances are the opening position. A transaction-consistent snapshot records that opening
 position together with the applied-ledger totals visible at the same time.
 
-## Recovery
+### Recovery
 
-The event history, its checkpoints and the balance snapshots make recovery demonstrable:
+Recovery uses balance snapshots and the event history to calculate expected balances before making corrections:
 
 ```mermaid
 stateDiagram-v2
@@ -368,43 +376,44 @@ stateDiagram-v2
     Shadow --> Ledger: prove again before recutover
 ```
 
-A snapshot uses repeatable-read isolation and records each user's materialized spendable/escrow values plus the
-applied ledger totals at that point. Reconciliation computes the expected current values from that baseline and later
-applied events. Read-only reconciliation reports drift. Repair mode emits deterministic `RECONCILIATION` postings.
-it never rewrites a balance, deletes a posting, or changes an old `applied` flag. Re-running the same repair cannot
-duplicate it.
+A snapshot uses repeatable-read isolation. It records each user's materialized spendable and escrow values plus the
+applied ledger totals at that point. Reconciliation computes the expected current values from that baseline and the
+events applied later. Read-only reconciliation reports drift. Repair mode emits deterministic `RECONCILIATION`
+postings. It does not rewrite a balance, delete a posting, or change an old `applied` flag. Re-running the same repair
+cannot duplicate it.
 
-If the projector stops, accepted rows remain durable and unapplied: restore the projector and drain. If projection is
+If the projector stops, accepted rows stay durable and unapplied. Restore the projector and drain. If projection is
 wrong, preserve evidence, reconcile from a known snapshot, review all drift, emit compensation, drain, and reconcile
-again. If ledger ownership itself must be rolled back, switch to shadow through the control helper so the final tail
-is folded atomically. Rolling directly back to code that does not understand reservations and shadow audit events is
-unsafe.
+again. If the move to ledger mode itself must be rolled back, switch to shadow through the control helper so the
+final tail is folded atomically. Rolling back directly to code that does not handle reservations and shadow audit
+events is unsafe.
 
-This recovery model is why only the retention job removes events, after their replacement is committed, and why an
-operator must not "fix" an incident by toggling `applied`, deleting events, or assigning balances directly. The
-operational commands and rehearsal checklist are in [kudos ledger operations](../how-to/kudos_ledger_operations.md).
+Because of this recovery model, only the retention job removes events, and only after their replacement is committed.
+For the same reason, an operator must not "fix" an incident by toggling `applied`, deleting events, or assigning
+balances directly. The operational commands and rehearsal checklist are in
+[kudos ledger operations](../how-to/kudos_ledger_operations.md).
 
 ## Costs and boundaries
 
 The architecture deliberately accepts several costs:
 
 - Normal balance and aggregate reads are only eventually consistent in ledger mode.
-- One projector limits write throughput. Bounded batches, a small interval, and a bounded per-tick catch-up loop are
-  the scaling controls. Sharding it would require a new ordering and reservation design, not merely more threads.
+- One projector limits write throughput. Bounded batches, a small interval, and a bounded catch-up loop per tick are
+  the scaling controls. Sharding the projector would require a new design for ordering and reservations. More threads
+  would not be enough.
 - Statistic rows older than the window survive only as daily rollups and best-effort dumps. Reading archived currency
-  rows means restoring an object instead of running an indexed query, and the archive budget must be sized by the
-  operator.
+  rows means restoring an object instead of running an indexed query. The operator must size the archive budget.
 - PostgreSQL provides the production concurrency guarantees, and the unit suite runs against PostgreSQL. The SQLite
-  code branches serve the legacy `USE_SQLITE` runtime mode only. They short-circuit advisory locks and prove nothing
-  about concurrent-projector behavior.
-- Projection exactly-once does not automatically make every producer idempotent. New externally retryable mutations
-  need a stable idempotency key and parameter-conflict behavior.
+  code branches exist only for the legacy `USE_SQLITE` runtime mode. They short-circuit advisory locks, so they do not
+  prove anything about concurrent projector behavior.
+- Exactly-once projection does not automatically make every producer idempotent. A new mutation that clients can
+  retry needs a stable idempotency key and a rule for a retry with conflicting parameters.
 - Reconciliation covers user currency and evaluation escrow. Derived statistics are auditable and replayable from
-  `kudos_stat_events`, but the snapshot/repair command does not reconcile every worker, team, or counter row.
-- Mint and burn events post one side only, so no global arithmetic identity detects kudos created or destroyed by an
-  emission bug. Balancing them against system accounts is proposed in
+  `kudos_stat_events`, but the snapshot and repair command does not reconcile every worker, team, or counter row.
+- Mint and burn events post one side only. A global arithmetic check therefore cannot detect kudos created or
+  destroyed by an emission bug. Balancing them against system accounts is proposed in
   [ADR 0009](../decisions/0009-balanced-events-via-system-accounts.md).
 
-These are preferable to an implicit, distributed lock graph, but they are still operational obligations. A safe
-cutover requires shadow evidence, PostgreSQL concurrency tests, a current snapshot, a clean reconciliation, healthy
+Before switching to ledger mode, verify that the event-based balances agree with the inline balances. A safe
+cutover requires shadow-mode comparisons, PostgreSQL concurrency tests, a current snapshot, a clean reconciliation, healthy
 queue lag, and a rehearsed return to shadow before ledger mode becomes authoritative.

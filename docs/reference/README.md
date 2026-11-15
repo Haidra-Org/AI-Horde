@@ -6,8 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Reference
 
-How the running service behaves, down to the classes, caches, and gate orderings
-involved. These pages are for reading alongside the code.
+These pages specify API contracts and service behaviour, with code maps and tests for implementation details.
 
 The concepts they assume (what a worker is, what a job's lifecycle means) are in
 [`haidra-assets/docs`](../haidra-assets/docs/README.md).
@@ -26,6 +25,7 @@ The concepts they assume (what a worker is, what a job's lifecycle means) are in
 | [Style contract reference](style_contract.md) | Style parameter overrides, prompt placeholders and text context sizing, with endpoint validation, dry-run responses and implementation references. |
 | [Chat requests reference](chat_requests.md) | Native chat routes, request fields, worker declarations, job payloads, submissions, pricing and progress streams, with implementation and test references. |
 | [Chat wire examples](chat_wire_examples.md) | Checked JSON examples for native chat requests, OpenAI-compatible responses and worker pop, progress and submit routes. |
+| [Request scheduling telemetry and forecasts](request_scheduling.md) | Assignment-pressure inputs, availability telemetry, shadow forecast retention and validation criteria for server maintainers. |
 | [Chat front reference](chat_front.md) | Routes, settings, OpenAI-compatible request and response formats, stream behavior, availability errors and telemetry of the horde.oai service. |
 | [Outbound requests reference](outbound_requests.md) | Which client-supplied URLs the horde requests, the address check every hop passes, and the timeouts, redirect limits and byte caps of image fetches and webhooks. |
 <!-- END GENERATED: documents -->

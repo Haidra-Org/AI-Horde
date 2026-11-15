@@ -18,77 +18,79 @@ Topics: [accounting](../topics.md#accounting), [kudos](../topics.md#kudos)
 <!-- END GENERATED: topics -->
 
 - Exact rows of `kudos_ledger` and `kudos_stat_events` stay in PostgreSQL for an online window of at least 30 days.
-  Both tables are range-partitioned by `created`, and a partition leaves the database as a whole once it is older
+  Both tables are range-partitioned by `created`. A whole partition is removed from the database once it is older
   than the window.
 - Statistic events are replaced by daily rollups that keep every attribution key. The raw rows survive only in a
   best-effort archive dump.
-- Currency postings are replaced by per-user checkpoints and daily statements, and the rows themselves go to an
-  archive object that is read back and verified before the drop.
-- A drop is irreversible. It waits until the replacement is committed, the archive object is verified for currency,
-  and a recount shows the partition still holds what the replacement recorded. A grace period, seven days unless
-  configured otherwise, keeps the detached table for a rollback.
-- The ledger model this sits on is in [kudos accounting](kudos_accounting.md). The states, settings and metrics are
-  in the [event retention reference](../reference/kudos_accounting.md#event-retention). The operator procedures are
-  in [kudos ledger operations](../how-to/kudos_ledger_operations.md#enabling-retention).
+- Currency postings are replaced by per-user checkpoints and daily statements. The rows themselves go to an archive
+  object, which is read back and verified before the drop.
+- Before a partition is detached, its replacement must be committed and a recount must match the recorded rows.
+  Currency partitions also require a verified archive object. The detached table remains in the database for a grace
+  period of seven days by default, during which it can be attached again. Dropping the table after that period is
+  irreversible.
+- The ledger model under retention is described in [kudos accounting](kudos_accounting.md). The states, settings and
+  metrics are in the [event retention reference](../reference/kudos_accounting.md#event-retention). The operator
+  procedures are in [kudos ledger operations](../how-to/kudos_ledger_operations.md#enabling-retention).
 
 ## Unbounded event tables
 
-Every business event appends one or two currency rows and several statistic rows. Without retention neither table
-is bounded, and storage, backups, replicas and the all-time reconciliation aggregate grow with the lifetime of the
-service.
+Every business event appends one or two currency rows and several statistic rows. Without retention, both tables grow
+without a limit. Storage, backups, replicas and the all-time reconciliation aggregate then grow with the lifetime of
+the service.
 
-Nothing online reads an old event row except three code paths. Every other reader uses the materialized projections,
-and spend admission and worker deletion read only unapplied rows. Each of the three reads a replacement instead:
+Only three online code paths read old event rows. Every other reader uses the materialized projections, and spend
+admission and worker deletion read only unapplied rows. Each of the three code paths reads a replacement instead:
 
-| Reader | What it needed from old rows | What it reads now |
+| Reader | What it needed from old rows | What it reads |
 | --- | --- | --- |
 | Reconciliation | The all-time sum of each user's applied postings | The latest checkpoint plus the applied online tail at or above its boundary |
 | Transfer idempotency | A prior transfer's postings by `event_id`, to replay it or detect a parameter conflict | `kudos_idempotency_keys`, written in the same transaction as the postings |
 | Repair idempotency | The `RECONCILIATION` posting of an earlier repair | The same key table. Repair refuses a snapshot older than the key lifetime |
 
-Keys live as long as the shorter online window. A transfer retried after that with the same key is a new transfer,
-and a repair needs a fresh snapshot. The
+A key is kept for the shorter of the two online windows. After that, a transfer retried with the same key is a new
+transfer, and a repair needs a fresh snapshot. The
 [idempotency key lifetime](../reference/kudos_accounting.md#idempotency-key-lifetime) section has the exact rules.
 
-The rejected alternative archives both datasets row for row forever, seals id ranges behind a writer barrier under
-the exclusive mode gate, and migrates to id-range partitions through a mirrored backfill. Its checkpoint boundary sits
-at the present moment, which is what requires the barrier, and it moves the growth into the object store instead of
-removing it. [ADR 42](../decisions/0042-roll-up-statistics-and-archive-currency-after-the-online-window.md) records
-the decision and the other options it weighed.
+Archiving every row of both datasets indefinitely would preserve more detail, but storage would continue growing in
+the object store. The alternative design also grouped rows by ID and required a writer barrier to prevent new writes
+while establishing a checkpoint. Age-based partitions avoid that coordination for ordinary retention work.
+[ADR 42](../decisions/0042-roll-up-statistics-and-archive-currency-after-the-online-window.md) records the decision
+and the other options that were considered.
 
 ## Partitions by age
 
 Both event tables are partitioned by `RANGE (created)`. `created` is set when the row is written, so a row that
 commits late still lands in the partition of its write time. A unit is eligible for removal once its upper bound
-is older than its dataset's window: a weekly partition as a whole, and the legacy partition sub-range by sub-range,
-with its drop waiting for the last one. A transaction that is still open cannot write into a range whose upper bound
-is a whole window in the past, so eligibility by age does not need a writer barrier, sequence sealing or a drain under
-the mode gate. The drop still recounts the rows, because a clock fault or a reference time moved forward on a live
-database can put a row where the age argument says none can be.
+is older than its dataset's window. A weekly partition is one unit. The legacy partition is processed sub-range by
+sub-range, and it is dropped only once its last sub-range is ready. A transaction that is still open cannot write
+into a range whose upper bound is a whole window in the past. Eligibility by age therefore does not need a writer
+barrier, sequence sealing or a drain under the mode gate. The drop still recounts the rows, because a clock fault, or
+a reference time moved forward on a live database, can put a row into a range that the age argument treats as closed.
 
 Two policy numbers shape retention. The online window, per dataset, is how long exact rows stay queryable. It can be
-raised and never goes below 30 days. The partition width, one week by default, sets the granularity of removal and
-adds to the effective retention, since a row waits for the whole partition to age out. The pre-partition history is
-one legacy partition, processed in width-sized sub-ranges so its replacements stay bounded. Each partition or
-sub-range is a retention unit with one row in `kudos_retention_catalog`.
+raised and cannot be set below 30 days. The partition width, one week by default, sets the granularity of removal. It
+also adds to the effective retention, because a row stays until its whole partition is old enough. The history from
+before partitioning is one legacy partition. It is processed in sub-ranges of one partition width each, so that each
+replacement stays bounded. Each partition or sub-range is a retention unit with one row in
+`kudos_retention_catalog`.
 
 | Dataset | Replacement in PostgreSQL | Archive | What the drop proves |
 | --- | --- | --- | --- |
-| Statistics (`kudos_stat_events`) | Rollups per UTC day and full attribution key, whose totals match the unit's totals in the same transaction. Quarantined rows move unchanged to `kudos_stat_quarantine` | A compressed dump, written best-effort and retried. It is not read back by the tick, and only an operator evicts it | The rollup is committed, and a recount matches the row count and highest id recorded with it |
+| Statistics (`kudos_stat_events`) | Rollups per UTC day and full attribution key. Their totals match the unit's totals in the same transaction. Quarantined rows move unchanged to `kudos_stat_quarantine` | A compressed dump, written best-effort and retried. It is not read back by the tick, and only an operator evicts it | The rollup is committed, and a recount matches the row count and highest id recorded with it |
 | Currency (`kudos_ledger`) | Per-user cumulative checkpoints at the unit's upper bound and per-user daily statements, committed in one repeatable-read transaction | A compressed object with a manifest of control totals, read back and checked against the manifest and the online rows. It is never evicted | The checkpoint is committed, the object is verified, and a recount matches the row count and highest id recorded with the checkpoint |
 
-A checkpoint is a sum of events, so drift that exists when the checkpoint is taken stays visible to reconciliation
-afterwards. The archive layout and manifest fields are in
+A checkpoint is a sum of events. Drift that exists when the checkpoint is taken therefore stays visible to
+reconciliation afterwards. The archive layout and manifest fields are in
 [archive objects](../reference/kudos_accounting.md#archive-objects).
 
 ## Unit lifecycle
 
-A unit moves through recorded states, at most one transition per tick, and each transition commits its database work in
-one transaction. Object I/O runs outside any transaction and the catalog row is updated after it returns, so a crash
-repeats a step instead of skipping it. A step that raises does not make a transition and runs again on the next tick.
-A unit that cannot proceed safely becomes `blocked` with a reason, and only an operator moves it on. Any state except
-`dropped` can become `blocked`. The diagrams show the edges where blocking is expected. The full transition rules are
-in [retention states](../reference/kudos_accounting.md#retention-states).
+A unit moves through recorded states, with at most one transition per tick. Each transition commits its database
+work in one transaction. Object I/O runs outside any transaction, and the catalog row is updated after the I/O
+returns, so a crash repeats a step instead of skipping it. A step that raises an error does not make a transition and
+runs again on the next tick. A unit that cannot proceed safely becomes `blocked` with a reason, and only an operator
+can move it on. Any state except `dropped` can become `blocked`. The diagrams show the edges where blocking is
+expected. The full transition rules are in [retention states](../reference/kudos_accounting.md#retention-states).
 
 `detached` appears only while the drop grace period is above zero, as it is by default. With the grace set to zero,
 the drop-ready state goes straight to `dropped`.
@@ -110,17 +112,18 @@ stateDiagram-v2
     dump_waived --> dropped: drop
     detached --> dropped: drop after grace
     pending --> blocked: block
+    rolled_up --> blocked: block
     dump_failed --> blocked: block
     dumped --> blocked: block
     dump_waived --> blocked: block
     detached --> blocked: reattach
     blocked --> pending: unblock
-    blocked --> dump_waived: waive
+    blocked --> dump_waived: waive, or unblock after reattach
     blocked --> dumped: unblock after reattach
     dropped --> [*]
 ```
 
-Blocked statistics units are skipped, and later units continue, because statistic units do not chain.
+Blocked statistics units are skipped, and later units continue, because statistics units do not form a chain.
 
 ### Currency units
 
@@ -144,38 +147,38 @@ stateDiagram-v2
     dropped --> [*]
 ```
 
-Each currency checkpoint chains from the previous one, so a blocked currency unit stops the currency dataset and
-every later unit stays online. Unblocking returns a unit with a committed checkpoint to `checkpointed`, so export and
-verification run again. `recheckpoint` returns the unit and every later currency unit to `pending`, which recomputes
-the tail of the chain after rows arrived late. Without an archive, currency units stop at `checkpointed` and their
-partitions stay online.
+Each currency checkpoint builds on the previous one. A blocked currency unit therefore stops the currency dataset,
+and every later unit stays online. Unblocking returns a unit with a committed checkpoint to `checkpointed`, so export
+and verification run again. `recheckpoint` returns the unit and every later currency unit to `pending`. This
+recomputes the tail of the chain after rows arrived late. Without an archive, currency units stop at `checkpointed`
+and their partitions stay online.
 
 ## Properties and costs
 
-The design buys these properties:
+The design has these properties:
 
 - Removal without a writer barrier. Removal by age leaves producers, the projector and the mode gate as they are.
 - Resumable from the catalog. Every transition is recorded, so a crash or restart continues from the last committed
   state.
 - Proven drops. A partition is dropped only after its replacement is committed and checked, and a recount before
-  and after the detach matches the counts the replacement recorded. A partition with an unapplied row is not
+  and after the detach matches the counts recorded with the replacement. A partition with an unapplied row is not
   removed.
 - A reattach window. With a drop grace period, seven days by default, a detached partition stays as a standalone
   table and can be attached again until the grace ends. A grace of zero has to be set explicitly, so a deployment
   whose environment lost the setting still keeps the window.
 - A verified currency archive. Every archived currency object is read back and matched against its manifest and the
-  online rows before the drop, and none is ever evicted.
+  online rows before the drop. Currency objects are not evicted.
 - Best-effort statistics dumps with retries. A failed dump is retried for a configured period and does not block the
   rollup. An unavailable archive pauses currency retention and statistics dumps, while writes, projection and
   rollups continue.
 
-It costs these:
+Its costs are:
 
 - The replacement tables grow. Each currency unit writes a checkpoint row for every user with any contributing
-  posting up to its boundary, since a checkpoint is cumulative and earlier boundaries are kept. Daily statements grow
-  with per-user activity and rollups with the number of distinct attribution keys per day. These tables do not have
-  a retention of their own.
-- Each tier's budget is the only cap on that tier, and nothing is evicted automatically. Once a tier would exceed
+  posting up to its boundary, because a checkpoint is cumulative and earlier boundaries are kept. Daily statements
+  grow with per-user activity, and rollups grow with the number of distinct attribution keys per day. These tables do
+  not have a retention of their own.
+- Each tier's budget is the only cap on that tier, and objects are not evicted automatically. Once a tier would exceed
   its budget, the units that would write to it block until the budget is raised or, for statistics, an operator
   evicts old dumps.
 - Per-job statistic detail older than the window survives only in dumps that an operator has not evicted. Reading an
@@ -188,22 +191,15 @@ It costs these:
 `retention status` and the retention metrics show where each unit stands. The
 [metrics and log lines](../reference/kudos_accounting.md#retention-metrics-and-log-lines) are in the reference.
 
-| Symptom | Meaning | Where it is handled |
-| --- | --- | --- |
-| Blocked, `unapplied rows` | The projector has not folded rows in an eligible unit | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
-| Blocked, `checkpoint chain gap` or `boundary already checkpointed` | The catalog or the partitions were changed outside the retention job | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
-| Blocked, `currency tier would exceed budget` | The currency export would pass the currency budget. Currency retention stops and statistics continue | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
-| Blocked, `statistics tier would exceed budget` | The statistics dump would pass the statistics budget. Nothing is uploaded, and later statistics units continue | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
-| Blocked, `archive mismatch` | The object read back disagrees with its manifest | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
-| Blocked, `archive object missing` | A currency unit past its export, or a dumped statistics unit before its drop, has lost its archive object, so it is not dropped | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
-| Restored partitions | A dropped partition was attached again under its original name. Its dataset does not make a transition until the partition is detached | [Rolling back a removed partition](../how-to/kudos_ledger_operations.md#rolling-back-a-removed-partition) |
-| Blocked, `online drift since export` or `late rows` | Rows in the unit changed after its replacement recorded them | [Recovering from a late-row or chain block](../how-to/kudos_ledger_operations.md#recovering-from-a-late-row-or-chain-block) |
-| `dump_failed`, or blocked with `dump retries exhausted` | Statistics dumps are failing, and the rollup is already committed | [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) |
-| Held partitions | `KUDOS_RETENTION_HOLD_DROPS` keeps drop-ready partitions attached. Every other step runs | [Enabling retention](../how-to/kudos_ledger_operations.md#enabling-retention) |
-| Detached partitions | The partition is inside its drop grace and can still be attached again | [Rolling back a removed partition](../how-to/kudos_ledger_operations.md#rolling-back-a-removed-partition) |
-| Outcome `deferred` | Another session holds a lock on the partition or its parent, and the drop is tried again on the next tick | [Retention units](../reference/kudos_accounting.md#retention-units) |
-| Outcome `refused` | The tick's reference time is later than the real clock, and the live-data-loss confirmation is absent | [Rehearsing partition removal](../how-to/kudos_ledger_operations.md#rehearsing-partition-removal-on-a-restored-copy) |
-| Outcome `failed` on every tick | A step raises each time, for example an unreachable archive | [Recovering from a late-row or chain block](../how-to/kudos_ledger_operations.md#recovering-from-a-late-row-or-chain-block) |
+Begin with the unit's state and error from `retention status`. A blocked currency unit stops later currency
+units because their checkpoints form a chain; blocked statistics units can be skipped. Held or detached partitions
+can be expected under the configured hold and grace policy.
+
+Use [Handling a blocked unit](../how-to/kudos_ledger_operations.md#handling-a-blocked-unit) for the diagnostic
+queries and recovery actions, and [retention states](../reference/kudos_accounting.md#retention-states) for the
+complete state contract. A failed archive operation requires diagnosing the failure; clearing a block alone
+does not repair its cause. For a partition still inside its grace period, use
+[Rolling back a removed partition](../how-to/kudos_ledger_operations.md#rolling-back-a-removed-partition).
 
 ## Code map
 
@@ -217,5 +213,5 @@ It costs these:
 | Scheduled tick and archive housekeeping jobs | `horde/database/threads.py` | `kudos_retention_tick`, `reconcile_kudos_archive_catalog`, `abort_stale_kudos_archive_uploads` |
 | Operator commands | `tools/kudos_ledger_admin.py` | `main` |
 
-The full map, including the migration and the idempotency keys, is the
+The full map, including the migration and the idempotency keys, is in the
 [kudos accounting code map](../reference/kudos_accounting.md#code-map).

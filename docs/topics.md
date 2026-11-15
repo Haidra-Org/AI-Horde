@@ -58,6 +58,7 @@ procedure for one subject sit together.
 - Reference: [Image baseline policy reference](reference/baseline_policy.md)
 - Reference: [Image model reference loader](reference/model_reference.md)
 - Reference: [Style contract reference](reference/style_contract.md)
+- Reference: [Request scheduling telemetry and forecasts](reference/request_scheduling.md)
 
 ### kudos
 
@@ -78,6 +79,7 @@ procedure for one subject sit together.
 - How-to: [Kudos ledger operations](how-to/kudos_ledger_operations.md)
 - How-to: [Run the OpenAI-compatible chat front](how-to/run_openai_chat_front.md)
 - Reference: [Moderation operations reference](reference/moderation_operations.md)
+- Reference: [Request scheduling telemetry and forecasts](reference/request_scheduling.md)
 - Reference: [Chat front reference](reference/chat_front.md)
 - Reference: [Outbound requests reference](reference/outbound_requests.md)
 
@@ -97,6 +99,7 @@ procedure for one subject sit together.
 - Reference: [Style contract reference](reference/style_contract.md)
 - Reference: [Chat requests reference](reference/chat_requests.md)
 - Reference: [Chat wire examples](reference/chat_wire_examples.md)
+- Reference: [Request scheduling telemetry and forecasts](reference/request_scheduling.md)
 - Reference: [Chat front reference](reference/chat_front.md)
 - Reference: [Outbound requests reference](reference/outbound_requests.md)
 - Tutorial: [Your first chat completion through the Horde](tutorial/first_chat_completion.md)
@@ -112,5 +115,6 @@ procedure for one subject sit together.
 - Reference: [Image model reference loader](reference/model_reference.md)
 - Reference: [Chat requests reference](reference/chat_requests.md)
 - Reference: [Chat wire examples](reference/chat_wire_examples.md)
+- Reference: [Request scheduling telemetry and forecasts](reference/request_scheduling.md)
 - Tutorial: [Serve your first chat job with koboldcpp](tutorial/first_chat_worker.md)
 <!-- END GENERATED: topics -->

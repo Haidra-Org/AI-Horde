@@ -17,42 +17,40 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 Topics: [accounting](../topics.md#accounting), [kudos](../topics.md#kudos), [operations](../topics.md#operations)
 <!-- END GENERATED: topics -->
 
-Operator procedures for the architecture described in [Kudos accounting, projection, and
-concurrency](../explanation/kudos_accounting.md). Exact schemas, mutation rules, and health fields are in the
+Use these procedures to switch accounting modes, investigate balance discrepancies and manage event retention.
+The [kudos accounting explanation](../explanation/kudos_accounting.md) describes how events and reservations keep
+accounting consistent. Exact schemas and health fields are in the
 [kudos accounting reference](../reference/kudos_accounting.md).
 
-Preconditions for every procedure below: a PostgreSQL primary, the whole fleet running kudos-ledger code, and shell
-access to a host that can run `tools/kudos_ledger_admin.py` against the production database. End state: `ledger` mode
-active with the projector draining within its lag budget, or `shadow` mode restored with the final ledger tail
-folded.
+Before running these commands, confirm that the whole fleet runs kudos-ledger code and that you can run
+`tools/kudos_ledger_admin.py` against the PostgreSQL primary. After switching modes, check both the reported mode
+and the pending event count. A successful command alone does not confirm that projection is keeping up.
 
 The kudos ledger has two online modes:
 
 - `shadow`: inline balances and counters are authoritative. Matching ledger rows are retained as already-applied
   audit history.
-- `ledger`: request transactions append postings and the database-serialized projector materializes them
-  asynchronously.
+- `ledger`: request transactions append postings. The projector, a background task that runs one instance at a
+  time, then applies them asynchronously to the balance and statistics columns.
 
 Fresh installations and the migration SQL default to `shadow`. Moving to `ledger` is always an explicit operator
 action. Currency postings and non-currency statistic events stay online for the retention window, and
-[retention](#enabling-retention) replaces older partitions with summaries and an archive. The projector is serialized
-by a PostgreSQL transaction advisory lock, independent of Redis quorum selection, and claims bounded batches with
-`FOR UPDATE SKIP LOCKED`.
+[retention](#enabling-retention) replaces older partitions with summaries and an archive. A PostgreSQL transaction
+advisory lock, independent of Redis quorum selection, makes sure that only one projector runs at a time. The projector
+claims bounded batches with `FOR UPDATE SKIP LOCKED`.
 
 ## Code and schema boundaries
 
 Accounting tables, their foreign-key lifetimes, and the typed enums are specified in the reference
-[data model](../reference/kudos_accounting.md#data-model). Two boundaries matter while operating the system:
+[data model](../reference/kudos_accounting.md#data-model), and the modules in its
+[code map](../reference/kudos_accounting.md#code-map). Two schema boundaries matter while operating the system:
 
 - Currency history cannot be orphaned. `kudos_ledger.user_id` is `ON DELETE RESTRICT`, so a user wipe that would
-  strand postings fails rather than deleting them. `kudos_stat_events` stores immutable audit IDs instead of
-  ownership foreign keys, so hard-deleting a worker or team leaves its counter history intact.
-- Mode-specific behavior lives in `horde/database/kudos_legacy_projection.py`. Business methods emit the same events
-  in both modes. Advisory locks and repeatable-read setup are confined to `horde/database/kudos_db.py`, and counter
-  upserts to `horde/database/kudos_counters.py`. A final cutover deletes the compatibility module and its call sites
-  without rewriting the accounting flow.
+  strand postings fails rather than deleting them.
+- `kudos_stat_events` stores immutable audit IDs instead of ownership foreign keys, so hard-deleting a worker or team
+  leaves its counter history intact.
 
-## Pre-cutover proof
+## Checks before switching to ledger mode {#pre-cutover-proof}
 
 1. Deploy the ledger code and schema to the whole fleet in `shadow` mode. Do not mix it with code that does not write
    the audit rows. Verify: `uv run python tools/kudos_ledger_admin.py status` reports `"mode": "shadow"` and a
@@ -67,16 +65,17 @@ Accounting tables, their foreign-key lifetimes, and the typed enums are specifie
    command prints `snapshot_id`. Use that value as `<snapshot-id>` below.
 5. Run `uv run python tools/kudos_ledger_admin.py reconcile <snapshot-id>`. Verify: the `drifts` array is empty.
    Investigate every drift entry before continuing.
-6. Switch with `uv run python tools/kudos_ledger_admin.py mode ledger`. The exclusive mode-gate advisory lock waits
-   for every transaction that observed shadow mode before ownership changes, so no service freeze is required.
+6. Switch with `uv run python tools/kudos_ledger_admin.py mode ledger`. The command takes the mode-gate advisory lock
+   in exclusive mode. Ownership changes only after every transaction that read shadow mode has committed, so the
+   service does not need to be frozen.
    Verify: `status` reports `"mode": "ledger"`, and `pending_rows` rises and then falls as the projector folds.
    Reverse with [online rollback](#online-rollback).
 
 Monitor pending row count, oldest pending age, heartbeat age, database deadlocks, reservation age and count,
 transfer rejection rate, and balance-floor adjustments throughout rollout, using the quorum node's applier
 telemetry (`horde.kudos.*` metrics) or `tools/kudos_ledger_admin.py status`. The per-node
-`/api/v2/status/heartbeat` response reports only node-local health. It does not include an applier-queue
-signal, since load balancer health checks consume it and a shared-database signal would fail every node at once.
+`/api/v2/status/heartbeat` response reports only node-local health. It does not include an applier-queue signal,
+because load balancer health checks use that response and a shared-database signal would fail every node at once.
 
 ## Online rollback
 
@@ -85,21 +84,21 @@ near zero. Reconcile against the latest baseline, then run `uv run python tools/
 Verify: `status` reports `"mode": "shadow"` and `pending_rows` is zero, since the transition folds whatever tail the
 pre-drain left.
 
-The transition takes the applier advisory lock followed by the exclusive mode-gate advisory lock, waits for every
-mutation that observed ledger mode to commit, and folds the final tail in the same transaction before changing
+The transition takes the applier advisory lock, then the exclusive mode-gate advisory lock. It waits until every
+mutation that read ledger mode has committed, and folds the final tail in the same transaction before it changes
 ownership. `set_kudos_ledger_mode` uses the same lock order as the projector, so an applier/mode-gate deadlock cannot
 form. Active upfront reservations can span the transition because shadow-mode debits consume the same holds inline.
 Rolling forward again means repeating the [pre-cutover proof](#pre-cutover-proof). Never roll directly back to code
-that does not understand reservations and shadow audit rows.
+that does not handle reservations and shadow audit rows.
 
 ## Recovery and repair
 
 `reconcile <snapshot-id>` is read-only and compares the materialized balances with the snapshot plus all subsequently
 applied currency postings. Minimum-balance forgiveness is recorded as an explicit `FLOOR_ADJUSTMENT`, so replay
-remains exact across separate batches. `reconcile <snapshot-id> --apply` never overwrites a balance or old history:
-it serializes repair runs and emits one deterministic `RECONCILIATION` posting per affected user. Re-running it
-before or after projection cannot duplicate a repair, so a repair has no reversal step and needs none. A repair that
-was itself wrong is corrected by a further compensating posting.
+remains exact across separate batches. `reconcile <snapshot-id> --apply` does not overwrite a balance or old history.
+It serializes repair runs and emits one deterministic `RECONCILIATION` posting per affected user. Re-running it
+before or after projection cannot duplicate a repair. If a repair is incorrect, correct it with a further
+compensating posting so the history records both changes.
 
 `reconcile --apply` exits with an error while a currency retention unit is blocked with `late rows` or
 `online drift since export`, because the checkpoints then omit rows. The read-only `reconcile` output lists those
@@ -108,24 +107,24 @@ units in `stale_checkpoint_units` and sets `drift_reliable` to `false`. Run
 
 ### Stopped projector
 
-If the projector stops, leave writers in ledger mode, restore the projector, and drain. Unapplied rows are durable
+If the projector stops, keep ledger mode active while restoring the projector, then run `drain`. Unapplied rows are durable
 and the database advisory lock prevents two replicas from applying them. Verify: `pending_rows` returns to zero and
 `heartbeat_seconds` stays within the projector interval.
 
 ### Incorrect projection
 
-If projection is corrupt, take a fresh snapshot for
-evidence, reconcile against the last known-good baseline, review the complete drift list, apply compensating
-postings, drain, and reconcile again. Verify: the second `reconcile` returns an empty `drifts` array. Do not edit
-`applied`, delete postings, or directly overwrite balances. These changes cannot be undone and destroy the
-evidence a later reconciliation needs.
+If projection is corrupt, take a fresh snapshot for evidence, reconcile against the last known-good baseline, review
+the complete drift list, apply compensating postings, drain, and reconcile again. Verify: the second `reconcile`
+returns an empty `drifts` array. Do not edit `applied`, delete postings, or directly overwrite balances. These
+changes cannot be undone, and they destroy the evidence needed by a later reconciliation.
 
 ### Quarantined events
 
 Treat every new `horde.kudos.applier.quarantined` alert as an incident even when `pending_rows` is draining normally.
-`quarantined_rows` is the total retained evidence, not an unresolved-incident gauge, so it remains non-zero after
-review. Use the counter alert and newest `quarantined_at` value to identify new incidents. Inspect the retained
-evidence before deciding on a repair:
+`quarantined_rows` counts the quarantined rows still in `kudos_stat_events`. It stays non-zero after review, until
+retention moves the rows to `kudos_stat_quarantine`, so a non-zero value does not mean an open incident. Use the
+counter alert and newest `quarantined_at` value to identify new incidents. Inspect the retained evidence before
+deciding on a repair:
 
 ```sql
 SELECT id, event_id, created, quarantine_reason, entry_type,
@@ -147,10 +146,10 @@ discard it.
 
 ### Database recovery
 
-For database disaster recovery, restore PostgreSQL to the selected PITR/WAL point, retain the ledger and stat
-history, the retention tables and the balance snapshots, start in shadow mode, reconcile, then repeat the cutover
-proof. The retention catalog, checkpoints and partitions are restored together, so the retention job continues from
-the restored catalog. Postings from partitions dropped before the restore point exist only in the archive. Read them
+For database disaster recovery, restore PostgreSQL to the selected PITR/WAL point. Keep the ledger and stat history,
+the retention tables and the balance snapshots. Start in shadow mode, reconcile, then repeat the cutover proof. The
+retention catalog, checkpoints and partitions are restored together, so the retention job continues from the
+restored catalog. Postings from partitions dropped before the restore point exist only in the archive. Read them
 with [restoring an archived partition](#restoring-an-archived-partition-into-a-scratch-table).
 
 ## Converting the event tables to partitions
@@ -163,28 +162,38 @@ Preconditions: the previous schema is applied, the application release that maps
 deployed, the `psql` client can reach the primary, and no long-running dump or backup (`pg_dump`, a base backup) is
 running or scheduled to start during the run. A dump holds `ACCESS SHARE` on every table for its whole duration, so
 the swap cannot take its exclusive lock within its `lock_timeout` and fails. The `kudos_ledger` swap also refuses to
-start when the server's `deadlock_timeout` is 500 ms or less. End state: both event tables
-are partitioned, each with a
-`<table>_p_legacy` partition and eight weekly partitions from `swap_ts`, and the retention tables exist and are empty except for
-the backfilled keys.
+start when the server's `deadlock_timeout` is 500 ms or less. End state: both event tables are partitioned, each with
+a `<table>_p_legacy` partition and eight weekly partitions from `swap_ts`. The retention tables exist and are empty
+except for the backfilled keys.
+
+Before the run, check that the age of each table is well below
+`autovacuum_freeze_max_age`:
+
+```sql
+SELECT relname, age(relfrozenxid), current_setting('autovacuum_freeze_max_age')
+FROM pg_class WHERE relname IN ('kudos_ledger', 'kudos_stat_events', 'users');
+```
+
+Choose `key_lifetime_days` from the configured retention windows before starting the command.
+The first session performs the migration while a second session observes the checks in steps 2 and 3.
+
+When `KUDOS_RETENTION_CURRENCY_DAYS` or `KUDOS_RETENTION_STATISTICS_DAYS` is raised above 30, add
+`-v key_lifetime_days=<days>` with the shorter of the two windows. Idempotency keys live for that shorter window,
+and the file backfills keys only for transfers and repairs inside `key_lifetime_days`, 30 when the option is not
+passed. Otherwise, a retry of an older transfer inside the key lifetime would not find a key and would post again.
+The file prints `Backfilling the idempotency keys of the last <days> days`. Check that the number is the key
+lifetime. The option needs psql 11 or later.
+
+The file uses `\gexec`, so only psql can run it. Do not pass `--single-transaction`, because
+`CREATE INDEX CONCURRENTLY` cannot run inside a transaction block. The swap reads its timestamp from a temporary
+table and calls temporary functions, so the whole file must run in one session. Steps 2 and 3 happen while the file
+runs.
 
 1. Apply the file with psql in one session:
 
    ```sh
    psql "<database-url>" -v ON_ERROR_STOP=1 -f sql_statements/5.1.16.txt
    ```
-
-   When `KUDOS_RETENTION_CURRENCY_DAYS` or `KUDOS_RETENTION_STATISTICS_DAYS` is raised above 30, add
-   `-v key_lifetime_days=<days>` with the shorter of the two windows. Idempotency keys live for that shorter window,
-   and the file backfills keys only for transfers and repairs inside `key_lifetime_days`, 30 when the option is not
-   passed. A retry of an older transfer inside the key lifetime would otherwise find no key and post again. The file
-   prints `Backfilling the idempotency keys of the last <days> days`. Check that the number is the key lifetime.
-   The option needs psql 11 or later.
-
-   The file uses `\gexec`, so only psql can run it. Do not pass `--single-transaction`, because
-   `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block. The swap reads its timestamp from a temporary
-   table and calls temporary functions, so the whole file must run in one session. Steps 2 and 3 happen while the file
-   runs.
 
 2. Watch the online index builds. Before each swap, the file builds a unique `(id, created)` index concurrently
    on each table (`kudos_ledger_p_legacy_pkey`, `kudos_stat_events_p_legacy_pkey`). It also builds
@@ -209,23 +218,15 @@ the backfilled keys.
 
    A nightly dump holds its snapshot until it ends, so the build waits for it. Cancel a stray long transaction with
    `pg_cancel_backend(<pid>)`. A conflicting lock request does not cancel an anti-wraparound autovacuum, so a build
-   that starts during one waits for it to end. Before the run, check that the age of each table is well below
-   `autovacuum_freeze_max_age`:
-
-   ```sql
-   SELECT relname, age(relfrozenxid), current_setting('autovacuum_freeze_max_age')
-   FROM pg_class WHERE relname IN ('kudos_ledger', 'kudos_stat_events', 'users');
-   ```
-
-   A failed concurrent build leaves an `INVALID` index. Drop it with `DROP INDEX CONCURRENTLY <index-name>` before
+   that starts during one waits for it to end.    A failed concurrent build leaves an `INVALID` index. Drop it with `DROP INDEX CONCURRENTLY <index-name>` before
    rerunning the file.
 
-3. Watch the range CHECK and the swap. For each table, the file computes `swap_ts`, the
-   first UTC Monday 00:00 at least 24 hours away. It then adds `<table>_legacy_range CHECK (created < swap_ts)`,
-   which takes an exclusive lock for a moment and waits up to 5 seconds for it, and validates it with one scan that
-   does not block writes. The swap transaction renames the table to
-   `<table>_p_legacy`, creates the partitioned parent, and attaches the old table and its indexes without a scan or
-   copy. It holds an exclusive lock for a short time. The `kudos_ledger` swap first takes the applier's advisory
+3. Watch the range CHECK and the swap. For each table, the file computes `swap_ts`, the first UTC Monday 00:00 at
+   least 24 hours away. It then adds `<table>_legacy_range CHECK (created < swap_ts)`. Adding the CHECK takes an
+   exclusive lock for a moment and waits up to 5 seconds for it. The file then validates the CHECK with one scan that
+   does not block writes. The swap transaction renames the table to `<table>_p_legacy`, creates the partitioned
+   parent, and attaches the old table and its indexes without a scan or copy. It holds an exclusive lock for a short
+   time. The `kudos_ledger` swap first takes the applier's advisory
    lock, so the applier skips its cycles until the swap commits. It then locks `users` in `SHARE ROW EXCLUSIVE` mode
    and `kudos_ledger` right after. Writes to `users` wait until the swap commits. A request that inserted a posting
    and then updates `users` can still form a lock cycle with the swap. Each lock wait of the `kudos_ledger` swap
@@ -258,16 +259,17 @@ the backfilled keys.
 
    The legacy bound is `FOR VALUES FROM (MINVALUE) TO ('<swap_ts>')`, the first weekly bound starts at the same
    timestamp, and the eight weeks follow each other without a gap. The file creates eight weeks because the previous
-   release does not create partitions. After a rollback to it, inserts keep finding a partition until eight weeks
-   after `swap_ts`, and the new release's retention tick creates the later weeks once it runs again.
+   release does not create partitions. After a rollback to it, every insert still has a partition to go into until
+   eight weeks after `swap_ts`, and the new release's retention tick creates the later weeks once it runs again.
 
 5. Deploy the application release in this order: stop every replica of the previous release, run the file again with
-   the same command, including any `-v key_lifetime_days`, and only then let replicas of the new release take traffic. The conversion steps skip the
-   converted tables. The key backfill adds the keys of transfers and repairs made by the previous release since the
-   first run. The new release looks up idempotency keys only in `kudos_idempotency_keys`, so a keyed transfer that
-   the previous release committed after the last backfill would post a second time when its client retries against
-   the new release. Verify: `SELECT kind, count(*) FROM kudos_idempotency_keys GROUP BY kind` returns rows when
-   transfers or repairs happened inside the backfill window.
+   the same command, including any `-v key_lifetime_days`, and only then let replicas of the new release take
+   traffic. The conversion steps skip the converted tables. The key backfill adds the keys of transfers and repairs
+   made by the previous release since the first run. The new release looks up idempotency keys only in
+   `kudos_idempotency_keys`, so a keyed transfer that the previous release committed after the last backfill would
+   post a second time when its client retries against the new release. Verify:
+   `SELECT kind, count(*) FROM kudos_idempotency_keys GROUP BY kind` returns rows when transfers or repairs happened
+   inside the backfill window.
 
 6. Check the cutover once the new release takes traffic. Verify:
    `uv run python tools/kudos_ledger_admin.py retention status` returns JSON with `"blocked_units": 0`, and the
@@ -283,9 +285,10 @@ the backfilled keys.
 ### Rerunning after a failure
 
 Every statement in the file is idempotent, so a failed run is repeated from the top in a new session once the cause
-is fixed. Pass the same `-v key_lifetime_days` as the first run, so the rerun backfills the same window. If the table is still unconverted and `<table>_legacy_range` exists from the earlier session, the rerun
-reads `swap_ts` back from that CHECK, so the CHECK and the swap use the same timestamp. Without the CHECK, the new
-session computes a new `swap_ts`. If the CHECK has a form the file cannot read, the rerun stops with
+is fixed. Pass the same `-v key_lifetime_days` as the first run, so the rerun backfills the same window. If the table
+is still unconverted and `<table>_legacy_range` exists from the earlier session, the rerun reads `swap_ts` back from
+that CHECK, so the CHECK and the swap use the same timestamp. Without the CHECK, the new session computes a new
+`swap_ts`. If the CHECK is in a form that the file cannot parse, the rerun stops with
 `cannot read swap_ts from <table>_legacy_range`. Drop the CHECK and rerun in a new session, which adds and validates
 it again:
 
@@ -297,9 +300,10 @@ If the swap has not committed by `swap_ts`, inserts into that table fail, and th
 `swap_ts for <table> has passed and the CHECK now rejects new rows`. Drop `<table>_legacy_range` at once with the
 statement above, which restores inserts. Then rerun the file in a new session, which uses the next Monday.
 
-A rerun on converted tables does not change them, also after retention has dropped `<table>_p_legacy`, except that
-it creates each missing week among the eight from the `swap_ts` it computes. It skips a week that an existing
-partition overlaps or that ended before the current week, and it does not alter an existing partition.
+A rerun on converted tables does not change them, even after retention has dropped `<table>_p_legacy`. The only
+exception is that it creates each missing week among the eight weeks from its newly computed `swap_ts`. It skips a
+week that an existing partition overlaps or that ended before the current week, and it does not alter an existing
+partition.
 
 The conversion does not have a scripted reversal. Until retention drops the legacy partition, every row from before
 the swap is still in `<table>_p_legacy`.
@@ -328,7 +332,9 @@ docker exec -w /app -e PYTHONPATH=/app <container> python tools/kudos_ledger_adm
    Verify:
    `retention status` reports `"archive_configured": true` and a byte count for each tier in `archive_tier_bytes`,
    and `horde.kudos.archive.budget_bytes` has one series for each tier with a budget.
-2. Set `KUDOS_RETENTION_ENABLED=true`. Set `KUDOS_RETENTION_CURRENCY_DAYS` or `KUDOS_RETENTION_STATISTICS_DAYS` only
+2. Before enabling retention, note that `retention step` runs a real tick and can drop a partition.
+   Set and verify the intended hold and grace policy before invoking it.
+   Set `KUDOS_RETENTION_ENABLED=true`. Set `KUDOS_RETENTION_CURRENCY_DAYS` or `KUDOS_RETENTION_STATISTICS_DAYS` only
    to keep a dataset longer than 30 days. On a fresh production deployment, also set
    `KUDOS_RETENTION_HOLD_DROPS=true` for a soak, so every step runs but no partition is detached or dropped, and set
    `KUDOS_RETENTION_DROP_GRACE_DAYS` to the rollback window to keep after the soak, long enough for the checks run
@@ -337,24 +343,24 @@ docker exec -w /app -e PYTHONPATH=/app <container> python tools/kudos_ledger_adm
    and `uv run python tools/kudos_ledger_admin.py retention step` prints `"outcome": "idle"` with
    `"detail": "no actionable unit"`, or a step result. It prints `"outcome": "skipped_lock"` when the scheduled tick
    holds the lock, and then it can be run again. While retention is disabled, the detail is `retention disabled`. The
-   command runs a real tick and can drop a partition.
+   command changes retention state.
 3. Expect the first tick to catalogue the legacy partition. A unit becomes eligible when its upper bound is older
    than the window. A weekly partition is one unit, catalogued when its upper bound is older than the window. The
-   legacy partition is catalogued as soon as the tick sees it, as one unit per partition width starting at the Monday
-   on or before its oldest row, and each of its sub-ranges becomes eligible on its own age. The tick logs
+   legacy partition is catalogued on the first tick, as one unit per partition width starting at the Monday on or
+   before its oldest row, and each of its sub-ranges becomes eligible on its own age. The tick logs
    `Kudos retention catalogued <n> units of <dataset> partition <table>_p_legacy`. `oldest_eligible_age_seconds` is
    then the age of the oldest sub-range past the window, or null when the legacy partition holds less than a window
    of history.
-4. Watch the legacy partition being processed. Each tick makes one transition
-   across both datasets, and the scheduler runs a tick every 60 seconds. Statistics units move through `rolled_up`
-   and `dumped`, and currency units through `checkpointed`, `exported` and `verified`. The last sub-range, which
-   ends at `swap_ts`, becomes eligible one window after `swap_ts`. The legacy partition is
-   dropped by one tick after every one of its units is ready. Until then it stays attached, so
-   `oldest_eligible_age_seconds` keeps growing and `pending_units` stays above zero. Verify: `retention status` shows
-   the units advancing, `last_step_age_seconds` stays near the tick interval, and `horde.kudos.retention.steps` grows
-   with `outcome` `stepped`. While drops are held, the units stop at `dumped`, `dump_waived` or `verified`, ticks
-   turn `idle`, and each tick logs `Kudos retention holds <n> partitions`. Verify: `retention status` reports
-   `"hold_drops": true` and `held_partitions` above 0, and `horde.kudos.retention.held_partitions` matches it.
+4. Watch the legacy partition being processed. Each tick makes one transition across both datasets, and the
+   scheduler runs a tick every 60 seconds. Statistics units move through `rolled_up` and `dumped`, and currency units
+   through `checkpointed`, `exported` and `verified`. The last sub-range, which ends at `swap_ts`, becomes eligible
+   one window after `swap_ts`. The legacy partition is dropped by one tick after every one of its units is ready.
+   Until then it stays attached, so `oldest_eligible_age_seconds` keeps growing and `pending_units` stays above zero.
+   Verify: `retention status` shows the units advancing, `last_step_age_seconds` stays near the tick interval, and
+   `horde.kudos.retention.steps` grows with `outcome` `stepped`. While drops are held, the units stop at `dumped`,
+   `dump_waived` or `verified`, ticks turn `idle`, and each tick logs `Kudos retention holds <n> partitions`. Verify:
+   `retention status` reports `"hold_drops": true` and `held_partitions` above 0, and
+   `horde.kudos.retention.held_partitions` matches it.
 5. End the soak. Compare the checkpoints, rollups and archive objects of the held partitions with their online rows,
    as in [the rehearsal](#rehearsing-partition-removal-on-a-restored-copy). Then set
    `KUDOS_RETENTION_HOLD_DROPS=false`, keep `KUDOS_RETENTION_DROP_GRACE_DAYS`, and restart. With a grace set, the next
@@ -386,10 +392,10 @@ units stay `blocked` until an operator releases them.
    The command attaches the table over the partition's recorded range and commits the catalog change with it. Each
    unit becomes `blocked` with `reattached by operator` and keeps `state_before_detach`, so later ticks do not detach
    the partition again. A blocked currency unit stops currency retention, and statistics retention continues past a
-   blocked statistics unit. A unit the drop recount blocked after the detach keeps its `late rows` reason, and a
-   partition whose units were all blocked that way is reattached the same way. The command refuses when no unit of
-   the partition has `detached_at` set or its table no longer exists,
-   and exits with an error while a tick holds the retention lock, so run it again after the tick. Verify: the command
+   blocked statistics unit. A unit blocked by the drop recount after the detach keeps its `late rows` reason, and a
+   partition whose units were all blocked that way is reattached the same way. The command refuses when
+   `detached_at` is not set on any unit of the partition, or when its table no longer exists. It exits with an error
+   while a tick holds the retention lock, so run it again after the tick. Verify: the command
    prints the units with `"state": "blocked"`, `"error": "reattached by operator"` and a null `detached_at`, and the
    partition is listed by `SELECT inhrelid::regclass FROM pg_inherits WHERE inhparent = '<parent>'::regclass`.
 2. Investigate with the rows online. To keep the partition, leave its units blocked. Retention of other partitions
@@ -427,11 +433,11 @@ currency unit recomputed over a recorded boundary blocks with `boundary already 
 ## Rehearsing partition removal on a restored copy
 
 A legacy sub-range becomes eligible when its upper bound is older than the window, and a weekly partition when its
-own is, so a freshly converted database with less than a window of history does not remove anything for at least
-the window, and one with more history does not drop anything before the window either, because the legacy drop waits
-for its last sub-range. To exercise the removal path before that, restore a copy of the
-database, point it at a scratch bucket or at a prefix of its own (`KUDOS_ARCHIVE_PREFIX`), enable retention, and move
-the clock forward for one tick at a time:
+own upper bound is. A freshly converted database with less than a window of history therefore does not remove
+anything for at least the window. One with more history does not drop anything before the window either, because the
+legacy partition is dropped only after its last sub-range. To exercise the removal path before that, restore a copy
+of the database, point it at a scratch bucket or at a prefix of its own (`KUDOS_ARCHIVE_PREFIX`), enable retention,
+and move the clock forward for one tick at a time:
 
 ```bash
 uv run python tools/kudos_ledger_admin.py retention step --as-of <swap time plus the window plus one partition width> --confirm-live-data-loss
@@ -454,15 +460,17 @@ table as described in [rolling back a removed partition](#rolling-back-a-removed
 The drop grace is measured with the tick's reference time. With `KUDOS_RETENTION_DROP_GRACE_DAYS` set, a rehearsal
 tick detaches a partition with `detached_at` set to its `--as-of`, and the partition is dropped only by a later tick
 whose `--as-of` is at least the grace past it. Advance `--as-of` past `drop_due_at` from `retention status` to see the
-drops. The latest accepted time grows by the grace for this reason. A tick at the real time does not drop a partition
-that a rehearsal detached, because its `detached_at` is still in the future. To rehearse the rollback, run
+drops. For this reason, the latest accepted time is extended by the grace. A tick at the real time does not drop a
+partition that a rehearsal detached, because its `detached_at` is still in the future. To rehearse the rollback, run
 `retention reattach` on a `detached` unit before advancing past its `drop_due_at`.
 
 ## Handling a blocked unit
 
 Preconditions: a `Kudos retention blocked` warning, a non-zero `horde.kudos.retention.blocked_units` series (one
 per `horde.kudos.block_reason`), or a unit with `"state": "blocked"` in `retention status`. End state: the cause is
-fixed, the unit is back in `pending` or `checkpointed`, and it advances on later ticks.
+fixed, the unit is back in `pending`, `checkpointed`, `dump_waived` or its state before a detach, and it advances on
+later ticks. The transitions of each command are listed under
+[retention states](../reference/kudos_accounting.md#retention-states).
 
 1. Find the unit. `uv run python tools/kudos_ledger_admin.py retention status` lists it with `id`, `dataset`,
    `source_range` and `error`. A blocked currency unit stops all currency retention. Statistics retention continues
@@ -479,9 +487,10 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
      ```
 
      For a statistics unit, add `AND quarantined = false`. Omit the lower bound when `unit_lower` is null.
-   - `checkpoint chain gap`: no currency unit in `checkpointed`, `exported`, `verified` or `dropped` ends at this
-     unit's lower bound, or one already ends after its upper bound. The chain is read from the catalog, not from
-     `kudos_ledger_checkpoints`, because an empty unit does not write any checkpoint rows. Compare the two:
+   - `checkpoint chain gap`: the catalog does not have a currency unit in `checkpointed`, `exported`, `verified` or
+     `dropped` that ends at this unit's lower bound, or one already ends after its upper bound. The chain is read
+     from the catalog, not from `kudos_ledger_checkpoints`, because an empty unit does not write any checkpoint rows.
+     Compare the two:
 
      ```sql
      SELECT id, partition_name, unit_lower, unit_upper, state
@@ -494,7 +503,8 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
      [the recheckpoint cascade](#recovering-from-a-late-row-or-chain-block) from the earliest affected unit.
    - `boundary already checkpointed`: a unit of another partition already records a checkpoint at this unit's upper
      bound, as after a partition created by hand over a dropped range. Recomputing it would replace that checkpoint
-     with this unit's rows alone, so the engine does not. Merge or remove the extra partition by hand, then unblock.
+     with this unit's rows alone, so the retention job does not recompute it. Merge or remove the extra partition by
+     hand, then unblock.
    - `currency tier would exceed budget`: the export would push the currency tier past `KUDOS_ARCHIVE_BUDGET_BYTES`.
      Currency objects are never evicted. Raise the budget and restart, or leave the unit blocked and let currency
      partitions stay online. Statistics retention continues meanwhile.
@@ -511,18 +521,19 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
      dumps of units not yet dropped are kept, because their raw rows are still online. When those dumps alone keep
      the tier above the budget, the command exits 1 with an `error`. When a delete fails it prints the keys deleted
      before the failure and exits 1. On a bucket with versioning, a deleted object stays stored as a noncurrent
-     version that the tier listing does not count, so free the space by the deployment's own procedure as well. Then
+     version, which is not counted in the tier listing. Free that space with the deployment's procedure as well. Then
      unblock the unit, which rolls it up again and retries the dump. Verify: the unit reaches `dumped` and its
      `object_key` is set. To drop the unit without a dump instead, run `retention unblock <unit-id> --waive-dump`.
    - `archive object missing`: the archive object of a currency unit past its export, or of a dumped statistics unit
      before its drop, is missing. Either the hourly archive reconciliation's listing does not hold the unit's key, or
-     the key or the object was missing at the drop. Eviction does not reach these units, so the object was removed some
-     other way. Nothing was dropped, and the rows are still online or in the detached table. Find out why the object is gone before going on. On a
-     bucket with versioning, the object may still be stored as a noncurrent version. For a unit of a detached
-     partition, `retention unblock` refuses, so run `retention reattach <unit-id>` first. Then unblock the unit. A
-     currency unit returns to `checkpointed`, and the next ticks export, verify and drop it again from the online
-     rows. A statistics unit returns to `pending`, and the next ticks roll it up, dump it and drop it again. To drop
-     a statistics unit without a dump instead, run `retention unblock <unit-id> --waive-dump` after the reattach.
+     the key or the object was missing at the drop. Eviction does not delete the objects of these units, so the object
+     was removed some other way. Nothing was dropped, and the rows are still online or in the detached table. Find out
+     why the object is gone before going on. On a bucket with versioning, the object may still be stored as a
+     noncurrent version. For a unit of a detached partition, `retention unblock` refuses, so run
+     `retention reattach <unit-id>` first. Then unblock the unit. A currency unit returns to `checkpointed`, and the
+     next ticks export, verify and drop it again from the online rows. A statistics unit returns to `pending`, and the
+     next ticks roll it up, dump it and drop it again. To drop a statistics unit without a dump instead, run
+     `retention unblock <unit-id> --waive-dump` after the reattach.
      Verify: the unit reaches `verified` or `dumped` with an `object_key`, and `archive audit` reports no
      `missing_object` line for it.
 
@@ -537,9 +548,10 @@ fixed, the unit is back in `pending` or `checkpointed`, and it advances on later
      number of rows than the checkpoint recorded. Restore the object into a scratch table and compare it with
      `SELECT * FROM ONLY <partition-name>` over the unit's range to find the changed rows and their writer. Rows
      committed after the checkpoint need [the recheckpoint cascade](#recovering-from-a-late-row-or-chain-block).
-   - `late rows`: the drop recounted the unit and found a different row count or highest `id` than the replacement
-     recorded. Nothing was dropped. Use [the recheckpoint cascade](#recovering-from-a-late-row-or-chain-block) for a
-     currency unit. For a statistics unit, unblock it: the rollup runs again over the current rows.
+   - `late rows`: the drop recounted the unit, and the row count or highest `id` differs from the values recorded
+     with the replacement. Nothing was dropped. Use
+     [the recheckpoint cascade](#recovering-from-a-late-row-or-chain-block) for a currency unit. For a statistics
+     unit, unblock it: the rollup runs again over the current rows.
    - `reattached by operator`: an operator reattached the unit's partition with `retention reattach`. Unblocking
      returns the unit to its state before the detach, and the partition is detached again with a new grace period.
      See [rolling back a removed partition](#rolling-back-a-removed-partition).
@@ -579,8 +591,8 @@ committed into its range after its checkpoint. End state: the unit and every lat
 checkpoints that include those rows, and they drop in order.
 
 A late row makes the unit's checkpoint, daily statements and recorded row count wrong, and every later checkpoint
-repeats the wrong totals. Unblocking the unit alone does not help: back in `checkpointed` it blocks again,
-and recomputing only its checkpoint is refused while later boundaries exist.
+repeats the wrong totals. Unblocking the unit alone does not help. Back in `checkpointed`, it blocks again, and
+recomputing only its checkpoint is refused while later boundaries exist.
 
 1. Find out who wrote the rows and stop the writer. A row more than a window late comes from a clock fault or a
    reference time moved forward on a live database.
@@ -591,20 +603,23 @@ and recomputing only its checkpoint is refused while later boundaries exist.
    ```
 
    The command refuses when a later currency unit is already `dropped`, because its rows cannot be recounted. A
-   blocked currency unit stops currency retention, so this refusal means the catalog was changed by hand. Verify:
+   blocked currency unit stops currency retention, so this refusal means the catalog was changed by hand. It also
+   refuses when the unit's partition or a later currency unit's partition is detached. Run `retention reattach` on
+   each such partition first. The command also deletes the stale checkpoints and daily statements, as listed under
+   [retention states](../reference/kudos_accounting.md#retention-states). Verify:
    the printed `reset` list starts with the unit and every entry has `"state": "pending"`.
 3. Let the ticks recompute the tail. Each unit checkpoints, exports over its previous object, verifies and drops in
    upper-bound order. Verify: `retention status` shows the units advancing, `blocked_units` stays 0, and a
    reconciliation snapshot reports no drift for the affected users.
 
-When a step fails without blocking, `Kudos retention <dataset> step failed for <source_range>` is logged as an error and
-the tick outcome is `failed`. Examples are an unreachable archive and a rollup whose totals differ from the unit. The
+When a step fails without blocking, `Kudos retention <dataset> step failed for <source_range>` is logged as an error,
+and the tick outcome is `failed`. Examples are an unreachable archive and a rollup whose totals differ from the unit. The
 step runs again on every tick. A failure that repeats on every tick needs the same investigation as a blocked unit.
 
 ## Reading a user's statement
 
-Preconditions: retention has checkpointed the days in question. End state: the user's daily movements for a range
-of UTC days.
+Use daily statements to inspect a user's kudos changes over a range of UTC days. Statement lines are available only
+after retention has checkpointed those days. Query the ledger directly for days that are still online.
 
 1. Print the archived daily statement:
 
@@ -628,7 +643,9 @@ of UTC days.
 ## Restoring an archived partition into a scratch table
 
 Preconditions: every `KUDOS_ARCHIVE_*` variable is set where the command runs. End state: the rows of one archive
-object are in a scratch table in the application database. Qualify the scratch table with a schema (`public.kudos_restore_check`): an unqualified name is created in the first schema of the application role's search path, which is not always `public`.
+object are in a scratch table in the application database. Qualify the scratch table with a schema
+(`public.kudos_restore_check`). An unqualified name is created in the first schema of the application role's search
+path, which is not always `public`.
 
 1. Find the object key. Dropped units keep their `object_key` in the catalog:
 
@@ -646,10 +663,10 @@ object are in a scratch table in the application database. Qualify the scratch t
    uv run python tools/kudos_ledger_admin.py archive restore <object-key> --into public.kudos_restore_check
    ```
 
-   The command creates the table from the column names and PostgreSQL types the manifest recorded at export, and
+   The command creates the table from the column names and PostgreSQL types recorded in the manifest at export, and
    copies the rows. The live event tables are not consulted, so a column renamed, dropped or retyped since the export
-   does not affect the restore. An object whose manifest is format version 1 does not record column types, and the command
-   refuses it with `predates recorded column types`. A table with that name that exists already is refused,
+   does not affect the restore. A format version 1 manifest does not record column types, and the command refuses
+   its object with `predates recorded column types`. The command also refuses a table name that already exists,
    because a retried restore would hold every row twice. To collect several objects in one table, pass `--append`
    for each restore after the first. The output then has `"appended": true`, and the count check below covers the
    whole table. The copy commits only when the object's digest, its stored size and the copied row count equal the
@@ -661,8 +678,9 @@ object are in a scratch table in the application database. Qualify the scratch t
 
 ## Auditing the archive
 
-Preconditions: every `KUDOS_ARCHIVE_*` variable is set where the command runs. End state: every archive object has
-been checked against its manifest, and the catalog has been compared with the listing. Nothing is changed.
+Audit the archive to compare object metadata with manifests and identify catalog entries whose objects are missing.
+Set the required `KUDOS_ARCHIVE_*` variables where the command runs. The audit is read-only. A full download and
+content check requires `--read-back`.
 
 1. Run the audit, monthly from cron or by hand:
 
@@ -679,12 +697,12 @@ been checked against its manifest, and the catalog has been compared with the li
    manifest, a manifest whose range or codec belongs to another key, and with `--read-back` an object that does not
    decompress or a field that differs from the manifest. For one object, `archive restore` into a scratch table
    (section "Restoring an archived partition into a scratch table") reads it back in full. A line with
-   `"kind": "missing_object"` is a catalog unit whose object is gone. For a currency unit that is lost history, because currency objects are never evicted. The last line is the
-   summary. Verify: the exit status is 0 and the summary has `"problems": 0`. The summary's `noncurrent_bytes` and
-   `delete_markers` map each tier to the storage still held by noncurrent object versions and to its delete markers.
-   They grow after an eviction or a re-export in a versioned bucket until a lifecycle rule expires the old versions.
-   A `null` value means the store did not list versions, so the figure is unknown. Neither figure affects the exit
-   status.
+   `"kind": "missing_object"` is a catalog unit whose object is gone. For a currency unit, that is lost history,
+   because currency objects are never evicted. The last line is the summary. Verify: the exit status is 0 and the
+   summary has `"problems": 0`. The summary's `noncurrent_bytes` and `delete_markers` map each tier to the storage
+   still held by noncurrent object versions and to its delete markers. They grow after an eviction or a re-export in
+   a versioned bucket until a lifecycle rule expires the old versions. A `null` value means the store did not list
+   versions, so the figure is unknown. Neither figure affects the exit status.
 3. Resume an interrupted audit from the summary's `last_key`, or from the last object line, with
    `--since-key <key>`. The catalog comparison always covers the whole listing.
 

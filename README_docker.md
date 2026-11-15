@@ -60,6 +60,10 @@ USE_SQLITE=0
 POSTGRES_URL="postgres"
 ```
 
+Before starting, stop any stack already using ports 7001, 7002, 5432 or 6379 or the container names in the Compose
+file. A project name changes named-volume ownership, but the supplied container names and host ports stay fixed.
+Choose the project name before startup and use it consistently for later commands.
+
 Then run the following command in your project root folder:
 
 ```bash
@@ -72,8 +76,20 @@ This is required by PostgreSQL 18 and later, and keeps data for different major
 versions in separate subdirectories when the development image is updated.
 The API waits for the database health check before it starts.
 
-The project name gives the test stack its own named volume. Stop any stack that
-already owns ports 7001, 5432, or 6379 before starting the isolated one.
+Check the running services and API response:
+
+```bash
+docker compose ps
+curl -fsS "http://localhost:7001/api/v2/status/models?type=image"
+```
+
+Expect running API, PostgreSQL and Redis containers and a JSON model list. A model list does not demonstrate that
+a worker can generate; register a worker with this Horde to test a full request. If startup or the query fails,
+inspect `docker compose logs aihorde postgres redis`, then check database credentials, Redis reachability and
+model-reference bootstrap errors. Configure `.env_docker` before retrying startup.
+
+Use `docker compose stop` to stop this stack while retaining its database volume. If you started with `-p <name>`,
+include that same option in status, logs and stop commands.
 
 ## Optional tuning environment variables
 

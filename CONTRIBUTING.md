@@ -7,13 +7,22 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## How to run AI Horde locally
 
-* Git clone this repository
-* copy `.env_template` into `.env` and edit it according to its comments. The horde should start if you leave it unedited
-* install python requirements with `python -m pip install -r requirements.txt --user`
-* start server with `python server.py  -vvvvi --horde stable`
-* You can now connect to http://localhost:7001
+Clone the repository, then follow [Docker Compose setup](README_docker.md#with-docker-compose) for the API,
+PostgreSQL and Redis. Configure the copied environment file before starting: its example service addresses are
+placeholders. Central Redis is required to initialize the fleet's image-model snapshot. The Docker guide includes
+an API check and log commands for failures.
 
-To run the AI Horde with Docker or Docker Compose, see the [README_docker.md](README_docker.md).
+For host-side development tools, install Python 3.12 or 3.13 and uv, then run from the repository root:
+
+```bash
+uv sync --group dev
+```
+
+This prepares the Python environment; it does not start the required services. To run the API on the host instead
+of in Compose, configure `.env` with reachable database and Redis addresses and credentials before running
+`uv run python server.py -vvvvi --horde stable`. Stop a container API already using port 7001 first.
+Check `http://localhost:7001/api/v2/status/models?type=image` for a JSON model list. On failure, inspect the server
+log for database or model-reference bootstrap errors before submitting work.
 
 ## How to contribute to the AI Horde code
 
@@ -26,8 +35,8 @@ Our codebase makes use of multiple tools to keep our work standardized. We typic
 You can install all the dev tools we're using by using `requirements.dev.txt` and then the pre-commit hook
 
 ```bash
-python -m pip install -r requirements.dev.txt
-pre-commit install
+uv sync --group dev
+uv run pre-commit install
 ```
 
 This will ensure that the project will prevent you from commiting changes which will not pass our CI checks.
@@ -42,13 +51,13 @@ To identify and fix (if possible) all files as necessary, simply run:
 
 
 ```bash
-ruff . --fix
+uv run ruff check . --fix
 ```
 
 To format all files:
 
 ```bash
-ruff format .
+uv run ruff format .
 ```
 
 Ruff might request extra manual fixes
