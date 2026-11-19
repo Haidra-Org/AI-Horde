@@ -287,5 +287,5 @@ A successful complete reply produces a dictionary with exactly the schema's key,
   browser, parsing the stream by hand and running the tool loop in a client.
 - [Chat front reference](../reference/chat_front.md) holds the request keys, message roles, response and stream
   shapes, and the model list fields.
-- The [chat requests explanation](../explanation/chat_requests.md) covers how a chat request travels from the front to a
+- The [chat requests explanation](../explanation/chat_requests.md) covers the path a chat request takes from the front to a
   worker and back.

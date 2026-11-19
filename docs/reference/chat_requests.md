@@ -19,8 +19,9 @@ Topics: [requests](../topics.md#requests), [workers](../topics.md#workers)
 
 A chat request is a text request whose worker input is an OpenAI `messages` array instead of a prompt. It lives in
 the text queue and shares the text worker pool. Queue position, kudos, upfront kudos, concurrency limits, statistics
-and countermeasures apply to it as to a text request. Only text workers that declare chat jobs on pop receive it.
-Those workers still receive text jobs unless they are configured as chat-only.
+and countermeasures apply to both native-text and chat requests. Only text workers that explicitly declare chat jobs 
+on pop receive it. Native text requests, while defaulting to true, can be explicitly opted out by the worker,
+which would effectively make it receive only chat requests.
 
 For complete request and response bodies, see [Chat wire examples](chat_wire_examples.md).
 For worker implementation steps, see [Serve chat jobs](../how-to/serve_chat_jobs.md). The sections below specify

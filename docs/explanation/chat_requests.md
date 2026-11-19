@@ -20,6 +20,8 @@ Topics: [chat](../topics.md#chat), [requests](../topics.md#requests), [workers](
 - A chat request sends an OpenAI `messages` array to a worker. The worker renders the conversation with the loaded
   model's chat template. Chat requests share the text queue, pricing and limits.
 - Workers opt in on every text pop. The Horde routes chat requests by the declared model, limits and required features.
+  Workers can elect to accept or decline chat requests on a per pop basis, which allows them to manage their load and 
+  capabilities dynamically.
 - A separate OpenAI-compatible front serves `/v1/chat/completions` through the native chat routes. Redis signals
   notify the front when a reply is available.
 - Unsupported parameters are refused, and the error message includes the key. Unknown keys inside messages, tool
@@ -48,7 +50,7 @@ the Horde would then have to maintain every model's chat template. The text requ
 for tools and images, and cannot return the backend's reported usage
 ([ADR 0019](../decisions/0019-chat-requests-as-a-text-request-subtype.md)).
 
-## How a chat request travels
+## Chat request flow and routing
 
 A request passes through the front, the native API and a volunteer worker, with Postgres, Redis and object storage
 between them. The front does not hold a database connection. It returns results from the native status route or,
@@ -131,14 +133,15 @@ Validation changes must be reflected in both forms. A separate chat class and ta
 but would require separate handling wherever text request behaviour also applies to chat
 ([Flattened prompt](../reference/chat_requests.md#flattened-prompt)).
 
-#### A separate front woken by Redis
+#### Separate front for chat requests
 
-An OpenAI call keeps its connection open until the reply is ready, and a horde request can wait minutes for a worker
-within its [20-minute request lifetime](../reference/service_limits.md#request-lifetime-and-expiry).
-Waiting inside the Flask application would hold one Waitress thread for each open call, leaving fewer threads for
-worker pops and submits. The front therefore runs as a separate ASGI process, where each waiting call uses a coroutine
-([ADR 0023](../decisions/0023-run-the-chat-front-as-a-separate-asgi-process-woken-by-redis.md)). The front does not
-hold a database connection. The outcome is stored in Postgres, and the front reads it through the status route.
+An OpenAI call keeps its connection open until the reply is ready, and a horde request can wait minutes for a worker within its
+[20-minute request lifetime](../reference/service_limits.md#request-lifetime-and-expiry).
+Waiting inside the Flask application would hold one Waitress thread for each open call, leaving fewer
+threads for worker pops and submits. The front therefore runs as a separate ASGI process, where each waiting call 
+uses a coroutine ([ADR 0023](../decisions/0023-run-the-chat-front-as-a-separate-asgi-process-woken-by-redis.md)). 
+The front does not hold a database connection. The outcome is stored in Postgres, and the front reads it through 
+the status route.
 
 Assignment and settlement can refresh that lifetime. The chat front's
 [HTTP response budgets](../reference/service_limits.md#chat-front-deadlines-and-admission) are separate and can end
