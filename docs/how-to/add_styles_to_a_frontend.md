@@ -70,9 +70,9 @@ configured in the frontend gets a separate entry.
 ## Build style authoring controls
 
 Create a style with `POST /api/v2/styles/<type>` and update it with `PATCH /api/v2/styles/<type>/<style-id>`.
-Only trusted users and users with the customizer role can create styles. Other users,
-including the anonymous user, get `StylesRequiresCustomizer`. The anonymous user gets
-`StylesAnonForbidden` when it creates a collection or deletes a style.
+Only trusted users and users with the customizer role can create styles. Other registered users get
+`StylesRequiresCustomizer`. The anonymous user gets `StylesAnonForbidden` when it creates a style or a collection,
+or deletes a style.
 
 ### Parameter policy
 

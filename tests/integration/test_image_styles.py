@@ -338,6 +338,18 @@ class TestImageStyleContract:
             assert details["template_fields"] == TEMPLATE_FIELDS
 
 
+class TestImageStyleCreateRefusals:
+    """Accounts that cannot create an image style."""
+
+    def test_the_anonymous_user_is_refused_as_anonymous(self, client, request_headers: dict[str, str]) -> None:
+        anonymous_headers = {**request_headers, "apikey": "0000000000"}
+
+        response = post_style(client, anonymous_headers, style_body("anonymous image style"))
+
+        assert response.status_code == 403, response.get_data(as_text=True)
+        assert response.get_json()["rc"] == "StylesAnonForbidden"
+
+
 class TestImageStyleContractRejections:
     """Declarations the image style endpoints refuse."""
 

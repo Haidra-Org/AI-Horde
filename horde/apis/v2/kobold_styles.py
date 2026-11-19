@@ -151,13 +151,14 @@ class TextStyle(TextStyleContractArgs, StyleTemplate):
         self.user = database.find_user_by_api_key(self.args["apikey"])
         if not self.user:
             raise e.InvalidAPIKey("TextStyle POST")
+        # The anonymous user is never a customizer, so its refusal comes first to report the real reason.
+        if self.user.is_anon():
+            raise e.Forbidden("Anonymous users cannot create styles", rc="StylesAnonForbidden")
         if not self.user.customizer and not self.user.trusted:
             raise e.Forbidden(
                 "Only customizers and trusted users can create new styles. You can request the customizer role in our channels.",
                 rc="StylesRequiresCustomizer",
             )
-        if self.user.is_anon():
-            raise e.Forbidden("Anonymous users cannot create styles", rc="StylesAnonForbidden")
         self.style_name = ensure_clean(self.args.name, "style name")
         self.validate()
         new_style = Style(
