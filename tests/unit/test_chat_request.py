@@ -58,6 +58,8 @@ from horde.classes.kobold.chat_request import (
     CHAT_SUBMIT_INVALID_RC,
     CHAT_SUBMIT_NONCONFORMANT_RC,
     DEFAULT_CHAT_MAX_TOKENS,
+    OVERFLOW_BOUND_FIXED_TOKENS,
+    OVERFLOW_BOUND_TOKENS_PER_LINE,
     UNSUPPORTED_CHAT_PARAMETER_RC,
     ChatSubmittedMessage,
     ReasoningEffortDefault,
@@ -88,6 +90,7 @@ from horde.classes.kobold.chat_request import (
     list_image_urls,
     list_stored_chat_object_keys,
     parse_chat_request,
+    prompt_overflow_is_plausible,
     replace_image_urls,
     required_chat_features,
     resolve_image_references,
@@ -2662,3 +2665,34 @@ class TestImageLoading:
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
 def test_native_sampling_values_must_be_finite(field: str, value: float) -> None:
     assert _rejection(_body(**{field: value})).code == 400
+
+
+class TestPromptOverflowPlausibility:
+    """Check the byte bound used to evaluate a worker's overflow report."""
+
+    def _context_just_fitting(self, prompt: str, max_length: int) -> int:
+        line_count = prompt.count("\n") + 1
+        return len(prompt.encode("utf-8")) + OVERFLOW_BOUND_FIXED_TOKENS + OVERFLOW_BOUND_TOKENS_PER_LINE * line_count + max_length
+
+    def test_a_prompt_whose_bound_fits_the_context_cannot_overflow(self) -> None:
+        prompt = "system: Be brief.\nuser: Name one colour."
+        context = self._context_just_fitting(prompt, max_length=512)
+
+        assert prompt_overflow_is_plausible(prompt=prompt, max_length=512, max_context_length=context, carries_images=False) is False
+
+    def test_a_prompt_whose_bound_exceeds_the_context_by_one_token_can_overflow(self) -> None:
+        prompt = "system: Be brief.\nuser: Name one colour."
+        context = self._context_just_fitting(prompt, max_length=512) - 1
+
+        assert prompt_overflow_is_plausible(prompt=prompt, max_length=512, max_context_length=context, carries_images=False) is True
+
+    def test_text_outside_ascii_is_counted_by_its_bytes(self) -> None:
+        prompt = "user: " + "語" * 1000
+        ascii_prompt = "user: " + "a" * 1000
+        context = self._context_just_fitting(ascii_prompt, max_length=0)
+
+        assert prompt_overflow_is_plausible(prompt=ascii_prompt, max_length=0, max_context_length=context, carries_images=False) is False
+        assert prompt_overflow_is_plausible(prompt=prompt, max_length=0, max_context_length=context, carries_images=False) is True
+
+    def test_a_prompt_with_an_image_can_always_overflow(self) -> None:
+        assert prompt_overflow_is_plausible(prompt="user: hi", max_length=16, max_context_length=1_000_000, carries_images=True) is True

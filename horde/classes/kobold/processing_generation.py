@@ -10,8 +10,11 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, override
 
+from horde_sdk.worker.chat_declaration import ChatFaultReason
+from opentelemetry._logs import SeverityNumber, get_logger
 from sqlalchemy.sql import expression
 
+from horde import metrics
 from horde import vars as hv
 from horde.bridge_reference import (
     is_backed_validated,
@@ -30,8 +33,10 @@ from horde.classes.base.processing_generation import ProcessingGeneration, json_
 from horde.classes.kobold.chat_request import (
     CHAT_SUBMIT_NONCONFORMANT_RC,
     MAX_CHAT_REFUSAL_RC_LENGTH,
+    REQUEST_CAUSED_FAULT_REASONS,
     ChargeBasis,
     chat_reply_characters,
+    prompt_overflow_is_plausible,
     streams_progress,
 )
 from horde.classes.kobold.genstats import TextGenerationStatistic, build_text_statistic, record_text_statistic
@@ -57,6 +62,8 @@ from horde.metrics import (
 )
 from horde.model_reference import model_reference
 from horde.suspicions import Suspicions
+
+_fault_event_logger = get_logger(__name__)
 
 UNKNOWN_ATTRIBUTE_VALUE = "unknown"
 """Placeholder for a metric attribute the submission did not include."""
@@ -546,15 +553,52 @@ class TextProcessingGeneration(ProcessingGeneration):
         return round(kudos * context_multiplier, 2)
 
     def log_worker_abort(self) -> None:
-        """Count the abort on the worker, as a nonconformant reply when the Horde refused the reply as one.
-
-        The worker generated a well-formed reply that broke a ``strict`` request's contract, which the model failed
-        rather than the worker, so it does not count toward the dropped jobs that put a worker into maintenance.
-        """
+        """Count the abort as a dropped job unless the request or model caused it."""
         if self.chat_refusal_rc == CHAT_SUBMIT_NONCONFORMANT_RC:
             self.worker.log_nonconformant_reply()
             return
+        fault_reason = self.request_caused_fault_reason()
+        if fault_reason is not None:
+            metrics.chat_worker_fault_exemptions.add(
+                1,
+                {
+                    "horde.reason": fault_reason,
+                    "horde.worker_trusted": str(bool(self.worker.user.trusted)).lower(),
+                },
+            )
+            # Emit an OTLP log record independently of submit trace sampling.
+            _fault_event_logger.emit(
+                event_name="horde.chat.worker_fault_exempted",
+                severity_number=SeverityNumber.INFO,
+                body="Chat worker fault exempted from dropped-job accounting",
+                attributes={
+                    "worker_id": str(self.worker_id),
+                    "generation_id": str(self.id),
+                    "reason": fault_reason,
+                },
+            )
+            return
         super().log_worker_abort()
+
+    def request_caused_fault_reason(self) -> str | None:
+        """Return an exempt reason from this submit, requiring a plausible overflow for ``prompt_overflow``.
+
+        Stale-generation aborts have no worker-reported reason.
+        """
+        fault_reason: str | None = getattr(self, "reported_fault_reason", None)
+        if fault_reason is None or not self.wp.is_chat or fault_reason not in REQUEST_CAUSED_FAULT_REASONS:
+            return None
+        if fault_reason != ChatFaultReason.PROMPT_OVERFLOW:
+            return fault_reason
+        # A generation assigned before the declaration was recorded uses the request's context as a fallback.
+        max_context_length = self.assigned_max_context_length or self.wp.max_context_length
+        overflow_is_plausible = prompt_overflow_is_plausible(
+            prompt=self.wp.prompt or "",
+            max_length=self.wp.max_length,
+            max_context_length=max_context_length,
+            carries_images=self.wp.needs_chat_images(),
+        )
+        return fault_reason if overflow_is_plausible else None
 
     @override
     def build_generation_statistic(self) -> TextGenerationStatistic:
@@ -598,8 +642,15 @@ class TextProcessingGeneration(ProcessingGeneration):
         state_t0 = time.monotonic()
         state = kwargs.get("state", "ok")
         if state == "faulted":
+            # Expose the submitted reason to log_worker_abort for this call only.
+            fault_reason = kwargs.get("fault_reason")
+            self.reported_fault_reason = fault_reason if isinstance(fault_reason, str) else None
             # Counted only by the submit that faulted the job, so a repeated fault submit is not counted again.
-            if self.fault_and_restart():
+            try:
+                faulted = self.fault_and_restart()
+            finally:
+                self.reported_fault_reason = None
+            if faulted:
                 self._record_gate_shadow_outcome(GateShadowOutcome.FAULTED)
         elif state in ("censored", "csam"):
             self.censored = True

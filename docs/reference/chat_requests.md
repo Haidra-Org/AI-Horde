@@ -1038,19 +1038,23 @@ while it is not faulted, or when the Horde did not refuse a reply to it and a wo
 [fault reason](#worker-fault-reasons). The `faulted` signal includes them too (see
 [Completion signal](#completion-signal)).
 
-When the worker's fault submit for a generation arrives, `TextProcessingGeneration.log_worker_abort` reads the stored
-`chat_refusal_rc`, so a worker cannot claim the exemption itself:
+When the worker submits a fault, the Horde checks the stored refusal first, then the worker's reported reason.
 
-| Stored `chat_refusal_rc`        | Worker counter                                                                                   |
-| ------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ChatSubmitNonconformant`       | `nonconformant_replies` is incremented. `aborted_jobs` and `uncompleted_jobs` are not             |
-| any other, or none              | `aborted_jobs` and `uncompleted_jobs` are incremented, as for any dropped job (`log_aborted_job`) |
+| Condition | Accounting |
+| --- | --- |
+| Stored refusal is `ChatSubmitNonconformant` | Increment `nonconformant_replies`. |
+| `unbuildable_grammar`, `tool_violation`, or a plausible `prompt_overflow` | Export the exemption under [Worker fault metrics](#worker-fault-metrics). |
+| Any other fault | Increment `aborted_jobs` and `uncompleted_jobs`. |
 
 A nonconformant reply is a well-formed reply that broke a `strict` request's contract. The worker did generate a
-reply, and the model failed the contract. Such a reply does not count toward the hourly aborted-job threshold that
-puts a worker into maintenance. The job still does not earn kudos. The same rule applies when the stale-generation
+reply, and the model failed the contract. Only the last row counts toward the hourly aborted-job threshold that
+puts a worker into maintenance. Faulted jobs earn zero kudos. The same refusal rule applies when the stale-generation
 thread aborts a generation whose reply was refused as nonconformant. Worker details (`GET /v2/workers`,
 `/v2/workers/{id}`, `/v2/workers/name/{name}`) and the moderation worker report include `nonconformant_replies`.
+
+For `prompt_overflow`, the Horde adds the UTF-8 byte length of the flattened prompt, 256 tokens for the template,
+16 tokens per line, and the requested output length. Overflow is plausible when that estimate exceeds the worker's
+context limit at assignment. Requests with images qualify because image token counts depend on the worker's projector.
 
 ### Worker fault reasons
 
@@ -1076,7 +1080,7 @@ value is not stored, and the fault is accepted without a reason, so an unrecogni
 the job. The value is ignored on every submit other than a chat job's fault.
 
 A failed write is logged and the fault is still applied. The fault counts toward the worker's counters as shown in
-the table in [Refusal record and worker counters](#refusal-record-and-worker-counters). A reason does not exempt it.
+the table in [Refusal record and worker counters](#refusal-record-and-worker-counters).
 Faulted submits are counted by reason under [Worker fault metrics](#worker-fault-metrics).
 
 ## Pricing
@@ -1373,12 +1377,21 @@ The submit route counts every faulted chat submit by the worker's reason (see
 | Counter                    | Attributes                                                                                   | Counts                    |
 | -------------------------- | -------------------------------------------------------------------------------------------- | ------------------------- |
 | `horde.chat.worker_faults` | `horde.reason` (a `fault_reason`, `unknown` or `none`), `horde.worker_trusted`               | Faulted chat submits      |
+| `horde.chat.worker_fault_exemptions` | `horde.reason`, `horde.worker_trusted` | Generations exempted from dropped-job accounting by a worker-reported reason |
 
 `unknown` is a value that is not in `CHAT_WORKER_FAULT_MESSAGES`, and `none` is a submit without `fault_reason`. The
 text sent by a worker is not used as an attribute. The count is recorded before the fault is applied, so a repeated
 fault submit for a generation that is already faulted is counted again. The counter records only the worker's reason.
 A refusal stored by the Horde is not counted. The worker's fault after it is counted once, with the worker's reason
 (`reply_refused` from a worker that follows the SDK).
+
+The exemption counter increments once per generation when the worker's submit applies the fault and the reported
+reason qualifies for an exemption.
+
+That same exemption emits the OpenTelemetry log event `horde.chat.worker_fault_exempted` with `worker_id`,
+`generation_id`, and `reason`. The logs can be filtered or grouped by worker over a time window independently of
+trace sampling. Export them through `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or the shared `OTEL_EXPORTER_OTLP_ENDPOINT`.
+In Loki, keep the UUIDs as structured metadata so they do not create indexed streams per worker or generation.
 
 ### Allowance metrics
 

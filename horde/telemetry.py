@@ -27,7 +27,7 @@ so they're safe to construct at import time. Custom histogram bucket
 boundaries are configured here through ``logfire.MetricsOptions(views=...)``.
 
 OTLP export is fully driven by standard env vars
-(``OTEL_EXPORTER_OTLP_ENDPOINT``, ``OTEL_EXPORTER_OTLP_METRICS_ENDPOINT``,
+(``OTEL_EXPORTER_OTLP_ENDPOINT``, ``OTEL_EXPORTER_OTLP_METRICS_ENDPOINT``, ``OTEL_EXPORTER_OTLP_LOGS_ENDPOINT``,
 ``OTEL_SERVICE_NAME``, ``OTEL_TRACES_SAMPLER_ARG``, …). Logfire auto-wires a
 ``PeriodicExportingMetricReader`` for the metrics endpoint when
 ``send_to_logfire=False`` (see logfire ``_internal/config.py`` ~line 1199).
@@ -322,6 +322,7 @@ def telemetry_enabled() -> bool:
             "OTEL_EXPORTER_OTLP_ENDPOINT",
             "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
             "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
         )
     )
 

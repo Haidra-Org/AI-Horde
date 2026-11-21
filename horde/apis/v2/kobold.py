@@ -2090,13 +2090,16 @@ class TextJobSubmit(JobSubmitTemplate):
         return {"dropped_tool_calls": self.dropped_tool_call_count}
 
     def get_submission_details(self):
-        """Return a chat job's structured reply for ``set_generation``; a text job carries none.
+        """Return a chat job's structured reply or fault reason for ``set_generation``.
 
         Returns:
-            dict: The message, finish reasons and reported token counts of a chat job, or nothing.
+            dict: The message, finish reasons and reported token counts of a chat job, its fault reason on a
+                faulted submit, or an empty dict for a text job.
         """
         if not self.procgen.wp.is_chat:
             return {}
+        if self.args.state == "faulted":
+            return {"fault_reason": self.args.fault_reason}
         return {
             "message": self.chat_message,
             "finish_reason": self.args.finish_reason,

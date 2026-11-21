@@ -317,6 +317,7 @@ def test_init_telemetry_early_is_idempotent(telemetry_app):
         ({}, False),
         ({"AI_HORDE_TELEMETRY_ENABLED": "true"}, True),
         ({"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"}, True),
+        ({"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://collector:4318/v1/logs"}, True),
         ({"PYROSCOPE_ENABLED": "true"}, True),
         ({"OTEL_SDK_DISABLED": "true"}, False),
         ({"OTEL_SDK_DISABLED": "true", "AI_HORDE_TELEMETRY_ENABLED": "true"}, False),

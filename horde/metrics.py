@@ -783,6 +783,11 @@ chat_worker_faults = logfire.metric_counter(
     unit="1",
     description="Faulted chat submits, split by the fault_reason the worker sent (a known reason, unknown or none) and worker trust",
 )
+chat_worker_fault_exemptions = logfire.metric_counter(
+    "horde.chat.worker_fault_exemptions",
+    unit="1",
+    description="Chat generations exempted from dropped-job accounting by a worker-reported reason, split by reason and worker trust",
+)
 
 # --- styles ------------------------------------------------------------------
 style_applications = logfire.metric_counter(
