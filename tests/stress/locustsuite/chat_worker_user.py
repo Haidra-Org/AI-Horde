@@ -176,7 +176,9 @@ class ChatMixWorker(HttpUser):
         else:
             time.sleep(generation_seconds)
         if reply.fault_reason is not None:
-            self._submit_fault(job, reply.fault_reason, name=f"{TEXT_SUBMIT_PATH} [chat fault scripted]")
+            self._submit_fault(
+                job, reply.fault_reason, is_aborted_job=reply.fault_is_aborted_job, name=f"{TEXT_SUBMIT_PATH} [chat fault scripted]"
+            )
             return
         self._submit_reply(job, reply)
 
@@ -331,8 +333,14 @@ class ChatMixWorker(HttpUser):
                 # Faulting would count one more aborted job against a worker name the run cannot replace.
                 refusals = f"{self.unintended_refusals} replies it meant to conform were refused"
                 self._stop(f"the {self.persona_role.value} worker {self.worker_name} stopped: {refusals}")
-        # A refusal is definitive: fault the job, as koboldcpp does, so it goes back to the queue at once.
-        self._submit_fault(job, REPLY_REFUSED_FAULT_REASON, name=f"{TEXT_SUBMIT_PATH} [chat fault after refusal]")
+        # A refusal is definitive: fault the job, as koboldcpp does, so it goes back to the queue at once. The fault
+        # after a nonconformant refusal counts as a nonconformant reply, and any other counts as an aborted job.
+        self._submit_fault(
+            job,
+            REPLY_REFUSED_FAULT_REASON,
+            is_aborted_job=return_code != "ChatSubmitNonconformant",
+            name=f"{TEXT_SUBMIT_PATH} [chat fault after refusal]",
+        )
 
     def _count_refusal(self, return_code: str | None) -> None:
         """Count a refused reply in the ledger by its return code."""
@@ -341,15 +349,28 @@ class ChatMixWorker(HttpUser):
         elif return_code == "ChatSubmitInvalid":
             chat_mix_settings.ledger.refused_invalid[self.worker_name] += 1
 
-    def _submit_fault(self, job: dict[str, Any], fault_reason: str, *, name: str) -> None:
-        """Fault a chat job with a reason; the Horde answers with a reward of 0."""
+    def _submit_fault(self, job: dict[str, Any], fault_reason: str, *, is_aborted_job: bool, name: str) -> None:
+        """Fault a chat job with a reason, and record in the ledger whether the Horde counts it as an aborted job.
+
+        A fault that counts is held as unanswered until its response arrives. The run can stop between the Horde
+        applying the fault and the response, so the stop-time check allows those faults either way.
+        """
+        ledger = chat_mix_settings.ledger
         submit_body = build_faulted_chat_submit_body(
             generation_id=job["id"], model_id=job.get("model") or self.model, fault_reason=fault_reason
         )
+        if is_aborted_job:
+            ledger.faults_in_flight[self.worker_name] += 1
         with self.client.post(TEXT_SUBMIT_PATH, json=submit_body, headers=_headers(self.api_key), catch_response=True, name=name) as resp:
+            if is_aborted_job:
+                ledger.faults_in_flight[self.worker_name] -= 1
             self._judge_plain_submit(resp, name, "fault submit")
             if resp.ok:
-                chat_mix_settings.ledger.faults_submitted[self.worker_name] += 1
+                ledger.faults_submitted[self.worker_name] += 1
+                if is_aborted_job:
+                    ledger.aborted_job_faults[self.worker_name] += 1
+                else:
+                    ledger.exempt_faults[self.worker_name] += 1
 
     def _submit_text_job(self, job: dict[str, Any]) -> None:
         """Submit a text job the way a text worker submits it."""

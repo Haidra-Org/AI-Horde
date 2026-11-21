@@ -26,6 +26,7 @@ from typing import Any
 import jsonschema
 import pytest
 from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_SCHEMA_NESTING, chat_schema_exceeds_nesting
+from horde_sdk.worker.chat_declaration import ChatFaultReason
 from pydantic import TypeAdapter
 
 os.environ.setdefault("LOCUST_SKIP_MONKEY_PATCH", "1")
@@ -36,6 +37,8 @@ from locust.exception import RescheduleTask, StopUser
 from locust.runners import MasterRunner, WorkerRunner
 
 from horde.chat_contract import ChatResponseFormat, check_strict_response_schema
+from horde.classes.kobold.chat_request import REQUEST_CAUSED_FAULT_REASONS, prompt_overflow_is_plausible
+from horde.classes.kobold.request_fit import estimate_prompt_tokens
 from tests.stress import check_smoke_results
 from tests.stress.locustsuite import chat_mix_settings as chat_mix_settings_module
 from tests.stress.locustsuite import chat_worker_user, helpers
@@ -61,6 +64,7 @@ from tests.stress.locustsuite.chat_mix_settings import (
     ChatMixConfigurationError,
     ChatMixCoverage,
     ChatMixSettings,
+    ChatWorkerLedger,
     IntervalGate,
     RunnerRole,
     RunTopology,
@@ -69,14 +73,17 @@ from tests.stress.locustsuite.chat_mix_settings import (
     build_run_topology,
     chat_mix_settings,
     coverage_for_gate,
+    find_aborted_job_mismatches,
     find_coverage_gaps,
 )
 from tests.stress.locustsuite.chat_scenarios import (
     FAIL_FAST_SHARE_GROUPS,
     RATING_SCHEMA,
+    REPLY_TOKENS,
     SCENARIO_BUILDERS,
     UPFRONT_KUDOS_FREE_TOKENS,
     ChatModelNames,
+    ChatScenario,
     HourlyBudget,
     ScenarioContext,
     ScenarioGroup,
@@ -84,11 +91,15 @@ from tests.stress.locustsuite.chat_scenarios import (
     as_fail_fast,
     build_authorization_headers,
     build_nested_object_schema,
+    build_overflow_prompt,
     build_oversized_body,
+    false_prompt_overflow_fault,
     parse_group_weights,
     plain_prompt,
 )
 from tests.stress.locustsuite.chat_worker_script import (
+    DEFAULT_PERSONA_MAX_CONTEXT_LENGTH,
+    SCRIPTED_FAULTS,
     VISION_OK_PREFIX,
     VISION_UNEXPECTED_PREFIX,
     ChatPersonaRole,
@@ -384,7 +395,8 @@ class TestScenarioCatalogue:
                     assert scenario.body["model"] == models_by_persona[scenario.persona], scenario.name
 
     def test_only_the_scenarios_whose_faults_abort_jobs_are_budgeted(self) -> None:
-        aborting_scripts = (ReplyScript.UNDECLARED, ReplyScript.DUP_IDS, ReplyScript.FAULT_GENERATION_ERROR)
+        aborting_faults = tuple(script for script, (_reason, is_aborted_job) in SCRIPTED_FAULTS.items() if is_aborted_job)
+        aborting_scripts = (ReplyScript.UNDECLARED, ReplyScript.DUP_IDS, *aborting_faults)
         for builders in SCENARIO_BUILDERS.values():
             for builder in builders:
                 scenario = builder(CONTEXT)
@@ -414,6 +426,31 @@ class TestScenarioCatalogue:
         assert not budget.try_take(20.0)
         assert budget.try_take(3600.0)
 
+    def test_the_overflow_prompt_is_assigned_but_exceeds_the_context_by_bytes(self) -> None:
+        prompt = build_overflow_prompt(CONTEXT)
+        assert len(prompt.encode("utf-8")) > DEFAULT_PERSONA_MAX_CONTEXT_LENGTH
+        assert estimate_prompt_tokens(prompt) + REPLY_TOKENS <= DEFAULT_PERSONA_MAX_CONTEXT_LENGTH
+        assert prompt_overflow_is_plausible(
+            prompt=prompt, max_length=REPLY_TOKENS, max_context_length=DEFAULT_PERSONA_MAX_CONTEXT_LENGTH, carries_images=False
+        )
+        short_prompt = only_user_text(false_prompt_overflow_fault(CONTEXT))
+        assert not prompt_overflow_is_plausible(
+            prompt=short_prompt, max_length=REPLY_TOKENS, max_context_length=DEFAULT_PERSONA_MAX_CONTEXT_LENGTH, carries_images=False
+        )
+
+    def test_the_suites_exempt_faults_match_the_hordes_exempt_reasons(self) -> None:
+        for script, (reason, is_aborted_job) in SCRIPTED_FAULTS.items():
+            if not is_aborted_job:
+                assert reason in REQUEST_CAUSED_FAULT_REASONS, script
+            elif reason != ChatFaultReason.PROMPT_OVERFLOW:
+                assert reason not in REQUEST_CAUSED_FAULT_REASONS, script
+
+
+def only_user_text(scenario: ChatScenario) -> str:
+    """Return the text of a scenario's only user message."""
+    (message,) = scenario.body["messages"]
+    return message["content"]
+
 
 class TestWorkerScript:
     conformant = build_persona(ChatPersonaRole.CONFORMANT, vision=True)
@@ -439,8 +476,10 @@ class TestWorkerScript:
         tools = [{"type": "function", "function": {"name": "get_weather"}}]
         for script in ReplyScript:
             reply = build_scripted_reply(self.payload(messages=[{"role": "user", "content": f"Hi {reply_marker(script)}"}], tools=tools))
-            if script == ReplyScript.FAULT_GENERATION_ERROR:
-                assert reply.fault_reason == "generation_error"
+            if script in SCRIPTED_FAULTS:
+                reason, is_aborted_job = SCRIPTED_FAULTS[script]
+                assert reply.fault_reason == reason.value and reply.fault_is_aborted_job is is_aborted_job
+                assert reply.content is None and reply.tool_calls is None
             elif script == ReplyScript.DUP_IDS:
                 assert reply.breaks_every_contract and reply.tool_calls[0]["id"] == reply.tool_calls[1]["id"]
             elif script == ReplyScript.UNDECLARED:
@@ -670,7 +709,7 @@ def chat_mix_options(**overrides: Any) -> SimpleNamespace:
         "limited_model": "stress/chat-limited",
         "flaky_model": "stress/chat-flaky",
         "flaky_rate": 0.3,
-        "group_weights": "ordinary=6,tools=4,structured=3,conformance=2,gap=2,misuse=3,lite=2,vision=1",
+        "group_weights": "ordinary=6,tools=4,structured=3,conformance=2,request_faults=1,gap=2,misuse=3,lite=2,vision=1",
         "stream_chance": 0.5,
         "include_usage_chance": 0.5,
         "gen_time_min": 0.0,
@@ -1461,6 +1500,71 @@ class TestChatMixWorker:
         assert refusal_was_intended(invalid, "ChatSubmitInvalid")
         assert not refusal_was_intended(conforming, "ChatSubmitNonconformant")
         assert not refusal_was_intended(conforming, "ChatModelMismatch")
+
+    @pytest.mark.parametrize(
+        ("script", "is_aborted_job"),
+        [
+            (ReplyScript.FAULT_TOOL_VIOLATION, False),
+            (ReplyScript.FAULT_UNBUILDABLE_GRAMMAR, False),
+            (ReplyScript.FAULT_GENERATION_ERROR, True),
+            (ReplyScript.FAULT_FALSE_PROMPT_OVERFLOW, True),
+        ],
+    )
+    def test_a_scripted_fault_is_recorded_by_whether_it_counts_as_an_aborted_job(self, script: ReplyScript, is_aborted_job: bool) -> None:
+        job = popped_mix_chat_job(user_text=f"Hi {reply_marker(script)} {nonce_marker(NONCE)}", stream_progress=False)
+        worker = self.build_worker([job, FakeResponse(200, {"reward": 0})])
+
+        worker.pop_and_serve()
+
+        ledger = chat_mix_settings.ledger
+        assert worker.client.sent[-1]["fault_reason"] == SCRIPTED_FAULTS[script][0].value
+        assert ledger.aborted_job_faults[worker.worker_name] == int(is_aborted_job)
+        assert ledger.exempt_faults[worker.worker_name] == int(not is_aborted_job)
+        assert ledger.faults_in_flight[worker.worker_name] == 0
+
+    def test_the_fault_after_an_invalid_refusal_counts_as_an_aborted_job(self) -> None:
+        job = popped_mix_chat_job(user_text=f"Hi {reply_marker(ReplyScript.UNDECLARED)} {nonce_marker(NONCE)}", stream_progress=False)
+        refused = FakeResponse(400, {"message": "invalid", "rc": "ChatSubmitInvalid"})
+        worker = self.build_worker([job, refused, FakeResponse(200, {"reward": 0})])
+
+        worker.pop_and_serve()
+
+        assert chat_mix_settings.ledger.aborted_job_faults[worker.worker_name] == 1
+        assert chat_mix_settings.ledger.exempt_faults[worker.worker_name] == 0
+
+
+class TestAbortedJobMismatches:
+    def ledger(self, *, aborted: int, exempt: int = 0, in_flight: int = 0, uncompleted_at_start: int = 5) -> ChatWorkerLedger:
+        ledger = ChatWorkerLedger()
+        ledger.faults_submitted["w"] = aborted + exempt
+        ledger.aborted_job_faults["w"] = aborted
+        ledger.exempt_faults["w"] = exempt
+        ledger.faults_in_flight["w"] = in_flight
+        ledger.counters_at_start["w"] = {"nonconformant_replies": 0, "uncompleted_jobs": uncompleted_at_start}
+        return ledger
+
+    def test_a_rise_equal_to_the_faults_that_count_matches(self) -> None:
+        ledger = self.ledger(aborted=3, exempt=9)
+        assert find_aborted_job_mismatches(ledger, {"w": {"uncompleted_jobs": 8}}) == []
+
+    def test_exempt_faults_counted_by_the_horde_are_a_mismatch(self) -> None:
+        ledger = self.ledger(aborted=3, exempt=9)
+        (mismatch,) = find_aborted_job_mismatches(ledger, {"w": {"uncompleted_jobs": 17}})
+        assert "rose by 12, expected 3" in mismatch and "9 exempt faults" in mismatch
+
+    def test_faults_that_count_missed_by_the_horde_are_a_mismatch(self) -> None:
+        ledger = self.ledger(aborted=3)
+        assert find_aborted_job_mismatches(ledger, {"w": {"uncompleted_jobs": 6}}) != []
+
+    def test_a_fault_unanswered_at_stop_is_allowed_either_way(self) -> None:
+        ledger = self.ledger(aborted=3, in_flight=1)
+        assert find_aborted_job_mismatches(ledger, {"w": {"uncompleted_jobs": 8}}) == []
+        assert find_aborted_job_mismatches(ledger, {"w": {"uncompleted_jobs": 9}}) == []
+        assert "expected 3 to 4" in find_aborted_job_mismatches(ledger, {"w": {"uncompleted_jobs": 10}})[0]
+
+    def test_a_worker_without_both_readings_is_skipped(self) -> None:
+        ledger = self.ledger(aborted=3)
+        assert find_aborted_job_mismatches(ledger, {}) == []
 
 
 def popped_mix_chat_job(*, user_text: str, stream_progress: bool) -> FakeResponse:

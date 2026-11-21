@@ -644,9 +644,10 @@ A scenario that needs a worker behaviour writes `[reply:<script>]` into its last
 user message (`ReplyScript` in `chat_worker_script.py`), so the client knows the
 outcome it caused, such as a 502 `ChatRequestFaulted` after three refused
 replies. The aborting scenarios (an undeclared function, duplicate call ids, a
-worker fault) fault three jobs each, and every fault counts as the worker's
-aborted job; the Horde puts a worker into maintenance past 20 aborted jobs an
-hour, 10 while the deployment is in raid mode, as dev is. They are capped by
+`generation_error` fault, a `prompt_overflow` fault for a short prompt) fault
+three jobs each, and every fault counts as the worker's aborted job. The Horde
+puts a worker into maintenance past 20 aborted jobs an hour, 10 while the
+deployment is in raid mode, as dev is. They are capped by
 `--chat-mix-aborting-per-hour`, across the whole run: 2 by default (6 aborted
 jobs), at most 6. In a distributed run only worker process 0 sends them, so the
 run's total stays the configured one; the other processes log that they skip
@@ -655,10 +656,19 @@ a worker whose replies meant to conform are refused three times stops without
 faulting the last job, so a Horde regression cannot push a worker name into
 maintenance.
 
+The `request_faults` group holds faults caused by the request or the model:
+`prompt_overflow` for a prompt whose UTF-8 bytes exceed the persona's context,
+`unbuildable_grammar` for a `strict` schema, and `tool_violation` for
+`tool_choice: required`. The Horde must not count them as aborted jobs, so they
+are not capped. Against a Horde that counts them, the conformant worker goes into
+maintenance during the run, and both the coverage gate and the aborted-job check
+below fail. The group also holds the short-prompt `prompt_overflow` scenario,
+which must still count.
+
 ### Groups, tags and classification
 
 `--chat-mix-group-weights` weights the front's scenario groups (`ordinary`,
-`tools`, `structured`, `conformance`, `gap`, `misuse`, `lite`, `vision`); a
+`tools`, `structured`, `conformance`, `request_faults`, `gap`, `misuse`, `lite`, `vision`); a
 group left out weighs 0. Give a group weight 0 when the run has no worker of the
 persona it needs. The `vision` group runs only with `--chat-mix-vision`, which
 makes the conformant persona declare `vision` with the `base64` transport; the
@@ -695,6 +705,14 @@ At test stop a coverage gate fails the run (`[coverage] chat mix`) when a
 configured persona never came online or its worker stopped itself, when no
 front scenario outside the misuse group completed, or, in a run longer than 5
 minutes, when a weighted group recorded no attempt.
+
+At test stop an aborted-job check (`[aborted jobs] chat mix`) compares each
+worker's rise in the Horde's `uncompleted_jobs` with the number of its faults
+that count as aborted jobs. `uncompleted_jobs` rises in the same call as the
+hourly count that puts a worker into maintenance and is never reset. A higher
+rise means the Horde counted exempt faults. A lower one means real faults were
+not counted. A fault submit without a response when the run stops is allowed
+either way. The check runs in the process that ran the workers.
 
 ### Anonymous share
 
