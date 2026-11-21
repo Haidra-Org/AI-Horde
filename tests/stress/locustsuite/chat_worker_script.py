@@ -43,6 +43,7 @@ from horde_sdk.worker.chat_declaration import ChatFaultReason, ChatFinishReason,
 
 __all__ = [
     "DEFAULT_PERSONA_MAX_LENGTH",
+    "SCRIPTED_FAULTS",
     "ChatPersona",
     "ChatPersonaRole",
     "ReplyScript",
@@ -75,6 +76,28 @@ class ReplyScript(StrEnum):
     """Text and one call in the same reply."""
     FAULT_GENERATION_ERROR = "fault_generation_error"
     """A faulted submit with ``fault_reason`` ``generation_error`` instead of a reply."""
+    FAULT_PROMPT_OVERFLOW = "fault_prompt_overflow"
+    """A faulted submit with ``fault_reason`` ``prompt_overflow``, for a prompt whose UTF-8 bytes alone exceed the
+    persona's context. The Horde accepts the report as caused by the request, so the fault is not an aborted job."""
+    FAULT_FALSE_PROMPT_OVERFLOW = "fault_false_prompt_overflow"
+    """A faulted submit with ``fault_reason`` ``prompt_overflow`` for a short prompt that cannot overflow. The Horde does
+    not accept the report, so the fault is an aborted job."""
+    FAULT_UNBUILDABLE_GRAMMAR = "fault_unbuildable_grammar"
+    """A faulted submit with ``fault_reason`` ``unbuildable_grammar``. The request's constraint caused it, so the fault
+    is not an aborted job."""
+    FAULT_TOOL_VIOLATION = "fault_tool_violation"
+    """A faulted submit with ``fault_reason`` ``tool_violation``. The model broke the request's tool controls, so the
+    fault is not an aborted job."""
+
+
+SCRIPTED_FAULTS: Mapping[ReplyScript, tuple[ChatFaultReason, bool]] = {
+    ReplyScript.FAULT_GENERATION_ERROR: (ChatFaultReason.GENERATION_ERROR, True),
+    ReplyScript.FAULT_PROMPT_OVERFLOW: (ChatFaultReason.PROMPT_OVERFLOW, False),
+    ReplyScript.FAULT_FALSE_PROMPT_OVERFLOW: (ChatFaultReason.PROMPT_OVERFLOW, True),
+    ReplyScript.FAULT_UNBUILDABLE_GRAMMAR: (ChatFaultReason.UNBUILDABLE_GRAMMAR, False),
+    ReplyScript.FAULT_TOOL_VIOLATION: (ChatFaultReason.TOOL_VIOLATION, False),
+}
+"""The ``fault_reason`` of each faulting script, and whether the Horde counts the fault as the worker's aborted job."""
 
 
 REPLY_MARKER_PATTERN: re.Pattern[str] = re.compile(r"\[reply:([a-z_]+)\]")
@@ -213,6 +236,9 @@ class WorkerReply:
     """The submitted ``finish_reason``."""
     fault_reason: str | None = None
     """When set, the worker faults the job with this ``fault_reason`` instead of submitting a reply."""
+    fault_is_aborted_job: bool = True
+    """Whether the Horde counts the fault as the worker's aborted job. False for a fault caused by the request or the
+    model, which must not count toward the threshold that puts a worker into maintenance."""
     breaks_strict_contract: bool = False
     """True when a ``strict`` request's reply verification refuses it as ``ChatSubmitNonconformant``."""
     breaks_every_contract: bool = False
@@ -294,9 +320,14 @@ def build_scripted_reply(payload: Mapping[str, Any]) -> WorkerReply:
             tool_calls=[_tool_call(first_tool_name, nonce)],
             finish_reason=ChatFinishReason.TOOL_CALLS.value,
         )
-    if script == ReplyScript.FAULT_GENERATION_ERROR:
+    if script in SCRIPTED_FAULTS:
+        fault_reason, is_aborted_job = SCRIPTED_FAULTS[script]
         return WorkerReply(
-            content=None, tool_calls=None, finish_reason=ChatFinishReason.STOP.value, fault_reason=ChatFaultReason.GENERATION_ERROR.value
+            content=None,
+            tool_calls=None,
+            finish_reason=ChatFinishReason.STOP.value,
+            fault_reason=fault_reason.value,
+            fault_is_aborted_job=is_aborted_job,
         )
     return _build_well_behaved_reply(payload, nonce)
 

@@ -156,6 +156,7 @@ __all__ = [
     "REASONING_BUDGET_EXCEEDED_MARKER",
     "REQUEST_CAUSED_FAULT_REASONS",
     "UNSUPPORTED_CHAT_PARAMETER_RC",
+    "WORKER_CAUSED_FAULT_REASONS",
     "ChargeBasis",
     "ChatCompletionRequest",
     "ChatImageDetail",
@@ -425,7 +426,26 @@ REQUEST_CAUSED_FAULT_REASONS: frozenset[str] = frozenset(
 )
 """Fault reasons caused by the request or model that are exempt from dropped-job accounting.
 
-A prompt overflow is exempt only when the prompt could overflow the worker's declared context.
+A worker that keeps the OpenAI contract must end some requests with a hard error, such as a ``strict`` schema it cannot
+compile, a ``tool_choice`` the model broke, or a prompt longer than the context. The requester asked for those
+constraints, so the fault does not show a malfunction of the worker and must not count toward the aborted jobs that put
+a worker into maintenance. The worker still does not earn kudos for the job. A prompt overflow is exempt only when
+the prompt could overflow the worker's declared context, so a worker cannot claim it for a prompt that fits.
+
+Every ``ChatFaultReason`` is in this set or in ``WORKER_CAUSED_FAULT_REASONS``. A unit test fails when a reason added to
+the SDK is not in either set.
+"""
+
+WORKER_CAUSED_FAULT_REASONS: frozenset[str] = frozenset(
+    {
+        ChatFaultReason.REPLY_REFUSED,
+        ChatFaultReason.GENERATION_ERROR,
+    },
+)
+"""Fault reasons that count as dropped jobs, because the worker's backend failed or the worker's reply was refused.
+
+The reported reason does not exempt these faults. A ``reply_refused`` fault after a ``ChatSubmitNonconformant``
+refusal is exempt. Its exemption comes from the refusal stored by the Horde.
 """
 
 OVERFLOW_BOUND_FIXED_TOKENS = 256

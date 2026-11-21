@@ -35,7 +35,14 @@ from horde_sdk.generation_parameters.text.chat_limits import MAX_CHAT_SCHEMA_NES
 from horde.chat_contract import MAX_CHAT_BODY_BYTES, MAX_CHAT_MESSAGE_COUNT
 
 from .chat_checks import CompletionExpectation, ContentRule, ErrorExpectation
-from .chat_worker_script import VISION_OK_PREFIX, ChatPersonaRole, ReplyScript, nonce_marker, reply_marker
+from .chat_worker_script import (
+    DEFAULT_PERSONA_MAX_CONTEXT_LENGTH,
+    VISION_OK_PREFIX,
+    ChatPersonaRole,
+    ReplyScript,
+    nonce_marker,
+    reply_marker,
+)
 from .config import _TINY_PNG_B64
 
 __all__ = [
@@ -91,6 +98,23 @@ BAD_REQUEST_CODE: str = "BadRequest"
 
 WORKER_FAULT_GENERATION_ERROR_MESSAGE: str = "The worker's backend failed while generating."
 """The Horde's sentence for ``fault_reason`` ``generation_error``, which the 502 message ends with."""
+
+WORKER_FAULT_PROMPT_OVERFLOW_MESSAGE: str = "The worker could not fit the prompt into its context."
+"""The Horde's sentence for ``fault_reason`` ``prompt_overflow``."""
+
+WORKER_FAULT_UNBUILDABLE_GRAMMAR_MESSAGE: str = "The worker could not build the grammar the request's tool choice or response format needs."
+"""The Horde's sentence for ``fault_reason`` ``unbuildable_grammar``."""
+
+WORKER_FAULT_TOOL_VIOLATION_MESSAGE: str = "The model's reply broke the request's tool controls."
+"""The Horde's sentence for ``fault_reason`` ``tool_violation``."""
+
+OVERFLOW_PROMPT_BYTES: int = DEFAULT_PERSONA_MAX_CONTEXT_LENGTH + 4096
+"""The UTF-8 length of the overflow scenario's prompt text. The bytes alone exceed every persona's context, so the
+Horde's byte bound accepts a ``prompt_overflow`` report. By the Horde's estimate, about 3 characters per token, the
+prompt still fits that context, so the request is assigned to a worker."""
+
+OVERFLOW_FILLER_SENTENCE: str = "The quick brown fox jumps over the lazy dog. "
+"""The sentence repeated to make up the overflow scenario's prompt."""
 
 STRESS_CLIENT_TITLE: str = "aihorde-stress-chat-mix"
 """The ``X-Title`` the front attributes the suite's traffic to."""
@@ -153,6 +177,9 @@ class ScenarioGroup(StrEnum):
     """Requests shaped as KoboldAI Lite's OpenAI mode sends them from a browser."""
     VISION = "vision"
     """Image input; runs only when the conformant persona declares vision."""
+    REQUEST_FAULTS = "request_faults"
+    """Worker faults caused by the request or the model, which the Horde must not count as the worker's aborted jobs,
+    beside a false report that it must count."""
 
 
 class AuthorizationMode(StrEnum):
@@ -858,6 +885,80 @@ def worker_fault_reason(context: ScenarioContext) -> ChatScenario:
     )
 
 
+def build_overflow_prompt(context: ScenarioContext) -> str:
+    """Return the overflow scenario's user message: filler of ``OVERFLOW_PROMPT_BYTES`` ASCII bytes, then the reply
+    marker and the nonce."""
+    repeats = OVERFLOW_PROMPT_BYTES // len(OVERFLOW_FILLER_SENTENCE) + 1
+    filler = (OVERFLOW_FILLER_SENTENCE * repeats)[:OVERFLOW_PROMPT_BYTES]
+    return f"{filler} {reply_marker(ReplyScript.FAULT_PROMPT_OVERFLOW)} {nonce_marker(context.nonce)}"
+
+
+def prompt_overflow_fault(context: ScenarioContext) -> ChatScenario:
+    """A worker reporting ``prompt_overflow`` for a prompt whose bytes exceed its context: the request faults with the
+    Horde's sentence, and the faults are not the worker's aborted jobs."""
+    model = context.models.conformant
+    body = _body(model, [_user(build_overflow_prompt(context))])
+    return ChatScenario(
+        "prompt_overflow_fault",
+        ScenarioGroup.REQUEST_FAULTS,
+        body,
+        _faulted("ChatWorkerFault", message_fragments=(WORKER_FAULT_PROMPT_OVERFLOW_MESSAGE,)),
+        ChatPersonaRole.CONFORMANT,
+    )
+
+
+def false_prompt_overflow_fault(context: ScenarioContext) -> ChatScenario:
+    """A worker reporting ``prompt_overflow`` for a short prompt: the Horde does not accept the report, so the faults
+    are the worker's aborted jobs."""
+    model = context.models.conformant
+    body = _body(model, [_scripted_user(context, "Say hello.", ReplyScript.FAULT_FALSE_PROMPT_OVERFLOW)])
+    return ChatScenario(
+        "false_prompt_overflow_fault",
+        ScenarioGroup.REQUEST_FAULTS,
+        body,
+        _faulted("ChatWorkerFault", message_fragments=(WORKER_FAULT_PROMPT_OVERFLOW_MESSAGE,)),
+        ChatPersonaRole.CONFORMANT,
+        aborts_worker_jobs=True,
+    )
+
+
+def unbuildable_grammar_fault(context: ScenarioContext) -> ChatScenario:
+    """A worker that cannot build the grammar for a ``strict`` schema: the request faults with the Horde's sentence,
+    and the faults are not the worker's aborted jobs."""
+    model = context.models.conformant
+    body = _body(
+        model,
+        [_scripted_user(context, "Rate a film as JSON.", ReplyScript.FAULT_UNBUILDABLE_GRAMMAR)],
+        response_format=_rating_format(),
+    )
+    return ChatScenario(
+        "unbuildable_grammar_fault",
+        ScenarioGroup.REQUEST_FAULTS,
+        body,
+        _faulted("ChatWorkerFault", message_fragments=(WORKER_FAULT_UNBUILDABLE_GRAMMAR_MESSAGE,)),
+        ChatPersonaRole.CONFORMANT,
+    )
+
+
+def tool_violation_fault(context: ScenarioContext) -> ChatScenario:
+    """A model that broke ``tool_choice: required``: the request faults with the Horde's sentence, and the faults are
+    not the worker's aborted jobs."""
+    model = context.models.conformant
+    body = _body(
+        model,
+        [_scripted_user(context, "What is the weather in Paris?", ReplyScript.FAULT_TOOL_VIOLATION)],
+        tools=[dict(GET_WEATHER_TOOL), dict(GET_TIME_TOOL)],
+        tool_choice="required",
+    )
+    return ChatScenario(
+        "tool_violation_fault",
+        ScenarioGroup.REQUEST_FAULTS,
+        body,
+        _faulted("ChatWorkerFault", message_fragments=(WORKER_FAULT_TOOL_VIOLATION_MESSAGE,)),
+        ChatPersonaRole.CONFORMANT,
+    )
+
+
 def flaky_schema_strict(context: ScenarioContext) -> ChatScenario:
     """A ``strict`` schema on the flaky worker: whatever it submits, a delivered reply matches the schema, because the
     Horde refuses the ones that do not; three bad replies in a row fault the request."""
@@ -1413,6 +1514,7 @@ SCENARIO_BUILDERS: Mapping[ScenarioGroup, tuple[ScenarioBuilder, ...]] = {
         flaky_required_strict,
         flaky_schema_best_effort,
     ),
+    ScenarioGroup.REQUEST_FAULTS: (prompt_overflow_fault, false_prompt_overflow_fault, unbuildable_grammar_fault, tool_violation_fault),
     ScenarioGroup.GAP: (limited_plain_strict, gap_forced_strict, gap_forced_best_effort, gap_tool_temperature, gap_json_object),
     ScenarioGroup.MISUSE: (
         unsupported_top_level_key,

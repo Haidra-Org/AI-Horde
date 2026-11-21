@@ -33,7 +33,7 @@ from horde_sdk.generation_parameters.text.chat_policy import (
     ChatToolChoiceMode,
     chat_request_requirements,
 )
-from horde_sdk.worker.chat_declaration import ChatImageTransport
+from horde_sdk.worker.chat_declaration import ChatFaultReason, ChatImageTransport
 from PIL import Image
 from pydantic import ValidationError
 
@@ -60,7 +60,9 @@ from horde.classes.kobold.chat_request import (
     DEFAULT_CHAT_MAX_TOKENS,
     OVERFLOW_BOUND_FIXED_TOKENS,
     OVERFLOW_BOUND_TOKENS_PER_LINE,
+    REQUEST_CAUSED_FAULT_REASONS,
     UNSUPPORTED_CHAT_PARAMETER_RC,
+    WORKER_CAUSED_FAULT_REASONS,
     ChatSubmittedMessage,
     ReasoningEffortDefault,
     ReasoningMarkerPlace,
@@ -2665,6 +2667,16 @@ class TestImageLoading:
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
 def test_native_sampling_values_must_be_finite(field: str, value: float) -> None:
     assert _rejection(_body(**{field: value})).code == 400
+
+
+def test_every_fault_reason_is_classified_as_caused_by_the_request_or_by_the_worker() -> None:
+    """This test fails when a reason added to the SDK is not in either set.
+
+    The set of a reason decides whether its faults count toward maintenance. A fault the requester asked for, including one the
+    OpenAI contract makes a hard error, belongs in ``REQUEST_CAUSED_FAULT_REASONS``.
+    """
+    assert REQUEST_CAUSED_FAULT_REASONS | WORKER_CAUSED_FAULT_REASONS == set(ChatFaultReason)
+    assert not REQUEST_CAUSED_FAULT_REASONS & WORKER_CAUSED_FAULT_REASONS
 
 
 class TestPromptOverflowPlausibility:

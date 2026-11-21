@@ -61,6 +61,7 @@ __all__ = [
     "merge_coverage_reports",
     "fail_contract",
     "fail_environment",
+    "find_aborted_job_mismatches",
     "find_coverage_gaps",
     "fire_check_failure",
     "record_benign",
@@ -77,6 +78,9 @@ CHECK_REQUEST_TYPE: str = "CHECK"
 
 COVERAGE_ROW_NAME: str = "[coverage] chat mix"
 """The statistics row a coverage gap fails under."""
+
+ABORTED_JOBS_ROW_NAME: str = "[aborted jobs] chat mix"
+"""The statistics row an aborted-job mismatch fails under."""
 
 DEFAULT_ABORTING_PER_HOUR: int = 2
 """The aborting scenarios a run sends per hour by default, across every persona: 6 aborted jobs."""
@@ -144,6 +148,14 @@ class ChatWorkerLedger:
     """Replies refused as ``ChatSubmitInvalid``; their faults count as aborted jobs."""
     faults_submitted: Counter[str] = field(default_factory=Counter)
     """Faulted submits sent, scripted or after a refusal."""
+    aborted_job_faults: Counter[str] = field(default_factory=Counter)
+    """Accepted faulted submits that the Horde counts as aborted jobs."""
+    exempt_faults: Counter[str] = field(default_factory=Counter)
+    """Accepted faulted submits that the Horde must not count as aborted jobs. They follow a nonconformant refusal, or
+    the request or the model caused them."""
+    faults_in_flight: Counter[str] = field(default_factory=Counter)
+    """Faulted submits that count as aborted jobs and do not have a response yet. When the run stops during one, it is
+    unknown whether the Horde applied it."""
     text_jobs: Counter[str] = field(default_factory=Counter)
     """Text jobs served by a chat worker."""
     counters_at_start: dict[str, dict[str, int]] = field(default_factory=dict)
@@ -153,6 +165,39 @@ class ChatWorkerLedger:
         """Return every worker name the ledger counted anything for, sorted."""
         counted = (self.accepted_replies, self.refused_nonconformant, self.refused_invalid, self.faults_submitted, self.text_jobs)
         return sorted({worker_name for counter in counted for worker_name in counter})
+
+
+def find_aborted_job_mismatches(ledger: ChatWorkerLedger, counters_now: Mapping[str, Mapping[str, int]]) -> list[str]:
+    """Return each worker whose rise in the Horde's ``uncompleted_jobs`` differs from the number of its faults that
+    count as aborted jobs. The list is empty when every worker matches.
+
+    ``uncompleted_jobs`` rises in the same call as the hourly aborted-job count that puts a worker into maintenance.
+    It is never reset, so its rise over the run equals the run's aborted jobs. A rise above the expected count means
+    the Horde counted faults that it must not count, such as those caused by the request or the model. A rise below it
+    means real faults were not counted. A worker without both counter readings is skipped.
+
+    Args:
+        ledger: What the run's simulated chat workers submitted.
+        counters_now: The Horde's counters per worker name at test stop.
+    """
+    mismatches = []
+    for worker_name in ledger.worker_names():
+        counters_then = ledger.counters_at_start.get(worker_name)
+        counters_after = counters_now.get(worker_name)
+        if counters_then is None or counters_after is None:
+            continue
+        rise = counters_after["uncompleted_jobs"] - counters_then["uncompleted_jobs"]
+        lowest = ledger.aborted_job_faults[worker_name]
+        highest = lowest + ledger.faults_in_flight[worker_name]
+        if lowest <= rise <= highest:
+            continue
+        expected = str(lowest) if lowest == highest else f"{lowest} to {highest}"
+        mismatches.append(
+            f"worker {worker_name}: uncompleted_jobs rose by {rise}, expected {expected} "
+            f"({ledger.aborted_job_faults[worker_name]} faults that count, {ledger.exempt_faults[worker_name]} exempt faults, "
+            f"{ledger.faults_in_flight[worker_name]} unanswered at stop)"
+        )
+    return mismatches
 
 
 class RunnerRole(StrEnum):
@@ -729,7 +774,7 @@ def _add_chat_mix_arguments(parser: Any) -> None:
         "--chat-mix-group-weights",
         type=str,
         env_var="HORDE_CHAT_MIX_GROUP_WEIGHTS",
-        default="ordinary=6,tools=4,structured=3,conformance=2,gap=2,misuse=3,lite=2,vision=1",
+        default="ordinary=6,tools=4,structured=3,conformance=2,request_faults=1,gap=2,misuse=3,lite=2,vision=1",
         help="Front scenario group weights, group=weight pairs; an omitted group weighs 0",
     )
     group.add_argument(
@@ -998,29 +1043,42 @@ def coverage_for_gate(settings: ChatMixSettings) -> ChatMixCoverage:
 
 @events.test_stop.add_listener
 def _close_chat_mix(environment: Environment, **_kwargs: Any) -> None:
-    """Log the workers' submits beside the Horde's counters, and fail the run on any coverage gap.
+    """Log the workers' submits beside the Horde's counters, fail the run on an aborted-job mismatch, and fail it on
+    any coverage gap.
 
-    The gate runs where the run's statistics are written: in a local run, and on the master of a distributed one, which
-    merges the workers' reports. A worker process does not gate.
+    The aborted-job check runs in the process that ran the workers, since only that process has their ledger. The
+    coverage gate runs where the run's statistics are written: in a local run, and on the master of a distributed one,
+    which merges the workers' reports. A worker process does not gate coverage.
     """
     ledger = chat_mix_settings.ledger
+    counters_by_worker: dict[str, dict[str, int]] = {}
     for worker_name in ledger.worker_names():
         counters_now = read_worker_counters(worker_name) or {}
+        if counters_now:
+            counters_by_worker[worker_name] = counters_now
         counters_then = ledger.counters_at_start.get(worker_name, {})
         logger.info(
-            "Chat mix worker %s: accepted=%d refused_nonconformant=%d refused_invalid=%d faults=%d text_jobs=%d; "
+            "Chat mix worker %s: accepted=%d refused_nonconformant=%d refused_invalid=%d faults=%d "
+            "(aborted_job=%d exempt=%d unanswered=%d) text_jobs=%d; "
             "Horde nonconformant_replies %s->%s uncompleted_jobs %s->%s",
             worker_name,
             ledger.accepted_replies[worker_name],
             ledger.refused_nonconformant[worker_name],
             ledger.refused_invalid[worker_name],
             ledger.faults_submitted[worker_name],
+            ledger.aborted_job_faults[worker_name],
+            ledger.exempt_faults[worker_name],
+            ledger.faults_in_flight[worker_name],
             ledger.text_jobs[worker_name],
             counters_then.get("nonconformant_replies"),
             counters_now.get("nonconformant_replies"),
             counters_then.get("uncompleted_jobs"),
             counters_now.get("uncompleted_jobs"),
         )
+    mismatches = find_aborted_job_mismatches(ledger, counters_by_worker)
+    for mismatch in mismatches:
+        logger.error("Chat mix aborted-job mismatch: %s", mismatch)
+        fire_check_failure(environment, name=ABORTED_JOBS_ROW_NAME, message=f"{CONTRACT_VIOLATION_PREFIX} [aborted jobs]: {mismatch}")
     if chat_mix_settings.topology.role == RunnerRole.WORKER or chat_mix_settings.coverage.started_at is None:
         return
     if not (chat_mix_settings.worker_count or chat_mix_settings.front_clients):
@@ -1036,8 +1094,8 @@ def _close_chat_mix(environment: Environment, **_kwargs: Any) -> None:
     for gap in gaps:
         logger.error("Chat mix coverage gap: %s", gap)
         fire_check_failure(environment, name=COVERAGE_ROW_NAME, message=f"{CONTRACT_VIOLATION_PREFIX} [coverage]: {gap}")
-    if gaps:
+    if gaps or mismatches:
         # Locust's CSV writer greenlet rewrites the files every CSV_STATS_INTERVAL_SEC and gets no further turn once
-        # shutdown continues, so yield long enough for it to write the coverage failures the smoke checker reads.
+        # shutdown continues, so yield long enough for it to write the failures the smoke checker reads.
         gevent.sleep(CSV_STATS_INTERVAL_SEC + CSV_WRITE_MARGIN_SECONDS)
     logger.info("Chat mix coverage: %s", json.dumps(coverage.to_report()))
