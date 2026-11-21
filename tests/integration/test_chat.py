@@ -2853,6 +2853,7 @@ def test_request_and_model_fault_exemptions_use_metrics_instead_of_dropped_job_c
     app,
     client,
     request_headers: dict[str, str],
+    make_api_user,
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
     fault_reason: str | None,
@@ -2872,8 +2873,11 @@ def test_request_and_model_fault_exemptions_use_metrics_instead_of_dropped_job_c
     logger_provider.add_log_record_processor(SimpleLogRecordProcessor(log_exporter))
     request.addfinalizer(logger_provider.shutdown)
     monkeypatch.setattr(processing_generation, "_fault_event_logger", logger_provider.get_logger("test.chat"))
-    worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Exempt {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
+    owner = make_api_user(trusted=True)
+    worker_headers = {**request_headers, "apikey": owner.api_key}
+    worker = FakeChatWorker(client=client, headers=worker_headers, name=f"CICD Chat Exempt {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
     worker.pop()
+    request.addfinalizer(lambda: take_worker_offline(app, worker.name))
     request_id = submit_chat_request(
         client,
         request_headers,

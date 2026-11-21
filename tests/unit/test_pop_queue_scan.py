@@ -798,7 +798,10 @@ def _captured_scan_statements() -> Iterator[list[tuple[str, Any]]]:
 
 def _scan_plan(statement: str, parameters: Any) -> str:
     connection = db.session.connection()
+    # Prefer an index that supplies the full queue order even on a tiny test table.
     connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
+    connection.exec_driver_sql("SET LOCAL enable_sort = off")
+    connection.exec_driver_sql("SET LOCAL enable_incremental_sort = off")
     plan_rows = connection.exec_driver_sql(f"EXPLAIN {statement}", parameters).scalars().all()
     db.session.rollback()
     return "\n".join(plan_rows)
@@ -835,4 +838,5 @@ def test_the_pop_scan_reads_the_partial_queue_index(
 
     assert len(scan_statements) == 2
     for statement, parameters in scan_statements:
-        assert "ix_waiting_prompts_active_queue" in _scan_plan(statement, parameters)
+        plan = _scan_plan(statement, parameters)
+        assert "ix_waiting_prompts_active_queue" in plan, plan
