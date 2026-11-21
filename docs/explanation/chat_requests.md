@@ -337,7 +337,9 @@ This conservative count reduces the usable context. It counts one token per byte
 estimate of 3 characters per token for ASCII text, and more for text outside ASCII. The Horde assigns conversations that fit
 by the horde's estimate, so a worker that uses the byte bound faults long conversations with `prompt_overflow`.
 
-A worker that aborts more than 20 jobs in an hour is put into maintenance. The alternative is to trim the prompt.
+A worker that aborts more than 20 jobs in an hour is put into maintenance. A `prompt_overflow` fault is exempt when
+the Horde's byte-based check finds that the prompt and requested output could exceed the worker's declared context.
+The alternative is to trim the prompt.
 Trimming keeps the job but breaks the guarantee, so a worker that trims does not declare the guarantee and serves only
 `best_effort` requests. The counters and the check script are in
 [Write a minimal chat worker](../how-to/write_a_minimal_chat_worker.md#fit-check-and-the-overflow-guarantee).

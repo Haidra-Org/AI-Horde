@@ -151,7 +151,10 @@ __all__ = [
     "MAX_NATIVE_FINISH_REASON_LENGTH",
     "MAX_REPORTED_TOKEN_COUNT",
     "OPEN_THINK_TAG_PREFIX",
+    "OVERFLOW_BOUND_FIXED_TOKENS",
+    "OVERFLOW_BOUND_TOKENS_PER_LINE",
     "REASONING_BUDGET_EXCEEDED_MARKER",
+    "REQUEST_CAUSED_FAULT_REASONS",
     "UNSUPPORTED_CHAT_PARAMETER_RC",
     "ChargeBasis",
     "ChatCompletionRequest",
@@ -194,6 +197,7 @@ __all__ = [
     "list_stored_chat_object_keys",
     "message_text",
     "parse_chat_request",
+    "prompt_overflow_is_plausible",
     "replace_image_urls",
     "required_chat_features",
     "resolve_image_references",
@@ -410,6 +414,44 @@ def chat_worker_fault_reason_label(fault_reason: object) -> str:
     if isinstance(fault_reason, str) and fault_reason in CHAT_WORKER_FAULT_MESSAGES:
         return str(fault_reason)
     return CHAT_WORKER_FAULT_UNKNOWN_LABEL
+
+
+REQUEST_CAUSED_FAULT_REASONS: frozenset[str] = frozenset(
+    {
+        ChatFaultReason.PROMPT_OVERFLOW,
+        ChatFaultReason.UNBUILDABLE_GRAMMAR,
+        ChatFaultReason.TOOL_VIOLATION,
+    },
+)
+"""Fault reasons caused by the request or model that are exempt from dropped-job accounting.
+
+A prompt overflow is exempt only when the prompt could overflow the worker's declared context.
+"""
+
+OVERFLOW_BOUND_FIXED_TOKENS = 256
+"""Tokens added once to the prompt's byte length for the template's fixed part."""
+
+OVERFLOW_BOUND_TOKENS_PER_LINE = 16
+"""Tokens added per line of the flattened prompt for role markup."""
+
+
+def prompt_overflow_is_plausible(
+    *,
+    prompt: str,
+    max_length: int,
+    max_context_length: int,
+    carries_images: bool,
+) -> bool:
+    """Report whether the prompt and requested output could overflow the worker's context.
+
+    Estimate a generous bound for text using the UTF-8 byte length of the flattened prompt and allowances for
+    template markup. For images, the token cost depends on the worker's projector.
+    """
+    if carries_images:
+        return True
+    line_count = prompt.count("\n") + 1
+    prompt_bound = len(prompt.encode("utf-8")) + OVERFLOW_BOUND_FIXED_TOKENS + OVERFLOW_BOUND_TOKENS_PER_LINE * line_count
+    return prompt_bound + max_length > max_context_length
 
 
 class ChargeBasis(enum.StrEnum):

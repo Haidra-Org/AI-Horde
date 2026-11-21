@@ -487,18 +487,24 @@ Add `fault_reason` when the cause is one of these, so the requester learns why i
 The horde stores a fixed sentence for each value, and the worker does not supply the text. It reports the sentence
 with return code `ChatWorkerFault` in the requester's status and the client's `502` once the request faults. After a
 refused reply the horde keeps the refusal's message, which is more specific than `reply_refused`. Any other value is
-ignored, and the fault is accepted as if it did not include a reason. A reason does not change how the fault is
-counted.
+ignored, and the fault is accepted as if it did not include a reason. The Horde exports faulted submit counts by
+reason and worker trust. See
+[Worker fault metrics](../reference/chat_requests.md#worker-fault-metrics).
 
 A faulted submit is handled as a faulted text submit. The reward is 0 and the generation is not charged. The request
-returns to the queue for another worker, and its status counts the attempt under `restarted`. The worker's aborted job
-count rises. A worker that aborts more than 20 jobs in an hour is put into maintenance, so a worker that faults every
-chat job should withdraw its chat declaration instead.
+returns to the queue for another worker, and its status counts the attempt under `restarted`. Ordinary faults raise the
+worker's aborted-job count. A worker that aborts more than 20 jobs in an hour is put into maintenance, so a worker
+that cannot serve its assigned chat jobs should withdraw its chat declaration.
+
+`unbuildable_grammar`, `tool_violation`, and `prompt_overflow` when the prompt could exceed the declared context are
+exempt from the aborted-job count. See
+[Refusal record and worker counters](../reference/chat_requests.md#refusal-record-and-worker-counters).
 
 A fault that follows a `400 ChatSubmitNonconformant` refusal of the same job is counted separately. It increments
 the worker's `nonconformant_replies` and leaves its aborted job count unchanged, so these faults do not lead to
-maintenance. The job still does not earn a reward. A fault after `400 ChatSubmitInvalid` or `400 ChatModelMismatch`
-counts as an aborted job. `GET <HORDE_URL>/api/v2/workers/name/<worker-name>` shows `nonconformant_replies`. A count
+maintenance. The job still does not earn a reward. A `reply_refused` fault after `400 ChatSubmitInvalid` or
+`400 ChatModelMismatch` counts as an aborted job. `GET <HORDE_URL>/api/v2/workers/name/<worker-name>` shows
+`nonconformant_replies`. A count
 that keeps rising means the backend does not keep a declared guarantee
 ([Refusal record and worker counters](../reference/chat_requests.md#refusal-record-and-worker-counters)).
 

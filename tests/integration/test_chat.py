@@ -2838,6 +2838,79 @@ class _CounterRecorder:
         self.increments.append((amount, attributes))
 
 
+@pytest.mark.parametrize(
+    ("fault_reason", "prompt", "dropped_jobs"),
+    [
+        pytest.param("prompt_overflow", "a" * 7800, 0, id="plausible-overflow"),
+        pytest.param("prompt_overflow", "Name one colour.", 1, id="overflow-of-a-short-prompt"),
+        pytest.param("unbuildable_grammar", "Name one colour.", 0, id="unbuildable-grammar"),
+        pytest.param("tool_violation", "Name one colour.", 0, id="tool-violation"),
+        pytest.param("generation_error", "Name one colour.", 1, id="generation-error"),
+        pytest.param(None, "Name one colour.", 1, id="no-reason"),
+    ],
+)
+def test_request_and_model_fault_exemptions_use_metrics_instead_of_dropped_job_counters(
+    app,
+    client,
+    request_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    fault_reason: str | None,
+    prompt: str,
+    dropped_jobs: int,
+) -> None:
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
+
+    from horde import metrics
+    from horde.classes.kobold import processing_generation
+
+    exempt_faults = _CounterRecorder()
+    monkeypatch.setattr(metrics, "chat_worker_fault_exemptions", exempt_faults)
+    log_exporter = InMemoryLogRecordExporter()
+    logger_provider = LoggerProvider()
+    logger_provider.add_log_record_processor(SimpleLogRecordProcessor(log_exporter))
+    request.addfinalizer(logger_provider.shutdown)
+    monkeypatch.setattr(processing_generation, "_fault_event_logger", logger_provider.get_logger("test.chat"))
+    worker = FakeChatWorker(client=client, headers=request_headers, name=f"CICD Chat Exempt {uuid.uuid4().hex[:8]}", models=[CHAT_MODEL])
+    worker.pop()
+    request_id = submit_chat_request(
+        client,
+        request_headers,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=256,
+        horde={"max_context_length": 8192},
+    )
+    pop_result = worker.pop()
+    assert pop_result["id"] is not None, pop_result
+    body = build_faulted_chat_submit_body(generation_id=pop_result["id"], model_id=CHAT_MODEL, fault_reason=fault_reason)
+
+    response = worker.submit(body)
+
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert response.get_json()["reward"] == 0
+    if fault_reason == "tool_violation":
+        duplicate = worker.submit(body)
+        assert duplicate.status_code == 200, duplicate.get_data(as_text=True)
+    assert chat_status(client, request_headers, request_id)["restarted"] == 1
+    assert _worker_counters(app, worker.name) == (dropped_jobs, dropped_jobs, 0)
+    if dropped_jobs:
+        assert exempt_faults.increments == []
+        assert log_exporter.get_finished_logs() == ()
+    else:
+        assert exempt_faults.increments == [(1, {"horde.reason": fault_reason, "horde.worker_trusted": "true"})]
+        details = client.get(f"/api/v2/workers/name/{worker.name}", headers=request_headers)
+        assert details.status_code == 200, details.get_data(as_text=True)
+        (exported_log,) = log_exporter.get_finished_logs()
+        assert exported_log.log_record.event_name == "horde.chat.worker_fault_exempted"
+        assert exported_log.log_record.attributes == {
+            "worker_id": details.get_json()["id"],
+            "generation_id": pop_result["id"],
+            "reason": fault_reason,
+        }
+    cancel_request(client, request_headers, "chat", request_id)
+
+
 @pytest.fixture
 def worker_fault_counter(monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
     """Replace the chat worker fault counter with a recorder."""
