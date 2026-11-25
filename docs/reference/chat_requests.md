@@ -1423,7 +1423,7 @@ not recorded.
 
 | Instrument | Attributes | Records |
 | --- | --- | --- |
-| `horde.text.free_allowance.decisions` (counter) | `horde.requester` (`anonymous`, `registered`, `shared_key`), `horde.outcome` (`free`, `funded`, `refused`, `downgraded`), `horde.requested_bucket`, `horde.allowance_bucket`, `horde.prompt_bucket`, `horde.exceeded` (`none`, `output`, `input`, `both`), `horde.chat` | Each request creation: admitted without a hold, admitted with kudos reserved, refused with `KudosUpfront` (including `SharedKeyInsufficientKudos`) or with `NoEligibleWorker` in their place, or lowered to the allowances |
+| `horde.text.free_allowance.decisions` (counter) | `horde.requester` (`anonymous`, `registered`, `shared_key`), `horde.outcome` (`free`, `funded`, `refused`, `downgraded`), `horde.requested_bucket`, `horde.allowance_bucket`, `horde.prompt_bucket`, `horde.exceeded` (`none`, `output`, `input`, `both`), `horde.context_lowered`, `horde.chat` | Each request creation: admitted without a hold, admitted with kudos reserved, refused with `KudosUpfront` (including `SharedKeyInsufficientKudos`) or with `NoEligibleWorker` in their place, or lowered to the allowances |
 | `horde.text.free_allowance.estimated_wait_seconds` (histogram) | `horde.chat`, `horde.requester` | The wait used to size the allowances. Not recorded when an eligible worker is not available |
 | `horde.text.queue_wait_seconds` (histogram) | `horde.requester`, `horde.chat`, `horde.requested_bucket` | Each assignment's time from request creation to pop. A fake generation is not recorded |
 
@@ -1434,7 +1434,9 @@ log line is kept beside the `downgraded` outcome.
 
 `horde.allowance_bucket` holds the output allowance. `horde.prompt_bucket` holds the prompt tokens compared with the
 input allowance, before any downgrade: `<=4096` (at most the input floor), `4097-8192`, `8193-16384` (up to the input
-ceiling), `16385-32768` and `>32768`. `horde.exceeded` lists the exceeded allowances.
+ceiling), `16385-32768` and `>32768`. `horde.exceeded` lists the exceeded allowances. `horde.context_lowered` is true
+when a downgrade lowered `max_context_length`, so the worker cuts more of a long prompt away. A downgrade for the
+output allowance alone can also lower the context, so `horde.exceeded` does not show this.
 
 ## Implementation notes
 

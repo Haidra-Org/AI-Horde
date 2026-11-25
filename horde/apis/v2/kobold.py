@@ -318,12 +318,13 @@ class TextAsyncGenerate(GenerateTemplate):
             and (not decision.exceeds_input or self.context_fit is ContextFit.IGNORE)
         )
 
-        def record_allowance_decision(outcome: metrics.FreeAllowanceOutcome) -> None:
+        def record_allowance_decision(outcome: metrics.FreeAllowanceOutcome, *, context_lowered: bool = False) -> None:
             self.record_free_allowance_decision(
                 outcome,
                 requested_max_length=requested_max_length,
                 decision=decision,
                 estimated_wait_seconds=estimated_wait_seconds,
+                context_lowered=context_lowered,
             )
 
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
@@ -355,12 +356,16 @@ class TextAsyncGenerate(GenerateTemplate):
                     # a smaller max_length leaves more of the context to the prompt, so the processed prompt would
                     # otherwise grow past the input allowance. Under ``reject`` and ``grow`` the whole prompt already
                     # fits the lowered context, so nothing is cut.
+                    requested_max_context_length = self.wp.max_context_length
                     self.wp.downgrade(decision.output_allowance, decision.input_allowance)
                     # The downgrade lowers max_length or max_context_length and allows slow workers, which changes
                     # the eligible workers.
                     database.discard_cached_worker_availability(self.wp)
                     self.creation_availability = None
-                    record_allowance_decision(metrics.FreeAllowanceOutcome.DOWNGRADED)
+                    record_allowance_decision(
+                        metrics.FreeAllowanceOutcome.DOWNGRADED,
+                        context_lowered=self.wp.max_context_length < requested_max_context_length,
+                    )
                 else:
                     record_allowance_decision(metrics.FreeAllowanceOutcome.REFUSED)
                     self.refuse_when_no_worker_is_eligible(measured_availability)
@@ -452,6 +457,7 @@ class TextAsyncGenerate(GenerateTemplate):
         requested_max_length: int,
         decision: UpfrontKudosDecision,
         estimated_wait_seconds: float | None,
+        context_lowered: bool = False,
     ) -> None:
         """Count the free allowance outcome of the request being created, with the wait used to size the allowances.
 
@@ -463,6 +469,9 @@ class TextAsyncGenerate(GenerateTemplate):
             requested_max_length: The ``max_length`` the request asked for, before any downgrade.
             decision: The upfront decision, with the allowances and the processed prompt tokens before any downgrade.
             estimated_wait_seconds: The wait used to size the allowances. None when no worker is eligible.
+            context_lowered: Whether a downgrade lowered ``max_context_length``, so the worker cuts more of a long
+                prompt away. The ``exceeded`` attribute does not show this, since a downgrade for the output
+                allowance alone can also lower the context.
         """
         if self.args.dry_run:
             return
@@ -482,6 +491,7 @@ class TextAsyncGenerate(GenerateTemplate):
                     exceeds_output=decision.exceeds_output,
                     exceeds_input=decision.exceeds_input,
                 ).value,
+                "horde.context_lowered": context_lowered,
                 "horde.chat": bool(self.wp.is_chat),
             },
         )
