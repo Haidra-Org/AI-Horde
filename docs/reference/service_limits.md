@@ -87,24 +87,30 @@ has a finite time-budget estimate.
 
 ## Admission and charging
 
-### Free output and image work
+### Free output, input and image work {#free-output-and-image-work}
 
-The four text settings in `horde/config.py`, `Config`, size the free output allowance used by
-`horde/classes/kobold/waiting_prompt.py`, `TextWaitingPrompt`. Their environment names begin `HORDE_TEXT_FREE_OUTPUT_`.
+Six text settings in `horde/config.py`, `Config`, size the free output and input allowances used by
+`horde/classes/kobold/waiting_prompt.py`, `TextWaitingPrompt`. Both allowances share the two wait thresholds.
 
-| Setting suffix | Default | Purpose and rationale |
+| Environment name | Default | Purpose and rationale |
 | --- | --- | --- |
-| `CEILING` | 4,096 tokens | An idle fleet can serve instruction and reasoning replies longer than the former 512-token allowance |
-| `FLOOR` | 512 tokens | Keeps the default chat output length within the allowance at any load |
-| `WAIT_FULL_SECONDS` | 60 seconds | A queue clearing within a minute keeps the full allowance |
-| `WAIT_FLOOR_SECONDS` | 300 seconds | At five minutes of estimated backlog, longer free replies would prolong later waits |
+| `HORDE_TEXT_FREE_OUTPUT_CEILING` | 4,096 tokens | An idle fleet can serve instruction and reasoning replies longer than the former 512-token allowance |
+| `HORDE_TEXT_FREE_OUTPUT_FLOOR` | 512 tokens | Keeps the default chat output length within the allowance at any load |
+| `HORDE_TEXT_FREE_INPUT_CEILING` | 16,384 tokens | Matches the default context of current koboldcpp releases, so an idle fleet serves a default client's full context free |
+| `HORDE_TEXT_FREE_INPUT_FLOOR` | 4,096 tokens | Processing a long prompt occupies a worker before it generates anything, so a backed-up queue serves only short prompts free |
+| `HORDE_TEXT_FREE_OUTPUT_WAIT_FULL_SECONDS` | 60 seconds | A queue clearing within a minute keeps both full allowances |
+| `HORDE_TEXT_FREE_OUTPUT_WAIT_FLOOR_SECONDS` | 300 seconds | At five minutes of estimated backlog, longer free requests would prolong later waits |
 
-Between the wait thresholds the allowance falls linearly. No eligible worker gives the floor; some unfunded requests
-with no online service receive `NoEligibleWorker` instead of a misleading kudos refusal. A request disallowing slow
-workers needs an upfront hold regardless of the allowance. Native text can opt into a downgrade; chat does not
-downgrade to the free allowance. The allowance uses work ahead of the request; status estimates also account for the
-request's own output. See [free output allowance](chat_requests.md#free-output-allowance) and
-[ADR 0037](../decisions/0037-size-the-free-output-allowance-by-the-estimated-wait.md).
+Between the wait thresholds each allowance falls linearly. A request without an eligible worker gets the floors.
+Some unfunded requests with no online service receive `NoEligibleWorker` instead of a misleading kudos refusal. A
+request disallowing slow workers needs an upfront hold regardless of the allowances. The input allowance applies to
+the prompt tokens processed by a worker, and a context smaller than the prompt bounds that count. Native text can opt
+into a downgrade, which lowers the context for an input overage only under `context_fit: ignore`. Chat does not
+downgrade to the free allowances. The allowances use work ahead of the request, and status estimates also account for
+the request's own output. See
+[free output and input allowances](chat_requests.md#free-output-allowance),
+[ADR 0037](../decisions/0037-size-the-free-output-allowance-by-the-estimated-wait.md) and
+[ADR 0043](../decisions/0043-bound-free-input-by-a-wait-sized-allowance.md).
 
 Image admission uses inline values in `horde/classes/stable/waiting_prompt.py`,
 `ImageWaitingPrompt.require_upfront_kudos`: the free resolution starts at

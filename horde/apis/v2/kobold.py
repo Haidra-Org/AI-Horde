@@ -118,9 +118,10 @@ from horde.classes.kobold.request_fit import (
     estimate_prompt_tokens,
     fit_context_length,
     parse_context_fit,
+    processed_prompt_tokens,
     prompt_fits_context,
 )
-from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, delete_stored_chat_images
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, UpfrontKudosDecision, delete_stored_chat_images
 from horde.classes.kobold.worker import TextWorker
 from horde.config import Config
 from horde.database import functions as database
@@ -304,20 +305,29 @@ class TextAsyncGenerate(GenerateTemplate):
                     highest_multiplier = model_multiplier
             required_kudos = round(self.wp.max_length * highest_multiplier / 21, 2) * self.wp.n
         estimated_wait_seconds = self.estimate_competing_wait_seconds()
-        needs_kudos, tokens, disable_downgrade = self.wp.require_upfront_kudos(
+        decision = self.wp.require_upfront_kudos(
             estimated_wait_seconds=estimated_wait_seconds,
+            estimated_prompt_tokens=self.estimate_request_prompt_tokens(),
+        )
+        # Lowering the context to the input allowance makes the worker cut the front of the prompt away. The downgrade
+        # is offered only under ``ignore``, where the client already accepts that cut. Under ``reject`` or ``grow``
+        # the request is refused instead.
+        may_downgrade_to_allowances = (
+            self.args.allow_downgrade
+            and not decision.disable_downgrade
+            and (not decision.exceeds_input or self.context_fit is ContextFit.IGNORE)
         )
 
         def record_allowance_decision(outcome: metrics.FreeAllowanceOutcome) -> None:
             self.record_free_allowance_decision(
                 outcome,
                 requested_max_length=requested_max_length,
-                allowance=tokens,
+                decision=decision,
                 estimated_wait_seconds=estimated_wait_seconds,
             )
 
         if self.sharedkey and self.sharedkey.kudos != -1 and required_kudos > self.sharedkey.kudos:
-            if self.args.allow_downgrade and not disable_downgrade:
+            if self.args.allow_downgrade and not decision.disable_downgrade:
                 self.downgrade_wp_priority = True
             else:
                 record_allowance_decision(metrics.FreeAllowanceOutcome.REFUSED)
@@ -330,16 +340,24 @@ class TextAsyncGenerate(GenerateTemplate):
                     f"to fulfill this reques ({required_kudos}).",
                     rc="SharedKeyInsufficientKudos",
                 )
-        if needs_kudos and required_kudos > 0:
+        # The input allowance sets only whether kudos must be held. A request over it reserves the same amount as any
+        # other request, computed from max_length and the highest model multiplier, so prompt length does not change
+        # the amount.
+        if decision.needs_kudos and required_kudos > 0:
             reservation = reserve_kudos(
                 self.user,
                 required_kudos,
                 business_id=upfront_hold_id(self.wp.id),
             )
             if reservation is None:
-                if self.args.allow_downgrade and not disable_downgrade:
-                    self.wp.downgrade(tokens)
-                    # The downgrade lowers max_length and allows slow workers, which changes the eligible workers.
+                if may_downgrade_to_allowances:
+                    # The input allowance is passed even when only the output allowance is exceeded. Under ``ignore``
+                    # a smaller max_length leaves more of the context to the prompt, so the processed prompt would
+                    # otherwise grow past the input allowance. Under ``reject`` and ``grow`` the whole prompt already
+                    # fits the lowered context, so nothing is cut.
+                    self.wp.downgrade(decision.output_allowance, decision.input_allowance)
+                    # The downgrade lowers max_length or max_context_length and allows slow workers, which changes
+                    # the eligible workers.
                     database.discard_cached_worker_availability(self.wp)
                     self.creation_availability = None
                     record_allowance_decision(metrics.FreeAllowanceOutcome.DOWNGRADED)
@@ -353,7 +371,7 @@ class TextAsyncGenerate(GenerateTemplate):
                     raise e.KudosUpfront(
                         required_kudos,
                         self.username,
-                        message=self.get_kudos_upfront_message(tokens, required_kudos, quoted_kudos),
+                        message=self.get_kudos_upfront_message(decision, required_kudos, quoted_kudos),
                     )
             else:
                 record_allowance_decision(metrics.FreeAllowanceOutcome.FUNDED)
@@ -432,19 +450,19 @@ class TextAsyncGenerate(GenerateTemplate):
         outcome: metrics.FreeAllowanceOutcome,
         *,
         requested_max_length: int,
-        allowance: int,
+        decision: UpfrontKudosDecision,
         estimated_wait_seconds: float | None,
     ) -> None:
-        """Count how the free output allowance decided the request being created, with the wait it was sized by.
+        """Count the free allowance outcome of the request being created, with the wait used to size the allowances.
 
         A dry run is a quote and is not counted. The estimated wait is not recorded when no worker is eligible, which
-        gives the allowance its floor.
+        gives both allowances their floors.
 
         Args:
-            outcome: How the allowance decided the request.
+            outcome: The allowance outcome of the request.
             requested_max_length: The ``max_length`` the request asked for, before any downgrade.
-            allowance: The most tokens the request could ask for without kudos held upfront.
-            estimated_wait_seconds: The wait the allowance was sized by; None when no worker is eligible.
+            decision: The upfront decision, with the allowances and the processed prompt tokens before any downgrade.
+            estimated_wait_seconds: The wait used to size the allowances. None when no worker is eligible.
         """
         if self.args.dry_run:
             return
@@ -458,7 +476,12 @@ class TextAsyncGenerate(GenerateTemplate):
                 "horde.requester": requester.value,
                 "horde.outcome": outcome.value,
                 "horde.requested_bucket": metrics.TEXT_LENGTH_BUCKETS.label(requested_max_length),
-                "horde.allowance_bucket": metrics.TEXT_LENGTH_BUCKETS.label(allowance),
+                "horde.allowance_bucket": metrics.TEXT_LENGTH_BUCKETS.label(decision.output_allowance),
+                "horde.prompt_bucket": metrics.TEXT_PROMPT_BUCKETS.label(decision.processed_prompt_tokens),
+                "horde.exceeded": metrics.FreeAllowanceExceeded.from_flags(
+                    exceeds_output=decision.exceeds_output,
+                    exceeds_input=decision.exceeds_input,
+                ).value,
                 "horde.chat": bool(self.wp.is_chat),
             },
         )
@@ -471,30 +494,43 @@ class TextAsyncGenerate(GenerateTemplate):
                 },
             )
 
-    def get_kudos_upfront_message(self, free_tokens: int, required_kudos: float, quoted_kudos: float) -> str:
+    def get_kudos_upfront_message(
+        self,
+        decision: UpfrontKudosDecision,
+        required_kudos: float,
+        quoted_kudos: float,
+    ) -> str:
         """Return the ``KudosUpfront`` message for a request whose requester cannot cover its kudos hold.
 
         The reservation is a flat rate on the requested length and the quote is the dry-run cost of the same
-        request, so the two differ for most requests; the message states both so neither is read as the other.
+        request, so the two differ for most requests. The message states both so neither is read as the other.
 
         Args:
-            free_tokens: The most tokens the request could ask for without holding kudos upfront.
+            decision: The upfront decision, with the free allowances used to measure the request.
             required_kudos: The kudos the request holds upfront.
             quoted_kudos: The kudos a dry run of the same request quotes.
 
         Returns:
-            The message, stating the free allowance, the reservation and the quoted cost.
+            The message, stating the free allowance exceeded by the request, the reservation and the quoted cost.
         """
         cost = f"This request needs {required_kudos} kudos held upfront; its quoted cost is {quoted_kudos} kudos."
         if not self.wp.slow_workers:
             return (
                 "A request that does not allow slow workers needs the client to already have the required kudos. "
-                f"With slow workers allowed, about {free_tokens} tokens would currently be served without it. "
-                f"{cost}"
+                f"With slow workers allowed, about {decision.output_allowance} generated tokens and "
+                f"{decision.input_allowance} prompt tokens would currently be served without it. {cost}"
             )
+        prompt_note = f" This request's prompt is about {decision.processed_prompt_tokens} tokens."
+        if decision.exceeds_output and decision.exceeds_input:
+            served = f"up to {decision.output_allowance} tokens, from prompts of up to {decision.input_allowance} tokens,"
+        elif decision.exceeds_input:
+            served = f"prompts of up to {decision.input_allowance} tokens"
+        else:
+            served = f"up to {decision.output_allowance} tokens"
+            prompt_note = ""
         return (
-            f"The workers eligible for this request currently serve up to {free_tokens} tokens without kudos held "
-            f"upfront. For more, the client needs to already have the required kudos. {cost}"
+            f"The workers eligible for this request currently serve {served} without kudos held upfront.{prompt_note} "
+            f"For more, the client needs to already have the required kudos. {cost}"
         )
 
     def get_size_too_big_message(self):
@@ -517,20 +553,36 @@ class TextAsyncGenerate(GenerateTemplate):
         """Return whether a requester without kudos could be refused this request for want of upfront kudos.
 
         The quote cache is keyed by the params and models alone, so a quote cached for a requester who holds kudos
-        would otherwise answer a dry run from one who does not, whose submission is refused. The free output allowance
-        never falls below ``Config.text_free_output_floor``, so a request at or under the floor that allows slow
-        workers is refused to nobody on it. The conditions follow
+        would otherwise be returned for a dry run from one who does not, whose submission is refused. The free output
+        and input allowances never fall below ``Config.text_free_output_floor`` and ``Config.text_free_input_floor``,
+        so a request at or under both floors that allows slow workers is never refused because of them. The
+        conditions match
         [`TextWaitingPrompt.require_upfront_kudos`][horde.classes.kobold.waiting_prompt.TextWaitingPrompt.require_upfront_kudos].
 
+        This runs before validation, when a style has not yet been applied to the prompt. For a styled request, the
+        processed input is bounded by the context's space beside ``max_length``, since the styled prompt's length is
+        not known yet.
+
         Returns:
-            True when the request asks for more than the allowance floor, disallows slow workers, or names workers
-            while worker-targeted requests need upfront kudos.
+            True when the request's output or input is above the allowance floors, slow workers are disallowed, or
+            workers are listed while worker-targeted requests need upfront kudos.
         """
         max_length = self.params.get(MAX_LENGTH_PARAMETER, DEFAULT_MAX_LENGTH)
-        exceeds_allowance_floor = max_length > Config.text_free_output_floor
+        max_context_length = self.params.get(MAX_CONTEXT_LENGTH_PARAMETER, DEFAULT_MAX_CONTEXT_LENGTH)
+        exceeds_output_floor = max_length > Config.text_free_output_floor
+        context_room = max(max_context_length - max_length, 0)
+        if self.args.style:
+            prompt_tokens = context_room
+        else:
+            prompt_tokens = processed_prompt_tokens(
+                estimated_prompt_tokens=estimate_prompt_tokens(self.args.prompt),
+                max_length=max_length,
+                max_context_length=max_context_length,
+            )
+        exceeds_input_floor = prompt_tokens > Config.text_free_input_floor
         disallows_slow_workers = not self.args.get("slow_workers", True)
         worker_list_needs_kudos = os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "0") == "1" and bool(self.args.get("workers"))
-        return exceeds_allowance_floor or disallows_slow_workers or worker_list_needs_kudos
+        return exceeds_output_floor or exceeds_input_floor or disallows_slow_workers or worker_list_needs_kudos
 
     def get_resolved_request(self):
         """Return the request as the horde resolved it, with what only a text request carries.
@@ -604,7 +656,8 @@ class TextAsyncGenerate(GenerateTemplate):
         logger.debug(f"Style '{self.args.style}' applied.")
 
     def estimate_request_prompt_tokens(self) -> int:
-        """Return the estimated token count of the prompt the request's context is fitted and charged by.
+        """Return the estimated token count of the prompt used to fit the request's context and to measure it against
+        the free input allowance.
 
         Returns:
             The estimate of the prompt as it will be sent, after any style templating.

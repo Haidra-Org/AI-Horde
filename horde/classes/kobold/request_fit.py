@@ -133,6 +133,24 @@ def prompt_fits_context(*, estimated_prompt_tokens: int, max_length: int, max_co
     return estimated_prompt_tokens + max_length <= max_context_length
 
 
+def processed_prompt_tokens(*, estimated_prompt_tokens: int, max_length: int, max_context_length: int) -> int:
+    """Return the estimated number of prompt tokens processed by a worker for the request.
+
+    A worker cuts the front of a prompt away until the prompt and the tokens to generate fit the context. A prompt
+    longer than the space left beside ``max_length`` is processed only up to that space. A context larger than the
+    prompt does not add to the work.
+
+    Args:
+        estimated_prompt_tokens: The estimated token count of the prompt, after templating.
+        max_length: How many tokens are to be generated.
+        max_context_length: The context the request runs under, after any sizing.
+
+    Returns:
+        The smaller of the prompt estimate and the context's space beside ``max_length``.
+    """
+    return min(estimated_prompt_tokens, max(max_context_length - max_length, 0))
+
+
 def fit_context_length(
     *,
     estimated_prompt_tokens: int,

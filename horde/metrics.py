@@ -354,6 +354,25 @@ length. Nearly every legacy request asks for at most 512 tokens, the free allowa
 limits slow workers commonly declare, so the gate shadow records separate the requests each of those workers would be
 refused. 4096 is the free allowance ceiling, so ``>4096`` holds the requests that always need kudos upfront."""
 
+TEXT_PROMPT_BUCKETS = LengthBuckets(
+    upper_bounds=(
+        4096,
+        8192,
+        16384,
+        32768,
+    ),
+    labels=(
+        "<=4096",
+        "4097-8192",
+        "8193-16384",
+        "16385-32768",
+        ">32768",
+    ),
+)
+"""The labels of a text request's processed prompt tokens in the free allowance decisions. 4096 and 16384 are the free
+input allowance floor and ceiling, so ``<=4096`` holds the prompts that are always free and the two buckets above 16384
+hold the prompts that always need kudos upfront."""
+
 text_gate_shadow_assignments = logfire.metric_counter(
     "horde.text.gate_shadow.assignments",
     unit="1",
@@ -404,7 +423,7 @@ class TextRequester(enum.StrEnum):
 
 
 class FreeAllowanceOutcome(enum.StrEnum):
-    """How the free output allowance decided a text request at its creation."""
+    """The outcome of the free output and input allowances for a text request at its creation."""
 
     FREE = "free"
     """The request was created without kudos held upfront."""
@@ -416,20 +435,54 @@ class FreeAllowanceOutcome(enum.StrEnum):
     """The request was refused with ``KudosUpfront`` for want of kudos."""
 
     DOWNGRADED = "downgraded"
-    """The request's ``max_length`` was lowered to the allowance, which the requester allowed."""
+    """The request's ``max_length`` or ``max_context_length`` was lowered to the allowances, which the requester
+    allowed."""
+
+
+class FreeAllowanceExceeded(enum.StrEnum):
+    """Which free allowances a text request exceeded at its creation, as a metric attribute."""
+
+    NONE = "none"
+    """The request was within both allowances."""
+
+    OUTPUT = "output"
+    """The request's ``max_length`` was above the free output allowance."""
+
+    INPUT = "input"
+    """The request's processed prompt tokens were above the free input allowance."""
+
+    BOTH = "both"
+    """The request was above both allowances."""
+
+    @classmethod
+    def from_flags(cls, *, exceeds_output: bool, exceeds_input: bool) -> FreeAllowanceExceeded:
+        """Return the value for a request.
+
+        Args:
+            exceeds_output: Whether the request exceeded the free output allowance.
+            exceeds_input: Whether the request exceeded the free input allowance.
+        """
+        if exceeds_output and exceeds_input:
+            return cls.BOTH
+        if exceeds_output:
+            return cls.OUTPUT
+        if exceeds_input:
+            return cls.INPUT
+        return cls.NONE
 
 
 text_free_allowance_decisions = logfire.metric_counter(
     "horde.text.free_allowance.decisions",
     unit="1",
     description=(
-        "Free output allowance decisions at text request creation, split by requester, outcome, requested and "
-        "allowance size bucket and whether the request is a chat request"
+        "Free output and input allowance decisions at text request creation, split by requester, outcome, requested "
+        "and allowance size bucket, prompt size bucket, the allowances exceeded and whether the request is a chat "
+        "request"
     ),
 )
 text_free_allowance_estimated_wait_seconds = _free_allowance_wait_histogram(
     "horde.text.free_allowance.estimated_wait_seconds",
-    "Estimated wait the free output allowance of a text request is sized by, at the request's creation",
+    "Estimated wait used to size the free output and input allowances of a text request, at the request's creation",
 )
 text_queue_wait_seconds = _request_lifecycle_histogram(
     "horde.text.queue_wait_seconds",

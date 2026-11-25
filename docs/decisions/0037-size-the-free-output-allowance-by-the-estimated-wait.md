@@ -131,4 +131,7 @@ do not use the quote cache, since chat context fitting does not support `ignore`
 ADR 0040 defines the wait estimate this rule reads. ADR 0035 records that anonymous access to the chat front stays and
 depends on this allowance.
 
+[ADR 0043](0043-bound-free-input-by-a-wait-sized-allowance.md) extends this rule with a free input allowance on the
+same wait curve.
+
 For the current implementation's [free-output thresholds and image admission budgets](../reference/service_limits.md#free-output-and-image-work), see the constants reference.
