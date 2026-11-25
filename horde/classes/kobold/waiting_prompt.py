@@ -6,6 +6,7 @@ import base64
 import math
 import os
 from collections.abc import Collection
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -38,6 +39,7 @@ from horde.classes.kobold.chat_request import (
     select_chat_transport,
 )
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
+from horde.classes.kobold.request_fit import processed_prompt_tokens
 from horde.classes.kobold.worker import TextWorker, capable_chat_worker_clauses, text_array_column_type
 from horde.config import Config
 from horde.flask import SQLITE_MODE, db
@@ -74,7 +76,7 @@ SQLITE_CHAT_IMAGE_PART_PATTERN = '%"type": "image_url"%'
 escaped in that serialisation, so only a part's ``type`` key can match it."""
 
 
-def compute_free_output_allowance(
+def compute_free_allowance(
     *,
     estimated_wait_seconds: float | None,
     ceiling: int,
@@ -82,7 +84,10 @@ def compute_free_output_allowance(
     full_wait_seconds: float,
     floor_wait_seconds: float,
 ) -> int:
-    """Return how many tokens a text request may ask for without holding its kudos upfront.
+    """Return how many tokens a text request may use without holding its kudos upfront.
+
+    The free output allowance (tokens generated) and the free input allowance (prompt tokens processed) both follow
+    this curve, each with its own ceiling and floor.
 
     The allowance follows the request's estimated wait on the workers eligible for it, so a fast worker that clears a
     deep queue quickly keeps its users at the ceiling while a slow one with a short queue does not. It is ``ceiling``
@@ -105,6 +110,27 @@ def compute_free_output_allowance(
         return ceiling
     fraction_toward_floor = (estimated_wait_seconds - full_wait_seconds) / (floor_wait_seconds - full_wait_seconds)
     return round(ceiling - (ceiling - floor) * fraction_toward_floor)
+
+
+@dataclass(frozen=True)
+class UpfrontKudosDecision:
+    """Represents the upfront kudos requirement of a text request, with the free allowances used to measure it."""
+
+    needs_kudos: bool
+    """Whether the requester must already have the kudos for the request."""
+    output_allowance: int
+    """The largest ``max_length`` allowed without kudos held upfront."""
+    input_allowance: int
+    """The most prompt tokens processed for the request without kudos held upfront."""
+    processed_prompt_tokens: int
+    """The estimated number of prompt tokens processed by a worker for the request, which is compared with
+    ``input_allowance``."""
+    exceeds_output: bool
+    """Whether the request's ``max_length`` is above ``output_allowance``."""
+    exceeds_input: bool
+    """Whether ``processed_prompt_tokens`` is above ``input_allowance``."""
+    disable_downgrade: bool
+    """Whether downgrading the request to the allowances is barred."""
 
 
 class TextWaitingPrompt(WaitingPrompt):
@@ -601,46 +627,85 @@ class TextWaitingPrompt(WaitingPrompt):
             style_reward=style_reward,
         )
 
-    def require_upfront_kudos(self, *, estimated_wait_seconds: float | None) -> tuple[bool, int, bool]:
-        """Return whether this request must hold its kudos upfront, its free output allowance, and whether downgrading
-        is barred.
+    def require_upfront_kudos(
+        self,
+        *,
+        estimated_wait_seconds: float | None,
+        estimated_prompt_tokens: int,
+    ) -> UpfrontKudosDecision:
+        """Return whether this request must hold its kudos upfront, measured against its free output and input
+        allowances.
 
-        The allowance comes from
-        [`compute_free_output_allowance`][horde.classes.kobold.waiting_prompt.compute_free_output_allowance] under the
-        ceiling, floor and wait thresholds in [`Config`][horde.config.Config]. A request that disallows slow workers
-        always holds its kudos upfront.
+        Both allowances come from [`compute_free_allowance`][horde.classes.kobold.waiting_prompt.compute_free_allowance]
+        under the ceilings, floors and wait thresholds in [`Config`][horde.config.Config]. The input compared with
+        the input allowance is the part of the prompt processed by a worker
+        ([`processed_prompt_tokens`][horde.classes.kobold.request_fit.processed_prompt_tokens]), so a long prompt
+        sent with a small context is measured at the context. A request that disallows slow workers always holds its
+        kudos upfront.
 
         Args:
             estimated_wait_seconds: The seconds the workers eligible for the request at its ``max_length`` need to
                 clear the competing work ahead of it; None when no worker is eligible.
+            estimated_prompt_tokens: The estimated token count of the prompt as it will be sent.
 
         Returns:
-            Whether the requester must already have the kudos for the request, the most tokens it may ask for without
-            them, and whether the requirement forbids downgrading the request to the allowance.
+            The decision, with both allowances and which of them the request exceeds.
         """
-        max_tokens = compute_free_output_allowance(
+        output_allowance = compute_free_allowance(
             estimated_wait_seconds=estimated_wait_seconds,
             ceiling=Config.text_free_output_ceiling,
             floor=Config.text_free_output_floor,
             full_wait_seconds=Config.text_free_output_wait_full_seconds,
             floor_wait_seconds=Config.text_free_output_wait_floor_seconds,
         )
-        if not self.slow_workers:
-            return (True, max_tokens, False)
-        if self.max_length > max_tokens:
-            return (True, max_tokens, False)
-        if os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "0") == "1" and len(self.workers) > 0:
-            return (True, max_tokens, True)
-        return (False, max_tokens, False)
+        input_allowance = compute_free_allowance(
+            estimated_wait_seconds=estimated_wait_seconds,
+            ceiling=Config.text_free_input_ceiling,
+            floor=Config.text_free_input_floor,
+            full_wait_seconds=Config.text_free_output_wait_full_seconds,
+            floor_wait_seconds=Config.text_free_output_wait_floor_seconds,
+        )
+        prompt_tokens = processed_prompt_tokens(
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            max_length=self.max_length,
+            max_context_length=self.max_context_length,
+        )
+        exceeds_output = self.max_length > output_allowance
+        exceeds_input = prompt_tokens > input_allowance
+        worker_list_needs_kudos = os.getenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "0") == "1" and len(self.workers) > 0
+        needs_kudos = not self.slow_workers or exceeds_output or exceeds_input or worker_list_needs_kudos
+        # The worker list bars a downgrade only when it is the only reason for the hold.
+        disable_downgrade = self.slow_workers and not exceeds_output and not exceeds_input and worker_list_needs_kudos
+        return UpfrontKudosDecision(
+            needs_kudos=needs_kudos,
+            output_allowance=output_allowance,
+            input_allowance=input_allowance,
+            processed_prompt_tokens=prompt_tokens,
+            exceeds_output=exceeds_output,
+            exceeds_input=exceeds_input,
+            disable_downgrade=disable_downgrade,
+        )
 
-    def downgrade(self, max_tokens):
-        """Ensures this WP requirements are not exceeding upfront kudos requirements"""
+    def downgrade(self, max_tokens: int, max_prompt_tokens: int | None = None) -> None:
+        """Lower this request to its free allowances and allow slow workers, so it does not need kudos upfront.
+
+        Args:
+            max_tokens: The free output allowance; ``max_length`` is lowered to it.
+            max_prompt_tokens: The free input allowance. When given, ``max_context_length`` is lowered so the context
+                leaves at most this many tokens beside ``max_length``, and the worker cuts the front of a longer
+                prompt away. None leaves the context unchanged.
+        """
         self.slow_workers = True
-        while self.max_length > max_tokens:
+        if self.max_length > max_tokens:
             self.max_length = max_tokens
             self.params["max_length"] = self.max_length
             self.gen_payload["max_length"] = self.max_length
             logger.info(f"Text WP {self.id} was downgraded to {self.max_length} tokens")
+        if max_prompt_tokens is not None and self.max_context_length > max_prompt_tokens + self.max_length:
+            self.max_context_length = max_prompt_tokens + self.max_length
+            self.params["max_context_length"] = self.max_context_length
+            self.gen_payload["max_context_length"] = self.max_context_length
+            logger.info(f"Text WP {self.id} was downgraded to a context of {self.max_context_length} tokens")
         db.session.commit()
 
     def calculate_kudos(self):

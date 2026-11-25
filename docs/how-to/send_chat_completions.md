@@ -145,9 +145,10 @@ with 400 `no_worker_supports_limit` and `param` `max_tokens`.
 Verification: a request above the card's `max_completion_tokens` is served, and its `x_horde.context_adjustments`
 holds a `worker_max_length` entry whose `to` is the card's value.
 
-Above the [free output allowance](../reference/chat_requests.md#free-output-allowance), the API key must have
-enough kudos to cover the request. Otherwise the request is refused with 403 `KudosUpfront`. The allowance is
-512 to 4096 by default, depending on the load on eligible workers.
+Above the [free output and input allowances](../reference/chat_requests.md#free-output-allowance), the API key must
+have enough kudos to cover the request. Otherwise the request is refused with 403 `KudosUpfront`. By default the
+output allowance is 512 to 4096 tokens and the input allowance is 4096 to 16384 prompt tokens, depending on the load
+on eligible workers.
 
 ### Reasoning effort values
 

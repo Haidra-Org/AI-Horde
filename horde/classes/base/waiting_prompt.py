@@ -113,8 +113,8 @@ def estimate_queue_wait_seconds(
 ) -> float:
     """Return the seconds that workers with ``things_per_second`` of throughput need to clear ``queued_things``.
 
-    The text status reports this for the work up to and including a request, and the free output allowance reads it
-    for the work ahead of a request being created, so both describe one estimate. Fewer queued jobs than threads
+    The text status reports this for the work up to and including a request, and the free output and input allowances
+    use it for the work ahead of a request being created, so both describe one estimate. Fewer queued jobs than threads
     leave the other threads idle, so the throughput is scaled down to the threads the jobs occupy.
 
     Args:

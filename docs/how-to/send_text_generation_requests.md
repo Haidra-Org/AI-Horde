@@ -161,12 +161,17 @@ The response is 200 with `kudos` and `resolved`. `resolved` holds the prompt aft
 `params` and `models` that the request would use, the applied `style`, `estimated_prompt_tokens` and the applied
 `context_fit`. A dry run does not queue a request and is not charged.
 
-A request may use a free output allowance without holding kudos. The allowance is 512 to 4096 tokens by default.
-It is larger when the eligible workers have a short wait and smaller when they have a long one. A request with
-`max_length` above the allowance, or with `slow_workers` set to `false`, needs the requester to have the kudos
-for it, which are held when it is queued. Without them, the server refuses the request with 403 `KudosUpfront`,
-and the message includes the allowance and the cost. Send `"allow_downgrade": true` to have such a request lowered to the allowance,
-with slow workers allowed, instead of refused.
+A request may use the free output and input allowances without holding kudos. By default the output allowance is
+512 to 4096 tokens of `max_length`. The input allowance is 4096 to 16384 prompt tokens, counting only the part of
+the prompt that fits `max_context_length` beside `max_length`. Both are larger when the eligible workers have a
+short wait and smaller when they have a long one.
+
+A request above either allowance, or with `slow_workers` set to `false`, needs the requester to have the kudos for
+it, which are held when it is queued. Without them, the server refuses the request with 403 `KudosUpfront`, and the
+message includes the allowance and the cost. Send `"allow_downgrade": true` to have such a request lowered to the
+allowances, with slow workers allowed, instead of refused. The downgrade lowers `max_context_length` to at most the
+input allowance plus `max_length`. For a prompt over the input allowance, the worker then cuts the front of the
+prompt away, so that downgrade applies only when `context_fit` is `ignore` (the default).
 
 Verification: the dry run returns 200 and a `kudos` value.
 
@@ -295,7 +300,7 @@ A payload validation failure is 400 with `message` and an `errors` object keyed 
 | 400 | `MissingFullSamplerOrder`, `TooManyStopSequences`, `ExcessiveStopSequence` | A `sampler_order` or `stop_sequence` breaks its rule. | Correct the request. |
 | 400 | `MaintenanceMode` | The Horde is in maintenance mode. | Retry later. |
 | 401 | `InvalidAPIKey` | The key is unknown. | Fix the key. |
-| 403 | `KudosUpfront` | The request is above the free allowance and the requester lacks the kudos. | Lower `max_length`, send `allow_downgrade`, or earn kudos. |
+| 403 | `KudosUpfront` | The request is above a free allowance and the requester lacks the kudos. | Lower `max_length`, shorten the prompt or lower `max_context_length`, send `allow_downgrade`, or earn kudos. |
 | 403 | `NoEligibleWorker` | The request would be refused for kudos and no online worker can serve it. The body includes `impossible_reason` when the cause is known. | Change the request or wait for workers. |
 | 403 | `TimeoutIP` | Your address is in a timeout. | Wait for the timeout to end. |
 | 404 | `WorkerNotFound` | A worker id in `workers` does not exist. | Correct the list. |

@@ -299,20 +299,26 @@ The posted debit is still subtracted as a queued debit until projection applies 
 A queued credit cannot fund a new spend until it is projected. This can delay work
 during projector lag, but it cannot authorize an overspend based on income that is not yet projected.
 
-#### Free output allowance
+#### Free output and input allowances {#free-output-allowance}
 
-The [free-output constants](../reference/service_limits.md#free-output-and-image-work) give the defaults, wait
+The [free-allowance constants](../reference/service_limits.md#free-output-and-image-work) give the defaults, wait
 thresholds and rationale, with the defining configuration fields and admission paths.
 
-Not every request takes a hold. A text or chat request within its free output allowance is admitted without one and
-charged when its generations settle, so a requester with little or no balance can still use idle capacity. The
-allowance depends on the request's estimated wait on its eligible workers. This is the same estimate that the status
-route reports as `wait_time`: 4096 tokens up to a minute of queue ahead, falling linearly to 512 at five minutes. Free
-output is therefore generous while those workers keep up with their queue, however deep it is, and modest when they
-fall behind ([free output allowance](../reference/chat_requests.md#free-output-allowance)).
+Not every request takes a hold. A text or chat request within its free output and input allowances is admitted
+without one and charged when its generations settle, so a requester with little or no balance can still use idle
+capacity. Both allowances depend on the request's estimated wait on its eligible workers. This is the same estimate
+that the status route reports as `wait_time`. Up to a minute of queue ahead, a request is free with up to 4096
+tokens of output and 16384 prompt tokens. At five minutes, the allowances have fallen linearly to 512 and 4096. Free use is
+therefore generous while those workers keep up with their queue, however deep it is, and modest when they fall behind
+([free output and input allowances](../reference/chat_requests.md#free-output-allowance)).
+
+The input allowance exists because a long prompt occupies a worker before it generates anything. Without it, a
+request with a short output and a very long prompt would pass as free. A request over the input allowance needs a
+hold. The amount held is computed from the requested output and models as for any text request, so prompt length
+does not change it.
 
 A free request's charge can take the requester below the account floor. Projection then forgives the shortfall with a
-`FLOOR_ADJUSTMENT`, which is how free output is paid for.
+`FLOOR_ADJUSTMENT`, which is how free use is paid for.
 
 #### Effective balance reads
 

@@ -43,11 +43,18 @@ class Config:
     text_free_output_floor: int = env.int("HORDE_TEXT_FREE_OUTPUT_FLOOR", default=512)
     """The fewest tokens a text or chat request may ask for without holding its kudos upfront, however long its
     estimated wait and when no worker is eligible. 512 keeps the chat default ``max_tokens`` free under any load."""
+    text_free_input_ceiling: int = env.int("HORDE_TEXT_FREE_INPUT_CEILING", default=16384)
+    """The free input allowance at short waits: how many prompt tokens are processed for a text or chat request without
+    its kudos held upfront when its estimated wait is at most ``text_free_output_wait_full_seconds``. 16384 matches the
+    default context of current koboldcpp releases, so an idle fleet serves a default client's full context free."""
+    text_free_input_floor: int = env.int("HORDE_TEXT_FREE_INPUT_FLOOR", default=4096)
+    """The free input allowance at long waits and when no worker is eligible. Processing a long prompt occupies a
+    worker before it generates anything, so on a backed-up queue only a short conversation's worth of input is free."""
     text_free_output_wait_full_seconds: float = env.float("HORDE_TEXT_FREE_OUTPUT_WAIT_FULL_SECONDS", default=60.0)
-    """The longest estimated wait, in seconds, at which a request still gets the full free allowance. A minute of
-    queue ahead is ordinary on a busy model, so a worker that clears its queue within it keeps its users at the
-    ceiling however many requests that queue holds."""
+    """The longest estimated wait, in seconds, at which a request still gets the full free output and input
+    allowances. A minute of queue ahead is ordinary on a busy model, so a worker that clears its queue within it keeps
+    its users at the ceilings however many requests that queue holds."""
     text_free_output_wait_floor_seconds: float = env.float("HORDE_TEXT_FREE_OUTPUT_WAIT_FLOOR_SECONDS", default=300.0)
-    """The estimated wait, in seconds, at and beyond which the free allowance is the floor; between the two
-    thresholds it falls linearly. Five minutes is where a queue is backed up enough that long free answers would
-    lengthen every later wait, so only kudos-backed requests keep asking for more than the floor."""
+    """The estimated wait, in seconds, at and beyond which the free output and input allowances are their floors.
+    Between the two thresholds they fall linearly. Five minutes is where a queue is backed up enough that long free
+    requests would lengthen every later wait, so only requests with kudos held get more than the floors."""

@@ -32,7 +32,8 @@ from horde.chat_contract import ChatImpossibleReason
 from horde.classes.base.waiting_prompt import estimate_queue_wait_seconds
 from horde.classes.kobold import processing_generation as text_processing_generation
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
-from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, compute_free_output_allowance
+from horde.classes.kobold.request_fit import CHARS_PER_TOKEN_ESTIMATE, ContextFit
+from horde.classes.kobold.waiting_prompt import TextWaitingPrompt, UpfrontKudosDecision, compute_free_allowance
 from horde.classes.kobold.worker import TextWorker
 from horde.config import Config
 from horde.database.functions import RequestWorkerAvailability
@@ -61,9 +62,30 @@ FULL_WAIT_SECONDS = 60.0
 FLOOR_WAIT_SECONDS = 300.0
 """The default estimated wait from which the allowance is the floor."""
 
+FREE_INPUT_CEILING = 16384
+"""The default ceiling of the free input allowance."""
+
+FREE_INPUT_FLOOR = 4096
+"""The default floor of the free input allowance."""
+
+
+def _prompt_of(tokens: int) -> str:
+    """Return a prompt whose estimated token count is ``tokens``."""
+    return "x" * (tokens * CHARS_PER_TOKEN_ESTIMATE)
+
+
+def _set_default_allowance_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(Config, "text_free_output_ceiling", FREE_OUTPUT_CEILING)
+    monkeypatch.setattr(Config, "text_free_output_floor", FREE_OUTPUT_FLOOR)
+    monkeypatch.setattr(Config, "text_free_input_ceiling", FREE_INPUT_CEILING)
+    monkeypatch.setattr(Config, "text_free_input_floor", FREE_INPUT_FLOOR)
+    monkeypatch.setattr(Config, "text_free_output_wait_full_seconds", FULL_WAIT_SECONDS)
+    monkeypatch.setattr(Config, "text_free_output_wait_floor_seconds", FLOOR_WAIT_SECONDS)
+    monkeypatch.delenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", raising=False)
+
 
 def _allowance(estimated_wait_seconds: float | None) -> int:
-    return compute_free_output_allowance(
+    return compute_free_allowance(
         estimated_wait_seconds=estimated_wait_seconds,
         ceiling=FREE_OUTPUT_CEILING,
         floor=FREE_OUTPUT_FLOOR,
@@ -72,7 +94,7 @@ def _allowance(estimated_wait_seconds: float | None) -> int:
     )
 
 
-class TestComputeFreeOutputAllowance:
+class TestComputeFreeAllowance:
     def test_no_wait_gives_the_ceiling(self):
         assert _allowance(0.0) == FREE_OUTPUT_CEILING
 
@@ -111,62 +133,184 @@ class TestEstimateQueueWaitSeconds:
         assert estimate_queue_wait_seconds(queued_things=80, queued_jobs=1, worker_threads=0, things_per_second=0) == 80
 
 
+def _decide(wp: SimpleNamespace, *, estimated_wait_seconds: float | None, estimated_prompt_tokens: int = 0) -> UpfrontKudosDecision:
+    return TextWaitingPrompt.require_upfront_kudos(
+        wp,
+        estimated_wait_seconds=estimated_wait_seconds,
+        estimated_prompt_tokens=estimated_prompt_tokens,
+    )
+
+
+def _output_summary(decision: UpfrontKudosDecision) -> tuple[bool, int, bool]:
+    """Return whether the decision holds kudos, its output allowance and whether it bars a downgrade."""
+    return (decision.needs_kudos, decision.output_allowance, decision.disable_downgrade)
+
+
 class TestRequireUpfrontKudos:
     @pytest.fixture(autouse=True)
     def default_allowance_settings(self, monkeypatch):
-        monkeypatch.setattr(Config, "text_free_output_ceiling", FREE_OUTPUT_CEILING)
-        monkeypatch.setattr(Config, "text_free_output_floor", FREE_OUTPUT_FLOOR)
-        monkeypatch.setattr(Config, "text_free_output_wait_full_seconds", FULL_WAIT_SECONDS)
-        monkeypatch.setattr(Config, "text_free_output_wait_floor_seconds", FLOOR_WAIT_SECONDS)
-        monkeypatch.delenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", raising=False)
+        _set_default_allowance_settings(monkeypatch)
 
     def test_a_short_wait_serves_up_to_the_ceiling_free(self):
-        result = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=FREE_OUTPUT_CEILING), estimated_wait_seconds=0.0)
-        assert result == (False, FREE_OUTPUT_CEILING, False)
+        result = _decide(_wp(max_length=FREE_OUTPUT_CEILING), estimated_wait_seconds=0.0)
+        assert _output_summary(result) == (False, FREE_OUTPUT_CEILING, False)
 
     def test_over_the_allowance_requires_upfront(self):
-        result = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=FREE_OUTPUT_CEILING + 1), estimated_wait_seconds=0.0)
-        assert result == (True, FREE_OUTPUT_CEILING, False)
+        result = _decide(_wp(max_length=FREE_OUTPUT_CEILING + 1), estimated_wait_seconds=0.0)
+        assert _output_summary(result) == (True, FREE_OUTPUT_CEILING, False)
+        assert result.exceeds_output is True
+        assert result.exceeds_input is False
 
     def test_a_long_wait_serves_only_the_floor_free(self):
-        within_floor = TextWaitingPrompt.require_upfront_kudos(
-            _wp(max_length=FREE_OUTPUT_FLOOR),
-            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
-        )
-        over_floor = TextWaitingPrompt.require_upfront_kudos(
-            _wp(max_length=FREE_OUTPUT_FLOOR + 1),
-            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
-        )
-        assert within_floor == (False, FREE_OUTPUT_FLOOR, False)
-        assert over_floor == (True, FREE_OUTPUT_FLOOR, False)
+        within_floor = _decide(_wp(max_length=FREE_OUTPUT_FLOOR), estimated_wait_seconds=FLOOR_WAIT_SECONDS)
+        over_floor = _decide(_wp(max_length=FREE_OUTPUT_FLOOR + 1), estimated_wait_seconds=FLOOR_WAIT_SECONDS)
+        assert _output_summary(within_floor) == (False, FREE_OUTPUT_FLOOR, False)
+        assert _output_summary(over_floor) == (True, FREE_OUTPUT_FLOOR, False)
 
     def test_no_eligible_worker_serves_only_the_floor_free(self):
-        result = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=FREE_OUTPUT_FLOOR + 1), estimated_wait_seconds=None)
-        assert result == (True, FREE_OUTPUT_FLOOR, False)
+        result = _decide(_wp(max_length=FREE_OUTPUT_FLOOR + 1), estimated_wait_seconds=None)
+        assert _output_summary(result) == (True, FREE_OUTPUT_FLOOR, False)
 
     def test_no_slow_workers_always_requires_upfront(self):
-        result = TextWaitingPrompt.require_upfront_kudos(_wp(slow_workers=False, max_length=80), estimated_wait_seconds=0.0)
-        assert result == (True, FREE_OUTPUT_CEILING, False)
+        result = _decide(_wp(slow_workers=False, max_length=80), estimated_wait_seconds=0.0)
+        assert _output_summary(result) == (True, FREE_OUTPUT_CEILING, False)
 
     def test_configured_ceiling_floor_and_thresholds_apply(self, monkeypatch):
         monkeypatch.setattr(Config, "text_free_output_ceiling", 1024)
         monkeypatch.setattr(Config, "text_free_output_floor", 256)
         monkeypatch.setattr(Config, "text_free_output_wait_full_seconds", 10.0)
         monkeypatch.setattr(Config, "text_free_output_wait_floor_seconds", 20.0)
-        idle = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=1024), estimated_wait_seconds=10.0)
-        halfway = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=1024), estimated_wait_seconds=15.0)
-        busy = TextWaitingPrompt.require_upfront_kudos(_wp(max_length=1024), estimated_wait_seconds=20.0)
-        assert idle == (False, 1024, False)
-        assert halfway == (True, 640, False)
-        assert busy == (True, 256, False)
+        idle = _decide(_wp(max_length=1024), estimated_wait_seconds=10.0)
+        halfway = _decide(_wp(max_length=1024), estimated_wait_seconds=15.0)
+        busy = _decide(_wp(max_length=1024), estimated_wait_seconds=20.0)
+        assert _output_summary(idle) == (False, 1024, False)
+        assert _output_summary(halfway) == (True, 640, False)
+        assert _output_summary(busy) == (True, 256, False)
 
     def test_workerlist_env_forces_upfront_and_blocks_downgrade(self, monkeypatch):
         monkeypatch.setenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "1")
-        result = TextWaitingPrompt.require_upfront_kudos(
-            _wp(slow_workers=True, max_length=200, workers=["w"]),
+        result = _decide(_wp(slow_workers=True, max_length=200, workers=["w"]), estimated_wait_seconds=0.0)
+        assert _output_summary(result) == (True, FREE_OUTPUT_CEILING, True)
+
+    def test_workerlist_env_does_not_block_a_downgrade_for_an_allowance_overage(self, monkeypatch):
+        """The worker list bars a downgrade only when it is the sole reason for the hold."""
+        monkeypatch.setenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", "1")
+        result = _decide(_wp(max_length=FREE_OUTPUT_CEILING + 1, workers=["w"]), estimated_wait_seconds=0.0)
+        assert _output_summary(result) == (True, FREE_OUTPUT_CEILING, False)
+
+
+class TestRequireUpfrontKudosForInput:
+    """The prompt tokens processed by a worker are measured against the free input allowance on the same wait curve."""
+
+    @pytest.fixture(autouse=True)
+    def default_allowance_settings(self, monkeypatch):
+        _set_default_allowance_settings(monkeypatch)
+
+    def test_a_short_wait_processes_up_to_the_input_ceiling_free(self):
+        """A 16384-token prompt in a context with room for it is free at no wait."""
+        result = _decide(
+            _wp(max_length=512, max_context_length=32768),
             estimated_wait_seconds=0.0,
+            estimated_prompt_tokens=FREE_INPUT_CEILING,
         )
-        assert result == (True, FREE_OUTPUT_CEILING, True)
+        assert result.needs_kudos is False
+        assert result.input_allowance == FREE_INPUT_CEILING
+        assert result.processed_prompt_tokens == FREE_INPUT_CEILING
+
+    def test_a_prompt_over_the_input_allowance_requires_upfront(self):
+        """A 16385-token prompt with a short output needs kudos for its input alone."""
+        result = _decide(
+            _wp(max_length=80, max_context_length=32768),
+            estimated_wait_seconds=0.0,
+            estimated_prompt_tokens=FREE_INPUT_CEILING + 1,
+        )
+        assert result.needs_kudos is True
+        assert result.exceeds_input is True
+        assert result.exceeds_output is False
+        assert result.disable_downgrade is False
+
+    def test_a_long_wait_processes_only_the_input_floor_free(self):
+        within_floor = _decide(
+            _wp(max_length=80, max_context_length=32768),
+            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
+            estimated_prompt_tokens=FREE_INPUT_FLOOR,
+        )
+        over_floor = _decide(
+            _wp(max_length=80, max_context_length=32768),
+            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
+            estimated_prompt_tokens=FREE_INPUT_FLOOR + 1,
+        )
+        assert (within_floor.needs_kudos, within_floor.input_allowance) == (False, FREE_INPUT_FLOOR)
+        assert (over_floor.needs_kudos, over_floor.input_allowance) == (True, FREE_INPUT_FLOOR)
+
+    def test_no_eligible_worker_processes_only_the_input_floor_free(self):
+        result = _decide(
+            _wp(max_length=80, max_context_length=32768),
+            estimated_wait_seconds=None,
+            estimated_prompt_tokens=FREE_INPUT_FLOOR + 1,
+        )
+        assert (result.needs_kudos, result.input_allowance) == (True, FREE_INPUT_FLOOR)
+
+    def test_a_prompt_longer_than_its_context_is_measured_at_the_context(self):
+        """A 50000-token prompt in a 2048 context with 512 to generate is measured at the 1536 tokens kept by the worker."""
+        result = _decide(
+            _wp(max_length=512, max_context_length=2048),
+            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
+            estimated_prompt_tokens=50_000,
+        )
+        assert result.processed_prompt_tokens == 1536
+        assert result.needs_kudos is False
+
+    def test_the_input_allowance_falls_linearly_between_the_thresholds(self):
+        halfway_wait = (FULL_WAIT_SECONDS + FLOOR_WAIT_SECONDS) / 2
+        result = _decide(_wp(), estimated_wait_seconds=halfway_wait)
+        assert result.input_allowance == (FREE_INPUT_CEILING + FREE_INPUT_FLOOR) / 2
+
+    def test_configured_input_ceiling_and_floor_apply(self, monkeypatch):
+        monkeypatch.setattr(Config, "text_free_input_ceiling", 8192)
+        monkeypatch.setattr(Config, "text_free_input_floor", 1024)
+        idle = _decide(_wp(), estimated_wait_seconds=0.0)
+        busy = _decide(_wp(), estimated_wait_seconds=FLOOR_WAIT_SECONDS)
+        assert (idle.input_allowance, busy.input_allowance) == (8192, 1024)
+
+
+class TestDowngrade:
+    """A downgrade lowers the request to the exceeded allowances and allows slow workers."""
+
+    def _downgradable_wp(self, *, max_length: int, max_context_length: int) -> SimpleNamespace:
+        wp = _wp(slow_workers=False, max_length=max_length, max_context_length=max_context_length)
+        wp.id = "downgrade-test"
+        wp.params = {"max_length": max_length, "max_context_length": max_context_length}
+        wp.gen_payload = dict(wp.params)
+        return wp
+
+    def test_an_output_downgrade_leaves_the_context(self, monkeypatch):
+        monkeypatch.setattr(db.session, "commit", lambda: None)
+        wp = self._downgradable_wp(max_length=2048, max_context_length=8192)
+
+        TextWaitingPrompt.downgrade(wp, 512)
+
+        assert (wp.max_length, wp.max_context_length, wp.slow_workers) == (512, 8192, True)
+        assert wp.gen_payload == {"max_length": 512, "max_context_length": 8192}
+
+    def test_an_input_downgrade_leaves_room_for_the_input_allowance_beside_the_output(self, monkeypatch):
+        """A 32768 context with 2048 to generate, lowered to a 512 output and a 4096 input allowance, runs in 4608."""
+        monkeypatch.setattr(db.session, "commit", lambda: None)
+        wp = self._downgradable_wp(max_length=2048, max_context_length=32768)
+
+        TextWaitingPrompt.downgrade(wp, 512, 4096)
+
+        assert (wp.max_length, wp.max_context_length) == (512, 4608)
+        assert wp.params == {"max_length": 512, "max_context_length": 4608}
+        assert wp.gen_payload == {"max_length": 512, "max_context_length": 4608}
+
+    def test_an_input_downgrade_never_raises_the_context(self, monkeypatch):
+        monkeypatch.setattr(db.session, "commit", lambda: None)
+        wp = self._downgradable_wp(max_length=512, max_context_length=2048)
+
+        TextWaitingPrompt.downgrade(wp, 512, 4096)
+
+        assert wp.max_context_length == 2048
 
 
 class TestKudos:
@@ -254,6 +398,9 @@ def _queue_allowance_request(
     is_chat: bool = False,
     sharedkey: object | None = None,
     availability: RequestWorkerAvailability = ONE_ELIGIBLE_WORKER,
+    prompt: str = "allowance records test",
+    max_context_length: int = 2048,
+    context_fit: ContextFit = ContextFit.IGNORE,
 ) -> TextAsyncGenerate:
     """Create a text request through ``TextAsyncGenerate.initiate_waiting_prompt`` with the wait, the eligible workers
     and the kudos reservation fixed, so each allowance outcome is reached deterministically.
@@ -286,18 +433,21 @@ def _queue_allowance_request(
     resource.existing_style = None
     # The route sets this before any style is applied; the refusal path quotes the request through it.
     resource.style_kudos = False
+    # Validation sets both before the request is created, and the input allowance is measured from them.
+    resource.prompt = prompt
+    resource.context_fit = context_fit
     monkeypatch.setattr(
         resource,
         "get_waiting_prompt_arguments",
         lambda: {
             "worker_ids": [],
             "models": [ALLOWANCE_MODEL],
-            "prompt": "allowance records test",
+            "prompt": prompt,
             "user_id": user.id,
             "params": {
                 "n": 1,
                 "max_length": max_length,
-                "max_context_length": 2048,
+                "max_context_length": max_context_length,
             },
             **chat_fields,
         },
@@ -318,11 +468,7 @@ class TestFreeAllowanceRecords:
 
     @pytest.fixture(autouse=True)
     def default_allowance_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(Config, "text_free_output_ceiling", FREE_OUTPUT_CEILING)
-        monkeypatch.setattr(Config, "text_free_output_floor", FREE_OUTPUT_FLOOR)
-        monkeypatch.setattr(Config, "text_free_output_wait_full_seconds", FULL_WAIT_SECONDS)
-        monkeypatch.setattr(Config, "text_free_output_wait_floor_seconds", FLOOR_WAIT_SECONDS)
-        monkeypatch.delenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", raising=False)
+        _set_default_allowance_settings(monkeypatch)
         monkeypatch.setattr(text_api_module.model_reference, "get_text_model_multiplier", lambda _model_name: 21)
 
     @pytest.fixture
@@ -363,6 +509,8 @@ class TestFreeAllowanceRecords:
                     "horde.outcome": "free",
                     "horde.requested_bucket": "<=512",
                     "horde.allowance_bucket": "2049-4096",
+                    "horde.prompt_bucket": "<=4096",
+                    "horde.exceeded": "none",
                     "horde.chat": False,
                 },
             ),
@@ -402,6 +550,8 @@ class TestFreeAllowanceRecords:
                     "horde.outcome": "funded",
                     "horde.requested_bucket": ">4096",
                     "horde.allowance_bucket": "2049-4096",
+                    "horde.prompt_bucket": "<=4096",
+                    "horde.exceeded": "output",
                     "horde.chat": False,
                 },
             ),
@@ -434,6 +584,8 @@ class TestFreeAllowanceRecords:
                     "horde.outcome": "refused",
                     "horde.requested_bucket": "1025-2048",
                     "horde.allowance_bucket": "<=512",
+                    "horde.prompt_bucket": "<=4096",
+                    "horde.exceeded": "output",
                     "horde.chat": False,
                 },
             ),
@@ -467,6 +619,8 @@ class TestFreeAllowanceRecords:
                     "horde.outcome": "downgraded",
                     "horde.requested_bucket": "513-1024",
                     "horde.allowance_bucket": "<=512",
+                    "horde.prompt_bucket": "<=4096",
+                    "horde.exceeded": "output",
                     "horde.chat": False,
                 },
             ),
@@ -523,17 +677,187 @@ class TestFreeAllowanceRecords:
         assert estimated_waits.records == []
 
 
+class TestFreeInputAllowance:
+    """A request whose processed prompt is over the free input allowance needs kudos held upfront, whatever its output."""
+
+    @pytest.fixture(autouse=True)
+    def default_allowance_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_default_allowance_settings(monkeypatch)
+        monkeypatch.setattr(text_api_module.model_reference, "get_text_model_multiplier", lambda _model_name: 21)
+
+    @pytest.fixture
+    def decisions(self, monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+        recorder = _CounterRecorder()
+        monkeypatch.setattr(metrics, "text_free_allowance_decisions", recorder)
+        return recorder
+
+    def test_an_anonymous_long_prompt_is_refused_stating_the_input_allowance(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """An anonymous 20000-token prompt with 80 tokens to generate, at no wait, is refused ``KudosUpfront``. The
+        message states the 16384-token input allowance and the prompt's size, and the decision is counted as an input
+        overage."""
+        with pytest.raises(e.KudosUpfront) as refusal:
+            _queue_allowance_request(
+                monkeypatch,
+                make_user(oauth_id="anon"),
+                max_length=80,
+                estimated_wait_seconds=0.0,
+                reservation_granted=False,
+                prompt=_prompt_of(20_000),
+                max_context_length=32768,
+            )
+
+        message = refusal.value.specific
+        assert f"prompts of up to {FREE_INPUT_CEILING} tokens" in message
+        assert "This request's prompt is about 20000 tokens." in message
+        assert db.session.query(TextWaitingPrompt).count() == 0
+        assert [
+            (attributes["horde.outcome"], attributes["horde.exceeded"], attributes["horde.prompt_bucket"])
+            for _, attributes in decisions.increments
+        ] == [
+            ("refused", "input", "16385-32768"),
+        ]
+
+    def test_a_long_prompt_with_kudos_reserved_is_funded(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        resource = _queue_allowance_request(
+            monkeypatch,
+            make_user(),
+            max_length=80,
+            estimated_wait_seconds=0.0,
+            reservation_granted=True,
+            prompt=_prompt_of(20_000),
+            max_context_length=32768,
+        )
+
+        assert resource.wp.max_context_length == 32768
+        assert [attributes["horde.outcome"] for _, attributes in decisions.increments] == ["funded"]
+
+    def test_a_long_prompt_sent_under_ignore_with_downgrade_allowed_is_lowered_to_the_input_allowance(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """At a 300 s wait, a 20000-token prompt with 80 to generate in a 32768 context is lowered to a 4176 context,
+        which is the 4096-token input floor plus the 80 tokens to generate."""
+        resource = _queue_allowance_request(
+            monkeypatch,
+            make_user(),
+            max_length=80,
+            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
+            reservation_granted=False,
+            allow_downgrade=True,
+            prompt=_prompt_of(20_000),
+            max_context_length=32768,
+        )
+
+        assert (resource.wp.max_length, resource.wp.max_context_length) == (80, FREE_INPUT_FLOOR + 80)
+        assert resource.wp.params["max_context_length"] == FREE_INPUT_FLOOR + 80
+        assert [(attributes["horde.outcome"], attributes["horde.exceeded"]) for _, attributes in decisions.increments] == [
+            ("downgraded", "input"),
+        ]
+
+    def test_an_output_downgrade_under_ignore_keeps_the_processed_prompt_within_the_input_allowance(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """At a short wait, a 40000-token prompt with 16384 to generate in a 32768 context processes 16384 prompt
+        tokens, which is within the input ceiling. Lowering max_length to the 4096 output ceiling would leave 28672
+        tokens of the context to the prompt, so the context is lowered to 20480, the input ceiling plus 4096."""
+        resource = _queue_allowance_request(
+            monkeypatch,
+            make_user(),
+            max_length=16384,
+            estimated_wait_seconds=0.0,
+            reservation_granted=False,
+            allow_downgrade=True,
+            prompt=_prompt_of(40_000),
+            max_context_length=32768,
+        )
+
+        assert (resource.wp.max_length, resource.wp.max_context_length) == (
+            FREE_OUTPUT_CEILING,
+            FREE_INPUT_CEILING + FREE_OUTPUT_CEILING,
+        )
+        assert [(attributes["horde.outcome"], attributes["horde.exceeded"]) for _, attributes in decisions.increments] == [
+            ("downgraded", "output"),
+        ]
+
+    def test_a_long_prompt_sized_by_grow_is_refused_even_with_downgrade_allowed(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """Lowering the context would make the worker cut the prompt, which a client sizing its context with ``grow``
+        did not accept, so the request is refused rather than downgraded."""
+        with pytest.raises(e.KudosUpfront):
+            _queue_allowance_request(
+                monkeypatch,
+                make_user(),
+                max_length=80,
+                estimated_wait_seconds=0.0,
+                reservation_granted=False,
+                allow_downgrade=True,
+                prompt=_prompt_of(20_000),
+                max_context_length=32768,
+                context_fit=ContextFit.GROW,
+            )
+
+        assert [attributes["horde.outcome"] for _, attributes in decisions.increments] == ["refused"]
+
+    def test_a_long_prompt_in_a_small_context_is_free(
+        self,
+        db_session: Any,
+        fake_redis: Any,
+        make_user: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        decisions: _CounterRecorder,
+    ) -> None:
+        """Under ``ignore`` the worker keeps only what fits a 2048 context, so a 50000-token prompt is free at the
+        longest wait."""
+        _queue_allowance_request(
+            monkeypatch,
+            make_user(oauth_id="anon"),
+            max_length=512,
+            estimated_wait_seconds=FLOOR_WAIT_SECONDS,
+            reservation_granted=False,
+            prompt=_prompt_of(50_000),
+        )
+
+        assert [(attributes["horde.outcome"], attributes["horde.prompt_bucket"]) for _, attributes in decisions.increments] == [
+            ("free", "<=4096"),
+        ]
+
+
 class TestNoEligibleWorkerRefusal:
     """A request the kudos rules would refuse while no online worker can serve it is refused ``NoEligibleWorker``, with
     the declaration gap in its message and body when there is one."""
 
     @pytest.fixture(autouse=True)
     def default_allowance_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(Config, "text_free_output_ceiling", FREE_OUTPUT_CEILING)
-        monkeypatch.setattr(Config, "text_free_output_floor", FREE_OUTPUT_FLOOR)
-        monkeypatch.setattr(Config, "text_free_output_wait_full_seconds", FULL_WAIT_SECONDS)
-        monkeypatch.setattr(Config, "text_free_output_wait_floor_seconds", FLOOR_WAIT_SECONDS)
-        monkeypatch.delenv("HORDE_UPFRONT_KUDOS_ON_WORKERLIST", raising=False)
+        _set_default_allowance_settings(monkeypatch)
         monkeypatch.setattr(text_api_module.model_reference, "get_text_model_multiplier", lambda _model_name: 21)
 
     @pytest.fixture

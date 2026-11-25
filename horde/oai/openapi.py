@@ -432,7 +432,7 @@ def chat_completions_route_options() -> dict[str, Any]:
             ),
             HTTPStatus.FORBIDDEN.value: _error_response(
                 "The Horde refused the request for this key. For example, `KudosUpfront` refuses a request above the "
-                "free output allowance when the key does not have the kudos for it.",
+                "free output or input allowance when the key does not have the kudos for it.",
             ),
             HTTPStatus.NOT_FOUND.value: _error_response(
                 "`model_not_found`: the model id contains `:`. `UnknownChatModel`: the Horde does not know the model. "

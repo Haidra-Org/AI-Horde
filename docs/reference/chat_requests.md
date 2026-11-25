@@ -1134,15 +1134,28 @@ generation.
 The Horde does not measure partial work on a request that does not stream. Its worker submits after the cancel and is
 paid for the reply as usual.
 
-### Free output allowance
+### Free output and input allowances {#free-output-allowance}
 
-A text or chat request whose `max_length` is at most its free output allowance is admitted without holding its kudos
-upfront and is charged when its generations settle. Above the allowance, the requester has to have the request's
-kudos available, and they are held at admission. A chat request is not downgraded, so a requester who cannot cover
-the hold gets `403 KudosUpfront`, whose message states the allowance. A text request with `allow_downgrade` is
-lowered to the allowance instead.
+A text or chat request within two allowances is admitted without holding its kudos upfront and is charged when its
+generations settle:
 
-A request without an eligible worker gets the floor. When it cannot be served by any online worker and it would be
+- The free output allowance applies to `max_length`, the tokens to generate.
+- The free input allowance applies to the prompt tokens processed by a worker. A worker cuts the front of a prompt
+  away until the prompt and `max_length` fit `max_context_length`. A prompt longer than the space left beside
+  `max_length` is therefore measured at that space, and a context larger than the prompt is measured at the prompt.
+
+Above either allowance, the requester has to have kudos available, and they are held at admission. The amount held
+is the same for both overages. It is computed from `max_length` and the highest multiplier among the requested
+models, as for any text request, so prompt length does not change it. A chat request is not downgraded, so a requester who cannot cover the hold gets `403 KudosUpfront`, whose
+message states the exceeded allowance. A text request with `allow_downgrade` is lowered instead:
+
+- Over the output allowance, `max_length` is lowered to it.
+- `max_context_length` is lowered to at most the input allowance plus `max_length`. Without this, a lower
+  `max_length` would leave more of the context to the prompt. For a prompt over the input allowance, the worker cuts
+  the front of the prompt away. This happens only under `context_fit: ignore`, where the client already accepts that
+  cut. Under `reject` or `grow`, a request over the input allowance is refused.
+
+A request without an eligible worker gets both floors. When it cannot be served by any online worker and it would be
 refused for kudos (`KudosUpfront` or `SharedKeyInsufficientKudos`), the route deletes its row and returns
 `403 NoEligibleWorker` instead, since kudos do not help it until such a worker comes online.
 
@@ -1155,12 +1168,13 @@ max_length limit of every online worker serving the model" for exceeded limits. 
 --8<-- "docs/reference/chat_wire_examples.md:refusal-no-eligible-worker"
 ```
 
-A request that covers its hold, or fits the floor, is created and queued whether or not a worker can serve it.
+A request that covers its hold, or fits both floors, is created and queued whether or not a worker can serve it.
 
 #### Allowance calculation
 
-The allowance is measured when the request is created, from the request's estimated wait on the workers eligible for
-it at its requested `max_length` (`TextWaitingPrompt.require_upfront_kudos`, `compute_free_output_allowance`):
+Both allowances are measured when the request is created, from the request's estimated wait on the workers eligible
+for it at its requested `max_length` (`TextWaitingPrompt.require_upfront_kudos`, `compute_free_allowance`). They
+follow the same curve, each with its own ceiling and floor:
 
 ```text
 wait      = competing_tokens / (tokens_per_second * min(competing_jobs, eligible_threads) / eligible_threads)
@@ -1169,19 +1183,28 @@ allowance = floor     if wait >= floor_wait
 allowance = round(ceiling - (ceiling - floor) * (wait - full_wait) / (floor_wait - full_wait))   otherwise
 ```
 
+The prompt tokens compared with the input allowance are
+`min(estimated_prompt_tokens, max_context_length - max_length)` (`processed_prompt_tokens`). The estimate is the same
+one used by context sizing. It is the prompt's characters divided by 3, and for a chat request each image is counted
+as a worker counts it. It is taken after any style template and context sizing, so a context raised by `grow` is measured at its
+raised size.
+
 | Input               | Value |
 | ------------------- | ----- |
 | `competing_tokens`, `competing_jobs` | The outstanding tokens and generations of every queued text or chat request that at least one eligible worker could take, read from the in-process copy of the stored queue. The horde-wide queued text tokens and generations when a queue is not stored |
-| `eligible_threads`  | The advertised threads of the eligible workers. With none, the allowance is the floor |
+| `eligible_threads`  | The advertised threads of the eligible workers. With none, each allowance is its floor |
 | `tokens_per_second` | The eligible workers' measured speed, each counted once per thread. A worker that has not recorded a speed counts at the assumed speed of an unmeasured worker, 10 tokens per second |
-| `ceiling`           | `HORDE_TEXT_FREE_OUTPUT_CEILING`, default 4096: what an idle fleet serves free |
-| `floor`             | `HORDE_TEXT_FREE_OUTPUT_FLOOR`, default 512: the chat default `max_tokens` stays free under any load |
-| `full_wait`         | `HORDE_TEXT_FREE_OUTPUT_WAIT_FULL_SECONDS`, default 60: a worker that clears its queue within a minute keeps its users at the ceiling however many requests the queue holds |
-| `floor_wait`        | `HORDE_TEXT_FREE_OUTPUT_WAIT_FLOOR_SECONDS`, default 300: from five minutes of queue ahead, only the floor is free |
+| Output `ceiling`    | `HORDE_TEXT_FREE_OUTPUT_CEILING`, default 4096: what an idle fleet serves free |
+| Output `floor`      | `HORDE_TEXT_FREE_OUTPUT_FLOOR`, default 512: the chat default `max_tokens` stays free under any load |
+| Input `ceiling`     | `HORDE_TEXT_FREE_INPUT_CEILING`, default 16384: the default context of current koboldcpp releases, so an idle fleet serves a default client's full context free |
+| Input `floor`       | `HORDE_TEXT_FREE_INPUT_FLOOR`, default 4096: on a backed-up queue, only a short conversation's worth of input is free |
+| `full_wait`         | `HORDE_TEXT_FREE_OUTPUT_WAIT_FULL_SECONDS`, default 60: a worker that clears its queue within a minute keeps its users at the ceilings however many requests the queue holds |
+| `floor_wait`        | `HORDE_TEXT_FREE_OUTPUT_WAIT_FLOOR_SECONDS`, default 300: from five minutes of queue ahead, only the floors are free |
 
 The wait is the estimate that the status route reports as `wait_time` (`estimate_queue_wait_seconds`), over the same
 competing requests and the same throughput. It leaves out the request's own output. That output is not queued yet,
-and its length determines whether an upfront hold is required.
+and its length determines whether an upfront hold is required. The wait counts queued output only, so a queue of
+long-prompt requests looks shorter than it is until the workers' measured speed falls.
 
 A queued request competes when one eligible worker could take it, based on the worker's models, chat opt-in and
 length limits. A chat request needs a worker that serves one of its models with chat, within the worker's chat
@@ -1194,7 +1217,7 @@ and the request cannot be downgraded. The availability measured for the allowanc
 and reused by the worker check after activation, so the eligible-worker query runs once at creation. It also runs
 for a dry run. A downgrade changes the eligible workers, so the check after a downgrade queries them again.
 
-The instruments for the allowance are listed under [Allowance metrics](#allowance-metrics).
+The instruments for the allowances are listed under [Allowance metrics](#allowance-metrics).
 
 ## Chat model list
 
@@ -1395,18 +1418,23 @@ In Loki, keep the UUIDs as structured metadata so they do not create indexed str
 
 ### Allowance metrics
 
-These instruments show the effect of the [free output allowance](#free-output-allowance). A dry run is not recorded.
+These instruments show the effect of the [free output and input allowances](#free-output-allowance). A dry run is
+not recorded.
 
 | Instrument | Attributes | Records |
 | --- | --- | --- |
-| `horde.text.free_allowance.decisions` (counter) | `horde.requester` (`anonymous`, `registered`, `shared_key`), `horde.outcome` (`free`, `funded`, `refused`, `downgraded`), `horde.requested_bucket`, `horde.allowance_bucket`, `horde.chat` | Each request creation: admitted without a hold, admitted with kudos reserved, refused with `KudosUpfront` (including `SharedKeyInsufficientKudos`) or with `NoEligibleWorker` in their place, or lowered to the allowance |
-| `horde.text.free_allowance.estimated_wait_seconds` (histogram) | `horde.chat`, `horde.requester` | The wait used to size the allowance. Not recorded when an eligible worker is not available |
+| `horde.text.free_allowance.decisions` (counter) | `horde.requester` (`anonymous`, `registered`, `shared_key`), `horde.outcome` (`free`, `funded`, `refused`, `downgraded`), `horde.requested_bucket`, `horde.allowance_bucket`, `horde.prompt_bucket`, `horde.exceeded` (`none`, `output`, `input`, `both`), `horde.chat` | Each request creation: admitted without a hold, admitted with kudos reserved, refused with `KudosUpfront` (including `SharedKeyInsufficientKudos`) or with `NoEligibleWorker` in their place, or lowered to the allowances |
+| `horde.text.free_allowance.estimated_wait_seconds` (histogram) | `horde.chat`, `horde.requester` | The wait used to size the allowances. Not recorded when an eligible worker is not available |
 | `horde.text.queue_wait_seconds` (histogram) | `horde.requester`, `horde.chat`, `horde.requested_bucket` | Each assignment's time from request creation to pop. A fake generation is not recorded |
 
 The size buckets are those of `horde.size_bucket` under [Lease metrics](#lease-metrics): `<=512` (at most the
 floor), `513-1024`, `1025-2048`, `2049-4096` (up to the ceiling) and `>4096`. At creation, `horde.requested_bucket`
 uses the requested `max_length` before any downgrade. At assignment, it uses the stored `max_length`. The downgrade
 log line is kept beside the `downgraded` outcome.
+
+`horde.allowance_bucket` holds the output allowance. `horde.prompt_bucket` holds the prompt tokens compared with the
+input allowance, before any downgrade: `<=4096` (at most the input floor), `4097-8192`, `8193-16384` (up to the input
+ceiling), `16385-32768` and `>32768`. `horde.exceeded` lists the exceeded allowances.
 
 ## Implementation notes
 
