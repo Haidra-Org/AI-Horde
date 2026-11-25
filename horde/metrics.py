@@ -490,6 +490,45 @@ text_free_allowance_estimated_wait_seconds = _free_allowance_wait_histogram(
     "horde.text.free_allowance.estimated_wait_seconds",
     "Estimated wait used to size the free output and input allowances of a text request, at the request's creation",
 )
+
+
+class DryRunCacheOutcome(enum.StrEnum):
+    """The result of looking up a dry run's quote in the quote cache."""
+
+    HIT = "hit"
+    """The cached quote was returned."""
+
+    MISS = "miss"
+    """The quote could have come from the cache, but none was cached, so it was computed."""
+
+    BYPASSED = "bypassed"
+    """The cache was not used, for the reason in ``DryRunCacheBypass``, so the quote was computed."""
+
+
+class DryRunCacheBypass(enum.StrEnum):
+    """Why a dry run's quote could not come from the quote cache.
+
+    The cache is keyed by the params and models, so it can only return a quote whose answer depends on nothing else.
+    """
+
+    STYLE = "style"
+    """The request uses a style or template fields, which change the resolved request."""
+
+    CONTEXT_FIT = "context_fit"
+    """The request sizes its context against its prompt (``context_fit`` other than ``ignore``)."""
+
+    UPFRONT_KUDOS = "upfront_kudos"
+    """The request could need kudos upfront, so the dry run can be refused for a requester without them."""
+
+    KUDOS_CAP = "kudos_cap"
+    """The chat request sets ``horde.max_kudos``, which is checked where the quote is computed."""
+
+
+dry_run_cache_lookups = logfire.metric_counter(
+    "horde.generate.dry_run_cache_lookups",
+    unit="1",
+    description=("Dry-run quote cache lookups, split by gentype, outcome (hit, miss, bypassed) and the reason the cache was bypassed"),
+)
 text_queue_wait_seconds = _request_lifecycle_histogram(
     "horde.text.queue_wait_seconds",
     "Time from a text request's creation to a job's assignment, split by requester, chat and requested size bucket",

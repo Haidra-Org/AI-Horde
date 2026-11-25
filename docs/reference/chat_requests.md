@@ -1418,13 +1418,14 @@ In Loki, keep the UUIDs as structured metadata so they do not create indexed str
 
 ### Allowance metrics
 
-These instruments show the effect of the [free output and input allowances](#free-output-allowance). A dry run is
-not recorded.
+These instruments show the effect of the [free output and input allowances](#free-output-allowance). Only
+`horde.generate.dry_run_cache_lookups` records dry runs.
 
 | Instrument | Attributes | Records |
 | --- | --- | --- |
 | `horde.text.free_allowance.decisions` (counter) | `horde.requester` (`anonymous`, `registered`, `shared_key`), `horde.outcome` (`free`, `funded`, `refused`, `downgraded`), `horde.requested_bucket`, `horde.allowance_bucket`, `horde.prompt_bucket`, `horde.exceeded` (`none`, `output`, `input`, `both`), `horde.context_lowered`, `horde.chat` | Each request creation: admitted without a hold, admitted with kudos reserved, refused with `KudosUpfront` (including `SharedKeyInsufficientKudos`) or with `NoEligibleWorker` in their place, or lowered to the allowances |
 | `horde.text.free_allowance.estimated_wait_seconds` (histogram) | `horde.chat`, `horde.requester` | The wait used to size the allowances. Not recorded when an eligible worker is not available |
+| `horde.generate.dry_run_cache_lookups` (counter) | `horde.gentype`, `horde.outcome` (`hit`, `miss`, `bypassed`), `horde.bypass_reason` (`none`, `style`, `context_fit`, `upfront_kudos`, `kudos_cap`) | Each dry run's quote cache lookup. A bypassed dry run takes the full admission path, so `upfront_kudos` counts the dry runs that the allowances keep off the cache |
 | `horde.text.queue_wait_seconds` (histogram) | `horde.requester`, `horde.chat`, `horde.requested_bucket` | Each assignment's time from request creation to pop. A fake generation is not recorded |
 
 The size buckets are those of `horde.size_bucket` under [Lease metrics](#lease-metrics): `<=512` (at most the

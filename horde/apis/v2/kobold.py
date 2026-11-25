@@ -549,15 +549,23 @@ class TextAsyncGenerate(GenerateTemplate):
             "Consider reducing the amount of tokens to generate."
         )
 
-    def dry_run_answerable_from_cache(self):
-        """Report whether a cached quote can answer this dry run.
+    def dry_run_cache_bypass(self) -> metrics.DryRunCacheBypass | None:
+        """Return why a cached quote cannot answer this dry run, or None when it can.
+
+        A request that sizes its context against its prompt cannot be answered from a key built out of the params,
+        and neither can one that a requester without kudos could be refused upfront.
 
         Returns:
-            bool: Whether the cached quote is the whole answer. A request that sizes its context
-                against its prompt is not answerable from a key built out of the params, nor is one a
-                requester without kudos could be refused upfront.
+            The reason the cache is bypassed, or None when the cached quote is the whole answer.
         """
-        return super().dry_run_answerable_from_cache() and self.context_fit is ContextFit.IGNORE and not self.may_require_upfront_kudos()
+        bypass = super().dry_run_cache_bypass()
+        if bypass is not None:
+            return bypass
+        if self.context_fit is not ContextFit.IGNORE:
+            return metrics.DryRunCacheBypass.CONTEXT_FIT
+        if self.may_require_upfront_kudos():
+            return metrics.DryRunCacheBypass.UPFRONT_KUDOS
+        return None
 
     def may_require_upfront_kudos(self) -> bool:
         """Return whether a requester without kudos could be refused this request for want of upfront kudos.
@@ -1680,14 +1688,21 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         )
         self.prompt = flatten_messages(self.messages, self.chat_extras)
 
-    def dry_run_answerable_from_cache(self) -> bool:
-        """Report whether a cached quote can answer this dry run.
+    def dry_run_cache_bypass(self) -> metrics.DryRunCacheBypass | None:
+        """Return why a cached quote cannot answer this dry run, or None when it can.
+
+        A request with ``horde.max_kudos`` cannot be answered from the cache, since the cap is checked where the quote
+        is computed.
 
         Returns:
-            bool: Whether the cached quote is the whole answer. A request with ``horde.max_kudos`` is not, since the
-                cap is checked where the quote is computed.
+            The reason the cache is bypassed, or None when the cached quote is the whole answer.
         """
-        return super().dry_run_answerable_from_cache() and self.chat_request.horde.max_kudos is None
+        bypass = super().dry_run_cache_bypass()
+        if bypass is not None:
+            return bypass
+        if self.chat_request.horde.max_kudos is not None:
+            return metrics.DryRunCacheBypass.KUDOS_CAP
+        return None
 
     def refuse_over_kudos_cap(self) -> None:
         """Refuse the request when its kudos estimate exceeds ``horde.max_kudos``, deleting its row first.

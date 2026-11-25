@@ -319,8 +319,7 @@ class GenerateTemplate(Resource):
             self.models = self.args.models.copy()
         params_hash = self.get_hashed_params_dict()
         cached_payload_kudos_calc = hr.horde_r_get(f"payload_kudos_{params_hash}")
-        if cached_payload_kudos_calc and self.args.dry_run and self.dry_run_answerable_from_cache():
-            self.kudos = float(cached_payload_kudos_calc)
+        if self.args.dry_run and self.answer_dry_run_from_cache(cached_payload_kudos_calc):
             return
         self.workers = []
         if self.args.workers:
@@ -394,17 +393,62 @@ class GenerateTemplate(Resource):
         if unactivated_waiting_prompt is not None:
             unactivated_waiting_prompt.delete()
 
-    def dry_run_answerable_from_cache(self):
-        """Report whether a cached quote can answer this dry run without resolving the request.
+    def dry_run_cache_bypass(self) -> metrics.DryRunCacheBypass | None:
+        """Return why a cached quote cannot answer this dry run, or None when it can.
 
         The cache key is built from the params alone, so it can only stand in for a request whose
         answer depends on nothing else. A style or template fields also make the answer depend on the
         prompt, and the resolved body then has to be computed.
 
         Returns:
-            bool: Whether the cached quote is the whole answer.
+            The reason the cache is bypassed, or None when the cached quote is the whole answer.
+
+        Subclass Integration:
+            Override to add the reasons of a request type, returning the base reason first.
         """
-        return self.args.get("style") is None and not self.get_supplied_template_fields()
+        if self.args.get("style") is not None or self.get_supplied_template_fields():
+            return metrics.DryRunCacheBypass.STYLE
+        return None
+
+    def answer_dry_run_from_cache(self, cached_quote: str | bytes | None) -> bool:
+        """Set this dry run's quote from the cache when the cached quote is the whole answer, and count the lookup.
+
+        Args:
+            cached_quote: The quote cached under this request's params hash, or None when none is cached.
+
+        Returns:
+            Whether the cached quote answered the dry run. When False, the quote is computed on the full path.
+        """
+        bypass = self.dry_run_cache_bypass()
+        if bypass is not None:
+            self.count_dry_run_cache_lookup(metrics.DryRunCacheOutcome.BYPASSED, bypass)
+            return False
+        if not cached_quote:
+            self.count_dry_run_cache_lookup(metrics.DryRunCacheOutcome.MISS)
+            return False
+        self.count_dry_run_cache_lookup(metrics.DryRunCacheOutcome.HIT)
+        self.kudos = float(cached_quote)
+        return True
+
+    def count_dry_run_cache_lookup(
+        self,
+        outcome: metrics.DryRunCacheOutcome,
+        bypass: metrics.DryRunCacheBypass | None = None,
+    ) -> None:
+        """Count a dry run's quote cache lookup.
+
+        Args:
+            outcome: Whether the cached quote was returned, absent or not usable.
+            bypass: Why the cache was not usable. None unless ``outcome`` is ``bypassed``.
+        """
+        metrics.dry_run_cache_lookups.add(
+            1,
+            {
+                "horde.gentype": self.gentype,
+                "horde.outcome": outcome.value,
+                "horde.bypass_reason": bypass.value if bypass is not None else "none",
+            },
+        )
 
     def get_resolved_request(self):
         """Return the request as the horde resolved it, for the dry run response.
