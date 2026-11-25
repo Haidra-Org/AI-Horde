@@ -123,7 +123,7 @@ The prompt length is estimated at 3 characters per token.
 | --- | --- |
 | `ignore` (default) | The request is sent as it is, and the worker cuts the start of the prompt away. |
 | `reject` | The server refuses the request with 400 `PromptExceedsContext`. |
-| `grow` | `max_context_length` is raised to the next power of two that fits, up to the largest context declared by an online worker for the requested models. The larger context is charged. A prompt that does not fit at that bound is refused with 400 `PromptExceedsContext`. |
+| `grow` | `max_context_length` is raised to the next power of two that fits, up to the largest context declared by an online worker for the requested models. The dry-run quote is computed with the larger context. A prompt that does not fit at that bound is refused with 400 `PromptExceedsContext`. |
 
 Verification: a [dry run](#check-the-cost) returns the prompt estimate in `resolved.estimated_prompt_tokens`, and
 under `grow` it returns the raised context in `resolved.params.max_context_length`.
