@@ -15,7 +15,7 @@ by binding the methods to lightweight stubs rather than building an ORM graph.
 
 The quote is cached under a hash of the request, computed once before validation to look a cached
 quote up and once after to store it. The hash cases check that a style changes it and that validation
-does not.
+does not. The lookup cases check when a cached quote answers a dry run and how each lookup is counted.
 """
 
 from __future__ import annotations
@@ -23,13 +23,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from flask_restx.reqparse import ParseResult
 
+from horde import metrics
 from horde.apis.v2.base import GenerateTemplate
 from horde.apis.v2.kobold import TextAsyncGenerate
 from horde.apis.v2.stable import ImageAsyncGenerate
 from horde.classes.base.waiting_prompt import WaitingPrompt
+from horde.classes.kobold.request_fit import CHARS_PER_TOKEN_ESTIMATE, ContextFit
 from horde.classes.stable import waiting_prompt as stable_waiting_prompt
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
+from horde.config import Config
 
 
 def _wp(n=2, kudos=10.0, models=(), params=None):
@@ -149,3 +153,104 @@ class TestTextQuoteCacheKey:
         with_extras.args.extra_source_images = [{"image": "an-image"}]
 
         assert TextAsyncGenerate.get_hashed_params_dict(with_extras) != TextAsyncGenerate.get_hashed_params_dict(without_extras)
+
+
+class _CounterRecorder:
+    """Stands in for a metric counter and keeps the attributes of every increment."""
+
+    def __init__(self) -> None:
+        self.attributes: list[dict[str, object]] = []
+
+    def add(self, amount: int, attributes: dict[str, object]) -> None:
+        self.attributes.append(attributes)
+
+
+@pytest.fixture
+def lookups(monkeypatch: pytest.MonkeyPatch) -> _CounterRecorder:
+    recorder = _CounterRecorder()
+    monkeypatch.setattr(metrics, "dry_run_cache_lookups", recorder)
+    return recorder
+
+
+def _text_dry_run(
+    *,
+    max_length: int = 80,
+    max_context_length: int = 2048,
+    prompt: str = "a short prompt",
+    style: str | None = None,
+    context_fit: ContextFit = ContextFit.IGNORE,
+) -> TextAsyncGenerate:
+    """Build a text dry run as it stands at the pre-validate cache lookup."""
+    resource = TextAsyncGenerate()
+    resource.args = ParseResult(
+        dry_run=True,
+        prompt=prompt,
+        style=style,
+        template_fields=None,
+        slow_workers=True,
+        workers=[],
+    )
+    resource.params = {
+        "max_length": max_length,
+        "max_context_length": max_context_length,
+    }
+    resource.context_fit = context_fit
+    return resource
+
+
+class TestDryRunCacheLookup:
+    def test_a_cached_quote_answers_a_dry_run_that_needs_nothing_else(self, lookups):
+        resource = _text_dry_run()
+
+        assert resource.answer_dry_run_from_cache(b"12.5") is True
+        assert resource.kudos == 12.5
+        assert lookups.attributes == [
+            {
+                "horde.gentype": "text",
+                "horde.outcome": "hit",
+                "horde.bypass_reason": "none",
+            },
+        ]
+
+    def test_a_dry_run_without_a_cached_quote_is_counted_as_a_miss(self, lookups):
+        resource = _text_dry_run()
+
+        assert resource.answer_dry_run_from_cache(None) is False
+        assert [attributes["horde.outcome"] for attributes in lookups.attributes] == ["miss"]
+
+    def test_a_bypassed_dry_run_ignores_a_cached_quote(self, lookups):
+        resource = _text_dry_run(style="a-style")
+
+        assert resource.answer_dry_run_from_cache(b"12.5") is False
+        assert not hasattr(resource, "kudos") or resource.kudos != 12.5
+        assert [(attributes["horde.outcome"], attributes["horde.bypass_reason"]) for attributes in lookups.attributes] == [
+            ("bypassed", "style"),
+        ]
+
+
+class TestTextDryRunCacheBypass:
+    def test_a_request_within_both_floors_can_use_the_cache(self):
+        assert _text_dry_run().dry_run_cache_bypass() is None
+
+    def test_a_style_bypasses_the_cache(self):
+        assert _text_dry_run(style="a-style").dry_run_cache_bypass() is metrics.DryRunCacheBypass.STYLE
+
+    def test_context_sizing_bypasses_the_cache(self):
+        bypass = _text_dry_run(context_fit=ContextFit.GROW).dry_run_cache_bypass()
+
+        assert bypass is metrics.DryRunCacheBypass.CONTEXT_FIT
+
+    def test_a_max_length_over_the_output_floor_bypasses_the_cache(self):
+        bypass = _text_dry_run(max_length=Config.text_free_output_floor + 1).dry_run_cache_bypass()
+
+        assert bypass is metrics.DryRunCacheBypass.UPFRONT_KUDOS
+
+    def test_a_processed_prompt_over_the_input_floor_bypasses_the_cache(self):
+        """A prompt one token over the input floor, with room for all of it in the context, could need kudos."""
+        prompt_tokens = Config.text_free_input_floor + 1
+        bypass = _text_dry_run(
+            max_context_length=prompt_tokens + 80,
+            prompt="x" * (prompt_tokens * CHARS_PER_TOKEN_ESTIMATE),
+        ).dry_run_cache_bypass()
+
+        assert bypass is metrics.DryRunCacheBypass.UPFRONT_KUDOS
