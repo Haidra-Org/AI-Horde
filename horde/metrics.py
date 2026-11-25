@@ -476,8 +476,8 @@ text_free_allowance_decisions = logfire.metric_counter(
     unit="1",
     description=(
         "Free output and input allowance decisions at text request creation, split by requester, outcome, requested "
-        "and allowance size bucket, prompt size bucket, the allowances exceeded and whether the request is a chat "
-        "request"
+        "and allowance size bucket, prompt size bucket, the allowances exceeded, whether a downgrade lowered the "
+        "context and whether the request is a chat request"
     ),
 )
 text_free_allowance_estimated_wait_seconds = _free_allowance_wait_histogram(

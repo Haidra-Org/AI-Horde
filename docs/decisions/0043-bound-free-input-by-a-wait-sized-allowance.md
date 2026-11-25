@@ -74,7 +74,8 @@ same way, since a lower `max_length` would otherwise leave more of the context t
 `grow`, the client asked the Horde not to cut its prompt, so a request over the input allowance is refused. A chat request is never downgraded, as ADR 0037 records.
 
 `horde.text.free_allowance.decisions` gains `horde.prompt_bucket`, the processed prompt tokens before any downgrade,
-and `horde.exceeded`, which lists the exceeded allowances (`none`, `output`, `input`, `both`).
+`horde.exceeded`, which lists the exceeded allowances (`none`, `output`, `input`, `both`), and
+`horde.context_lowered`, which is true when a downgrade lowered `max_context_length`.
 
 ### Consequences
 

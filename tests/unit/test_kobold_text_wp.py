@@ -511,6 +511,7 @@ class TestFreeAllowanceRecords:
                     "horde.allowance_bucket": "2049-4096",
                     "horde.prompt_bucket": "<=4096",
                     "horde.exceeded": "none",
+                    "horde.context_lowered": False,
                     "horde.chat": False,
                 },
             ),
@@ -552,6 +553,7 @@ class TestFreeAllowanceRecords:
                     "horde.allowance_bucket": "2049-4096",
                     "horde.prompt_bucket": "<=4096",
                     "horde.exceeded": "output",
+                    "horde.context_lowered": False,
                     "horde.chat": False,
                 },
             ),
@@ -586,6 +588,7 @@ class TestFreeAllowanceRecords:
                     "horde.allowance_bucket": "<=512",
                     "horde.prompt_bucket": "<=4096",
                     "horde.exceeded": "output",
+                    "horde.context_lowered": False,
                     "horde.chat": False,
                 },
             ),
@@ -621,6 +624,7 @@ class TestFreeAllowanceRecords:
                     "horde.allowance_bucket": "<=512",
                     "horde.prompt_bucket": "<=4096",
                     "horde.exceeded": "output",
+                    "horde.context_lowered": False,
                     "horde.chat": False,
                 },
             ),
@@ -768,8 +772,11 @@ class TestFreeInputAllowance:
 
         assert (resource.wp.max_length, resource.wp.max_context_length) == (80, FREE_INPUT_FLOOR + 80)
         assert resource.wp.params["max_context_length"] == FREE_INPUT_FLOOR + 80
-        assert [(attributes["horde.outcome"], attributes["horde.exceeded"]) for _, attributes in decisions.increments] == [
-            ("downgraded", "input"),
+        assert [
+            (attributes["horde.outcome"], attributes["horde.exceeded"], attributes["horde.context_lowered"])
+            for _, attributes in decisions.increments
+        ] == [
+            ("downgraded", "input", True),
         ]
 
     def test_an_output_downgrade_under_ignore_keeps_the_processed_prompt_within_the_input_allowance(
@@ -798,8 +805,11 @@ class TestFreeInputAllowance:
             FREE_OUTPUT_CEILING,
             FREE_INPUT_CEILING + FREE_OUTPUT_CEILING,
         )
-        assert [(attributes["horde.outcome"], attributes["horde.exceeded"]) for _, attributes in decisions.increments] == [
-            ("downgraded", "output"),
+        assert [
+            (attributes["horde.outcome"], attributes["horde.exceeded"], attributes["horde.context_lowered"])
+            for _, attributes in decisions.increments
+        ] == [
+            ("downgraded", "output", True),
         ]
 
     def test_a_long_prompt_sized_by_grow_is_refused_even_with_downgrade_allowed(
