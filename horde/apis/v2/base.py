@@ -270,6 +270,9 @@ def commit_request_cancellation(wp) -> bool:
 
 class GenerateTemplate(Resource):
     gentype = "template"
+    is_chat_request: bool = False
+    """Whether the request arrived through the chat endpoint, which metrics record apart from native requests of the
+    same gentype."""
     submitted_prompt: str | None = None
     proxied_request = False
 
@@ -393,25 +396,37 @@ class GenerateTemplate(Resource):
         if unactivated_waiting_prompt is not None:
             unactivated_waiting_prompt.delete()
 
-    def dry_run_cache_bypass(self) -> metrics.DryRunCacheBypass | None:
-        """Return why a cached quote cannot answer this dry run, or None when it can.
+    def dry_run_quote_unknown(self) -> metrics.DryRunQuoteUnknown:
+        """Return why the quote cache key of this dry run is not known at the cache lookup.
 
-        The cache key is built from the params alone, so it can only stand in for a request whose
-        answer depends on nothing else. A style or template fields also make the answer depend on the
-        prompt, and the resolved body then has to be computed.
+        A style or template fields change the resolved request after the lookup, so the quote is computed for params
+        other than the ones the key was built from.
 
         Returns:
-            The reason the cache is bypassed, or None when the cached quote is the whole answer.
+            The first reason found, or ``NONE`` when the params as sent are the params the quote is computed from.
 
         Subclass Integration:
             Override to add the reasons of a request type, returning the base reason first.
         """
         if self.args.get("style") is not None or self.get_supplied_template_fields():
-            return metrics.DryRunCacheBypass.STYLE
-        return None
+            return metrics.DryRunQuoteUnknown.STYLE
+        return metrics.DryRunQuoteUnknown.NONE
+
+    def dry_run_admission_dependent(self) -> metrics.DryRunAdmissionDependent:
+        """Return why this dry run's answer can depend on more than its quote.
+
+        Returns:
+            The first reason found, or ``NONE`` when admission depends only on what the quote covers.
+
+        Subclass Integration:
+            Override to add the reasons of a request type, returning the base reason first.
+        """
+        return metrics.DryRunAdmissionDependent.NONE
 
     def answer_dry_run_from_cache(self, cached_quote: str | bytes | None) -> bool:
         """Set this dry run's quote from the cache when the cached quote is the whole answer, and count the lookup.
+
+        Both reasons are evaluated for every lookup, so the counter records each one whether or not the other applies.
 
         Args:
             cached_quote: The quote cached under this request's params hash, or None when none is cached.
@@ -419,36 +434,29 @@ class GenerateTemplate(Resource):
         Returns:
             Whether the cached quote answered the dry run. When False, the quote is computed on the full path.
         """
-        bypass = self.dry_run_cache_bypass()
-        if bypass is not None:
-            self.count_dry_run_cache_lookup(metrics.DryRunCacheOutcome.BYPASSED, bypass)
-            return False
-        if not cached_quote:
-            self.count_dry_run_cache_lookup(metrics.DryRunCacheOutcome.MISS)
-            return False
-        self.count_dry_run_cache_lookup(metrics.DryRunCacheOutcome.HIT)
-        self.kudos = float(cached_quote)
-        return True
-
-    def count_dry_run_cache_lookup(
-        self,
-        outcome: metrics.DryRunCacheOutcome,
-        bypass: metrics.DryRunCacheBypass | None = None,
-    ) -> None:
-        """Count a dry run's quote cache lookup.
-
-        Args:
-            outcome: Whether the cached quote was returned, absent or not usable.
-            bypass: Why the cache was not usable. None unless ``outcome`` is ``bypassed``.
-        """
+        quote_unknown = self.dry_run_quote_unknown()
+        admission_dependent = self.dry_run_admission_dependent()
+        cache_is_usable = quote_unknown is metrics.DryRunQuoteUnknown.NONE and admission_dependent is metrics.DryRunAdmissionDependent.NONE
+        if not cache_is_usable:
+            outcome = metrics.DryRunCacheOutcome.BYPASSED
+        elif not cached_quote:
+            outcome = metrics.DryRunCacheOutcome.MISS
+        else:
+            outcome = metrics.DryRunCacheOutcome.HIT
         metrics.dry_run_cache_lookups.add(
             1,
             {
                 "horde.gentype": self.gentype,
+                "horde.chat": self.is_chat_request,
                 "horde.outcome": outcome.value,
-                "horde.bypass_reason": bypass.value if bypass is not None else "none",
+                "horde.quote_unknown": quote_unknown.value,
+                "horde.admission_dependent": admission_dependent.value,
             },
         )
+        if outcome is not metrics.DryRunCacheOutcome.HIT:
+            return False
+        self.kudos = float(cached_quote)
+        return True
 
     def get_resolved_request(self):
         """Return the request as the horde resolved it, for the dry run response.
