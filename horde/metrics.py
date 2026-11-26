@@ -97,6 +97,7 @@ BUCKETS_SECONDS = (
 BUCKETS_COUNT = (0, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 5000)
 BUCKETS_KUDOS = (0, 1, 10, 100, 1000, 10000, 100000)
 BUCKETS_RATIO = (0, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1)
+BUCKETS_RECAPTCHA_SCORE = (0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
 BUCKETS_REQUEST_LIFECYCLE_SECONDS = (
     0,
     1,
@@ -171,6 +172,11 @@ def _kudos_histogram(name: str, description: str) -> Histogram:
 
 def _ratio_histogram(name: str, description: str) -> Histogram:
     _BUCKET_REGISTRY[name] = BUCKETS_RATIO
+    return logfire.metric_histogram(name, unit="1", description=description)
+
+
+def _recaptcha_score_histogram(name: str, description: str) -> Histogram:
+    _BUCKET_REGISTRY[name] = BUCKETS_RECAPTCHA_SCORE
     return logfire.metric_histogram(name, unit="1", description=description)
 
 
@@ -1206,4 +1212,18 @@ moderation_retention_saturation = logfire.metric_counter(
     "horde.moderation.retention.saturation",
     unit="1",
     description="Moderation retention ticks that used every catch-up cycle with a full final batch",
+)
+
+# --- registration reCAPTCHA ---------------------------------------------------
+recaptcha_verifications = logfire.metric_counter(
+    "horde.recaptcha.verifications",
+    unit="1",
+    description=(
+        "Registration form submissions by reCAPTCHA result, as horde.outcome (passed, low_score, wrong_action, "
+        "missing_token, failed, unavailable, disabled). A disabled count means that RECAPTCHA_SECRET_KEY is not set"
+    ),
+)
+recaptcha_scores = _recaptcha_score_histogram(
+    "horde.recaptcha.score",
+    "reCAPTCHA v3 scores of registration form submissions, from 0 (likely automated) to 1 (likely a person)",
 )

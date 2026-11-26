@@ -8,7 +8,6 @@ from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 import oauthlib
-import requests
 from flask import Blueprint, redirect, render_template, request, send_from_directory, session, url_for
 from flask_dance.contrib.discord import discord
 from flask_dance.contrib.github import github
@@ -16,6 +15,7 @@ from flask_dance.contrib.google import google
 from markdown import markdown
 
 from horde import vars as hv
+from horde.apis.request_utils import get_remoteaddr
 from horde.argparser import maintenance
 from horde.classes.base import settings
 from horde.classes.base.news import News
@@ -26,6 +26,7 @@ from horde.database import functions as database
 from horde.flask import cache, db
 from horde.logger import logger
 from horde.patreon import patrons
+from horde.recaptcha import RecaptchaOutcome, record_recaptcha_disabled, refusal_message, verify_registration_token
 from horde.utils import ConvertAmount, generate_api_key, hash_api_key, is_profane, sanitize_string
 from horde.vars import (
     google_verification_string,
@@ -276,6 +277,50 @@ def get_oauth_id():
     return oauth_id
 
 
+def _render_register_page(
+    *,
+    use_recaptcha: bool,
+    welcome: str,
+    user: User | None,
+    api_key: str | None,
+    username: str,
+    pseudonymous: bool,
+    oauth_id: str | None,
+    registration_error: str | None = None,
+    status: int = 200,
+) -> tuple[str, int]:
+    """Render the register page, with an error above the form when a submission was refused.
+
+    Args:
+        use_recaptcha: Whether the form runs the reCAPTCHA check.
+        welcome: The page's heading for a signed-in account.
+        user: The signed-in or newly created account, if any.
+        api_key: A newly generated API key to show once, if any.
+        username: The name to fill in the form.
+        pseudonymous: Whether the account was created without a sign-in.
+        oauth_id: The sign-in identity, if any.
+        registration_error: The reason a submission was refused, shown above the form.
+        status: The HTTP status of the response.
+
+    Returns:
+        The page and its status.
+    """
+    page = render_template(
+        "register.html",
+        page_title=f"Join the {horde_title}!",
+        use_recaptcha=use_recaptcha,
+        recaptcha_site=os.getenv("RECAPTCHA_SITE_KEY"),
+        welcome=welcome,
+        user=user,
+        api_key=api_key,
+        username=username,
+        pseudonymous=pseudonymous,
+        oauth_id=oauth_id,
+        registration_error=registration_error,
+    )
+    return page, status
+
+
 @logger.catch(reraise=True)
 @routes_bp.route("/register", methods=["GET", "POST"])
 def register():
@@ -293,32 +338,36 @@ def register():
     secret_key = os.getenv("RECAPTCHA_SECRET_KEY")
     if not secret_key:
         use_recaptcha = False
+    if user:
+        welcome = f"Welcome back {user.get_unique_alias()}"
     if request.method == "POST":
         if use_recaptcha:
-            try:
-                recaptcha_response = request.form["g-recaptcha-response"]
-                payload = {"response": recaptcha_response, "secret": secret_key}
-                response = requests.post("https://www.google.com/recaptcha/api/siteverify", payload)
-                if not response.ok or not response.json()["success"]:
-                    return render_template(
-                        "recaptcha_error.html",
-                        page_title="Recaptcha validation Error!",
-                        use_recaptcha=False,
-                    )
-                ip_timeout = CounterMeasures.retrieve_timeout(request.remote_addr)
-                if ip_timeout:
-                    return render_template(
-                        "ipaddr_ban_error.html",
-                        page_title="IP Address Banned",
-                        use_recaptcha=False,
-                    )
-            except Exception as err:
-                logger.error(err)
-                return render_template(
-                    "recaptcha_error.html",
-                    page_title="Recaptcha Submit Error!",
-                    use_recaptcha=False,
+            recaptcha_verdict = verify_registration_token(request.form.get("g-recaptcha-response"), secret_key)
+            if not recaptcha_verdict.passed:
+                # The form is shown again with the submitted name, so the person can retry or sign in instead.
+                username = request.form.get("username", username)
+                status = 503 if recaptcha_verdict.outcome is RecaptchaOutcome.UNAVAILABLE else 400
+                return _render_register_page(
+                    use_recaptcha=use_recaptcha,
+                    welcome=welcome,
+                    user=user,
+                    api_key=None,
+                    username=username,
+                    pseudonymous=pseudonymous,
+                    oauth_id=oauth_id,
+                    registration_error=refusal_message(recaptcha_verdict.outcome),
+                    status=status,
                 )
+        else:
+            record_recaptcha_disabled()
+        # The timeout is checked whether or not recaptcha is configured, on the same origin as the API checks.
+        registration_ip = get_remoteaddr()
+        if CounterMeasures.retrieve_timeout(registration_ip):
+            return render_template(
+                "ipaddr_ban_error.html",
+                page_title="IP Address Banned",
+                use_recaptcha=False,
+            )
         api_key = generate_api_key()
         hashed_api_key = hash_api_key(api_key)
         if user:
@@ -347,11 +396,8 @@ def register():
             user.create()
     if user:
         welcome = f"Welcome back {user.get_unique_alias()}"
-    return render_template(
-        "register.html",
-        page_title=f"Join the {horde_title}!",
+    return _render_register_page(
         use_recaptcha=use_recaptcha,
-        recaptcha_site=os.getenv("RECAPTCHA_SITE_KEY"),
         welcome=welcome,
         user=user,
         api_key=api_key,
