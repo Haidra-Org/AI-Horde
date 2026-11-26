@@ -549,23 +549,36 @@ class TextAsyncGenerate(GenerateTemplate):
             "Consider reducing the amount of tokens to generate."
         )
 
-    def dry_run_cache_bypass(self) -> metrics.DryRunCacheBypass | None:
-        """Return why a cached quote cannot answer this dry run, or None when it can.
+    def dry_run_quote_unknown(self) -> metrics.DryRunQuoteUnknown:
+        """Return why the quote cache key of this dry run is not known at the cache lookup.
 
-        A request that sizes its context against its prompt cannot be answered from a key built out of the params,
-        and neither can one that a requester without kudos could be refused upfront.
+        Context fitting sizes ``max_context_length`` against the prompt after the lookup, unless ``context_fit`` is
+        ``ignore``.
 
         Returns:
-            The reason the cache is bypassed, or None when the cached quote is the whole answer.
+            The first reason found, or ``NONE`` when the params as sent are the params the quote is computed from.
         """
-        bypass = super().dry_run_cache_bypass()
-        if bypass is not None:
-            return bypass
+        quote_unknown = super().dry_run_quote_unknown()
+        if quote_unknown is not metrics.DryRunQuoteUnknown.NONE:
+            return quote_unknown
         if self.context_fit is not ContextFit.IGNORE:
-            return metrics.DryRunCacheBypass.CONTEXT_FIT
+            return metrics.DryRunQuoteUnknown.CONTEXT_FIT
+        return metrics.DryRunQuoteUnknown.NONE
+
+    def dry_run_admission_dependent(self) -> metrics.DryRunAdmissionDependent:
+        """Return why this dry run's answer can depend on more than its quote.
+
+        A requester without kudos could be refused a request that may need kudos upfront.
+
+        Returns:
+            The first reason found, or ``NONE`` when admission depends only on what the quote covers.
+        """
+        admission_dependent = super().dry_run_admission_dependent()
+        if admission_dependent is not metrics.DryRunAdmissionDependent.NONE:
+            return admission_dependent
         if self.may_require_upfront_kudos():
-            return metrics.DryRunCacheBypass.UPFRONT_KUDOS
-        return None
+            return metrics.DryRunAdmissionDependent.UPFRONT_KUDOS
+        return metrics.DryRunAdmissionDependent.NONE
 
     def may_require_upfront_kudos(self) -> bool:
         """Return whether a requester without kudos could be refused this request for want of upfront kudos.
@@ -1083,6 +1096,7 @@ class ClaimedOperation(Exception):
 
 
 class ChatAsyncGenerate(TextAsyncGenerate):
+    is_chat_request = True
     requires_chat_workers = True
     context_adjustments = None
     """The changes made by the horde to the request's completion length and context, as stored for the chat status,
@@ -1688,21 +1702,20 @@ class ChatAsyncGenerate(TextAsyncGenerate):
         )
         self.prompt = flatten_messages(self.messages, self.chat_extras)
 
-    def dry_run_cache_bypass(self) -> metrics.DryRunCacheBypass | None:
-        """Return why a cached quote cannot answer this dry run, or None when it can.
+    def dry_run_admission_dependent(self) -> metrics.DryRunAdmissionDependent:
+        """Return why this dry run's answer can depend on more than its quote.
 
-        A request with ``horde.max_kudos`` cannot be answered from the cache, since the cap is checked where the quote
-        is computed.
+        ``horde.max_kudos`` is checked where the quote is computed.
 
         Returns:
-            The reason the cache is bypassed, or None when the cached quote is the whole answer.
+            The first reason found, or ``NONE`` when admission depends only on what the quote covers.
         """
-        bypass = super().dry_run_cache_bypass()
-        if bypass is not None:
-            return bypass
+        admission_dependent = super().dry_run_admission_dependent()
+        if admission_dependent is not metrics.DryRunAdmissionDependent.NONE:
+            return admission_dependent
         if self.chat_request.horde.max_kudos is not None:
-            return metrics.DryRunCacheBypass.KUDOS_CAP
-        return None
+            return metrics.DryRunAdmissionDependent.KUDOS_CAP
+        return metrics.DryRunAdmissionDependent.NONE
 
     def refuse_over_kudos_cap(self) -> None:
         """Refuse the request when its kudos estimate exceeds ``horde.max_kudos``, deleting its row first.

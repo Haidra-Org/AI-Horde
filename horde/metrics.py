@@ -526,20 +526,36 @@ class DryRunCacheOutcome(enum.StrEnum):
     """The quote could have come from the cache, but none was cached, so it was computed."""
 
     BYPASSED = "bypassed"
-    """The cache was not used, for the reason in ``DryRunCacheBypass``, so the quote was computed."""
+    """The cache was not used, for a reason in ``DryRunQuoteUnknown`` or ``DryRunAdmissionDependent``, so the quote was
+    computed."""
 
 
-class DryRunCacheBypass(enum.StrEnum):
-    """Why a dry run's quote could not come from the quote cache.
+class DryRunQuoteUnknown(enum.StrEnum):
+    """Why the quote cache key of a dry run is not known when the cache is read.
 
-    The cache is keyed by the params and models, so it can only return a quote whose answer depends on nothing else.
+    The cache is read before validation, keyed by the params as sent. A step that changes the params after that read
+    makes the cached quote belong to other params.
     """
+
+    NONE = "none"
+    """The params as sent are the params the quote is computed from."""
 
     STYLE = "style"
     """The request uses a style or template fields, which change the resolved request."""
 
     CONTEXT_FIT = "context_fit"
     """The request sizes its context against its prompt (``context_fit`` other than ``ignore``)."""
+
+
+class DryRunAdmissionDependent(enum.StrEnum):
+    """Why a dry run's answer can depend on more than its quote.
+
+    A dry run also previews admission, which depends on the requester, the queue and the prompt. A cached quote cannot
+    stand in for that preview.
+    """
+
+    NONE = "none"
+    """Admission does not depend on anything the quote leaves out."""
 
     UPFRONT_KUDOS = "upfront_kudos"
     """The request could need kudos upfront, so the dry run can be refused for a requester without them."""
@@ -551,7 +567,10 @@ class DryRunCacheBypass(enum.StrEnum):
 dry_run_cache_lookups = logfire.metric_counter(
     "horde.generate.dry_run_cache_lookups",
     unit="1",
-    description=("Dry-run quote cache lookups, split by gentype, outcome (hit, miss, bypassed) and the reason the cache was bypassed"),
+    description=(
+        "Dry-run quote cache lookups, split by gentype, chat, outcome (hit, miss, bypassed), why the quote key was"
+        " unknown at lookup and why admission depends on more than the quote"
+    ),
 )
 text_queue_wait_seconds = _request_lifecycle_histogram(
     "horde.text.queue_wait_seconds",

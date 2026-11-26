@@ -533,12 +533,12 @@ in the request. The `styled` key comes from the `style` argument, since the surc
 during validation. The text and image overrides take the model list from the request arguments, since
 applying a style replaces the resolved models.
 
-`GenerateTemplate.dry_run_cache_bypass` bypasses that cache whenever the request specifies a
+`GenerateTemplate.dry_run_quote_unknown` bypasses that cache whenever the request specifies a
 style or supplies template fields, since the quote and the resolved body then depend on the prompt and
 on the outcome of resolution. The text override also bypasses it for a `context_fit` other than
-`ignore`, and for a request that could be refused for want of upfront kudos
-(`TextAsyncGenerate.may_require_upfront_kudos`). The `horde.generate.dry_run_cache_lookups` counter records each dry
-run's lookup and, when the cache is bypassed, the reason.
+`ignore`. `TextAsyncGenerate.dry_run_admission_dependent` bypasses it for a request that could be refused for want
+of upfront kudos (`TextAsyncGenerate.may_require_upfront_kudos`). The `horde.generate.dry_run_cache_lookups`
+counter records each dry run's lookup with both reasons.
 
 ### Served styles
 
@@ -616,7 +616,7 @@ The span that validates a styled generate request includes `horde.style.id`, `ho
 | Crediting the owner the amount collected by the surcharge | `horde/database/kudos_ledger.py`, `horde/database/kudos_legacy_projection.py`, `horde/classes/base/kudos.py` | `_credit_style_authors`, `project_style_reward`, `StyleReward.collected` |
 | Token estimate and fit rule | `horde/classes/kobold/request_fit.py` | `estimate_prompt_tokens`, `prompt_fits_context` |
 | Context sizing and its bound | `horde/classes/kobold/request_fit.py` | `fit_context_length`, `context_growth_upper_bound` |
-| Shared merge, resolution and dry-run body | `horde/apis/v2/base.py` | `GenerateTemplate.apply_style_contract`, `GenerateTemplate.get_resolved_request`, `GenerateTemplate.dry_run_cache_bypass` |
+| Shared merge, resolution and dry-run body | `horde/apis/v2/base.py` | `GenerateTemplate.apply_style_contract`, `GenerateTemplate.get_resolved_request`, `GenerateTemplate.dry_run_quote_unknown` |
 | Vocabulary hook for the request path | `horde/apis/v2/base.py`, `horde/apis/v2/kobold.py`, `horde/apis/v2/stable.py` | `GenerateTemplate.style_contract_vocabulary`, `TextAsyncGenerate.style_contract_vocabulary`, `ImageAsyncGenerate.style_contract_vocabulary` |
 | Style application on a text request | `horde/apis/v2/kobold.py` | `TextAsyncGenerate.apply_style`, `TextAsyncGenerate.apply_context_fit` |
 | Style application on an image request | `horde/apis/v2/stable.py` | `ImageAsyncGenerate.apply_style`, `ImageAsyncGenerate.get_resolved_request` |

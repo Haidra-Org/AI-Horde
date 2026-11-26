@@ -21,19 +21,23 @@ does not. The lookup cases check when a cached quote answers a dry run and how e
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from flask_restx.reqparse import ParseResult
 
 from horde import metrics
 from horde.apis.v2.base import GenerateTemplate
-from horde.apis.v2.kobold import TextAsyncGenerate
+from horde.apis.v2.kobold import ChatAsyncGenerate, TextAsyncGenerate
 from horde.apis.v2.stable import ImageAsyncGenerate
 from horde.classes.base.waiting_prompt import WaitingPrompt
 from horde.classes.kobold.request_fit import CHARS_PER_TOKEN_ESTIMATE, ContextFit
 from horde.classes.stable import waiting_prompt as stable_waiting_prompt
 from horde.classes.stable.waiting_prompt import ImageWaitingPrompt
 from horde.config import Config
+
+if TYPE_CHECKING:
+    from horde.classes.kobold.chat_request import ChatCompletionRequest
 
 
 def _wp(n=2, kudos=10.0, models=(), params=None):
@@ -198,8 +202,29 @@ def _text_dry_run(
     return resource
 
 
+def _chat_dry_run(*, max_kudos: int | None = None) -> ChatAsyncGenerate:
+    """Build a chat dry run as it stands at the pre-validate cache lookup. A chat request sizes its context by
+    default."""
+    resource = ChatAsyncGenerate()
+    resource.args = ParseResult(
+        dry_run=True,
+        prompt="a short prompt",
+        style=None,
+        template_fields=None,
+        slow_workers=True,
+        workers=[],
+    )
+    resource.params = {
+        "max_length": 80,
+        "max_context_length": 2048,
+    }
+    resource.context_fit = ContextFit.GROW
+    resource.chat_request = cast("ChatCompletionRequest", SimpleNamespace(horde=SimpleNamespace(max_kudos=max_kudos)))
+    return resource
+
+
 class TestDryRunCacheLookup:
-    def test_a_cached_quote_answers_a_dry_run_that_needs_nothing_else(self, lookups):
+    def test_a_cached_quote_answers_a_dry_run_that_needs_nothing_else(self, lookups: _CounterRecorder) -> None:
         resource = _text_dry_run()
 
         assert resource.answer_dry_run_from_cache(b"12.5") is True
@@ -207,50 +232,75 @@ class TestDryRunCacheLookup:
         assert lookups.attributes == [
             {
                 "horde.gentype": "text",
+                "horde.chat": False,
                 "horde.outcome": "hit",
-                "horde.bypass_reason": "none",
+                "horde.quote_unknown": "none",
+                "horde.admission_dependent": "none",
             },
         ]
 
-    def test_a_dry_run_without_a_cached_quote_is_counted_as_a_miss(self, lookups):
+    def test_a_dry_run_without_a_cached_quote_is_counted_as_a_miss(self, lookups: _CounterRecorder) -> None:
         resource = _text_dry_run()
 
         assert resource.answer_dry_run_from_cache(None) is False
         assert [attributes["horde.outcome"] for attributes in lookups.attributes] == ["miss"]
 
-    def test_a_bypassed_dry_run_ignores_a_cached_quote(self, lookups):
+    def test_a_bypassed_dry_run_ignores_a_cached_quote(self, lookups: _CounterRecorder) -> None:
         resource = _text_dry_run(style="a-style")
 
         assert resource.answer_dry_run_from_cache(b"12.5") is False
         assert not hasattr(resource, "kudos") or resource.kudos != 12.5
-        assert [(attributes["horde.outcome"], attributes["horde.bypass_reason"]) for attributes in lookups.attributes] == [
+        assert [(attributes["horde.outcome"], attributes["horde.quote_unknown"]) for attributes in lookups.attributes] == [
             ("bypassed", "style"),
+        ]
+
+    def test_a_lookup_records_both_reasons_when_both_apply(self, lookups: _CounterRecorder) -> None:
+        """A context-fitted request that may need kudos upfront is counted under both attributes."""
+        resource = _text_dry_run(context_fit=ContextFit.GROW, max_length=Config.text_free_output_floor + 1)
+
+        assert resource.answer_dry_run_from_cache(b"12.5") is False
+        assert [(attributes["horde.quote_unknown"], attributes["horde.admission_dependent"]) for attributes in lookups.attributes] == [
+            ("context_fit", "upfront_kudos"),
+        ]
+
+    def test_a_chat_dry_run_with_a_kudos_cap_is_counted_as_chat_and_capped(self, lookups: _CounterRecorder) -> None:
+        resource = _chat_dry_run(max_kudos=50)
+
+        assert resource.answer_dry_run_from_cache(b"12.5") is False
+        assert [
+            (attributes["horde.chat"], attributes["horde.quote_unknown"], attributes["horde.admission_dependent"])
+            for attributes in lookups.attributes
+        ] == [
+            (True, "context_fit", "kudos_cap"),
         ]
 
 
 class TestTextDryRunCacheBypass:
-    def test_a_request_within_both_floors_can_use_the_cache(self):
-        assert _text_dry_run().dry_run_cache_bypass() is None
+    def test_a_request_within_both_floors_can_use_the_cache(self) -> None:
+        resource = _text_dry_run()
 
-    def test_a_style_bypasses_the_cache(self):
-        assert _text_dry_run(style="a-style").dry_run_cache_bypass() is metrics.DryRunCacheBypass.STYLE
+        assert resource.dry_run_quote_unknown() is metrics.DryRunQuoteUnknown.NONE
+        assert resource.dry_run_admission_dependent() is metrics.DryRunAdmissionDependent.NONE
 
-    def test_context_sizing_bypasses_the_cache(self):
-        bypass = _text_dry_run(context_fit=ContextFit.GROW).dry_run_cache_bypass()
+    def test_a_style_leaves_the_quote_key_unknown(self) -> None:
+        assert _text_dry_run(style="a-style").dry_run_quote_unknown() is metrics.DryRunQuoteUnknown.STYLE
 
-        assert bypass is metrics.DryRunCacheBypass.CONTEXT_FIT
+    def test_context_sizing_leaves_the_quote_key_unknown(self) -> None:
+        quote_unknown = _text_dry_run(context_fit=ContextFit.GROW).dry_run_quote_unknown()
 
-    def test_a_max_length_over_the_output_floor_bypasses_the_cache(self):
-        bypass = _text_dry_run(max_length=Config.text_free_output_floor + 1).dry_run_cache_bypass()
+        assert quote_unknown is metrics.DryRunQuoteUnknown.CONTEXT_FIT
 
-        assert bypass is metrics.DryRunCacheBypass.UPFRONT_KUDOS
+    def test_a_max_length_over_the_output_floor_makes_admission_dependent(self) -> None:
+        admission_dependent = _text_dry_run(max_length=Config.text_free_output_floor + 1).dry_run_admission_dependent()
 
-    def test_a_processed_prompt_over_the_input_floor_bypasses_the_cache(self):
+        assert admission_dependent is metrics.DryRunAdmissionDependent.UPFRONT_KUDOS
+
+    def test_a_processed_prompt_over_the_input_floor_makes_admission_dependent(self) -> None:
         """A prompt one token over the input floor, with room for all of it in the context, could need kudos."""
         prompt_tokens = Config.text_free_input_floor + 1
-        bypass = _text_dry_run(
+        admission_dependent = _text_dry_run(
             max_context_length=prompt_tokens + 80,
             prompt="x" * (prompt_tokens * CHARS_PER_TOKEN_ESTIMATE),
-        ).dry_run_cache_bypass()
+        ).dry_run_admission_dependent()
 
-        assert bypass is metrics.DryRunCacheBypass.UPFRONT_KUDOS
+        assert admission_dependent is metrics.DryRunAdmissionDependent.UPFRONT_KUDOS
