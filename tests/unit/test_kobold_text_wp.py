@@ -26,6 +26,7 @@ import pytest
 
 from horde import exceptions as e
 from horde import metrics
+from horde import vars as hv
 from horde.apis.v2 import kobold as text_api_module
 from horde.apis.v2.kobold import TextAsyncGenerate
 from horde.chat_contract import ChatImpossibleReason
@@ -280,9 +281,30 @@ class TestDowngrade:
     def _downgradable_wp(self, *, max_length: int, max_context_length: int) -> SimpleNamespace:
         wp = _wp(slow_workers=False, max_length=max_length, max_context_length=max_context_length)
         wp.id = "downgrade-test"
+        wp.n = 2
+        wp.things = max_length
+        wp.total_usage = round(max_length * wp.n / hv.thing_divisors["text"], 2)
         wp.params = {"max_length": max_length, "max_context_length": max_context_length}
         wp.gen_payload = dict(wp.params)
         return wp
+
+    def test_an_output_downgrade_lowers_the_queued_work(self, monkeypatch):
+        """The queue estimate sums things, so a downgraded request counts at its lowered length."""
+        monkeypatch.setattr(db.session, "commit", lambda: None)
+        wp = self._downgradable_wp(max_length=6000, max_context_length=32768)
+
+        TextWaitingPrompt.downgrade(wp, 4096)
+
+        assert wp.things == 4096
+        assert wp.total_usage == round(4096 * 2 / hv.thing_divisors["text"], 2)
+
+    def test_an_input_only_downgrade_leaves_the_queued_work(self, monkeypatch):
+        monkeypatch.setattr(db.session, "commit", lambda: None)
+        wp = self._downgradable_wp(max_length=256, max_context_length=32768)
+
+        TextWaitingPrompt.downgrade(wp, 512, 16384)
+
+        assert (wp.things, wp.max_context_length) == (256, 16640)
 
     def test_an_output_downgrade_leaves_the_context(self, monkeypatch):
         monkeypatch.setattr(db.session, "commit", lambda: None)
