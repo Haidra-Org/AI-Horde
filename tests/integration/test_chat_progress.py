@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -557,6 +557,68 @@ def test_a_cancel_of_a_request_that_does_not_stream_leaves_its_generation_pendin
     generation_state = _read_generation_state(app, generation_id)
     assert generation_state[:3] == (False, False, None)
     assert generation_state[4] is None
+
+
+class _KudosRecorder:
+    """Stand in for a kudos histogram and keep each recorded sample."""
+
+    def __init__(self) -> None:
+        self.samples: list[tuple[float, dict[str, object]]] = []
+
+    def record(self, amount: float, attributes: dict[str, object]) -> None:
+        self.samples.append((amount, attributes))
+
+
+def _read_upfront_hold(app: Flask, request_id: str) -> tuple[Decimal, bool]:
+    """Return the request's remaining upfront hold and whether the hold was released."""
+    from horde.classes.base.kudos import KudosReservation
+    from horde.classes.base.waiting_prompt import upfront_hold_id
+    from horde.flask import db
+
+    with app.app_context():
+        reservation = db.session.query(KudosReservation).filter_by(business_id=upfront_hold_id(request_id)).one()
+        return reservation.remaining_amount, reservation.released_at is not None
+
+
+def test_a_cancel_releases_the_hold_and_a_later_submit_is_counted_as_unreserved(
+    app: Flask,
+    client: FlaskClient,
+    request_headers: dict[str, str],
+    progress_redis: fakeredis.FakeStrictRedis,
+    settle_kudos: Callable[[], int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request over the free output allowance holds kudos until its cancel, and the job its worker submits after
+    the cancel debits without a reservation."""
+    from horde.classes.base import waiting_prompt as waiting_prompt_module
+
+    unreserved_debits = _KudosRecorder()
+    monkeypatch.setattr(waiting_prompt_module, "cancelled_unreserved_debit", unreserved_debits)
+    own_model = f"custom/held-{uuid.uuid4().hex[:8]}"
+    worker = FakeChatWorker(
+        client=client,
+        headers=request_headers,
+        name=f"CICD Held Scribe {uuid.uuid4().hex[:8]}",
+        models=[own_model],
+    )
+    # Room for a completion over the free output allowance, so the request holds kudos.
+    chat_context_limit, chat_output_limit = 16384, 8192
+    worker.pop(chat_max_context_length=chat_context_limit, chat_max_length=chat_output_limit)
+    settle_kudos()
+    request_id = _submit_chat_request(client, request_headers, model=own_model, stream=False, max_tokens=6000)
+    held_amount, released = _read_upfront_hold(app, request_id)
+    assert held_amount > 0
+    assert not released
+    generation_id: str = worker.pop(chat_max_context_length=chat_context_limit, chat_max_length=chat_output_limit)["id"]
+
+    cancel_response = client.delete(f"/api/v2/generate/chat/status/{request_id}", headers=request_headers)
+
+    assert cancel_response.status_code == 200, cancel_response.get_data(as_text=True)
+    assert _read_upfront_hold(app, request_id) == (Decimal("0.00"), True)
+    late_submit = worker.submit(build_chat_submit_body(generation_id=generation_id, content="Blue.", model_id=own_model))
+    assert late_submit.status_code == 200, late_submit.get_data(as_text=True)
+    assert [attributes for _, attributes in unreserved_debits.samples] == [{"horde.gentype": "text"}]
+    assert unreserved_debits.samples[0][0] > 0
 
 
 def test_a_reasoning_delta_is_appended_with_its_reasoning_beside_empty_content(

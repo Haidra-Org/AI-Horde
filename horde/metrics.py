@@ -768,6 +768,10 @@ submit_kudos = _kudos_histogram(
     "horde.submit.kudos",
     "Kudos awarded per job submission",
 )
+cancelled_unreserved_debit = _kudos_histogram(
+    "horde.request.cancelled_unreserved_debit",
+    "Kudos debited by a job that settled after its request's cancel released the upfront hold, split by gentype",
+)
 submit_outcomes = logfire.metric_counter(
     "horde.submit.outcomes",
     unit="1",

@@ -35,6 +35,7 @@ from horde.classes.base.style_contract import (
     build_vocabulary,
 )
 from horde.classes.base.user import User
+from horde.classes.base.waiting_prompt import upfront_hold_id
 from horde.classes.base.worker import StoredWorkerDeclaration
 from horde.classes.stable.genstats import (
     get_compiled_imagegen_stats_models,
@@ -373,7 +374,7 @@ class ImageAsyncGenerate(GenerateTemplate):
             reservation = reserve_kudos(
                 self.user,
                 required_kudos,
-                business_id=f"upfront:{self.wp.id}",
+                business_id=upfront_hold_id(self.wp.id),
             )
             if reservation is None:
                 if self.args.allow_downgrade and not disable_downgrade:
@@ -673,6 +674,10 @@ class ImageAsyncStatus(Resource):
             return (wp_status, 200)
         if cancellation_claimed:
             record_request_cancellation_forecast(request_id=str(wp.id), cancelled_at=cancelled_at)
+        # A job that a worker submits after this point debits without a reservation;
+        # horde.request.cancelled_unreserved_debit counts those.
+        wp.release_upfront_hold()
+        db.session.commit()
         return (wp_status, 200)
 
 

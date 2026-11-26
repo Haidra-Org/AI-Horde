@@ -314,7 +314,7 @@ The following kudos-adjacent state is not a user currency projection and must no
 
 | Operation | Stable business ID | Created/reactivated | Consumed/released |
 | --- | --- | --- | --- |
-| Image/text upfront admission | `upfront:<waiting-prompt-id>` | Before activation is accepted | Debit projection consumes it. Prompt deletion/cancel paths and the expired-prompt cleanup release the unused remainder |
+| Image/text upfront admission | `upfront:<waiting-prompt-id>` (`upfront_hold_id`) | Before activation is accepted | Debit projection consumes it. Completion, cancellation, prompt deletion and the expired-prompt cleanup release the unused remainder (`WaitingPrompt.release_upfront_hold`). A job settled after a cancel debits without a hold, and `horde.request.cancelled_unreserved_debit` records its kudos by gentype |
 | Interrogation upfront admission | `interrogation:<form-id>` | When a worker claims a waiting form | Debit projection consumes it. Cancellation/failure paths and the expired-interrogation cleanup release it. A retry reactivates the row |
 | Transfer | `transfer:<source-user-id>:<event-id>` | Before paired postings commit | Released only once every posting of the event is applied |
 

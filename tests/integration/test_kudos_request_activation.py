@@ -213,3 +213,30 @@ class TestUpfrontGate:
         settle_kudos()
         resp = client.post("/api/v2/generate/async", json=GATED_REQUEST, headers=_headers(requester.api_key))
         assert resp.status_code == 202, resp.get_data(as_text=True)
+
+    def test_a_cancel_releases_the_upfront_hold(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+    ) -> None:
+        """Cancelling a request that held kudos upfront releases the hold, so the requester's available kudos do not
+        stay reduced until the request expires."""
+        from horde.classes.base.kudos import KudosReservation
+        from horde.classes.base.waiting_prompt import upfront_hold_id
+        from horde.flask import db
+
+        requester = make_api_user(kudos=100000)
+        settle_kudos()
+        resp = client.post("/api/v2/generate/async", json=GATED_REQUEST, headers=_headers(requester.api_key))
+        assert resp.status_code == 202, resp.get_data(as_text=True)
+        request_id = resp.get_json()["id"]
+
+        cancel = client.delete(f"/api/v2/generate/status/{request_id}", headers=_headers(requester.api_key))
+
+        assert cancel.status_code == 200, cancel.get_data(as_text=True)
+        with app.app_context():
+            reservation = db.session.query(KudosReservation).filter_by(business_id=upfront_hold_id(request_id)).one()
+            assert reservation.released_at is not None
+            assert reservation.remaining_amount == 0

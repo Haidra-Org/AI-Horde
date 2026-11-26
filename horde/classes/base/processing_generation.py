@@ -400,9 +400,7 @@ class ProcessingGeneration(db.Model):
         _t = time.monotonic()
         request_completed = self.wp.is_completed()
         if request_completed:
-            from horde.database.kudos_reservations import release_reservation
-
-            release_reservation(f"upfront:{self.wp.id}")
+            self.wp.release_upfront_hold()
             completed_at = datetime.utcnow()
             outcome_claimed = self.wp.claim_terminal_outcome(
                 RequestTerminalOutcome.COMPLETED,
@@ -518,9 +516,7 @@ class ProcessingGeneration(db.Model):
         # After the settlement commit, so the worker_performances insert stays out of the settlement transaction.
         self.worker.record_performance(things_per_sec)
         if self.wp.is_completed():
-            from horde.database.kudos_reservations import release_reservation
-
-            release_reservation(f"upfront:{self.wp.id}")
+            self.wp.release_upfront_hold()
             db.session.commit()
         return kudos * self.worker.get_bridge_kudos_multiplier()
 

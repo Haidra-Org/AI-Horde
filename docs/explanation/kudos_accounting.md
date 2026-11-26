@@ -292,6 +292,10 @@ transaction as its ledger posting.
 Projection consumes a request hold as the corresponding debits are applied. It releases a transfer hold
 only when the complete event has been applied, including a transfer split across batches.
 
+A request releases what remains of its hold when it completes, is cancelled, is deleted or expires. A cancel
+releases the hold while jobs may still be with workers, so a job settled after the cancel debits without a hold.
+The posted debit is still subtracted as a queued debit until projection applies it.
+
 A queued credit cannot fund a new spend until it is projected. This can delay work
 during projector lag, but it cannot authorize an overspend based on income that is not yet projected.
 

@@ -27,7 +27,7 @@ from horde import vars as hv
 from horde.argparser import args
 from horde.chat_signal import ChatEvent, publish_chat_event
 from horde.classes.base.user import User
-from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT
+from horde.classes.base.waiting_prompt import FAULTED_GENERATIONS_LIMIT, upfront_hold_id
 from horde.classes.base.worker import SPEED_BASELINE_THINGS_PER_SEC, WorkerPerformance, WorkerTemplate
 from horde.classes.kobold.chat_request import list_stored_chat_object_keys
 from horde.classes.kobold.genstats import CompiledTextGensStatsTotals, CompiledTextGenStatsModels
@@ -462,10 +462,10 @@ def check_waiting_prompts():
                 # published its terminal event.
                 expired_chat_faults = collect_chat_faults([expired_wp.id for expired_wp, _ in claimed_expiries])
             # The bulk delete never runs WaitingPrompt.delete(), so release the
-            # 'upfront:<wp-id>' admission holds here in the same transaction.
+            # admission holds here in the same transaction.
             # Otherwise a request that expires unserved leaves its hold active and
             # permanently depresses the payer's available kudos.
-            release_reservations_for_business_ids(f"upfront:{wp_id}" for wp_id in expired_wp_ids)
+            release_reservations_for_business_ids(upfront_hold_id(wp_id) for wp_id in expired_wp_ids)
             expired_chat_image_keys = collect_expired_chat_image_keys(cutoff_time) if wp_class is TextWaitingPrompt else []
             expired_wps.delete()
             db.session.commit()

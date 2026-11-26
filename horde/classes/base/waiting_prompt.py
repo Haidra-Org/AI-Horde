@@ -26,7 +26,7 @@ from sqlalchemy.sql import ColumnElement, expression, null
 
 from horde import vars as hv
 from horde.bridge_reference import check_bridge_capability
-from horde.classes.base.kudos import StyleReward, kudos_event
+from horde.classes.base.kudos import KudosReservation, StyleReward, kudos_event
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.kobold.processing_generation import TextProcessingGeneration
 from horde.classes.stable.processing_generation import ImageProcessingGeneration
@@ -37,6 +37,7 @@ from horde.flask import SQLITE_MODE, db
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.metrics import (
+    cancelled_unreserved_debit,
     request_time_to_first_start,
     wp_activate_base_commit_duration,
     wp_activate_base_record_usage_duration,
@@ -86,6 +87,21 @@ FAULTED_GENERATIONS_LIMIT = 2
 """How many faulted generations a request tolerates; one more faults the request. A request that fails on every
 attempt, such as one no worker can build, is otherwise dispatched again after each fault, and every fault counts
 toward the aborted-job threshold that puts the worker serving it into maintenance."""
+
+
+def upfront_hold_id(waiting_prompt_id: uuid.UUID | str) -> str:
+    """Return the business id of a request's upfront kudos hold.
+
+    Admission reserves the hold under this id, each debit of the request consumes it, and completion, cancellation,
+    deletion and expiry release it.
+
+    Args:
+        waiting_prompt_id: The request's id.
+
+    Returns:
+        The hold's business id.
+    """
+    return f"upfront:{waiting_prompt_id}"
 
 
 def estimate_queue_wait_seconds(
@@ -1200,12 +1216,16 @@ class WaitingPrompt(db.Model):
             kudos = self.calculate_extra_kudos_burn(kudos)
         if self.sharedkey_id is not None:
             self.sharedkey.consume_kudos(kudos, commit=False)
+        if self.terminal_outcome == RequestTerminalOutcome.CANCELLED.value and self.upfront_hold_was_released():
+            # A cancel releases the hold while jobs may still be with workers, so a debit settled afterwards is not
+            # covered by a reservation. The histogram shows how often that happens and how much it debits.
+            cancelled_unreserved_debit.record(kudos, {"horde.gentype": self.wp_type})
         forgiven = self.user.record_usage(
             raw_things,
             kudos,
             usage_type,
             commit=False,
-            reservation_id=f"upfront:{self.id}",
+            reservation_id=upfront_hold_id(self.id),
             style_reward=style_reward,
         )
         self.consumed_kudos = round(self.consumed_kudos + kudos, 2)
@@ -1320,10 +1340,26 @@ class WaitingPrompt(db.Model):
         """
         logger.warning(f"Faulting waiting prompt {self.id}: a faulted job was not restarted and no other job remains")
 
-    def delete(self):
+    def release_upfront_hold(self) -> None:
+        """Release the unused remainder of this request's upfront kudos hold, if it has one. The caller commits."""
         from horde.database.kudos_reservations import release_reservation
 
-        release_reservation(f"upfront:{self.id}")
+        release_reservation(upfront_hold_id(self.id))
+
+    def upfront_hold_was_released(self) -> bool:
+        """Return whether this request held kudos upfront and the hold has been released."""
+        return (
+            db.session.query(KudosReservation.id)
+            .filter(
+                KudosReservation.business_id == upfront_hold_id(self.id),
+                KudosReservation.released_at.is_not(None),
+            )
+            .first()
+            is not None
+        )
+
+    def delete(self):
+        self.release_upfront_hold()
         for gen in self.processing_gens:
             if not self.faulted and not gen.fake:
                 gen.cancel()

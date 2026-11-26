@@ -66,7 +66,7 @@ from horde.classes.base.style_contract import (
     StyleContractVocabulary,
     build_vocabulary,
 )
-from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX, estimate_queue_wait_seconds
+from horde.classes.base.waiting_prompt import EXTRA_SOURCE_IMAGE_HORDE_TAX, estimate_queue_wait_seconds, upfront_hold_id
 from horde.classes.base.worker import StoredWorkerDeclaration
 from horde.classes.kobold.chat_request import (
     CHAT_WORKER_FAULT_RC,
@@ -334,7 +334,7 @@ class TextAsyncGenerate(GenerateTemplate):
             reservation = reserve_kudos(
                 self.user,
                 required_kudos,
-                business_id=f"upfront:{self.wp.id}",
+                business_id=upfront_hold_id(self.wp.id),
             )
             if reservation is None:
                 if self.args.allow_downgrade and not disable_downgrade:
@@ -903,6 +903,10 @@ class TextAsyncStatus(Resource):
                 cancel_progress_streams([str(procgen.id) for procgen in pending_procgens], str(wp.id))
             if wp.is_chat:
                 publish_chat_event(str(wp.id), ChatEvent.CANCELLED, wp.count_stored_generations())
+        # Released after the streamed settlements above, which still consume the hold. A job that a worker submits
+        # after this point debits without a reservation; horde.request.cancelled_unreserved_debit counts those.
+        wp.release_upfront_hold()
+        db.session.commit()
         return (wp_status, 200)
 
 
