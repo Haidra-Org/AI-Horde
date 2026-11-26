@@ -71,3 +71,32 @@ class TestConsumeReservations:
 
     def test_empty_batch_is_a_no_op(self, db_session):
         assert consume_reservations({}) == Decimal("0.00")
+
+
+class TestReleaseReservation:
+    def test_a_release_returns_the_reservation_with_its_original_amount(self, db_session, make_user):
+        payer = make_user(kudos=10000)
+        reserve_kudos(payer, 100, business_id="hold-open")
+        consume_reservation("hold-open", 30)
+
+        reservation = release_reservation("hold-open")
+
+        assert reservation is not None
+        assert reservation.original_amount == Decimal("100.00")
+        assert reservation.remaining_amount == Decimal("0.00")
+        assert reservation.released_at is not None
+
+    def test_a_hold_used_up_by_its_debits_is_still_returned(self, db_session, make_user):
+        """A hold drained to zero is stamped released when its debits are projected, which can happen before the
+        request completes. Its original amount stays readable for the request's completion."""
+        payer = make_user(kudos=10000)
+        reserve_kudos(payer, 100, business_id="hold-drained")
+        consume_reservation("hold-drained", 150)
+
+        reservation = release_reservation("hold-drained")
+
+        assert reservation is not None
+        assert reservation.original_amount == Decimal("100.00")
+
+    def test_an_unknown_hold_returns_none(self, db_session):
+        assert release_reservation("hold-missing") is None

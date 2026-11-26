@@ -7,6 +7,7 @@ import random
 import threading
 import time
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 import logfire
@@ -400,7 +401,7 @@ class ProcessingGeneration(db.Model):
         _t = time.monotonic()
         request_completed = self.wp.is_completed()
         if request_completed:
-            self.wp.release_upfront_hold()
+            upfront_hold = self.wp.release_upfront_hold()
             completed_at = datetime.utcnow()
             outcome_claimed = self.wp.claim_terminal_outcome(
                 RequestTerminalOutcome.COMPLETED,
@@ -408,6 +409,8 @@ class ProcessingGeneration(db.Model):
                 commit=False,
             )
             db.session.commit()
+            if outcome_claimed and upfront_hold is not None:
+                self.record_upfront_hold_charge(upfront_hold.original_amount)
             if outcome_claimed:
                 completion_delay = max((completed_at - self.wp.created).total_seconds(), 0)
                 try:
@@ -430,6 +433,18 @@ class ProcessingGeneration(db.Model):
         self.send_webhook(kudos)
         submit_webhook_call_duration.record(time.monotonic() - _t)
         return kudos
+
+    def record_upfront_hold_charge(self, held_kudos: Decimal) -> None:
+        """Record how a completed request's total charge compares with the kudos it held upfront.
+
+        Called once per request, at completion, only for a request that held kudos upfront.
+
+        Args:
+            held_kudos: The kudos the request held upfront.
+
+        Subclass Integration:
+            Override to record the comparison for a request type. The base records nothing.
+        """
 
     def get_submission_columns(self, **kwargs: object) -> dict[str, object]:
         """Return further columns a submission writes in the same compare-and-set as its generation.
