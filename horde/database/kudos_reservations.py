@@ -223,15 +223,22 @@ def consume_reservations(consumptions: Mapping[str, Decimal | int | float]) -> D
     return total_consumed
 
 
-def release_reservation(business_id: str) -> Decimal:
-    """Release the unused remainder of a reservation."""
+def release_reservation(business_id: str) -> KudosReservation | None:
+    """Release the unused remainder of a reservation.
+
+    Args:
+        business_id: The business id the reservation was made under.
+
+    Returns:
+        The reservation, so a caller can read its ``original_amount``, or None when there is none. A reservation that
+        was already released, including one released when its debits used all of it, is returned unchanged.
+    """
     reservation = db.session.query(KudosReservation).filter_by(business_id=business_id).with_for_update().first()
     if reservation is None or reservation.released_at is not None:
-        return Decimal("0.00")
-    released = reservation.remaining_amount
+        return reservation
     reservation.remaining_amount = Decimal("0.00")
     reservation.released_at = datetime.utcnow()
-    return released
+    return reservation
 
 
 def release_reservations_for_business_ids(business_ids: Iterable[str]) -> int:

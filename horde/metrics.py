@@ -135,6 +135,23 @@ BUCKETS_FREE_ALLOWANCE_WAIT_SECONDS = (
 60 s and falls linearly to the floor at 300 s, so the boundaries split that span into 60 s steps; 600 s separates a
 backed-up queue from one just past the floor."""
 
+BUCKETS_CHARGE_TO_HOLD_RATIO = (
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1,
+    1.5,
+    2,
+    3,
+    5,
+    10,
+)
+"""The bucket boundaries of a request's total charge divided by its upfront hold. The hold is computed from
+``max_length`` and the charge from the delivered output and the prompt, so the ratio can fall well below 1 for a short
+output and rise several times above it for a long output with a long prompt. 1 separates the requests charged more
+than they held."""
+
 REQUEST_ESTIMATE_MINIMUM_ABSOLUTE_TOLERANCE_SECONDS = 60
 REQUEST_ESTIMATE_RELATIVE_TOLERANCE = 0.5
 REQUEST_ASSIGNMENT_PRESSURE_EVIDENCE = frozenset(
@@ -182,6 +199,11 @@ def _request_lifecycle_histogram(name: str, description: str) -> Histogram:
 def _free_allowance_wait_histogram(name: str, description: str) -> Histogram:
     _BUCKET_REGISTRY[name] = BUCKETS_FREE_ALLOWANCE_WAIT_SECONDS
     return logfire.metric_histogram(name, unit="s", description=description)
+
+
+def _charge_to_hold_histogram(name: str, description: str) -> Histogram:
+    _BUCKET_REGISTRY[name] = BUCKETS_CHARGE_TO_HOLD_RATIO
+    return logfire.metric_histogram(name, unit="1", description=description)
 
 
 def histogram_views() -> list[View]:
@@ -483,6 +505,14 @@ text_free_allowance_decisions = logfire.metric_counter(
 text_free_allowance_estimated_wait_seconds = _free_allowance_wait_histogram(
     "horde.text.free_allowance.estimated_wait_seconds",
     "Estimated wait used to size the free output and input allowances of a text request, at the request's creation",
+)
+
+text_upfront_hold_charge_ratio = _charge_to_hold_histogram(
+    "horde.text.upfront_hold.charge_ratio",
+    (
+        "Total kudos charged to a completed text request divided by the kudos it held upfront, split by requested size "
+        "bucket and whether the request is a chat request"
+    ),
 )
 
 

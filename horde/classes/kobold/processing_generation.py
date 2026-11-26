@@ -8,6 +8,7 @@ import os
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, override
 
 from horde_sdk.worker.chat_declaration import ChatFaultReason
@@ -59,6 +60,7 @@ from horde.metrics import (
     text_lease_renewals,
     text_queue_wait_seconds,
     text_stale_aborts,
+    text_upfront_hold_charge_ratio,
 )
 from horde.model_reference import model_reference
 from horde.suspicions import Suspicions
@@ -523,6 +525,27 @@ class TextProcessingGeneration(ProcessingGeneration):
             "reasoning_tokens": kwargs.get("reasoning_tokens"),
             "charge_basis": self.get_charge_basis().value,
         }
+
+    @override
+    def record_upfront_hold_charge(self, held_kudos: Decimal) -> None:
+        """Record the request's total charge divided by the kudos it held upfront.
+
+        The hold is computed from ``max_length`` and the most expensive requested model. The charge comes from the
+        delivered output, the model that served it and the prompt counted up to ``max_length``, and it includes the
+        activation tax. The ratio shows how far the hold is from the charge across output and prompt sizes.
+
+        Args:
+            held_kudos: The kudos the request held upfront.
+        """
+        if held_kudos <= 0:
+            return
+        text_upfront_hold_charge_ratio.record(
+            float(self.wp.consumed_kudos) / float(held_kudos),
+            {
+                "horde.chat": bool(self.wp.is_chat),
+                "horde.requested_bucket": TEXT_LENGTH_BUCKETS.label(self.wp.max_length),
+            },
+        )
 
     def get_gen_kudos(self):
         if os.getenv("HORDE_REQUIRE_MATCHED_TARGETING", "0") == "1" and len(self.wp.workers) > 0:

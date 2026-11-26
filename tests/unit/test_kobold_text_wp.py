@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
@@ -1128,3 +1129,39 @@ class TestQueueWaitRecord:
         )
 
         assert recorder.records == []
+
+
+class TestUpfrontHoldChargeRatio:
+    @pytest.fixture
+    def ratios(self, monkeypatch: pytest.MonkeyPatch) -> _HistogramRecorder:
+        recorder = _HistogramRecorder()
+        monkeypatch.setattr(text_processing_generation, "text_upfront_hold_charge_ratio", recorder)
+        return recorder
+
+    def _generation(self, *, consumed_kudos: float, max_length: int = 2048, is_chat: bool = False) -> SimpleNamespace:
+        return SimpleNamespace(
+            wp=SimpleNamespace(
+                consumed_kudos=consumed_kudos,
+                max_length=max_length,
+                is_chat=is_chat,
+            ),
+        )
+
+    def test_the_total_charge_is_recorded_against_the_hold(self, ratios: _HistogramRecorder) -> None:
+        """A request that held 200 kudos and was charged 500 records 2.5, under its requested size."""
+        TextProcessingGeneration.record_upfront_hold_charge(self._generation(consumed_kudos=500), Decimal("200.00"))
+
+        assert ratios.records == [
+            (
+                2.5,
+                {
+                    "horde.chat": False,
+                    "horde.requested_bucket": "1025-2048",
+                },
+            ),
+        ]
+
+    def test_a_zero_hold_is_not_recorded(self, ratios: _HistogramRecorder) -> None:
+        TextProcessingGeneration.record_upfront_hold_charge(self._generation(consumed_kudos=5), Decimal("0.00"))
+
+        assert ratios.records == []

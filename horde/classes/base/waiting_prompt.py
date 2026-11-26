@@ -1340,11 +1340,16 @@ class WaitingPrompt(db.Model):
         """
         logger.warning(f"Faulting waiting prompt {self.id}: a faulted job was not restarted and no other job remains")
 
-    def release_upfront_hold(self) -> None:
-        """Release the unused remainder of this request's upfront kudos hold, if it has one. The caller commits."""
+    def release_upfront_hold(self) -> KudosReservation | None:
+        """Release the unused remainder of this request's upfront kudos hold, if it has one. The caller commits.
+
+        Returns:
+            The hold, so a caller can read its ``original_amount``, or None when the request did not hold kudos. A
+            hold that was already released is returned unchanged.
+        """
         from horde.database.kudos_reservations import release_reservation
 
-        release_reservation(upfront_hold_id(self.id))
+        return release_reservation(upfront_hold_id(self.id))
 
     def upfront_hold_was_released(self) -> bool:
         """Return whether this request held kudos upfront and the hold has been released."""

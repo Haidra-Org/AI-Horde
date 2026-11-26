@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from decimal import Decimal
 from functools import partial
 from unittest.mock import Mock
 
@@ -26,6 +27,7 @@ from sqlalchemy.orm import Session
 
 import horde.classes.base.processing_generation as processing_generation_module
 import horde.classes.base.worker as worker_module
+from horde.classes.base.kudos import KudosReservation
 from horde.classes.base.processing_generation import ProcessingGeneration
 from horde.classes.base.settings import HordeSettings
 from horde.classes.base.stats import FulfillmentPerformance, ModelPerformance
@@ -477,3 +479,35 @@ def test_fast_submission_suspicion_and_pause_roll_back_with_a_failed_settlement(
     assert count_suspicions(generation) == (worker.suspicion_threshold - 1, 0, 0, False)
     assert stored_generation_text(generation) is None
     assert statistics_added(statistics_before, count_statistics(generation)) == NO_STATISTICS
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_a_completed_request_reports_its_upfront_hold_once(
+    pending_generation: TextProcessingGeneration,
+    monkeypatch: pytest.MonkeyPatch,
+    held: bool,
+) -> None:
+    """A completing request with a hold reports the hold's original amount once, even when the hold was already used
+    up by its debits. A retried submission and a request without a hold report nothing."""
+    generation = pending_generation
+    monkeypatch.setattr(generation.wp, "is_completed", Mock(return_value=True))
+    monkeypatch.setattr(generation, "record_upfront_hold_charge", Mock())
+    if held:
+        db.session.add(
+            KudosReservation(
+                business_id=f"upfront:{generation.wp.id}",
+                user_id=generation.wp.user_id,
+                original_amount=Decimal("100.00"),
+                remaining_amount=Decimal("0.00"),
+                released_at=generation.wp.created,
+            ),
+        )
+        db.session.commit()
+
+    ProcessingGeneration.set_generation(generation, "result", 4.0)
+    ProcessingGeneration.set_generation(generation, "retried", 4.0)
+
+    if held:
+        generation.record_upfront_hold_charge.assert_called_once_with(Decimal("100.00"))
+    else:
+        generation.record_upfront_hold_charge.assert_not_called()
