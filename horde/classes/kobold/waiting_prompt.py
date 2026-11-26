@@ -700,6 +700,10 @@ class TextWaitingPrompt(WaitingPrompt):
             self.max_length = max_tokens
             self.params["max_length"] = self.max_length
             self.gen_payload["max_length"] = self.max_length
+            # The queue estimate, the work assigned at pop and the delivered token count read things, so it follows
+            # the lowered length as the image downgrade's does.
+            self.things = self.max_length
+            self.total_usage = round(self.max_length * self.n / hv.thing_divisors["text"], 2)
             logger.info(f"Text WP {self.id} was downgraded to {self.max_length} tokens")
         if max_prompt_tokens is not None and self.max_context_length > max_prompt_tokens + self.max_length:
             self.max_context_length = max_prompt_tokens + self.max_length
