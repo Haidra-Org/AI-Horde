@@ -16,7 +16,7 @@ import logfire
 from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField
 from sqlalchemy import JSON, ScalarSelect, func, select, type_coerce
 from sqlalchemy.dialects.postgresql import UUID, aggregate_order_by, array_agg
-from sqlalchemy.orm import InstrumentedAttribute, Mapped, relationship
+from sqlalchemy.orm import InstrumentedAttribute, Mapped, query_expression, relationship
 
 from horde import vars as hv
 from horde.classes.base import settings
@@ -424,6 +424,11 @@ class WorkerTemplate(db.Model):
         back_populates="worker",
         cascade="all, delete-orphan",
     )
+    suspicion_count: Mapped[int | None] = query_expression()
+    """The number of the worker's ``suspicions`` rows, counted in SQL by
+    [`get_active_workers_for_details`][horde.database.functions.get_active_workers_for_details]. It is None when the
+    loading query did not compute it. A worker can hold tens of thousands of suspicion rows, so the
+    bulk worker list reads this count instead of loading the rows."""
     messages = db.relationship("WorkerMessage", back_populates="worker", cascade="all, delete-orphan")
 
     require_upfront_kudos = False
@@ -936,7 +941,10 @@ class WorkerTemplate(db.Model):
         }
         if details_privilege >= 2:
             ret_dict["paused"] = self.paused
-            ret_dict["suspicious"] = len(self.suspicions)
+            if self.suspicion_count is None:
+                ret_dict["suspicious"] = self.get_suspicion()
+            else:
+                ret_dict["suspicious"] = self.suspicion_count
         if details_privilege >= 1 or self.user.public_workers:
             ret_dict["owner"] = self.user.get_unique_alias()
             msgs = []

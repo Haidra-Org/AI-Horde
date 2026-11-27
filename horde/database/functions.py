@@ -16,7 +16,7 @@ from typing import Any
 import logfire
 from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField, ChatServiceGapKind
 from sqlalchemy import Boolean, ColumnElement, and_, case, func, not_, null, or_, select
-from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload
+from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload, with_expression
 from sqlalchemy.orm.attributes import set_committed_value
 
 import horde.classes.base.stats as stats
@@ -39,6 +39,7 @@ from horde.classes.base.worker import (
     WorkerMessage,
     WorkerModel,
     WorkerPerformance,
+    WorkerSuspicions,
     WorkerTemplate,
     worker_blacklist_words_clause,
     worker_model_names_clause,
@@ -372,35 +373,46 @@ def get_highest_text_worker_limits(
 
 
 def get_active_workers_for_details() -> list[WorkerTemplate]:
-    """Return every active worker with all relationships ``get_details()`` reads already loaded.
+    """Return every active worker with everything ``get_details()`` reads already loaded.
 
     Use this instead of ``get_active_workers()`` whenever the result is serialized in bulk (the worker list cache,
     the ``/v2/workers`` fallback). ``get_details(2)`` reads the owner, the owner's roles, the team, messages, kudos
-    stats, suspicions and the advertised models (or forms/annotation types for interrogation workers); lazily that
-    is one SELECT per relationship per worker, each a database round-trip. Loaded with ``selectinload`` it is one
-    SELECT per relationship per worker type regardless of how many workers are active.
+    stats and the advertised models (or forms, annotation types and performance records for interrogation
+    workers). Loaded lazily, that is one SELECT per relationship per worker, each a database round-trip. Loaded with
+    ``selectinload`` it is one SELECT per relationship per worker type regardless of how many workers are active.
+
+    The moderator view also reports the number of suspicion rows of each worker. The query fills
+    ``suspicion_count`` with a correlated count instead of loading the rows, because one worker can hold tens of
+    thousands of them and building that many ORM objects costs far more than the count.
     """
     cutoff = datetime.utcnow() - timedelta(seconds=300)
     active_workers: list[WorkerTemplate] = []
     for worker_class in (ImageWorker, TextWorker, InterrogationWorker):
-        shared_relationship_loads = [
+        # The subquery runs once per selected worker and counts its rows through ix_worker_suspicions_worker_id.
+        # It correlates to the outer query's workers row, so a worker with three suspicion rows gets
+        # suspicion_count 3 and a worker without any gets 0 (count over no rows), never None.
+        suspicion_count_subquery = (
+            select(func.count(WorkerSuspicions.id)).where(WorkerSuspicions.worker_id == worker_class.id).scalar_subquery()
+        )
+        shared_loads = [
             selectinload(worker_class.user).selectinload(User.roles),
             selectinload(worker_class.team),
             selectinload(worker_class.messages),
             selectinload(worker_class.stats),
-            selectinload(worker_class.suspicions),
+            with_expression(worker_class.suspicion_count, suspicion_count_subquery),
         ]
         if worker_class is InterrogationWorker:
             type_specific_relationship_loads = [
                 selectinload(InterrogationWorker.forms),
                 selectinload(InterrogationWorker.annotation_types),
+                selectinload(InterrogationWorker.performance),
             ]
         else:
             type_specific_relationship_loads = [selectinload(worker_class.models)]
         active_workers += (
             db.session.query(worker_class)
             .filter(worker_class.last_check_in > cutoff)
-            .options(*shared_relationship_loads, *type_specific_relationship_loads)
+            .options(*shared_loads, *type_specific_relationship_loads)
             .all()
         )
     return active_workers

@@ -14,12 +14,36 @@ and populate the documented redis keys with the live state.
 from __future__ import annotations
 
 import json
+import uuid
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 import pytest
 
+from tests.conftest import _QueryRecorder
+
+if TYPE_CHECKING:
+    from flask import Flask
+    from flask.testing import FlaskClient
+
+    from horde.classes.base.worker import WorkerTemplate
+    from tests.fixture_types import MakeApiUser
+
+QueryCounter = Callable[[], AbstractContextManager[_QueryRecorder]]
+
 AGENT = "aihorde_ci_client:1.0:(test)ci"
 TEXT_MODEL = "elinas/chronos-70b-v2"
+
+FEW_SUSPICION_ROWS: int = 3
+"""Suspicion rows held by a worker with a handful of reports."""
+MANY_SUSPICION_ROWS: int = 1000
+"""Suspicion rows held by a heavily reported worker. Large enough that loading them as ORM objects would be visible in
+the session, and small enough for a quick insert."""
+INTERROGATION_PERFORMANCE_ROWS: int = 2
+"""Performance records given to each interrogation worker, so its performance text is computed from a non-empty list."""
 
 
 @pytest.fixture(autouse=True)
@@ -66,6 +90,79 @@ def _mark_faulted_after_repeated_faults_and_commit(waiting_prompt) -> bool:
     request_faulted = waiting_prompt.mark_faulted_after_repeated_faults()
     db.session.commit()
     return request_faulted
+
+
+@dataclass(frozen=True)
+class _ListedWorker:
+    """Represents a worker created for the worker list tests."""
+
+    id: str
+    """The worker's ID, in the form used by the single-worker route."""
+    name: str
+    """The worker's unique name, used as its key in the cached worker lists."""
+
+
+def _add_suspicion_rows(worker_id: object, row_count: int) -> None:
+    """Insert ``row_count`` suspicion rows for the worker in one statement, without creating ORM objects."""
+    from sqlalchemy import insert
+
+    from horde.classes.base.worker import WorkerSuspicions
+    from horde.flask import db
+    from horde.suspicions import Suspicions
+
+    if row_count == 0:
+        return
+    db.session.execute(
+        insert(WorkerSuspicions),
+        [
+            {
+                "worker_id": worker_id,
+                "suspicion_id": int(Suspicions.UNREASONABLY_FAST),
+            }
+            for _ in range(row_count)
+        ],
+    )
+    db.session.commit()
+
+
+def _create_listed_worker(
+    worker_class: type[WorkerTemplate],
+    *,
+    owner_id: int,
+    suspicion_rows: int,
+    performance_rows: int = 0,
+) -> _ListedWorker:
+    """Create an active worker of ``worker_class`` owned by ``owner_id`` with the given suspicion and performance rows.
+
+    Must run inside an app context. The worker checks in at creation, so the worker list includes it.
+    """
+    from horde.classes.base.worker import WorkerPerformance
+    from horde.flask import db
+
+    worker = worker_class(
+        name=f"Suspicion Count Worker {uuid.uuid4().hex[:8]}",
+        user_id=owner_id,
+    )
+    db.session.add(worker)
+    db.session.commit()
+    db.session.add_all(WorkerPerformance(worker_id=worker.id, performance=1.5) for _ in range(performance_rows))
+    db.session.commit()
+    _add_suspicion_rows(worker.id, suspicion_rows)
+    return _ListedWorker(id=str(worker.id), name=worker.name)
+
+
+def _record_worker_list_statements(app: Flask, assert_query_count: QueryCounter) -> _QueryRecorder:
+    """Return the statements run to build the public and moderator details of every active worker.
+
+    The loading runs in a fresh app context, as the worker list job does, so no worker is already in the session.
+    """
+    from horde.database.functions import get_active_workers_for_details
+
+    with app.app_context(), assert_query_count() as queries:
+        for worker in get_active_workers_for_details():
+            worker.get_details()
+            worker.get_details(2)
+    return queries
 
 
 def _refresh_text_queue_position_cache() -> None:
@@ -467,6 +564,131 @@ class TestCacheBuilders:
         assert TEXT_MODEL in cached_models
         assert cached_models[TEXT_MODEL]["count"] >= 1
         assert cached_models[TEXT_MODEL]["jobs"] == 4
+
+
+class TestWorkerListSuspicionCounts:
+    """The bulk worker list reports suspicion counts from SQL instead of loading every suspicion row."""
+
+    def test_moderator_worker_list_reports_each_workers_suspicion_row_count(
+        self,
+        app: Flask,
+        make_api_user: MakeApiUser,
+    ) -> None:
+        """The privileged worker list reports, for workers of every type, the number of suspicion rows of each worker."""
+        from horde.classes.kobold.worker import TextWorker
+        from horde.classes.stable.interrogation_worker import InterrogationWorker
+        from horde.classes.stable.worker import ImageWorker
+        from horde.database.threads import store_worker_list
+
+        owner = make_api_user(trusted=True)
+        worker_specs: list[tuple[type[WorkerTemplate], int]] = [
+            (ImageWorker, 0),
+            (ImageWorker, FEW_SUSPICION_ROWS),
+            (ImageWorker, MANY_SUSPICION_ROWS),
+            (TextWorker, FEW_SUSPICION_ROWS),
+            (InterrogationWorker, 0),
+            (InterrogationWorker, MANY_SUSPICION_ROWS),
+        ]
+        expected_counts: dict[str, int] = {}
+        with app.app_context():
+            for worker_class, suspicion_rows in worker_specs:
+                listed_worker = _create_listed_worker(
+                    worker_class,
+                    owner_id=owner.id,
+                    suspicion_rows=suspicion_rows,
+                    performance_rows=INTERROGATION_PERFORMANCE_ROWS if worker_class is InterrogationWorker else 0,
+                )
+                expected_counts[listed_worker.name] = suspicion_rows
+
+        store_worker_list()
+
+        cached_privileged = {w["name"]: w for w in json.loads(_redis_get("worker_cache_privileged"))}
+        reported_counts = {name: cached_privileged[name]["suspicious"] for name in expected_counts}
+        assert reported_counts == expected_counts
+
+    def test_single_worker_route_reports_the_suspicion_row_count_to_moderators(
+        self,
+        app: Flask,
+        client: FlaskClient,
+        api_key: str,
+        make_api_user: MakeApiUser,
+    ) -> None:
+        """A worker loaded outside the bulk loader still reports its suspicion row count to a moderator."""
+        from horde.classes.stable.worker import ImageWorker
+
+        owner = make_api_user(trusted=True)
+        with app.app_context():
+            listed_worker = _create_listed_worker(ImageWorker, owner_id=owner.id, suspicion_rows=FEW_SUSPICION_ROWS)
+
+        response = client.get(f"/api/v2/workers/{listed_worker.id}", headers=_headers(api_key))
+
+        assert response.status_code == 200, response.get_data(as_text=True)
+        assert response.get_json()["suspicious"] == FEW_SUSPICION_ROWS
+
+    def test_worker_list_leaves_suspicion_rows_unloaded(self, app: Flask, make_api_user: MakeApiUser) -> None:
+        """Building the public and moderator details from the bulk loader does not load any worker's suspicion rows."""
+        import sqlalchemy
+
+        from horde.classes.base.worker import WorkerSuspicions
+        from horde.classes.kobold.worker import TextWorker
+        from horde.classes.stable.interrogation_worker import InterrogationWorker
+        from horde.classes.stable.worker import ImageWorker
+        from horde.database.functions import get_active_workers_for_details
+        from horde.flask import db
+
+        owner = make_api_user(trusted=True)
+        with app.app_context():
+            created_names = {
+                _create_listed_worker(worker_class, owner_id=owner.id, suspicion_rows=FEW_SUSPICION_ROWS).name
+                for worker_class in (ImageWorker, TextWorker, InterrogationWorker)
+            }
+
+        with app.app_context():
+            workers = get_active_workers_for_details()
+            for worker in workers:
+                worker.get_details()
+                worker.get_details(2)
+            created_workers = [worker for worker in workers if worker.name in created_names]
+            loaded_suspicion_rows = [obj for obj in db.session.identity_map.values() if isinstance(obj, WorkerSuspicions)]
+
+            assert len(created_workers) == len(created_names)
+            assert all("suspicions" not in sqlalchemy.inspect(worker).dict for worker in created_workers)
+            assert loaded_suspicion_rows == []
+
+    def test_worker_list_statement_count_does_not_grow_with_suspicion_rows_or_interrogation_workers(
+        self,
+        app: Flask,
+        make_api_user: MakeApiUser,
+        assert_query_count: QueryCounter,
+    ) -> None:
+        """The statements run to build every worker's details stay the same when a worker gains suspicion rows and
+        when more interrogation workers check in."""
+        from horde.classes.stable.interrogation_worker import InterrogationWorker
+        from horde.classes.stable.worker import ImageWorker
+
+        owner = make_api_user(trusted=True)
+        with app.app_context():
+            image_worker = _create_listed_worker(ImageWorker, owner_id=owner.id, suspicion_rows=FEW_SUSPICION_ROWS)
+            _create_listed_worker(
+                InterrogationWorker,
+                owner_id=owner.id,
+                suspicion_rows=FEW_SUSPICION_ROWS,
+                performance_rows=INTERROGATION_PERFORMANCE_ROWS,
+            )
+        queries_before = _record_worker_list_statements(app, assert_query_count)
+
+        with app.app_context():
+            _add_suspicion_rows(uuid.UUID(image_worker.id), MANY_SUSPICION_ROWS)
+            for _ in range(2):
+                _create_listed_worker(
+                    InterrogationWorker,
+                    owner_id=owner.id,
+                    suspicion_rows=MANY_SUSPICION_ROWS,
+                    performance_rows=INTERROGATION_PERFORMANCE_ROWS,
+                )
+        queries_after = _record_worker_list_statements(app, assert_query_count)
+
+        assert len(queries_after) == len(queries_before), f"before:\n{queries_before.describe()}\n\nafter:\n{queries_after.describe()}"
 
 
 class TestAssignMonthlyKudos:
