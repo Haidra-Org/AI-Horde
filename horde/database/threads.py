@@ -76,6 +76,7 @@ from horde.worker_rows import (
     WORKER_ROWS_ROLLING_CHUNK_SIZE,
     advance_rolling_position,
     mark_departed_active_workers,
+    mark_worker_rows_dirty,
     read_rolling_position,
     reconcile_worker_rows,
     remove_worker_rows,
@@ -1288,6 +1289,9 @@ def refresh_worker_speeds() -> None:
                 .execution_options(synchronize_session=False),
             ).rowcount
             db.session.commit()
+            # A worker's row shows its speed as ``performance``. A worker can stop checking in before the job stores the
+            # average of its last samples, and the worker list job rewrites only active workers.
+            mark_worker_rows_dirty([str(worker_id) for worker_id in chunk])
         if pruned or refreshed:
             logger.debug(f"Refreshed speed on {refreshed} workers and pruned {pruned} surplus performance samples")
 

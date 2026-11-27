@@ -4569,6 +4569,9 @@ class WorkerMessages(Resource):
         )
         db.session.add(new_message)
         db.session.commit()
+        # A row shows only the messages sent to its own worker, so a message without a worker changes no row.
+        if new_message.worker_id is not None:
+            mark_worker_rows_dirty([str(new_message.worker_id)])
         return new_message, 200
 
 
@@ -4627,6 +4630,10 @@ class SingleWorkerMessage(Resource):
             raise e.ThingNotFound("WorkerMessage", message_id)
         if wmessage.user_id != user.id and user.moderator is False:
             raise e.Forbidden("You can only delete your own messages.")
+        message_worker_id = wmessage.worker_id
         db.session.delete(wmessage)
         db.session.commit()
+        # A row shows only the messages sent to its own worker, so a message without a worker changes no row.
+        if message_worker_id is not None:
+            mark_worker_rows_dirty([str(message_worker_id)])
         return {"message": "OK"}, 200

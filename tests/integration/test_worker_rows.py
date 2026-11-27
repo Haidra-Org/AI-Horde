@@ -50,6 +50,10 @@ SMALL_ROLLING_CHUNK: int = 2
 """A rolling chunk small enough that a handful of workers needs several runs and a wrap."""
 LARGE_ROLLING_CHUNK: int = 10_000
 """A rolling chunk larger than every worker registered by this module, so one run covers them all."""
+PROMOTION_THRESHOLD: int = 100
+"""The evaluating kudos above which the applier promotes a user to trusted in the promotion test."""
+WORKER_KUDOS_AWARD: int = 25
+"""The kudos credited to each worker in the applier test."""
 
 
 class WorkerKind(StrEnum):
@@ -419,6 +423,223 @@ class TestDirtyTier:
             _refresh_dirty_worker_rows(set())
 
         assert len(queries) == 0, queries.describe()
+
+
+def _inactive_worker_with_rows(
+    client: FlaskClient,
+    app: Flask,
+    owner: ApiUser,
+    kind: WorkerKind = WorkerKind.TEXT,
+) -> str:
+    """Register a worker, move it out of the active set and write its rows, then return its ID.
+
+    The worker list job does not rewrite an inactive worker, so a later change shows in its rows only when a write
+    site marks the worker dirty.
+    """
+    from horde.database.threads import refresh_worker_rows_rolling
+
+    worker_id = _register_worker(client, app, owner, kind)
+    _make_inactive(app, worker_id)
+    refresh_worker_rows_rolling(chunk_size=LARGE_ROLLING_CHUNK)
+    return worker_id
+
+
+def _stored_row_of(view_name: str, worker_id: str) -> dict[str, object]:
+    """Return the decoded row of the worker in the view, failing when the store holds no row for it."""
+    stored_row = _stored_row(view_name, worker_id)
+    assert stored_row is not None, (view_name, worker_id)
+    return stored_row
+
+
+class TestWriteSitesMarkWorkersDirty:
+    """A change outside a worker or user edit that feeds a worker's row shows on the next run of the worker list job."""
+
+    def test_new_and_deleted_messages_show_in_the_owner_row(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+    ) -> None:
+        """A message sent to a worker appears in the owner row, and disappears once deleted."""
+        from horde.database.threads import store_worker_list
+
+        owner = make_api_user(trusted=True, kudos=100)
+        worker_id = _inactive_worker_with_rows(client, app, owner)
+        message_text = f"message {uuid.uuid4().hex[:8]}"
+
+        response = client.post(
+            "/api/v2/workers/messages",
+            json={"worker_id": worker_id, "message": message_text, "expiry": 12},
+            headers=_headers(owner.api_key),
+        )
+        assert response.status_code == 200, response.get_data(as_text=True)
+        message_id = response.get_json()["id"]
+        store_worker_list()
+
+        owner_messages = _stored_row_of("owner", worker_id)["messages"]
+        assert isinstance(owner_messages, list)
+        assert [stored_message["message"] for stored_message in owner_messages] == [message_text]
+
+        response = client.delete(f"/api/v2/workers/messages/{message_id}", headers=_headers(owner.api_key))
+        assert response.status_code == 200, response.get_data(as_text=True)
+        store_worker_list()
+
+        assert _stored_row_of("owner", worker_id)["messages"] == []
+
+    def test_team_rename_and_deletion_show_in_the_member_row(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+    ) -> None:
+        """Renaming a team changes the name in its member's row, and deleting the team clears the team."""
+        from horde.database.threads import refresh_worker_rows_rolling, store_worker_list
+
+        owner = make_api_user(trusted=True, kudos=100)
+        response = client.post(
+            "/api/v2/teams",
+            json={"name": f"Row Store Team {uuid.uuid4().hex[:8]}"},
+            headers=_headers(owner.api_key),
+        )
+        assert response.status_code == 200, response.get_data(as_text=True)
+        team_id = response.get_json()["id"]
+        worker_id = _register_worker(client, app, owner)
+        response = client.put(f"/api/v2/workers/{worker_id}", json={"team": team_id}, headers=_headers(owner.api_key))
+        assert response.status_code == 200, response.get_data(as_text=True)
+        _make_inactive(app, worker_id)
+        refresh_worker_rows_rolling(chunk_size=LARGE_ROLLING_CHUNK)
+        new_team_name = f"Renamed Row Store Team {uuid.uuid4().hex[:8]}"
+
+        response = client.patch(f"/api/v2/teams/{team_id}", json={"name": new_team_name}, headers=_headers(owner.api_key))
+        assert response.status_code == 200, response.get_data(as_text=True)
+        store_worker_list()
+
+        assert _stored_row_of("public", worker_id)["team"] == {"id": team_id, "name": new_team_name}
+
+        response = client.delete(f"/api/v2/teams/{team_id}", headers=_headers(owner.api_key))
+        assert response.status_code == 200, response.get_data(as_text=True)
+        store_worker_list()
+
+        stored_team = _stored_row_of("public", worker_id).get("team")
+        assert not isinstance(stored_team, dict) or stored_team.get("id") is None, stored_team
+
+    def test_suspicion_reset_shows_in_the_moderator_row(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+    ) -> None:
+        """Clearing a worker's suspicions sets ``suspicious`` back to zero in the moderator row."""
+        from horde.database.functions import find_worker_by_id
+        from horde.database.threads import refresh_worker_rows_rolling, store_worker_list
+        from horde.suspicions import Suspicions
+
+        owner = make_api_user(trusted=True, kudos=100)
+        worker_id = _register_worker(client, app, owner)
+        _make_inactive(app, worker_id)
+        with app.app_context():
+            find_worker_by_id(worker_id).report_suspicion(reason=Suspicions.WORKER_PROFANITY, formats=["a profane name"])
+        refresh_worker_rows_rolling(chunk_size=LARGE_ROLLING_CHUNK)
+        assert _stored_row_of("moderator", worker_id)["suspicious"] == 1
+
+        with app.app_context():
+            find_worker_by_id(worker_id).reset_suspicion()
+        store_worker_list()
+
+        assert _stored_row_of("moderator", worker_id)["suspicious"] == 0
+
+    def test_flagging_the_owner_outside_the_user_edit_shows_in_the_row(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+    ) -> None:
+        """``User.set_flagged`` marks the owner's workers, whatever calls it."""
+        from horde.database.functions import find_user_by_id
+        from horde.database.threads import store_worker_list
+
+        owner = make_api_user(trusted=True, kudos=100)
+        worker_id = _inactive_worker_with_rows(client, app, owner)
+        assert _stored_row_of("public", worker_id)["flagged"] is False
+
+        with app.app_context():
+            find_user_by_id(owner.id).set_flagged(True)
+        store_worker_list()
+
+        assert _stored_row_of("public", worker_id)["flagged"] is True
+
+    def test_trust_promotion_by_the_kudos_applier_shows_in_the_row(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A user promoted to trusted by the applier has ``trusted: true`` in the rows of their workers."""
+        from horde.classes.base.user import User
+        from horde.database.kudos_ledger import apply_pending_kudos
+        from horde.database.threads import store_worker_list
+        from horde.flask import db
+
+        owner = make_api_user(kudos=100)
+        worker_id = _inactive_worker_with_rows(client, app, owner, WorkerKind.IMAGE)
+        assert _stored_row_of("public", worker_id)["trusted"] is False
+        monkeypatch.setenv("KUDOS_TRUST_THRESHOLD", str(PROMOTION_THRESHOLD))
+        with app.app_context():
+            db.session.query(User).filter(User.id == owner.id).update(
+                {
+                    User.evaluating_kudos: PROMOTION_THRESHOLD * 2,
+                    User.created: datetime.utcnow() - User.PROMOTION_MIN_ACCOUNT_AGE - timedelta(days=1),
+                },
+            )
+            db.session.commit()
+            apply_pending_kudos()
+
+        store_worker_list()
+
+        assert _stored_row_of("public", worker_id)["trusted"] is True
+
+    def test_applied_worker_kudos_show_in_kudos_rewards_with_one_mark_per_batch(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+        settle_kudos: Callable[[], int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One applier batch folding two workers' kudos marks both workers with a single call."""
+        import horde.database.kudos_ledger as kudos_ledger
+        from horde.database.functions import find_worker_by_id
+        from horde.database.threads import store_worker_list
+        from horde.worker_rows import mark_worker_rows_dirty
+
+        owner = make_api_user(trusted=True, kudos=100)
+        worker_ids = [_inactive_worker_with_rows(client, app, owner) for _ in range(2)]
+        settle_kudos()
+        kudos_before: dict[str, float] = {}
+        for worker_id in worker_ids:
+            stored_kudos = _stored_row_of("public", worker_id)["kudos_rewards"]
+            assert isinstance(stored_kudos, int | float)
+            kudos_before[worker_id] = stored_kudos
+        with app.app_context():
+            for worker_id in worker_ids:
+                find_worker_by_id(worker_id).modify_kudos(WORKER_KUDOS_AWARD, "generated")
+        marked_batches: list[set[str]] = []
+
+        def _record_mark(marked_worker_ids: set[str]) -> None:
+            marked_batches.append(set(marked_worker_ids))
+            mark_worker_rows_dirty(marked_worker_ids)
+
+        monkeypatch.setattr(kudos_ledger, "mark_worker_rows_dirty", _record_mark)
+
+        with app.app_context():
+            kudos_ledger.apply_pending_kudos()
+        store_worker_list()
+
+        assert len(marked_batches) == 1
+        assert set(worker_ids) <= marked_batches[0]
+        for worker_id in worker_ids:
+            assert _stored_row_of("public", worker_id)["kudos_rewards"] == kudos_before[worker_id] + WORKER_KUDOS_AWARD
 
 
 class TestActiveTier:

@@ -46,6 +46,7 @@ from horde.patreon import patrons
 from horde.stripe_subs import stripe_subs
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import generate_api_key, generate_client_id, get_db_uuid, is_profane, sanitize_string
+from horde.worker_rows import mark_worker_rows_dirty
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -794,6 +795,11 @@ class User(db.Model):
         if self.is_anon():
             return
         self.set_user_role(UserRoleTypes.FLAGGED, is_flagged)
+        # A module-level import would be circular: horde.database.functions imports this module.
+        from horde.database.functions import get_worker_ids_of_user
+
+        # set_user_role has committed the role, and each worker's row shows whether its owner is flagged.
+        mark_worker_rows_dirty(get_worker_ids_of_user(self.id))
 
     def set_moderator(self, is_moderator):
         if self.is_anon():

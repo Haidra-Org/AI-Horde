@@ -37,6 +37,7 @@ from horde.vars import (
     horde_url,
     img_url,
 )
+from horde.worker_rows import mark_worker_rows_dirty
 
 routes_bp = Blueprint("routes", __name__)
 
@@ -377,6 +378,8 @@ def register():
             user.username = username
             user.api_key = hashed_api_key
             db.session.commit()
+            # Each worker's row shows its owner's alias, which includes the username.
+            mark_worker_rows_dirty(database.get_worker_ids_of_user(user.id))
         else:
             # Triggered when the user created a username without logging in
             if is_profane(request.form["username"]):
@@ -484,6 +487,8 @@ def create_test_user_for_local_testing():
         user.kudos = kudos
         db.session.commit()
     user.refresh_cache()
+    # Each worker's row shows its owner's alias and trust, both set above.
+    mark_worker_rows_dirty(database.get_worker_ids_of_user(user.id))
 
     return (
         {

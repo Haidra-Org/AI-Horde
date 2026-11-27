@@ -14,6 +14,7 @@ from horde.classes.base.worker import Worker
 from horde.flask import SQLITE_MODE, db
 from horde.logger import logger
 from horde.utils import get_db_uuid, is_profane, sanitize_string
+from horde.worker_rows import mark_worker_rows_dirty
 
 uuid_column_type = lambda: UUID(as_uuid=True) if not SQLITE_MODE else db.String(36)  # FIXME # noqa E731
 
@@ -84,6 +85,8 @@ class Team(db.Model):
         if existing_team and existing_team != self:
             return "Already Exists"
         db.session.commit()
+        # Each member worker's row shows the team name.
+        mark_worker_rows_dirty([str(worker.id) for worker in self.workers])
         return "OK"
 
     def set_info(self, new_info):
@@ -100,10 +103,13 @@ class Team(db.Model):
         db.session.commit()
 
     def delete(self):
+        # Each member worker's row shows the team, so the members are collected while the team still exists.
+        member_worker_ids = [str(worker.id) for worker in self.workers]
         db.session.delete(self)
         for worker in self.workers:
             worker.set_team(None)
         db.session.commit()
+        mark_worker_rows_dirty(member_worker_ids)
 
     def record_uptime(self, seconds: int | float, commit: bool = True) -> None:
         self.uptime += seconds

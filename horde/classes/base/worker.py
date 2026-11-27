@@ -34,7 +34,7 @@ from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import get_db_uuid, get_message_expiry_date, is_profane, sanitize_string
-from horde.worker_rows import remove_worker_rows
+from horde.worker_rows import mark_worker_rows_dirty, remove_worker_rows
 
 if TYPE_CHECKING:
     from horde.classes.base.user import User
@@ -633,6 +633,8 @@ class WorkerTemplate(db.Model):
         """Clears the worker's suspicion and resets their reasons"""
         db.session.query(WorkerSuspicions).filter_by(worker_id=self.id).delete()
         db.session.commit()
+        # The moderator row shows the suspicion count.
+        mark_worker_rows_dirty([str(self.id)])
 
     def get_suspicion(self):
         return len(self.suspicions)

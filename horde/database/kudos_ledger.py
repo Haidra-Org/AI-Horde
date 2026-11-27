@@ -72,6 +72,7 @@ from horde.metrics import (
     kudos_floor_adjustments,
     kudos_floor_adjustments_created,
 )
+from horde.worker_rows import mark_worker_rows_dirty
 
 type _MaterializedKudosAmount = int | Decimal
 
@@ -433,9 +434,10 @@ def apply_pending_kudos(
     # which keeps scan-only invocations working.
     claims_settled = batch_size == 0 or (len(rows) < batch_size and claimed_stat_count < batch_size)
     drained = 0
+    promoted_worker_ids: list[str] = []
     if claims_settled and get_kudos_ledger_mode() == KudosLedgerMode.LEDGER:
         phase_t = time.monotonic()
-        _promote_eligible_users(now)
+        promoted_worker_ids = _promote_eligible_users(now)
         drained = _drain_trusted_escrow()
         kudos_applier_phase_duration.record(time.monotonic() - phase_t, {"horde.kudos.phase": "settle_scans"})
     # Folding workers and teams last minimizes the wall time this transaction
@@ -452,6 +454,16 @@ def apply_pending_kudos(
     state.applied_at = now
     if commit:
         db.session.commit()
+        # A worker's details row shows the folded kudos_rewards, kudos_details, requests_fulfilled and, for an image
+        # worker, megapixelsteps_generated, and its owner's trust and its pause, both set by a promotion. One call
+        # marks the whole batch, so the Redis writes do not grow with the number of events. A fold without a commit
+        # (the final tail of a switch to shadow mode) marks nothing, and the rolling pass rewrites those workers.
+        mark_worker_rows_dirty(
+            {str(worker_id) for worker_id in worker_deltas}
+            | {str(worker_id) for worker_id in worker_contribution_deltas}
+            | {str(worker_id) for worker_id in worker_fulfilment_deltas}
+            | set(promoted_worker_ids),
+        )
         # Success counters must follow the commit. Recording them before the
         # projection transaction commits makes a poison row look like useful
         # throughput every time the same batch rolls back and retries.
@@ -570,16 +582,19 @@ def _drain_trusted_escrow() -> int:
     return emitted
 
 
-def _promote_eligible_users(now: datetime) -> None:
+def _promote_eligible_users(now: datetime) -> list[str]:
     """Promote every mature user whose newly projected escrow crossed threshold.
 
     Promotion belongs to the projector because request transactions cannot see
     their own still-unprojected escrow credit.  This guarantees that the final
     qualifying contribution promotes the user even if they never submit again.
+
+    Returns:
+        The IDs of the workers of the promoted users, whose details rows show the new trust.
     """
     threshold = get_kudos_trust_threshold()
     if threshold is None:
-        return
+        return []
     trusted_role_exists = (
         db.session.query(UserRole.id)
         .filter(
@@ -622,6 +637,7 @@ def _promote_eligible_users(now: datetime) -> None:
         .all()
     )
     promoted_user_ids: list[int] = []
+    promoted_worker_ids: list[str] = []
     for user in candidates:
         role = db.session.query(UserRole).filter_by(user_id=user.id, user_role=UserRoleTypes.TRUSTED).first()
         if role is None:
@@ -631,6 +647,7 @@ def _promote_eligible_users(now: datetime) -> None:
             role.value = True
         for worker in cast(list[WorkerTemplate], user.workers):
             worker.paused = False
+            promoted_worker_ids.append(str(worker.id))
         # Per-user detail stays at debug: a promotion is durably auditable via
         # the EVALUATION_PROMOTION ledger pair the drain emits, and a promotion
         # wave (hundreds of users in one tick at cutover) must not stretch the
@@ -647,6 +664,7 @@ def _promote_eligible_users(now: datetime) -> None:
     # cannot remain stuck on the pre-promotion collection.
     for user in candidates:
         db.session.expire(user, ["roles"])
+    return promoted_worker_ids
 
 
 def _apply_user_deltas(
