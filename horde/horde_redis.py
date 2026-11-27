@@ -5,6 +5,7 @@
 import json
 import threading
 import time
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime, timedelta
 from threading import Lock
 
@@ -163,6 +164,102 @@ class HordeRedis:
                 logger.warning(f"Exception when deleting from redis servers {hr}: {err}")
         if self.horde_local_r:
             self.horde_local_r.delete(key)
+
+    def horde_r_hset_many(self, key: str, mapping: Mapping[str, bytes], expiry: timedelta) -> None:
+        """Write ``mapping`` into the hash at ``key`` on every server and refresh the whole hash's expiry.
+
+        The host-local redis is not written, because ``horde_r_get`` reads only plain keys from it.
+
+        Args:
+            key: The hash's key.
+            mapping: The fields to write and their values. Nothing is written when it is empty.
+            expiry: How long the whole hash stays after this write if no later write refreshes it.
+        """
+        if not mapping:
+            return
+        for hr in self._servers_primary_first():
+            try:
+                pipeline = hr.pipeline(transaction=False)
+                pipeline.hset(key, mapping=mapping)
+                pipeline.expire(key, expiry)
+                pipeline.execute()
+            except Exception as err:
+                logger.warning(f"Exception when writing in redis servers {hr}: {err}")
+
+    def horde_r_hdel(self, key: str, fields: Collection[str]) -> None:
+        """Remove ``fields`` from the hash at ``key`` on every server. Nothing is sent when ``fields`` is empty."""
+        if not fields:
+            return
+        for hr in self._servers_primary_first():
+            try:
+                hr.hdel(key, *fields)
+            except Exception as err:
+                logger.warning(f"Exception when deleting from redis servers {hr}: {err}")
+
+    def horde_r_hmget(self, key: str, fields: Sequence[str]) -> list[str | bytes | None]:
+        """Return the values of ``fields`` in the hash at ``key`` on the primary, in the order of ``fields``.
+
+        A field missing from the hash, or every field when the primary is unavailable, returns None.
+        """
+        if not fields:
+            return []
+        if self.horde_r is None:
+            return [None] * len(fields)
+        return self.horde_r.hmget(key, list(fields))
+
+    def horde_r_sadd(self, key: str, members: Collection[str]) -> None:
+        """Add ``members`` to the set at ``key`` on every server. Nothing is sent when ``members`` is empty."""
+        if not members:
+            return
+        for hr in self._servers_primary_first():
+            try:
+                hr.sadd(key, *members)
+            except Exception as err:
+                logger.warning(f"Exception when writing in redis servers {hr}: {err}")
+
+    def horde_r_srem(self, key: str, members: Collection[str]) -> None:
+        """Remove ``members`` from the set at ``key`` on every server. Nothing is sent when ``members`` is empty."""
+        if not members:
+            return
+        for hr in self._servers_primary_first():
+            try:
+                hr.srem(key, *members)
+            except Exception as err:
+                logger.warning(f"Exception when deleting from redis servers {hr}: {err}")
+
+    def horde_r_replace_set(self, key: str, members: Collection[str], expiry: timedelta) -> None:
+        """Replace the set at ``key`` with ``members`` on every server, with an expiry on the whole set.
+
+        An empty ``members`` leaves no set at ``key``, which reads back as an empty set.
+        """
+        for hr in self._servers_primary_first():
+            try:
+                pipeline = hr.pipeline(transaction=True)
+                pipeline.delete(key)
+                if members:
+                    pipeline.sadd(key, *members)
+                    pipeline.expire(key, expiry)
+                pipeline.execute()
+            except Exception as err:
+                logger.warning(f"Exception when writing in redis servers {hr}: {err}")
+
+    def horde_r_srandmember(self, key: str, count: int) -> list[str | bytes]:
+        """Return up to ``count`` distinct members of the set at ``key`` on the primary, or none without a primary."""
+        if self.horde_r is None:
+            return []
+        return self.horde_r.srandmember(key, count)
+
+    def horde_r_smembers(self, key: str) -> set[str | bytes]:
+        """Return every member of the set at ``key`` on the primary, or none without a primary."""
+        if self.horde_r is None:
+            return set()
+        return self.horde_r.smembers(key)
+
+    def horde_r_hkeys(self, key: str) -> list[str | bytes]:
+        """Return every field of the hash at ``key`` on the primary, or none without a primary."""
+        if self.horde_r is None:
+            return []
+        return self.horde_r.hkeys(key)
 
 
 horde_redis = HordeRedis()

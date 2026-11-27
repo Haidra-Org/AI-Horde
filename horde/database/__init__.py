@@ -31,12 +31,23 @@ def start_background_threads():
     from horde.database.classes import CachedPasskeys, Quorum
     from horde.logger import logger
     from horde.threads import PrimaryTimedFunction
+    from horde.worker_rows import WORKER_ROWS_ROLLING_INTERVAL_SECONDS
 
     quorum = Quorum(1, threads.get_quorum)
     PrimaryTimedFunction(1, threads.store_prioritized_wp_queue, quorum=quorum)
     # /v2/workers is served straight from this cache and workers change their advertised models/parameters often,
     # so keep the snapshot near-realtime. The job is a few set-based queries (see threads.store_worker_list).
     PrimaryTimedFunction(2, threads.store_worker_list, quorum=quorum)
+    # Rewrites a bounded chunk of every registered worker's stored details rows, so rows of workers that changed
+    # without being marked dirty are refreshed once per pass (see horde.worker_rows).
+    PrimaryTimedFunction(WORKER_ROWS_ROLLING_INTERVAL_SECONDS, threads.refresh_worker_rows_rolling, quorum=quorum)
+    # Copies the columns that order and filter the paged worker list into worker_list_entries, whose indexes serve
+    # the page query, and reconciles the row store with the registered workers (see threads.refresh_worker_list_entries).
+    PrimaryTimedFunction(
+        threads.WORKER_LIST_ENTRIES_REFRESH_INTERVAL_SECONDS,
+        threads.refresh_worker_list_entries,
+        quorum=quorum,
+    )
     PrimaryTimedFunction(20, threads.store_worker_performances, quorum=quorum)
     PrimaryTimedFunction(10, threads.store_available_models, quorum=quorum)
     if not args.check_prompts:

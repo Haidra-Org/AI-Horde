@@ -104,6 +104,7 @@ from horde.suspicions import Suspicions
 from horde.telemetry import pyroscope_tag
 from horde.utils import datetime_parser, hash_api_key, hash_dictionary, is_profane, sanitize_string
 from horde.vars import horde_contact_email, horde_repository, horde_title, horde_url
+from horde.worker_rows import mark_worker_rows_dirty
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
@@ -2182,6 +2183,7 @@ class WorkerSingle(WorkerSingleBase):
                 ret_dict["team"] = team.name
         if not len(ret_dict):
             raise e.NoValidActions("No worker modification selected!", rc="NoWorkerModSelected")
+        mark_worker_rows_dirty([str(worker.id)])
         return (ret_dict, 200)
 
     delete_parser = reqparse.RequestParser()
@@ -2653,6 +2655,9 @@ class UserSingle(Resource):
         if not len(ret_dict):
             raise e.NoValidActions("No usermod operations selected!", rc="NoUserModSelected")
         user.refresh_cache()
+        # Several user fields appear in each worker's details row (trusted, flagged, owner alias, contact, public
+        # workers), so every worker of the user is rewritten.
+        mark_worker_rows_dirty(database.get_worker_ids_of_user(user.id))
         return (ret_dict, 200)
 
     delete_parser = reqparse.RequestParser()

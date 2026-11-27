@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Self
 
 import logfire
 from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField
-from sqlalchemy import JSON, ScalarSelect, func, select, type_coerce
+from sqlalchemy import JSON, ScalarSelect, column, func, select, type_coerce
 from sqlalchemy.dialects.postgresql import UUID, aggregate_order_by, array_agg
 from sqlalchemy.orm import InstrumentedAttribute, Mapped, query_expression, relationship
 
@@ -34,6 +34,7 @@ from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.suspicions import SUSPICION_LOGS, Suspicions
 from horde.utils import get_db_uuid, get_message_expiry_date, is_profane, sanitize_string
+from horde.worker_rows import remove_worker_rows
 
 if TYPE_CHECKING:
     from horde.classes.base.user import User
@@ -174,6 +175,73 @@ class WorkerModel(db.Model):
     )
     worker = db.relationship("Worker", back_populates="models")
     model = db.Column(db.String(255))  # TODO model should be a foreign key to a model table
+
+
+LOWER_WORKER_NAME_CHARACTERS: int = 2 * MAX_WORKER_NAME_CHARACTERS
+"""The longest lower-cased worker name ``worker_list_entries`` stores.
+
+``str.lower()`` maps one character, U+0130, to two, so a lower-cased name can be up to twice as long as the name.
+"""
+
+
+class WorkerListEntry(db.Model):
+    """Represents the columns of one registered worker that order and filter the paged worker list.
+
+    The refresh job on the quorum node copies them from ``workers`` about once a minute and writes only the entries
+    that changed (see ``horde.database.functions.sync_worker_list_entries``). Every check-in updates the counters on
+    ``workers``, and an index on those columns there would turn each of those updates into a non-HOT update that
+    rewrites every index of the row. The indexes live on this table instead.
+    """
+
+    __tablename__ = "worker_list_entries"
+    __table_args__ = (
+        # Each sort index ends with worker_id, the tie-breaker of every order. A page in that order is then a range
+        # scan of the index that starts at the cursor and stops after the limit, whatever the number of workers.
+        # Pages in uptime order: ORDER BY uptime DESC, worker_id.
+        db.Index("ix_worker_list_entries_uptime", column("uptime").desc(), "worker_id"),
+        # Pages in fulfilled requests order: ORDER BY fulfilments DESC, worker_id.
+        db.Index("ix_worker_list_entries_fulfilments", column("fulfilments").desc(), "worker_id"),
+        # Pages in kudos order: ORDER BY kudos DESC, worker_id.
+        db.Index("ix_worker_list_entries_kudos", column("kudos").desc(), "worker_id"),
+        # Pages in name order: ORDER BY lower_name, worker_id.
+        db.Index("ix_worker_list_entries_lower_name", "lower_name", "worker_id"),
+        # The owner filter and an owner's list of their own workers: WHERE user_id = :account.
+        db.Index("ix_worker_list_entries_user_id", "user_id"),
+        # The team filter: WHERE team_id = :team.
+        db.Index("ix_worker_list_entries_team_id", "team_id"),
+    )
+
+    worker_id: Mapped[uuid.UUID | str] = db.Column(
+        uuid_column_type(),
+        db.ForeignKey("workers.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    """The worker's ID. Deleting the worker deletes its entry."""
+    worker_type: Mapped[str] = db.Column(db.String(30), nullable=False)
+    """The worker's polymorphic identity, the value of ``workers.worker_type``."""
+    user_id: Mapped[int | None] = db.Column(db.Integer)
+    """The owner's account ID.
+
+    It is not a foreign key, so deleting an account is not blocked by this copy. The worker's own foreign key deletes
+    the worker, and with it the entry.
+    """
+    team_id: Mapped[uuid.UUID | str | None] = db.Column(uuid_column_type())
+    """The team's ID, or None for a worker without a team.
+
+    It is not a foreign key, so deleting a team is not blocked by this copy. The next refresh clears it.
+    """
+    lower_name: Mapped[str] = db.Column(db.String(LOWER_WORKER_NAME_CHARACTERS), nullable=False)
+    """The worker's name lower-cased with ``str.lower()``.
+
+    The page query lower-cases its search text with the same function, so a name search matches the same names on
+    every database. A database ``lower()`` depends on the dialect and its locale.
+    """
+    uptime: Mapped[int] = db.Column(db.BigInteger, nullable=False)
+    """The value of ``workers.uptime``."""
+    fulfilments: Mapped[int] = db.Column(db.Integer, nullable=False)
+    """The value of ``workers.fulfilments``."""
+    kudos: Mapped[int] = db.Column(db.BigInteger, nullable=False)
+    """The value of ``workers.kudos``."""
 
 
 @dataclass(frozen=True)
@@ -885,6 +953,9 @@ class WorkerTemplate(db.Model):
             db.session.delete(suspicion)
         db.session.delete(self)
         db.session.commit()
+        # Every deletion of a worker of any type ends here, including a user wipe, so the stored rows cannot outlive
+        # the worker.
+        remove_worker_rows([str(self.id)])
 
     def get_kudos_details(self) -> dict[str, int]:
         """Return the per-action kudos totals of this worker, keyed by ``WorkerStats.action``.

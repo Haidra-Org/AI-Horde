@@ -2,12 +2,13 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+import itertools
 import json
 import os
 import time
 import urllib.parse
 import uuid
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -15,9 +16,12 @@ from typing import Any
 
 import logfire
 from horde_sdk.generation_parameters.text.chat_policy import ChatLimitField, ChatServiceGapKind
-from sqlalchemy import Boolean, ColumnElement, and_, case, func, not_, null, or_, select
-from sqlalchemy.orm import contains_eager, joinedload, noload, selectinload, subqueryload, with_expression
+from sqlalchemy import Boolean, ColumnElement, and_, case, delete, func, not_, null, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import aliased, contains_eager, joinedload, noload, selectinload, subqueryload, with_expression
 from sqlalchemy.orm.attributes import set_committed_value
+from sqlalchemy.orm.util import AliasedClass
 
 import horde.classes.base.stats as stats
 from horde import vars as hv
@@ -36,6 +40,7 @@ from horde.classes.base.worker import (
     StoredWorkerDeclaration,
     Worker,
     WorkerEligibilityInputs,
+    WorkerListEntry,
     WorkerMessage,
     WorkerModel,
     WorkerPerformance,
@@ -90,6 +95,8 @@ from horde.request_scheduling import (
     get_request_assignment_pressure,
 )
 from horde.utils import hash_api_key, validate_regex
+from horde.worker_pages import WorkerListSort, WorkerPageCursor, WorkerPageFilters
+from horde.worker_rows import WorkerListView
 
 ALLOW_ANONYMOUS = True
 type KudosTransferResult = list[int | float | str | bool | None]
@@ -373,21 +380,36 @@ def get_highest_text_worker_limits(
 
 
 def get_active_workers_for_details() -> list[WorkerTemplate]:
-    """Return every active worker with everything ``get_details()`` reads already loaded.
+    """Return every active worker, with every relationship read by ``get_details()`` already loaded.
 
-    Use this instead of ``get_active_workers()`` whenever the result is serialized in bulk (the worker list cache,
-    the ``/v2/workers`` fallback). ``get_details(2)`` reads the owner, the owner's roles, the team, messages, kudos
-    stats and the advertised models (or forms, annotation types and performance records for interrogation
-    workers). Loaded lazily, that is one SELECT per relationship per worker, each a database round-trip. Loaded with
-    ``selectinload`` it is one SELECT per relationship per worker type regardless of how many workers are active.
+    Use this instead of ``get_active_workers()`` whenever the result is serialized in bulk, as in the worker list
+    snapshot and its fallback.
+    """
+    cutoff = datetime.utcnow() - timedelta(seconds=300)
+    return _query_workers_for_details(lambda worker_class: worker_class.last_check_in > cutoff)
+
+
+_LISTED_WORKER_CLASSES: tuple[type[WorkerTemplate], ...] = (ImageWorker, TextWorker, InterrogationWorker)
+"""The worker classes included in the worker lists. Their rows share the ``workers`` table."""
+
+
+def _query_workers_for_details(criterion: Callable[[type[WorkerTemplate]], Any]) -> list[WorkerTemplate]:
+    """Return the workers of every type that match ``criterion``, with their relationships loaded in bulk.
+
+    ``get_details(2)`` reads the owner, the owner's roles, the team, messages, kudos stats and the advertised models,
+    or the forms, annotation types and performance records of an interrogation worker. A lazy load would run one
+    SELECT for each relationship of each worker. With ``selectinload``, the number of SELECT statements depends only
+    on the number of relationships and worker types.
 
     The moderator view also reports the number of suspicion rows of each worker. The query fills
     ``suspicion_count`` with a correlated count instead of loading the rows, because one worker can hold tens of
     thousands of them and building that many ORM objects costs far more than the count.
+
+    Args:
+        criterion: A function that returns the filter expression for one worker class.
     """
-    cutoff = datetime.utcnow() - timedelta(seconds=300)
-    active_workers: list[WorkerTemplate] = []
-    for worker_class in (ImageWorker, TextWorker, InterrogationWorker):
+    matching_workers: list[WorkerTemplate] = []
+    for worker_class in _LISTED_WORKER_CLASSES:
         # The subquery runs once per selected worker and counts its rows through ix_worker_suspicions_worker_id.
         # It correlates to the outer query's workers row, so a worker with three suspicion rows gets
         # suspicion_count 3 and a worker without any gets 0 (count over no rows), never None.
@@ -409,13 +431,384 @@ def get_active_workers_for_details() -> list[WorkerTemplate]:
             ]
         else:
             type_specific_relationship_loads = [selectinload(worker_class.models)]
-        active_workers += (
+        matching_workers += (
             db.session.query(worker_class)
-            .filter(worker_class.last_check_in > cutoff)
+            .filter(criterion(worker_class))
             .options(*shared_loads, *type_specific_relationship_loads)
             .all()
         )
-    return active_workers
+    return matching_workers
+
+
+def _worker_id_column_value(worker_id: str) -> uuid.UUID | str:
+    """Convert a worker ID string to the value compared with ``workers.id``.
+
+    Postgres stores the ID as a UUID and SQLite as its 36-character text form.
+
+    Raises:
+        ValueError: ``worker_id`` is not a UUID.
+    """
+    worker_uuid = uuid.UUID(worker_id)
+    if SQLITE_MODE:
+        return str(worker_uuid)
+    return worker_uuid
+
+
+def _worker_id_column_values(worker_ids: Iterable[str]) -> list[uuid.UUID | str]:
+    """Return ``worker_ids`` in the form of the ``workers.id`` column, leaving out every ID that is not a UUID."""
+    id_values: list[uuid.UUID | str] = []
+    for worker_id in worker_ids:
+        try:
+            id_values.append(_worker_id_column_value(worker_id))
+        except ValueError:
+            logger.debug(f"Non-UUID worker_id skipped: '{worker_id}'.")
+    return id_values
+
+
+def get_workers_for_details_by_ids(worker_ids: Iterable[str]) -> list[WorkerTemplate]:
+    """Return the workers with the given IDs, with every relationship read by ``get_details()`` already loaded.
+
+    An ID that is not a UUID or does not belong to any worker is left out of the result.
+
+    Args:
+        worker_ids: Worker IDs in their string form.
+    """
+    id_values = _worker_id_column_values(worker_ids)
+    if not id_values:
+        return []
+    return _query_workers_for_details(lambda worker_class: worker_class.id.in_(id_values))
+
+
+def get_worker_ids_after(after_worker_id: str | None, limit: int) -> list[str]:
+    """Return up to ``limit`` worker IDs in ascending order, starting after ``after_worker_id``.
+
+    Args:
+        after_worker_id: The last ID of the previous chunk, or None to start from the lowest ID.
+        limit: The largest number of IDs returned.
+
+    Example:
+        With workers ``1a..``, ``5c..``, ``9e..`` and ``d0..``, ``get_worker_ids_after("5c..", 2)`` returns
+        ``["9e..", "d0.."]``, and ``get_worker_ids_after("d0..", 2)`` returns ``[]``.
+    """
+    # Every row of the workers table, whatever its worker type, so one ordered walk covers the image, text and
+    # interrogation workers together.
+    query = db.session.query(WorkerTemplate.id)
+    if after_worker_id is not None:
+        # Strictly greater, so the last worker of the previous chunk is not refreshed twice. The primary key index
+        # serves both this range and the ordering below.
+        query = query.filter(WorkerTemplate.id > _worker_id_column_value(after_worker_id))
+    # Ascending ID order is total and stable while workers are added or removed, so a walk that resumes after any
+    # ID reaches every worker that exists for the whole walk.
+    worker_id_rows = query.order_by(WorkerTemplate.id).limit(limit).all()
+    return [str(worker_id) for (worker_id,) in worker_id_rows]
+
+
+def get_worker_ids_of_user(user_id: int) -> list[str]:
+    """Return the IDs of every worker owned by the user, of every worker type."""
+    worker_id_rows = db.session.query(WorkerTemplate.id).filter(WorkerTemplate.user_id == user_id).all()
+    return [str(worker_id) for (worker_id,) in worker_id_rows]
+
+
+WORKER_LIST_ENTRIES_WRITE_CHUNK: int = 1000
+"""The most entries written or deleted by one statement of ``sync_worker_list_entries``.
+
+An upsert binds eight values per entry, so a chunk binds 8,000, well under the 32,766 bound variables that SQLite
+accepts in one statement. On the first refresh after the table is created every entry is new, and the chunk keeps
+each statement near a few hundred kilobytes.
+"""
+
+_WORKER_LIST_ENTRY_COPIED_COLUMNS: tuple[str, ...] = (
+    "worker_type",
+    "user_id",
+    "team_id",
+    "lower_name",
+    "uptime",
+    "fulfilments",
+    "kudos",
+)
+"""The columns of ``worker_list_entries`` that a refresh copies from ``workers``, in the order of the compared values."""
+
+
+def sync_worker_list_entries() -> set[str]:
+    """Bring ``worker_list_entries`` in line with the registered workers of a listed type and return their IDs.
+
+    Two statements read the narrow columns of every listed worker and every current entry. The comparison runs in
+    Python, so an unchanged worker costs no write. New and changed entries are then written with an upsert, and the
+    entries whose worker is gone are deleted, in statements of at most ``WORKER_LIST_ENTRIES_WRITE_CHUNK`` entries. A
+    run in which nothing changed issues only the two reads and does not commit.
+
+    A worker deleted between the read and the upsert fails the upsert on its foreign key, and the whole run rolls
+    back. The next run no longer reads that worker and writes the rest.
+
+    Example:
+        With the workers A (uptime 900) and B, and the entries of A (uptime 600) and C, a run upserts the entries of A
+        with uptime 900 and of B, deletes the entry of C and returns the IDs of A and B. A second run without a change
+        reads both tables, writes nothing and returns the same IDs.
+    """
+    listed_identities = [worker_class.__mapper__.polymorphic_identity for worker_class in _LISTED_WORKER_CLASSES]
+    worker_rows = (
+        db.session.query(
+            WorkerTemplate.id,
+            WorkerTemplate.worker_type,
+            WorkerTemplate.user_id,
+            WorkerTemplate.team_id,
+            WorkerTemplate.name,
+            WorkerTemplate.uptime,
+            WorkerTemplate.fulfilments,
+            WorkerTemplate.kudos,
+        )
+        # Only the worker types of the list. Rows of other polymorphic identities share the table but are not listed.
+        .filter(WorkerTemplate.worker_type.in_(listed_identities))
+        .all()
+    )
+    entry_rows = db.session.query(
+        WorkerListEntry.worker_id,
+        *(getattr(WorkerListEntry, column_name) for column_name in _WORKER_LIST_ENTRY_COPIED_COLUMNS),
+    ).all()
+    # The IDs and team IDs are compared as text, because Postgres returns them as UUIDs and SQLite as text.
+    stored_values_by_id = {
+        str(worker_id): (worker_type, user_id, _optional_text(team_id), lower_name, uptime, fulfilments, kudos)
+        for worker_id, worker_type, user_id, team_id, lower_name, uptime, fulfilments, kudos in entry_rows
+    }
+    upserted_entries: list[dict[str, object]] = []
+    for worker_id, worker_type, user_id, team_id, name, uptime, fulfilments, kudos in worker_rows:
+        current_values = (worker_type, user_id, _optional_text(team_id), name.lower(), uptime, fulfilments, kudos)
+        if stored_values_by_id.get(str(worker_id)) == current_values:
+            continue
+        upserted_entries.append(
+            {
+                **dict(zip(_WORKER_LIST_ENTRY_COPIED_COLUMNS, current_values, strict=True)),
+                # The IDs are written as read, in the form each dialect stores, not as the compared text.
+                "worker_id": worker_id,
+                "team_id": team_id,
+            },
+        )
+    registered_worker_ids = {str(worker_id) for worker_id, *_ in worker_rows}
+    departed_worker_ids = [worker_id for worker_id, *_ in entry_rows if str(worker_id) not in registered_worker_ids]
+    entry_table = WorkerListEntry.__table__
+    insert = sqlite_insert(entry_table) if SQLITE_MODE else postgresql_insert(entry_table)
+    for upserted_chunk in itertools.batched(upserted_entries, WORKER_LIST_ENTRIES_WRITE_CHUNK):
+        upsert = insert.values(list(upserted_chunk))
+        # An existing entry takes every copied value of its worker. A new entry is inserted as it is.
+        upsert = upsert.on_conflict_do_update(
+            index_elements=[entry_table.c.worker_id],
+            set_={column_name: upsert.excluded[column_name] for column_name in _WORKER_LIST_ENTRY_COPIED_COLUMNS},
+        )
+        db.session.execute(upsert)
+    for departed_chunk in itertools.batched(departed_worker_ids, WORKER_LIST_ENTRIES_WRITE_CHUNK):
+        # The foreign key deletes the entry of a deleted worker on Postgres. SQLite enforces foreign keys only when
+        # they are switched on, so the entries are deleted here as well.
+        db.session.execute(delete(WorkerListEntry).where(WorkerListEntry.worker_id.in_(departed_chunk)))
+    if upserted_entries or departed_worker_ids:
+        db.session.commit()
+    return registered_worker_ids
+
+
+def _optional_text(column_value: object) -> str | None:
+    """Return ``column_value`` as text, or None for NULL."""
+    if column_value is None:
+        return None
+    return str(column_value)
+
+
+@dataclass(frozen=True)
+class RegisteredWorkerPage:
+    """Represents the worker IDs of one page of registered workers, read from ``worker_list_entries``."""
+
+    worker_ids: list[str]
+    """The page's worker IDs in the requested order."""
+    next_cursor: WorkerPageCursor | None
+    """The position after the page's last worker, or None on the last page."""
+    total: int
+    """How many registered workers pass the filters, across all pages."""
+
+
+def page_registered_workers(
+    *,
+    filters: WorkerPageFilters,
+    sort: WorkerListSort,
+    limit: int,
+    after: WorkerPageCursor | None,
+    view: WorkerListView,
+    account_id: int | None = None,
+    active_worker_ids: Collection[str] | None = None,
+) -> RegisteredWorkerPage:
+    """Return the worker IDs of one page of registered workers, active or not, with a keyset query.
+
+    One statement reads at most ``limit + 1`` entries after ``after``, ordered by the sort column and then by worker
+    ID, and counts every entry that passes the filters in a scalar subquery. The extra entry shows whether another
+    page follows. The caller reads the rows of the returned IDs from the row store.
+
+    The entries are refreshed about once a minute (see ``sync_worker_list_entries``), so a new, renamed, moved or
+    deleted worker reaches its place in the list within that time.
+
+    Args:
+        filters: The filters in the request.
+        sort: The order of the page.
+        limit: The most worker IDs to return. The caller has already checked it against the limits.
+        after: The cursor of the previous page, or None for the first page.
+        view: The caller's view. In the public view, an owner filter matches only the workers of owners who made
+            their workers public.
+        account_id: Only workers of this account, for the owner's list. With None, the page includes the workers of
+            every account.
+        active_worker_ids: The IDs of the active workers, as ``read_active_worker_ids`` returns them. Only the online
+            filter reads them.
+
+    Raises:
+        ValueError: ``filters.online`` is set and ``active_worker_ids`` is None.
+    """
+    if filters.online is not None and active_worker_ids is None:
+        raise ValueError("the online filter needs the IDs of the active workers")
+    active_id_values = _worker_id_column_values(active_worker_ids or ())
+    if filters.online and not active_id_values:
+        # No worker is online, so no entry passes the filter and the database is not asked.
+        return RegisteredWorkerPage(worker_ids=[], next_cursor=None, total=0)
+    sort_column = _worker_sort_column(sort)
+    conditions = _registered_worker_conditions(WorkerListEntry, filters, view, account_id, active_id_values)
+    # The count reads its own alias of the table, so it is not correlated with the page rows. Postgres runs it once
+    # as an init plan. It does not depend on the cursor, so every page of a walk reports the size of the whole
+    # filtered list.
+    counted_entry = aliased(WorkerListEntry)
+    total_count = (
+        select(func.count())
+        .select_from(counted_entry)
+        .where(*_registered_worker_conditions(counted_entry, filters, view, account_id, active_id_values))
+        .scalar_subquery()
+    )
+    page_query = select(
+        WorkerListEntry.worker_id,
+        sort_column.label("sort_value"),
+        total_count.label("total"),
+    ).where(*conditions)
+    if after is not None:
+        page_query = page_query.where(_after_cursor_condition(sort_column, sort, after))
+    ordering = sort_column.desc() if sort.descending else sort_column.asc()
+    # The ID breaks ties, so no two workers share a position and a cursor points to exactly one of them. The order
+    # matches the sort index of ``worker_list_entries``, so the database reads the index from the cursor and stops
+    # after the limit instead of sorting every filtered entry. The row past the limit shows whether another page
+    # follows.
+    page_query = page_query.order_by(ordering, WorkerListEntry.worker_id.asc()).limit(limit + 1)
+    # Worked example: the entries A (uptime 900), B (uptime 300) and C (uptime 300) pass the filters, B's ID sorts
+    # before C's, and the limit is 1. The first page reads the rows (A, 900, 3) and (B, 300, 3), returns the IDs [A]
+    # with total 3, and the cursor holds (900, A) because B shows that another page follows. The page after (900, A)
+    # reads (B, 300, 3) and (C, 300, 3), returns [B], and the cursor holds (300, B). The page after (300, B) reads
+    # only (C, 300, 3), returns [C] and has no cursor. If C is deleted before that read, the page reads no rows, and
+    # the separate count below returns the total 2.
+    page_rows = db.session.execute(page_query).all()
+    if page_rows:
+        total = page_rows[0].total
+    elif after is None:
+        # Without a cursor, a page with no rows means that no worker passes the filters.
+        total = 0
+    else:
+        # A cursor past the end reads no rows and therefore no count. An issued cursor points past the end only when
+        # every worker after it was deleted or left the filters since the previous page, so the second statement is
+        # rare.
+        total = db.session.execute(select(func.count()).select_from(WorkerListEntry).where(*conditions)).scalar_one()
+    returned_rows = page_rows[:limit]
+    next_cursor = None
+    if len(page_rows) > limit:
+        last_row = returned_rows[-1]
+        next_cursor = WorkerPageCursor(sort=sort, sort_value=last_row.sort_value, worker_id=str(last_row.worker_id))
+    return RegisteredWorkerPage(
+        worker_ids=[str(row.worker_id) for row in returned_rows],
+        next_cursor=next_cursor,
+        total=total,
+    )
+
+
+def _worker_sort_column(sort: WorkerListSort) -> ColumnElement[Any]:
+    """Return the column of ``worker_list_entries`` that ``sort`` orders by."""
+    if sort is WorkerListSort.NAME:
+        return WorkerListEntry.lower_name
+    if sort is WorkerListSort.REQUESTS_FULFILLED:
+        return WorkerListEntry.fulfilments
+    if sort is WorkerListSort.KUDOS_REWARDS:
+        return WorkerListEntry.kudos
+    return WorkerListEntry.uptime
+
+
+def _after_cursor_condition(
+    sort_column: ColumnElement[Any],
+    sort: WorkerListSort,
+    after: WorkerPageCursor,
+) -> ColumnElement[bool]:
+    """Return the condition that keeps only the entries strictly after ``after`` in ``sort`` order.
+
+    Ties break by ascending ID in every order. A descending order therefore mixes directions, and a row-value
+    comparison such as ``(column, id) > (value, id)`` would not express it. The condition is written as
+    ``column <= value AND (column < value OR id > after_id)`` for a descending order, and mirrored for the ascending
+    one. The first part is a plain range on the sort column, which the database uses as the start of the index scan.
+    The OR alone does not bound the scan, so the database would read the index from its first entry and discard every
+    entry before the cursor.
+
+    Args:
+        sort_column: The column that ``sort`` orders by.
+        sort: The order of the page.
+        after: The cursor of the previous page.
+    """
+    after_id = _worker_id_column_value(after.worker_id)
+    if sort.descending:
+        return and_(
+            sort_column <= after.sort_value,
+            or_(sort_column < after.sort_value, WorkerListEntry.worker_id > after_id),
+        )
+    return and_(
+        sort_column >= after.sort_value,
+        or_(sort_column > after.sort_value, WorkerListEntry.worker_id > after_id),
+    )
+
+
+def _registered_worker_conditions(
+    entry: type[WorkerListEntry] | AliasedClass[WorkerListEntry],
+    filters: WorkerPageFilters,
+    view: WorkerListView,
+    account_id: int | None,
+    active_id_values: Sequence[uuid.UUID | str],
+) -> list[ColumnElement[bool]]:
+    """Return the conditions on ``entry`` for ``filters`` in ``view``.
+
+    Args:
+        entry: ``WorkerListEntry`` or an alias of it, which the conditions and their subqueries refer to.
+        filters: The filters in the request.
+        view: The caller's view.
+        account_id: Only workers of this account, or None for every account.
+        active_id_values: The IDs of the active workers in the form of the ID column.
+    """
+    identities_by_type = {worker_class.wtype: worker_class.__mapper__.polymorphic_identity for worker_class in _LISTED_WORKER_CLASSES}
+    conditions: list[ColumnElement[bool]] = []
+    if account_id is not None:
+        conditions.append(entry.user_id == account_id)
+    if filters.worker_type is not None:
+        conditions.append(entry.worker_type == identities_by_type[filters.worker_type])
+    if filters.team_id is not None:
+        team_id: uuid.UUID | str = uuid.UUID(filters.team_id)
+        conditions.append(entry.team_id == (str(team_id) if SQLITE_MODE else team_id))
+    if filters.owner_id is not None:
+        conditions.append(entry.user_id == filters.owner_id)
+        if view is WorkerListView.PUBLIC:
+            # The public view shows a worker's owner only when the owner made their workers public. Matching the
+            # workers of a private owner would reveal which workers are theirs, and the total alone how many, so the
+            # filter matches no worker of a private owner. The flag is read from users, so a change applies at once.
+            public_owner = select(User.id).where(User.id == entry.user_id, User.public_workers.is_(True))
+            conditions.append(public_owner.exists())
+    if filters.model is not None:
+        # The models stay on worker_models, which the worker's pop keeps current, so the filter needs no refresh.
+        advertised_model = select(WorkerModel.id).where(
+            WorkerModel.worker_id == entry.worker_id,
+            WorkerModel.model == filters.model,
+        )
+        conditions.append(advertised_model.exists())
+    if filters.name_contains is not None:
+        # Both sides are lower-cased with str.lower(). autoescape matches "%" and "_" in the text as plain
+        # characters, where a LIKE pattern would read them as wildcards.
+        conditions.append(entry.lower_name.contains(filters.name_contains.lower(), autoescape=True))
+    if filters.online is True:
+        conditions.append(entry.worker_id.in_(active_id_values))
+    elif filters.online is False and active_id_values:
+        # Without any active worker every worker is offline, and the condition is left out.
+        conditions.append(entry.worker_id.not_in(active_id_values))
+    return conditions
 
 
 def count_active_workers(worker_class="image"):

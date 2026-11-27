@@ -51,23 +51,37 @@ from horde.database.functions import (
     get_active_workers_for_details,
     get_all_users_passkeys,
     get_available_models,
+    get_worker_ids_after,
+    get_workers_for_details_by_ids,
     prune_expired_stats,
     query_prioritized_wp_model_names,
     query_prioritized_wps,
     refresh_worker_performances_cache,
     retrieve_regex_replacements,
+    sync_worker_list_entries,
 )
 from horde.database.kudos_reservations import release_reservations_for_business_ids
 from horde.enums import RequestTerminalOutcome, State
 from horde.flask import SQLITE_MODE, db, get_app
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
-from horde.metrics import request_outcomes, request_time_to_expiry
+from horde.metrics import WorkerRowsTier, request_outcomes, request_time_to_expiry
 from horde.patreon import patrons
 from horde.r2 import delete_source_image
 from horde.request_scheduling import record_request_expiry_forecast
 from horde.stripe_subs import stripe_subs
 from horde.vars import horde_instance_id
+from horde.worker_rows import (
+    WORKER_ROWS_DIRTY_CHUNK_SIZE,
+    WORKER_ROWS_ROLLING_CHUNK_SIZE,
+    advance_rolling_position,
+    mark_departed_active_workers,
+    read_rolling_position,
+    reconcile_worker_rows,
+    remove_worker_rows,
+    store_worker_rows,
+    take_dirty_worker_ids,
+)
 
 if TYPE_CHECKING:
     from horde.kudos_archive import ArchiveTier, KudosArchive
@@ -190,6 +204,10 @@ def store_worker_list():
     Runs every few seconds on the quorum node (see ``horde.database.__init__``); the 300s redis TTL is only a safety
     margin in case the primary thread dies. The workers come from ``get_active_workers_for_details`` so serializing
     them is a handful of set-based queries rather than several lazy loads per worker.
+
+    The same run keeps the worker row store (``horde.worker_rows``) fresh. It writes the rows of the active workers
+    it has already loaded, marks dirty the workers that stopped being active since the previous run, and drains up to
+    ``WORKER_ROWS_DIRTY_CHUNK_SIZE`` dirty workers.
     """
 
     def json_serial(obj):
@@ -201,7 +219,8 @@ def store_worker_list():
     with get_app().app_context():
         serialized_workers = []
         serialized_workers_privileged = []
-        for worker in get_active_workers_for_details():
+        active_workers = get_active_workers_for_details()
+        for worker in active_workers:
             serialized_workers.append(worker.get_details())
             serialized_workers_privileged.append(worker.get_details(2))
         json_workers = json.dumps(serialized_workers, default=json_serial)
@@ -215,6 +234,71 @@ def store_worker_list():
             )
         except (TypeError, OverflowError) as err:
             logger.error(f"Failed serializing workers with error: {err}")
+        store_worker_rows(active_workers, WorkerRowsTier.ACTIVE)
+        active_worker_ids = {str(worker.id) for worker in active_workers}
+        mark_departed_active_workers(active_worker_ids)
+        _refresh_dirty_worker_rows(active_worker_ids)
+
+
+def _refresh_dirty_worker_rows(fresh_worker_ids: set[str]) -> None:
+    """Rewrite the rows of up to ``WORKER_ROWS_DIRTY_CHUNK_SIZE`` dirty workers and delete the rows of deleted ones.
+
+    Must run inside an app context. An empty dirty set runs no database statement.
+
+    Args:
+        fresh_worker_ids: Workers whose rows this run has already written, which are not loaded again.
+    """
+    dirty_worker_ids = take_dirty_worker_ids(WORKER_ROWS_DIRTY_CHUNK_SIZE)
+    stale_worker_ids = [worker_id for worker_id in dirty_worker_ids if worker_id not in fresh_worker_ids]
+    if not stale_worker_ids:
+        return
+    dirty_workers = get_workers_for_details_by_ids(stale_worker_ids)
+    store_worker_rows(dirty_workers, WorkerRowsTier.DIRTY)
+    loaded_worker_ids = {str(worker.id) for worker in dirty_workers}
+    remove_worker_rows([worker_id for worker_id in stale_worker_ids if worker_id not in loaded_worker_ids])
+
+
+@logger.catch(reraise=True)
+def refresh_worker_rows_rolling(*, chunk_size: int = WORKER_ROWS_ROLLING_CHUNK_SIZE) -> None:
+    """Rewrite the rows of the next ``chunk_size`` registered workers in ascending ID order.
+
+    The position is kept in Redis, and the pass wraps to the lowest ID after the last worker, so every registered
+    worker is rewritten once per pass on whichever node holds the quorum. This bounds the staleness of a row whose
+    worker changed without being marked dirty.
+
+    Args:
+        chunk_size: The number of workers rewritten by this run.
+    """
+    with get_app().app_context():
+        chunk_worker_ids = get_worker_ids_after(read_rolling_position(), chunk_size)
+        chunk_workers = get_workers_for_details_by_ids(chunk_worker_ids)
+        store_worker_rows(chunk_workers, WorkerRowsTier.ROLLING)
+        # A row of the workers table outside the listed worker types is not loaded, so it has no row to keep.
+        loaded_worker_ids = {str(worker.id) for worker in chunk_workers}
+        remove_worker_rows([worker_id for worker_id in chunk_worker_ids if worker_id not in loaded_worker_ids])
+        advance_rolling_position(chunk_worker_ids, chunk_size)
+
+
+WORKER_LIST_ENTRIES_REFRESH_INTERVAL_SECONDS: int = 60
+"""The seconds between two refreshes of ``worker_list_entries``.
+
+A refresh reads the narrow columns of every registered worker, so the interval bounds how long a new, renamed, moved or
+deleted worker takes to reach its place in the paged list. Counts change at every check-in and a list ordered by them
+is never exact, so a minute is enough.
+"""
+
+
+@logger.catch(reraise=True)
+def refresh_worker_list_entries() -> None:
+    """Bring ``worker_list_entries`` in line with the registered workers, then reconcile the row store.
+
+    Unchanged workers cost no write, so the statements of a run grow only with the workers that changed (see
+    ``sync_worker_list_entries``). The same list of registered workers then corrects the row store
+    (``reconcile_worker_rows``).
+    """
+    with get_app().app_context():
+        registered_worker_ids = sync_worker_list_entries()
+    reconcile_worker_rows(registered_worker_ids)
 
 
 # @logger.catch(reraise=True)

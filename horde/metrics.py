@@ -153,6 +153,23 @@ BUCKETS_CHARGE_TO_HOLD_RATIO = (
 output and rise several times above it for a long output with a long prompt. 1 separates the requests charged more
 than they held."""
 
+BUCKETS_WORKER_ROWS_PASS_SECONDS = (
+    60,
+    120,
+    300,
+    600,
+    900,
+    1200,
+    1800,
+    2700,
+    3600,
+    7200,
+)
+"""The bucket boundaries of the time the rolling worker row refresh takes to rewrite every registered worker once. A pass
+over tens of thousands of workers at a few hundred per tick takes tens of minutes, so the boundaries are dense between
+10 and 30 minutes. 3600 is the lifetime of the row hashes: a pass longer than that leaves rows that were last written
+by the rolling refresh older than the hashes would be kept for a dead builder."""
+
 REQUEST_ESTIMATE_MINIMUM_ABSOLUTE_TOLERANCE_SECONDS = 60
 REQUEST_ESTIMATE_RELATIVE_TOLERANCE = 0.5
 REQUEST_ASSIGNMENT_PRESSURE_EVIDENCE = frozenset(
@@ -210,6 +227,11 @@ def _free_allowance_wait_histogram(name: str, description: str) -> Histogram:
 def _charge_to_hold_histogram(name: str, description: str) -> Histogram:
     _BUCKET_REGISTRY[name] = BUCKETS_CHARGE_TO_HOLD_RATIO
     return logfire.metric_histogram(name, unit="1", description=description)
+
+
+def _worker_rows_pass_histogram(name: str, description: str) -> Histogram:
+    _BUCKET_REGISTRY[name] = BUCKETS_WORKER_ROWS_PASS_SECONDS
+    return logfire.metric_histogram(name, unit="s", description=description)
 
 
 def histogram_views() -> list[View]:
@@ -651,6 +673,30 @@ worker_availability_cache_lookups = logfire.metric_counter(
         "Per-request worker-availability cache reads, split by outcome (hit, absent, generation_mismatch, malformed), "
         "gentype and whether the request is a chat request"
     ),
+)
+
+
+class WorkerRowsTier(enum.StrEnum):
+    """The background refresh that wrote a worker's stored details rows."""
+
+    ACTIVE = "active"
+    """The worker list job, which rewrites every active worker on each run."""
+
+    DIRTY = "dirty"
+    """The drain of workers marked dirty by a change to their details."""
+
+    ROLLING = "rolling"
+    """The rolling pass, which rewrites every registered worker in ID order."""
+
+
+worker_rows_written = logfire.metric_counter(
+    "horde.worker_rows.written",
+    unit="1",
+    description="Worker details rows written to the row store, one per worker and view, split by tier",
+)
+worker_rows_rolling_pass_duration = _worker_rows_pass_histogram(
+    "horde.worker_rows.rolling_pass_duration",
+    "Time between two wraps of the rolling worker row refresh, which rewrites every registered worker once per pass",
 )
 
 
