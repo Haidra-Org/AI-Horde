@@ -10,7 +10,7 @@ import urllib.parse
 import uuid
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -75,6 +75,7 @@ from horde.database.kudos_legacy_projection import consume_user_reservation
 from horde.database.kudos_reservations import reserve_kudos
 from horde.enums import KudosAuditDetail, KudosEntryType, KudosIdempotencyKind, State
 from horde.flask import SQLITE_MODE, db
+from horde.horde_redis import LOCAL_CACHE_MAX_LIFETIME
 from horde.horde_redis import horde_redis as hr
 from horde.logger import logger
 from horde.metrics import (
@@ -82,6 +83,7 @@ from horde.metrics import (
     pop_query_duration,
     record_request_assignment_pressure,
     worker_availability_cache_lookups,
+    worker_list_snapshot_misses,
 )
 from horde.model_reference import model_reference
 from horde.request_scheduling import (
@@ -94,7 +96,7 @@ from horde.request_scheduling import (
     build_worker_scheduling_state,
     get_request_assignment_pressure,
 )
-from horde.utils import hash_api_key, validate_regex
+from horde.utils import datetime_parser, hash_api_key, validate_regex
 from horde.worker_pages import WorkerListSort, WorkerPageCursor, WorkerPageFilters
 from horde.worker_rows import WorkerListView
 
@@ -479,6 +481,51 @@ def get_workers_for_details_by_ids(worker_ids: Iterable[str]) -> list[WorkerTemp
     return _query_workers_for_details(lambda worker_class: worker_class.id.in_(id_values))
 
 
+def _serialize_snapshot_value(value: object) -> str:
+    """Convert a datetime in a worker details row to ISO 8601, as the snapshot job stores it.
+
+    Raises:
+        TypeError: The value is neither a datetime nor a date, so it cannot be stored in the snapshot.
+    """
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    raise TypeError(f"Type {type(value)} not serializable")
+
+
+def read_worker_list_snapshot(view: WorkerListView) -> list[dict[str, Any]]:
+    """Return the details rows of every active worker for ``view``, from the cached snapshot.
+
+    The snapshot job on the quorum node rebuilds the public and moderator views every few seconds
+    (``store_worker_list``). When the snapshot is missing, the API node that serves the request rebuilds the view
+    from the database. The node keeps the rebuilt list in its local Redis for ``LOCAL_CACHE_MAX_LIFETIME``, so a
+    burst of reads on that node causes only one rebuild. The recovered snapshot is served within that lifetime after
+    the snapshot job restarts.
+
+    Args:
+        view: Which snapshot to read. The owner view has no snapshot.
+
+    Returns:
+        Every row of the view, unfiltered, in snapshot order. The caller must not change the rows.
+
+    Side Effects:
+        Adds 1 to ``horde.workers.list.snapshot_misses`` and logs a warning when the snapshot is missing.
+    """
+    if not hr.horde_r:
+        return [worker.get_details(view.details_privilege) for worker in get_active_workers_for_details()]
+    cached_workers = hr.horde_r_get(view.snapshot_key)
+    if cached_workers is not None:
+        return json.loads(cached_workers, object_hook=datetime_parser)
+    logger.warning(f"The {view} worker list snapshot is missing. Check the snapshot job on the quorum node.")
+    worker_list_snapshot_misses.add(1, {"horde.workers.list.view": view.value})
+    rebuilt_workers = [worker.get_details(view.details_privilege) for worker in get_active_workers_for_details()]
+    if hr.horde_local_r:
+        # A row holds datetimes when its worker has an active message, and horde_local_setex_to_json does not convert
+        # datetimes. The list is therefore serialized here.
+        serialized_workers = json.dumps(rebuilt_workers, default=_serialize_snapshot_value)
+        hr.horde_local_r.setex(view.snapshot_key, LOCAL_CACHE_MAX_LIFETIME, serialized_workers)
+    return rebuilt_workers
+
+
 def get_worker_ids_after(after_worker_id: str | None, limit: int) -> list[str]:
     """Return up to ``limit`` worker IDs in ascending order, starting after ``after_worker_id``.
 
@@ -709,7 +756,12 @@ def page_registered_workers(
     next_cursor = None
     if len(page_rows) > limit:
         last_row = returned_rows[-1]
-        next_cursor = WorkerPageCursor(sort=sort, sort_value=last_row.sort_value, worker_id=str(last_row.worker_id))
+        next_cursor = WorkerPageCursor(
+            sort=sort,
+            sort_value=last_row.sort_value,
+            worker_id=str(last_row.worker_id),
+            walk_key=filters.walk_key(view.value, account_id),
+        )
     return RegisteredWorkerPage(
         worker_ids=[str(row.worker_id) for row in returned_rows],
         next_cursor=next_cursor,

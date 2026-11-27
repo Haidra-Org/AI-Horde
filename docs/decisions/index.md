@@ -54,6 +54,7 @@ One decision per record: what was chosen, what was rejected, and what it cost.
 | [Enforce the speed gate for chat requests and shadow it for legacy text](0041-enforce-the-speed-gate-for-chat-requests-and-shadow-it-for-legacy-text.md) | accepted | 2026-10-30 |
 | [Keep 30 days of exact kudos history online, roll statistics up by day, and archive currency rows](0042-roll-up-statistics-and-archive-currency-after-the-online-window.md) | accepted | 2026-11-04 |
 | [Bound free input by a wait-sized allowance](0043-bound-free-input-by-a-wait-sized-allowance.md) | accepted | 2026-11-23 |
+| [List every registered worker in pages with a keyset cursor](0047-paginate-the-worker-list-with-a-keyset-cursor.md) | proposed | 2026-11-27 |
 
 ## Relationships
 
@@ -103,6 +104,7 @@ flowchart TD
     r0041["0041: Enforce the speed gate for chat reque…"]
     r0042["0042: Keep 30 days of exact kudos history o…"]
     r0043["0043: Bound free input by a wait-sized allo…"]
+    r0047["0047: List every registered worker in pages…"]
     r0001 --> r0003
     r0001 --> r0004
     r0001 --> r0005

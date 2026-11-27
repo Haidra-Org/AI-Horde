@@ -1117,6 +1117,27 @@ class Models:
             },
         )
 
+        # The paged worker lists send their body as stored bytes and do not marshal it, so this model documents the
+        # body only. Each row is marshalled with response_model_worker_details and skip_none when it is stored.
+        self.response_model_worker_page = api.model(
+            "WorkerPage",
+            {
+                "workers": fields.List(
+                    fields.Nested(self.response_model_worker_details, skip_none=True),
+                    description=(
+                        "The workers on this page, in the requested order. Each entry has the same fields as the response "
+                        "of /v2/workers/{id} for that worker, with the same API key."
+                    ),
+                ),
+                "next_cursor": fields.String(
+                    description="Pass as cursor, with the same sort, to read the next page. It is null on the last page.",
+                ),
+                "total": fields.Integer(
+                    description="How many registered workers pass the filters, across all pages, when this page was read.",
+                ),
+            },
+        )
+
         self.input_model_worker_modify = api.model(
             "ModifyWorkerInput",
             {

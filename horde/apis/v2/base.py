@@ -7,14 +7,17 @@ import json
 import os
 import random
 import time
+import uuid
 from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 import logfire
+import redis
 import regex as re
-from flask import render_template, request
+from flask import Response, render_template, request
 from flask_restx import Namespace, Resource, inputs, marshal_with, reqparse
 from flask_restx.reqparse import ParseResult
 from markdownify import markdownify
@@ -102,9 +105,17 @@ from horde.patreon import patrons
 from horde.r2 import upload_prompt
 from horde.suspicions import Suspicions
 from horde.telemetry import pyroscope_tag
-from horde.utils import datetime_parser, hash_api_key, hash_dictionary, is_profane, sanitize_string
+from horde.utils import hash_api_key, hash_dictionary, is_profane, sanitize_string
 from horde.vars import horde_contact_email, horde_repository, horde_title, horde_url
-from horde.worker_rows import mark_worker_rows_dirty
+from horde.worker_pages import (
+    DEFAULT_WORKER_LIST_SORT,
+    InvalidWorkerCursorError,
+    WorkerListSort,
+    WorkerPageCursor,
+    WorkerPageFilters,
+    WorkerPageLimits,
+)
+from horde.worker_rows import WorkerListView, mark_worker_rows_dirty, read_active_worker_ids, read_worker_rows
 
 # Not used yet
 authorizations = {"apikey": {"type": "apiKey", "in": "header", "name": "apikey"}}
@@ -206,6 +217,7 @@ handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_reques
 handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 handle_service_unavailable = api.errorhandler(e.ServiceUnavailable)(e.handle_bad_requests)
+handle_worker_list_unavailable = api.errorhandler(e.WorkerListUnavailable)(e.handle_worker_list_unavailable)
 handle_not_found = api.errorhandler(e.NotFound)(e.handle_bad_requests)
 locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 
@@ -1847,6 +1859,92 @@ class AwardKudos(Resource):
         return ({"awarded": self.args.amount}, 200)
 
 
+def _resolve_worker_list_view(api_key: str | None, *, refuse_unknown_key: bool) -> WorkerListView:
+    """Return the moderator view for a moderator's key, and the public view for any other caller.
+
+    Args:
+        api_key: The ``apikey`` header, or None when the request does not include one.
+        refuse_unknown_key: Whether to refuse a key that does not match any account. The full list accepts such a key
+            and returns the public view. The paged list refuses it, so a moderator with a mistyped key gets an error
+            instead of the public view.
+
+    Returns:
+        The caller's view.
+
+    Raises:
+        e.InvalidAPIKey: ``refuse_unknown_key`` is set and the key does not match any account.
+    """
+    if not api_key:
+        return WorkerListView.PUBLIC
+    caller = database.find_user_by_api_key(api_key)
+    if caller is None:
+        if refuse_unknown_key:
+            raise e.InvalidAPIKey("GET WorkersPage")
+        return WorkerListView.PUBLIC
+    if caller.moderator:
+        return WorkerListView.MODERATOR
+    return WorkerListView.PUBLIC
+
+
+class WorkerListEndpoint(StrEnum):
+    """Represent the worker list endpoints, which are the values of the ``horde.workers.list.endpoint`` metric label."""
+
+    FULL = "full"
+    """``GET /v2/workers``, every active worker in one response."""
+    PAGE = "page"
+    """``GET /v2/workers/page``, one bounded page of the registered workers."""
+    MINE = "mine"
+    """``GET /v2/workers/mine``, one bounded page of the caller's workers."""
+
+
+def _record_worker_list_read(
+    *,
+    endpoint: WorkerListEndpoint,
+    view: WorkerListView,
+    sort: str,
+    filter_names: list[str],
+    continued: bool,
+    row_count: int,
+) -> None:
+    """Count one worker list read and record its row count.
+
+    Every label value comes from a fixed set, so the number of metric series stays bounded whatever values a client
+    sends.
+    """
+    metrics.worker_list_reads.add(
+        1,
+        {
+            "horde.workers.list.endpoint": endpoint.value,
+            "horde.workers.list.view": view.value,
+            "horde.workers.list.sort": sort,
+            "horde.workers.list.filters": ",".join(filter_names) or "none",
+            "horde.workers.list.continued": str(continued).lower(),
+        },
+    )
+    metrics.worker_list_rows.record(row_count, {"horde.workers.list.endpoint": endpoint.value})
+
+
+PRIVATE_WORKER_LIST_CACHE_CONTROL: str = "private, no-store"
+"""The ``Cache-Control`` of moderator and owner worker lists.
+
+Their rows include worker IP addresses and contacts, so shared and browser caches must not store them.
+"""
+PUBLIC_WORKER_PAGE_CACHE_CONTROL: str = "public, max-age=15"
+"""The ``Cache-Control`` of a public worker page.
+
+The rows and their order are already seconds to a minute old when they are read, so a cache that keeps a page for 15
+seconds adds little staleness. A shared cache in front of the horde stores a page only when it is configured to cache
+API responses, so the header does not bound the load on the server. ``WORKER_PAGE_FLEET_RATE_LIMIT`` does.
+"""
+
+
+def _worker_list_response_headers(view: WorkerListView) -> dict[str, str]:
+    """Return the response headers of the full worker list in ``view``. The public list does not set a cache policy."""
+    if view is WorkerListView.PUBLIC:
+        return {}
+    return {"Cache-Control": PRIVATE_WORKER_LIST_CACHE_CONTROL}
+
+
 class Workers(Resource):
     get_parser = reqparse.RequestParser()
     get_parser.add_argument(
@@ -1892,45 +1990,393 @@ class Workers(Resource):
         skip_none=True,
     )
     def get(self):
-        """A List with the details of all registered and active workers"""
+        """A List with the details of all active workers
+
+        This list contains only the workers that checked in within the last 5 minutes. To page through every
+        registered worker, active or inactive, use /v2/workers/page.
+        """
         self.args = self.get_parser.parse_args()
-        return (self.retrieve_workers_details(), 200)
+        view = _resolve_worker_list_view(self.args.apikey, refuse_unknown_key=False)
+        return (self.retrieve_workers_details(view), 200, _worker_list_response_headers(view))
 
     @logger.catch(reraise=True)
-    def retrieve_workers_details(self):
-        details_privilege = 0
-        if self.args.apikey:
-            admin = database.find_user_by_api_key(self.args["apikey"])
-            if admin and admin.moderator:
-                details_privilege = 2
-        if not hr.horde_r:
-            return self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
-        if details_privilege == 2:
-            cached_workers = hr.horde_r_get("worker_cache_privileged")
-        else:
-            cached_workers = hr.horde_r_get("worker_cache")
-        if cached_workers is None:
-            logger.warning(f"No {details_privilege} worker cache found! Check caching thread!")
-            workers = self.parse_worker_by_query(self.get_worker_info_list(details_privilege))
-            if details_privilege > 0:
-                hr.horde_local_setex_to_json("worker_cache_privileged", 300, workers)
-            else:
-                hr.horde_local_setex_to_json("worker_cache", 300, workers)
-            return workers
-        return self.parse_worker_by_query(json.loads(cached_workers, object_hook=datetime_parser))
+    def retrieve_workers_details(self, view: WorkerListView) -> list[dict[str, Any]]:
+        """Return the details rows of the active workers in ``view``, narrowed by ``name`` or ``type``."""
+        workers = self.parse_worker_by_query(database.read_worker_list_snapshot(view))
+        applied_filter_names = [filter_name for filter_name in ("name", "type") if self.args.get(filter_name)]
+        _record_worker_list_read(
+            endpoint=WorkerListEndpoint.FULL,
+            view=view,
+            sort="none",
+            # parse_worker_by_query applies only the first of name and type, so only that filter is counted.
+            filter_names=applied_filter_names[:1],
+            continued=False,
+            row_count=len(workers),
+        )
+        return workers
 
-    def get_worker_info_list(self, details_privilege):
-        workers_ret = []
-        for worker in database.get_active_workers_for_details():
-            workers_ret.append(worker.get_details(details_privilege))
-        return workers_ret
-
-    def parse_worker_by_query(self, workers_list):
+    def parse_worker_by_query(self, workers_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return the rows matching ``name`` (case insensitive), or else ``type``, or every row when neither is set."""
         if self.args.name:
-            return [w for w in workers_list if w["name"].lower() == self.args.name.lower()]
+            return [worker for worker in workers_list if worker["name"].lower() == self.args.name.lower()]
         if self.args.type:
-            return [w for w in workers_list if w["type"] == self.args.type]
+            return [worker for worker in workers_list if worker["type"] == self.args.type]
         return workers_list
+
+
+WORKER_PAGE_FLEET_RATE_LIMIT: str = "3000/minute"
+"""The most requests that ``GET /v2/workers/page`` and ``GET /v2/workers/mine`` serve together each minute, from all
+addresses.
+
+Each page runs one statement against the database and one read of the row store in Redis. The per-address limit does
+not bound the total when many addresses send requests, so this limit caps the load that the paged lists can put on the
+database and Redis, at 50 pages a second.
+"""
+WORKER_PAGE_FLEET_RATE_LIMIT_SCOPE: str = "worker_pages"
+"""The scope of the fleet-wide limit, which both paged lists count against."""
+
+
+def _worker_page_fleet_rate_limit_key() -> str:
+    """Return the same rate limit key for every request, so the fleet-wide limit counts every caller together."""
+    return WORKER_PAGE_FLEET_RATE_LIMIT_SCOPE
+
+
+worker_page_fleet_rate_limit = limiter.shared_limit(
+    # flask-limiter calls a callable limit on each request. The lambda therefore reads the module constant at request
+    # time, so a test can lower the limit by patching the constant.
+    lambda: WORKER_PAGE_FLEET_RATE_LIMIT,
+    scope=WORKER_PAGE_FLEET_RATE_LIMIT_SCOPE,
+    key_func=_worker_page_fleet_rate_limit_key,
+)
+"""The limit shared by both paged worker lists. A request refused by it receives the limiter's 429."""
+
+
+def _worker_page_parser() -> reqparse.RequestParser:
+    """Create the parser of the arguments shared by every paged worker list."""
+    parser = reqparse.RequestParser()
+    parser.add_argument(
+        "Client-Agent",
+        default="unknown:0:unknown",
+        type=str,
+        required=False,
+        help="The client name and version.",
+        location="headers",
+    )
+    parser.add_argument(
+        "limit",
+        type=int,
+        default=WorkerPageLimits.DEFAULT_LIMIT,
+        required=False,
+        help=f"Workers per page (1-{WorkerPageLimits.MAX_LIMIT}). A value outside the range is refused with InvalidWorkerListLimit.",
+        location="args",
+    )
+    parser.add_argument(
+        "cursor",
+        type=str,
+        required=False,
+        help=(
+            "The next_cursor of the previous page. Omit for the first page. Send it with the same sort and filters as "
+            "the page that returned it. A cursor issued for another sort, other filters or another API key is refused "
+            "with InvalidWorkerListCursor."
+        ),
+        location="args",
+    )
+    parser.add_argument(
+        "type",
+        choices=["image", "text", "interrogation"],
+        required=False,
+        help="Only workers of this type.",
+        location="args",
+    )
+    parser.add_argument(
+        "model",
+        type=str,
+        required=False,
+        help="Only workers advertising this exact model name.",
+        location="args",
+    )
+    parser.add_argument(
+        "team_id",
+        type=str,
+        required=False,
+        help="Only workers in the team with this ID. A value that is not a UUID is refused with InvalidWorkerListFilter.",
+        location="args",
+    )
+    parser.add_argument(
+        "name_contains",
+        type=str,
+        required=False,
+        help=f"Only workers whose name contains this text, ignoring case. At most {WorkerPageLimits.MAX_NAME_QUERY_CHARACTERS} characters.",
+        location="args",
+    )
+    parser.add_argument(
+        "online",
+        type=inputs.boolean,
+        required=False,
+        help="Only workers that are online (true) or offline (false), as of the last few seconds.",
+        location="args",
+    )
+    parser.add_argument(
+        "sort",
+        choices=list(WorkerListSort),
+        default=DEFAULT_WORKER_LIST_SORT,
+        required=False,
+        help="Page order. 'name' sorts ascending, and 'uptime', 'requests_fulfilled' and 'kudos_rewards' sort descending.",
+        location="args",
+    )
+    return parser
+
+
+class WorkerPageResource(Resource):
+    """Hold the argument checks and the response body shared by the paged worker lists.
+
+    A page is read without loading any worker. One statement returns the page's worker IDs, the next cursor and the
+    total from ``worker_list_entries``, and one ``HMGET`` returns the stored JSON row of each ID in the caller's view.
+    The response body joins those bytes without parsing them.
+
+    Subclass Integration:
+        A subclass sets ``get_parser`` from ``_worker_page_parser()``, calls ``parse_page_request()`` first, resolves
+        the caller's view, and returns the result of ``page_response()``. The cursor is parsed in ``page_response()``,
+        because it is tied to the view and the account.
+    """
+
+    args: ParseResult
+
+    def parse_page_request(self) -> tuple[WorkerListSort, WorkerPageFilters]:
+        """Parse the order and the filters of a page request, and check the limit.
+
+        Returns:
+            The order and the filters.
+
+        Raises:
+            e.BadRequest: The limit or a filter is not valid.
+        """
+        sort = WorkerListSort(self.args.sort)
+        filters = self._parse_filters()
+        if not 1 <= self.args.limit <= WorkerPageLimits.MAX_LIMIT:
+            raise e.BadRequest(f"limit must be between 1 and {WorkerPageLimits.MAX_LIMIT}", rc="InvalidWorkerListLimit")
+        return sort, filters
+
+    def _parse_cursor(self, sort: WorkerListSort, walk_key: str) -> WorkerPageCursor | None:
+        """Parse the ``cursor`` argument, or return None for the first page.
+
+        Raises:
+            e.BadRequest: The cursor is malformed, or was issued for another sort order or another walk.
+        """
+        if not self.args.cursor:
+            return None
+        try:
+            return WorkerPageCursor.decode(self.args.cursor, expected_sort=sort, expected_walk_key=walk_key)
+        except InvalidWorkerCursorError as err:
+            raise e.BadRequest(str(err), rc="InvalidWorkerListCursor") from err
+
+    def _parse_filters(self) -> WorkerPageFilters:
+        """Parse the filter arguments. A blank text filter does not narrow the list.
+
+        Raises:
+            e.BadRequest: ``team_id`` is not a UUID, ``owner_id`` is negative or ``name_contains`` is too long.
+        """
+        team_id = (self.args.team_id or "").strip() or None
+        if team_id is not None:
+            try:
+                team_id = str(uuid.UUID(team_id))
+            except ValueError as err:
+                raise e.BadRequest("team_id must be a UUID", rc="InvalidWorkerListFilter") from err
+        owner_id = self.args.get("owner_id")
+        if owner_id is not None and owner_id < 0:
+            raise e.BadRequest("owner_id must not be negative", rc="InvalidWorkerListFilter")
+        name_contains = (self.args.name_contains or "").strip() or None
+        if name_contains is not None and len(name_contains) > WorkerPageLimits.MAX_NAME_QUERY_CHARACTERS:
+            raise e.BadRequest(
+                f"name_contains must be at most {WorkerPageLimits.MAX_NAME_QUERY_CHARACTERS} characters",
+                rc="InvalidWorkerListFilter",
+            )
+        return WorkerPageFilters(
+            worker_type=self.args.type,
+            model=(self.args.model or "").strip() or None,
+            team_id=team_id,
+            owner_id=owner_id,
+            name_contains=name_contains,
+            online=self.args.get("online"),
+        )
+
+    def page_response(
+        self,
+        *,
+        endpoint: WorkerListEndpoint,
+        view: WorkerListView,
+        sort: WorkerListSort,
+        filters: WorkerPageFilters,
+        account_id: int | None = None,
+    ) -> Response:
+        """Return the response of one page of registered workers in ``view`` and count the read.
+
+        A worker ID returned by the page query without a stored row is left out of the page, and ``total`` still
+        counts it.
+
+        Args:
+            endpoint: The endpoint that serves the page, for the metric label.
+            view: The caller's view.
+            sort: The order of the page.
+            filters: The filters in the request.
+            account_id: Only workers of this account, for the owner's list.
+
+        Raises:
+            e.BadRequest: The cursor is malformed, or was issued for another sort order or another walk.
+            e.WorkerListUnavailable: Redis cannot be reached, or the row store does not hold any of the page's rows.
+        """
+        after = self._parse_cursor(sort, filters.walk_key(view.value, account_id))
+        if hr.horde_r is None:
+            # Without Redis the online filter would not read any active worker IDs and the page would not read any
+            # rows, so the page would be wrong rather than incomplete.
+            raise e.WorkerListUnavailable("The worker row store is unavailable because Redis is not connected.")
+        try:
+            active_worker_ids = read_active_worker_ids() if filters.online is not None else None
+        except redis.RedisError as err:
+            raise e.WorkerListUnavailable(f"Reading the active worker IDs failed: {err}") from err
+        registered_page = database.page_registered_workers(
+            filters=filters,
+            sort=sort,
+            limit=self.args.limit,
+            after=after,
+            view=view,
+            account_id=account_id,
+            active_worker_ids=active_worker_ids,
+        )
+        # The rows come from Redis and the body is built from them, so the pooled connection is released before the
+        # Redis read.
+        db.session.remove()
+        try:
+            stored_rows = read_worker_rows(view, registered_page.worker_ids)
+        except redis.RedisError as err:
+            raise e.WorkerListUnavailable(f"Reading the worker rows failed: {err}") from err
+        page_rows = [stored_row for stored_row in stored_rows if stored_row is not None]
+        # A row can be missing for a short time while the rest are stored, for a worker registered after the last
+        # write of the row store or deleted since the last refresh of worker_list_entries. That worker is left out and
+        # the rest of the page is served. When the query returned IDs but the row store does not hold a row for any of
+        # them, the row hash is missing as a whole, because Redis lost it or the worker list job stopped and the hash
+        # expired. An empty page with a cursor would then read as a list without workers, so the request is refused
+        # for a retry instead.
+        if registered_page.worker_ids and not page_rows:
+            raise e.WorkerListUnavailable(
+                f"The row store does not hold any of the {len(registered_page.worker_ids)} rows of a {view} worker page.",
+            )
+        _record_worker_list_read(
+            endpoint=endpoint,
+            view=view,
+            sort=sort.value,
+            filter_names=filters.applied_names,
+            continued=after is not None,
+            row_count=len(page_rows),
+        )
+        next_cursor = registered_page.next_cursor.encode() if registered_page.next_cursor is not None else None
+        # The stored rows are already the marshalled JSON of each worker, so they are joined as bytes. The fields are
+        # written in the order of response_model_worker_page.
+        page_body = b"".join(
+            [
+                b'{"workers":[',
+                b",".join(page_rows),
+                b'],"next_cursor":',
+                json.dumps(next_cursor).encode(),
+                b',"total":',
+                str(registered_page.total).encode(),
+                b"}",
+            ],
+        )
+        cache_control = PUBLIC_WORKER_PAGE_CACHE_CONTROL if view is WorkerListView.PUBLIC else PRIVATE_WORKER_LIST_CACHE_CONTROL
+        return Response(page_body, status=200, mimetype="application/json", headers={"Cache-Control": cache_control})
+
+
+class WorkersPage(WorkerPageResource):
+    """Serve every registered worker, active or inactive, one bounded page at a time.
+
+    Each entry has the same fields as the response of ``GET /v2/workers/{id}`` for that worker, with the same API key.
+    """
+
+    decorators = [limiter.limit("90/minute"), worker_page_fleet_rate_limit]
+
+    get_parser = _worker_page_parser()
+    get_parser.add_argument(
+        "apikey",
+        type=str,
+        required=False,
+        help=(
+            "Optional. A moderator's key gets the moderator view, and any other valid key gets the public view. "
+            "A key that does not match an account is refused."
+        ),
+        location="headers",
+    )
+    get_parser.add_argument(
+        "owner_id",
+        type=int,
+        required=False,
+        help=(
+            "Only workers owned by this account. A worker is matched only when its owner is visible to the caller. "
+            "A negative value is refused with InvalidWorkerListFilter."
+        ),
+        location="args",
+    )
+
+    @api.expect(get_parser)
+    @api.response(200, "One page of registered workers", models.response_model_worker_page)
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(429, "Too Many Requests")
+    @api.response(503, "Worker List Unavailable", models.response_model_error)
+    def get(self) -> Response:
+        """One page of every registered worker, active or inactive
+
+        To walk the list, pass each page's next_cursor back with the same sort and filters until next_cursor is null.
+        A cursor sent with other filters or another API key is refused with InvalidWorkerListCursor. To change the
+        filters, request the first page again. A worker whose sort value changes during a walk, such as an online
+        worker gaining uptime, can be skipped or listed twice. Rows and order are read from copies refreshed in the
+        background, so a page can be up to a minute old.
+        """
+        self.args = self.get_parser.parse_args()
+        sort, filters = self.parse_page_request()
+        view = _resolve_worker_list_view(self.args.apikey, refuse_unknown_key=True)
+        return self.page_response(endpoint=WorkerListEndpoint.PAGE, view=view, sort=sort, filters=filters)
+
+
+class WorkersMine(WorkerPageResource):
+    """Serve the caller's workers one bounded page at a time, online or offline, in the owner view."""
+
+    decorators = [limiter.limit("90/minute"), worker_page_fleet_rate_limit]
+
+    get_parser = _worker_page_parser()
+    get_parser.add_argument(
+        "apikey",
+        type=str,
+        required=True,
+        help="The API key of the account that owns the workers.",
+        location="headers",
+    )
+
+    @api.expect(get_parser)
+    @api.response(200, "One page of the caller's workers", models.response_model_worker_page)
+    @api.response(400, "Validation Error", models.response_model_error)
+    @api.response(401, "Invalid API Key", models.response_model_error)
+    @api.response(429, "Too Many Requests")
+    @api.response(503, "Worker List Unavailable", models.response_model_error)
+    def get(self) -> Response:
+        """One page of the workers owned by this API key's account, online or offline
+
+        To walk the list, pass each page's next_cursor back with the same sort and filters until next_cursor is null.
+        A cursor sent with other filters or another account's key is refused with InvalidWorkerListCursor. A new
+        worker, or a worker that changed owner, appears in this list within about a minute.
+        """
+        self.args = self.get_parser.parse_args()
+        sort, filters = self.parse_page_request()
+        owner = database.find_user_by_api_key(self.args.apikey)
+        if owner is None:
+            raise e.InvalidAPIKey("GET WorkersMine")
+        return self.page_response(
+            endpoint=WorkerListEndpoint.MINE,
+            view=WorkerListView.OWNER,
+            sort=sort,
+            filters=filters,
+            account_id=owner.id,
+        )
 
 
 class WorkerSingleBase(Resource):

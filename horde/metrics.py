@@ -1042,6 +1042,31 @@ api_rejections = logfire.metric_counter(
     description="Client errors the API returned, split by return code, HTTP status, route and method",
 )
 
+# --- worker list ----------------------------------------------------------------
+# The full list reads a cached snapshot of the active workers. The paged list and the owner's list read worker IDs
+# from worker_list_entries and the rows from the row store. The read and row counts of each endpoint show how many
+# requests read each list.
+worker_list_reads = logfire.metric_counter(
+    "horde.workers.list.reads",
+    unit="1",
+    description=(
+        "Worker list reads, split by endpoint (full, page or mine), view (public, moderator or owner), sort, the filters "
+        "in use, and whether the read continued a walk from a cursor"
+    ),
+)
+worker_list_rows = _count_histogram(
+    "horde.workers.list.rows",
+    "Workers returned by one worker list read, split by endpoint",
+)
+worker_list_snapshot_misses = logfire.metric_counter(
+    "horde.workers.list.snapshot_misses",
+    unit="1",
+    description=(
+        "Full worker list reads that rebuilt the list from the database because the cached snapshot was missing, split by view. "
+        "A steady rate means the snapshot job on the quorum node has stopped"
+    ),
+)
+
 # --- /generate/check & /generate/status --------------------------------------
 check_duration = _seconds_histogram(
     "horde.generate.check.duration",

@@ -47,6 +47,7 @@ nav = [
         { "Chat requests" = "reference/chat_requests.md" },
         { "Chat front" = "reference/chat_front.md" },
         { "Chat wire examples" = "reference/chat_wire_examples.md" },
+        { "Worker listing" = "reference/worker_listing.md" },
     ] },
     { "How-to" = [
         { "Overview" = "how-to/README.md" },
@@ -63,6 +64,7 @@ nav = [
         { "Add chat to a frontend" = "how-to/add_chat_to_a_frontend.md" },
         { "Write a minimal chat worker" = "how-to/write_a_minimal_chat_worker.md" },
         { "Serve chat jobs" = "how-to/serve_chat_jobs.md" },
+        { "List workers in a front end" = "how-to/list_workers_in_a_frontend.md" },
     ] },
     { "Tutorial" = [
         { "Overview" = "tutorial/README.md" },

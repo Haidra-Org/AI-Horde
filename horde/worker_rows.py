@@ -87,6 +87,19 @@ class WorkerListView(StrEnum):
         """Return the key of the Redis hash that holds this view's rows, keyed by worker ID."""
         return f"worker_rows:{self.value}"
 
+    @property
+    def snapshot_key(self) -> str:
+        """Return the Redis key under which ``store_worker_list`` stores this view's list of active workers.
+
+        Raises:
+            ValueError: The view is the owner view, which the full worker list does not serve.
+        """
+        if self is WorkerListView.MODERATOR:
+            return "worker_cache_privileged"
+        if self is WorkerListView.OWNER:
+            raise ValueError("the owner view is not stored in a snapshot of the active workers")
+        return "worker_cache"
+
 
 WORKER_ROWS_LIFETIME: timedelta = timedelta(hours=1)
 """How long a row hash and the set of active worker IDs stay after their last write.
