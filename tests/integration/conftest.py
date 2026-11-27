@@ -18,12 +18,15 @@ import pytest
 import sqlalchemy
 
 from tests.dependency_runtime import (
+    EXTERNAL_DEPS_MODE,
     REQUIRE_TEST_DEPS_ENV,
+    HordeTestRuntime,
     create_schema,
     drop_schema,
     new_test_schema_name,
     postgres_reachable,
     redis_reachable,
+    start_managed_redis,
 )
 from tests.fixture_types import ApiUser, MakeApiUser
 from tests.integration._fake_chat_worker import OFFLOAD_THRESHOLD_BYTES
@@ -166,10 +169,17 @@ def _fake_redis_backend(app) -> Iterator[None]:
         yield
         return
 
+    from horde import chat_progress, chat_signal
     from horde import horde_redis as horde_redis_module
 
     redis_conn = horde_redis_module.horde_redis
     fake = fakeredis.FakeStrictRedis()
+    # The chat signals and the delta stream create their own clients for the configured Redis host. Without a
+    # server, every publish waits for a refused connection, which takes seconds on Windows.
+    chat_fake = fakeredis.FakeStrictRedis(decode_responses=True)
+    old_chat_publisher = chat_signal._publisher
+    old_progress_client = chat_progress._client
+    old_append_script = chat_progress._append_script
 
     old_horde_r = redis_conn.horde_r
     old_horde_local_r = redis_conn.horde_local_r
@@ -178,6 +188,9 @@ def _fake_redis_backend(app) -> Iterator[None]:
     redis_conn.horde_r = fake
     redis_conn.horde_local_r = fake
     redis_conn.all_horde_redis = [fake]
+    chat_signal._publisher = chat_fake
+    chat_progress._client = chat_fake
+    chat_progress._append_script = None
     _reset_redis_state()
 
     try:
@@ -186,6 +199,9 @@ def _fake_redis_backend(app) -> Iterator[None]:
         redis_conn.horde_r = old_horde_r
         redis_conn.horde_local_r = old_horde_local_r
         redis_conn.all_horde_redis = old_all_horde_redis
+        chat_signal._publisher = old_chat_publisher
+        chat_progress._client = old_progress_client
+        chat_progress._append_script = old_append_script
 
 
 def _reset_redis_state() -> None:
@@ -411,20 +427,37 @@ def lua_redis(progress_redis: fakeredis.FakeStrictRedis) -> fakeredis.FakeStrict
     return progress_redis
 
 
+@pytest.fixture(scope="session")
+def redis_server_address(horde_test_runtime: HordeTestRuntime) -> tuple[str, int]:
+    """Return the host and port of a Redis server, and start one in auto mode when a server is not reachable.
+
+    fakeredis runs inside the test process, so a separate process such as the chat front needs a real server. The
+    container starts only when a test requests this fixture, directly or through ``request.getfixturevalue``.
+    """
+    redis_host = os.environ.get("REDIS_IP", "localhost")
+    redis_port = int(os.environ.get("REDIS_PORT", "6379"))
+    if redis_reachable(redis_host, redis_port):
+        return redis_host, redis_port
+
+    message = f"These tests need a Redis server, and {redis_host}:{redis_port} is not reachable."
+    if horde_test_runtime.deps_mode != EXTERNAL_DEPS_MODE:
+        try:
+            return start_managed_redis(horde_test_runtime)
+        except Exception as raised_exc:  # pragma: no cover - depends on local Docker availability
+            message = f"{message} Starting a Redis container failed: {raised_exc}"
+    if os.environ.get(REQUIRE_TEST_DEPS_ENV) == "1":
+        pytest.fail(message)
+    pytest.skip(message)
+
+
 @pytest.fixture(scope="module")
-def signal_redis_url() -> Iterator[str]:
+def signal_redis_url(redis_server_address: tuple[str, int]) -> Iterator[str]:
     """Route the Horde's chat signals to the test Redis and return the URL used by the front to subscribe."""
     import redis
 
     from horde import chat_signal
 
-    redis_host = os.environ.get("REDIS_IP", "localhost")
-    redis_port = int(os.environ.get("REDIS_PORT", "6379"))
-    if not redis_reachable(redis_host, redis_port):
-        message = f"The SDK conformance run needs the test Redis at {redis_host}:{redis_port} for chat signals."
-        if os.environ.get(REQUIRE_TEST_DEPS_ENV) == "1":
-            pytest.fail(message)
-        pytest.skip(message)
+    redis_host, redis_port = redis_server_address
     publisher = redis.Redis(host=redis_host, port=redis_port, db=CHAT_SIGNAL_REDIS_DB, decode_responses=True)
     previous_publisher = chat_signal._publisher
     chat_signal._publisher = publisher

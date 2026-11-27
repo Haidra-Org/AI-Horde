@@ -303,6 +303,20 @@ def configure_postgres(runtime: HordeTestRuntime) -> None:
         runtime.postgres_skip_reason = f"Postgres unreachable at {external_dsn!r}, and automatic provisioning failed: {raised_exc}"
 
 
+def start_managed_redis(runtime: HordeTestRuntime) -> tuple[str, int]:
+    """Start a Redis container that lasts until the runtime closes, and return its host and port.
+
+    Raises:
+        Exception: Docker or testcontainers could not start the container.
+    """
+    _, RedisContainer = load_testcontainers()
+    redis_container = runtime._stack.enter_context(RedisContainer())
+    host = redis_container.get_container_host_ip()
+    port = int(redis_container.get_exposed_port(redis_container.port))
+    wait_until("managed Redis", lambda: redis_reachable(host, port))
+    return host, port
+
+
 def configure_redis(runtime: HordeTestRuntime) -> None:
     try:
         import fakeredis  # noqa: F401
@@ -320,14 +334,10 @@ def configure_redis(runtime: HordeTestRuntime) -> None:
         return
 
     try:
-        _, RedisContainer = load_testcontainers()
-        redis_container = runtime._stack.enter_context(RedisContainer())
-        host = redis_container.get_container_host_ip()
-        port = str(redis_container.get_exposed_port(redis_container.port))
-        wait_until("managed Redis", lambda: redis_reachable(host, int(port)))
+        host, port = start_managed_redis(runtime)
 
         runtime.set_env("REDIS_IP", host)
-        runtime.set_env("REDIS_PORT", port)
+        runtime.set_env("REDIS_PORT", str(port))
         runtime.set_env("REDIS_SERVERS", f'["{host}"]')
     except Exception:  # pragma: no cover - depends on local Docker availability
         return
