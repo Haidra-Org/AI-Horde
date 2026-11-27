@@ -9,7 +9,7 @@ import uuid
 from locust import HttpUser, between, tag, task
 
 from ..config import _config
-from ..helpers import _headers, _pick_requestor_key, _pick_worker_key, _random_prompt, _record_expected
+from ..helpers import _accept_rate_limit, _headers, _pick_requestor_key, _pick_worker_key, _random_prompt, _record_expected
 
 
 class MisuseUser(HttpUser):
@@ -132,6 +132,73 @@ class MisuseUser(HttpUser):
             name="/api/v2/workers/name/[name] [misuse-missing]",
         ) as resp:
             self._expect_4xx(resp, "/api/v2/workers/name/[name] [misuse-missing]")
+
+    def _expect_refusal(self, resp, name: str, return_code: str, status_code: int = 400):
+        """Pass only the documented status and return code, because any page here would be a wrong response.
+
+        A 429 comes from the rate limiter before the arguments are checked, so it is recorded as rate limited.
+        """
+        if _accept_rate_limit(resp, self.environment, name):
+            return
+        if resp.status_code == status_code and (resp.json() or {}).get("rc") == return_code:
+            resp.success()
+            _record_expected(
+                self.environment,
+                resp.request_meta.get("method", "GET"),
+                name,
+                resp.elapsed.total_seconds() * 1000,
+                len(resp.content or b""),
+            )
+            return
+        resp.failure(f"Expected {status_code} {return_code}, got {resp.status_code}: {resp.text[:200]}")
+
+    @tag("misuse", "worker")
+    @task(1)
+    def worker_page_forged_cursor(self):
+        name = "/api/v2/workers/page [misuse-bad-cursor]"
+        with self.client.get(
+            "/api/v2/workers/page",
+            params={"cursor": uuid.uuid4().hex},
+            catch_response=True,
+            name=name,
+        ) as resp:
+            self._expect_refusal(resp, name, "InvalidWorkerListCursor")
+
+    @tag("misuse", "worker")
+    @task(1)
+    def worker_page_over_limit(self):
+        name = "/api/v2/workers/page [misuse-over-limit]"
+        with self.client.get(
+            "/api/v2/workers/page",
+            params={"limit": 10000},
+            catch_response=True,
+            name=name,
+        ) as resp:
+            self._expect_refusal(resp, name, "InvalidWorkerListLimit")
+
+    @tag("misuse", "worker")
+    @task(1)
+    def worker_page_oversized_name_search(self):
+        name = "/api/v2/workers/page [misuse-long-name-search]"
+        with self.client.get(
+            "/api/v2/workers/page",
+            params={"name_contains": "x" * 5000},
+            catch_response=True,
+            name=name,
+        ) as resp:
+            self._expect_refusal(resp, name, "InvalidWorkerListFilter")
+
+    @tag("misuse", "worker")
+    @task(1)
+    def own_workers_forged_key(self):
+        name = "/api/v2/workers/mine [misuse-bad-key]"
+        with self.client.get(
+            "/api/v2/workers/mine",
+            headers=_headers(uuid.uuid4().hex),
+            catch_response=True,
+            name=name,
+        ) as resp:
+            self._expect_refusal(resp, name, "InvalidAPIKey", status_code=401)
 
     @tag("misuse", "image", "worker")
     @task(1)

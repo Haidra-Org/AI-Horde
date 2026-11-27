@@ -191,6 +191,9 @@ The errors returned by the AI horde are always in this json format
 | InvalidTransparencyImg2Img | Transparent images cannot be generated in img2img workflows |
 | InvalidTransparencyModel | Transparent images cannot be generated for this model baseline |
 | InvalidWorkerID | The worker ID is not a UUID |
+| InvalidWorkerListCursor | The worker page cursor is malformed, belongs to another sort order or to a walk with other filters, view or account, or holds a sort value outside the 64-bit integer range |
+| InvalidWorkerListFilter | A worker page filter is malformed: `team_id` is not a UUID, `owner_id` is negative, or `name_contains` is longer than 100 characters |
+| InvalidWorkerListLimit | The worker page size is out of range |
 | MessagesOnlyOwnWorkers | Messages can only be sent to your own workers |
 | MissingExtraTexts | This workflow requires the extra texts to be provided |
 | MissingFullSamplerOrder | A custom sampler order must list every sampler |
@@ -241,3 +244,4 @@ The errors returned by the AI horde are always in this json format
 | ChatProgressUnavailable | A chat job's progress post could not be stored because Redis could not be reached (HTTP 503) |
 | ChatJobAborted | A chat job's progress post named a generation without a lease that is faulted, as after its lease lapsed or its request was cancelled, or not stored, as after its request expired (HTTP 404); the worker stops generating and does not submit |
 | UserNotDeleted | The user is not deleted and cannot be undeleted |
+| WorkerListUnavailable | A worker page could not be read because Redis could not be reached or the stored worker rows were missing (HTTP 503); retry after the number of seconds in the `Retry-After` header |

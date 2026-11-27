@@ -60,6 +60,29 @@ def _record_expected(environment, request_type: str, name: str, response_time_ms
     )
 
 
+def _accept_rate_limit(resp, environment, name: str) -> bool:
+    """Count a 429 as an expected response, recorded under ``<name> [rate limited]``.
+
+    All Locust users of one run send from the same client IP address, so in a busy run some requests get a 429 from
+    the Horde's per-address limits. A 429 is returned before the endpoint runs, so it is recorded separately from the
+    endpoint's responses.
+
+    Returns:
+        True when the response was a 429 and has been recorded.
+    """
+    if resp.status_code != 429:
+        return False
+    resp.success()
+    _record_expected(
+        environment,
+        resp.request_meta.get("method", "GET"),
+        f"{name} [rate limited]",
+        resp.elapsed.total_seconds() * 1000,
+        len(resp.content or b""),
+    )
+    return True
+
+
 def _handle_async_generate(resp, environment) -> str | None:
     """Common handling for POST /generate/async responses.
 

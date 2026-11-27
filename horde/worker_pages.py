@@ -16,6 +16,11 @@ therefore do not shift the rows of later pages. A worker's sort value can change
 each check-in, so a walk can skip or repeat a worker whose value moves it past the cursor. Page boundaries are best
 effort.
 
+A cursor continues only the walk it was issued for. It holds a digest of the walk's filters, view and account, and
+the server refuses it with other filters, another view or another account. A position in one filtered list does not
+correspond to a position in another list. A walk continued under new filters would skip, without any error, the
+matching workers before the cursor.
+
 Public members:
 
 - [`WorkerPageLimits`][horde.worker_pages.WorkerPageLimits]: the bounds of one page request.
@@ -30,6 +35,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import uuid
 from dataclasses import dataclass
@@ -101,18 +107,26 @@ SortValue = str | int
 _LARGEST_COUNT: int = 2**63 - 1
 """The largest value of the 64-bit integer columns that hold the counts."""
 
+WALK_KEY_CHARACTERS: int = 16
+"""The length of a walk key, in hexadecimal characters.
+
+The key tells walks apart. It does not protect anything, because a crafted cursor only starts a walk at a position
+chosen by the caller. 64 bits keep an accidental match between two different walks out of reach and keep the cursor
+short.
+"""
+
 
 class InvalidWorkerCursorError(ValueError):
-    """Raised when a cursor was not produced by this module or belongs to another sort order."""
+    """Raised when a cursor was not produced by this module, or belongs to another sort order or another walk."""
 
 
 @dataclass(frozen=True)
 class WorkerPageCursor:
     """Represents the position after the last row of a page.
 
-    The encoded form is URL-safe base64 of a small JSON document, which clients treat as opaque. The cursor holds only
-    values that are visible in the page, so it is not signed. A crafted cursor only starts a walk at a position chosen
-    by the caller.
+    The encoded form is URL-safe base64 of a small JSON document, which clients treat as opaque. The cursor holds the
+    values of the last row and a digest of the walk's filters, so it is not signed. A crafted cursor only starts a walk
+    at a position chosen by the caller.
     """
 
     FORMAT_VERSION = 1
@@ -124,27 +138,36 @@ class WorkerPageCursor:
     """The last row's value of the sort column, as read from the database."""
     worker_id: str
     """The ID of the last row, which breaks ties in ``sort_value``."""
+    walk_key: str
+    """The digest of the walk's filters, view and account, from ``WorkerPageFilters.walk_key``."""
 
     def encode(self) -> str:
         """Return the opaque string that a client passes back as ``cursor``."""
-        document = {"v": self.FORMAT_VERSION, "s": self.sort.value, "k": self.sort_value, "i": self.worker_id}
+        document = {
+            "v": self.FORMAT_VERSION,
+            "s": self.sort.value,
+            "k": self.sort_value,
+            "i": self.worker_id,
+            "w": self.walk_key,
+        }
         serialized = json.dumps(document, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         return base64.urlsafe_b64encode(serialized).decode("ascii").rstrip("=")
 
     @classmethod
-    def decode(cls, encoded: str, *, expected_sort: WorkerListSort) -> WorkerPageCursor:
-        """Parse a cursor passed back by a client and check that it continues a walk in ``expected_sort``.
+    def decode(cls, encoded: str, *, expected_sort: WorkerListSort, expected_walk_key: str) -> WorkerPageCursor:
+        """Parse a cursor passed back by a client and check that it continues the walk of the current request.
 
         Args:
             encoded: The ``next_cursor`` of an earlier page.
             expected_sort: The order of the current request.
+            expected_walk_key: The walk key of the current request's filters, view and account.
 
         Returns:
             The decoded position.
 
         Raises:
             InvalidWorkerCursorError: The cursor is too long, malformed, of another version, of another sort order,
-                or holds a value of the wrong type or range for its order.
+                of another walk, or holds a value of the wrong type or range for its order.
         """
         if len(encoded) > WorkerPageLimits.MAX_CURSOR_CHARACTERS:
             raise InvalidWorkerCursorError("cursor is longer than the longest cursor issued by this server")
@@ -157,13 +180,17 @@ class WorkerPageCursor:
             raise InvalidWorkerCursorError("cursor was not issued by this server")
         if document.get("s") != expected_sort.value:
             raise InvalidWorkerCursorError("cursor continues a walk in another sort order")
+        if document.get("w") != expected_walk_key:
+            raise InvalidWorkerCursorError(
+                "cursor continues a walk with other filters, another view or another account. Request the first page again.",
+            )
         worker_id = document.get("i")
         sort_value = document.get("k")
         if not isinstance(worker_id, str) or not _is_uuid(worker_id):
             raise InvalidWorkerCursorError("cursor does not hold a valid worker ID")
         if not _sort_value_fits(sort_value, expected_sort):
             raise InvalidWorkerCursorError("cursor holds a value of the wrong type or range for its sort order")
-        return cls(sort=expected_sort, sort_value=sort_value, worker_id=worker_id)
+        return cls(sort=expected_sort, sort_value=sort_value, worker_id=worker_id, walk_key=expected_walk_key)
 
 
 def _is_uuid(candidate: str) -> bool:
@@ -222,3 +249,31 @@ class WorkerPageFilters:
             "online": self.online,
         }
         return [filter_name for filter_name, filter_value in candidate_filters.items() if filter_value is not None]
+
+    def walk_key(self, view: str, account_id: int | None) -> str:
+        """Return the digest that ties a cursor to the walk of these filters, in ``view``, for ``account_id``.
+
+        The view and the account are part of the key because they change which workers are listed. A public
+        ``owner_id`` filter matches fewer workers than a moderator's, and the owner's list holds one account's workers.
+        The filters are hashed after the request parser has normalized them, so the same request gives the same key.
+        The search text is hashed and not stored, so it does not appear in the cursor.
+
+        Args:
+            view: The caller's view, as the value of ``horde.worker_rows.WorkerListView``.
+            account_id: The account of the owner's list, or None for the list of every account.
+
+        Returns:
+            A hexadecimal digest of ``WALK_KEY_CHARACTERS`` characters.
+        """
+        walk = [
+            view,
+            account_id,
+            self.worker_type,
+            self.model,
+            self.team_id,
+            self.owner_id,
+            self.name_contains,
+            self.online,
+        ]
+        serialized = json.dumps(walk, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return hashlib.sha256(serialized).hexdigest()[:WALK_KEY_CHARACTERS]

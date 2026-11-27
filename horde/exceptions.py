@@ -194,6 +194,10 @@ KNOWN_RC = [
     "InvalidModerationNote",
     "ModerationEventNotFound",
     "InvalidWorkerID",
+    "InvalidWorkerListLimit",
+    "InvalidWorkerListCursor",
+    "InvalidWorkerListFilter",
+    "WorkerListUnavailable",
     "InvalidSuspicionID",
     "SchedulerBaselineMismatch",
     "FlowShiftInapplicable",
@@ -256,6 +260,30 @@ class ServiceUnavailable(wze.ServiceUnavailable):
         self.specific = message
         self.log = log
         self.rc = rc
+
+
+class WorkerListUnavailable(wze.ServiceUnavailable):
+    """A worker page that cannot be read from the worker row store, refused with 503 and a ``Retry-After``.
+
+    It does not subclass ``ServiceUnavailable``, because the namespace runs the first registered handler that matches
+    a refusal, and the handler of ``ServiceUnavailable`` does not send the header.
+    """
+
+    RETRY_AFTER_SECONDS: int = 10
+    """The seconds a client waits before retrying.
+
+    The worker list job rewrites the rows of every active worker every 2 seconds and restores lost rows of inactive
+    workers over the following runs, so a page is usually readable again within a few runs once Redis is reachable.
+    """
+
+    response_headers: dict[str, str]
+    """Headers that ``handle_worker_list_unavailable`` adds to the refusal."""
+
+    def __init__(self, log: str, rc: str = "WorkerListUnavailable") -> None:
+        self.specific = f"The worker list is temporarily unavailable. Retry after {self.RETRY_AFTER_SECONDS} seconds."
+        self.log = log
+        self.rc = rc
+        self.response_headers = {"Retry-After": str(self.RETRY_AFTER_SECONDS)}
 
 
 class NotFound(wze.NotFound):
@@ -813,6 +841,16 @@ def handle_bad_requests(error):
         },
         error.code,
     )
+
+
+def handle_worker_list_unavailable(error: WorkerListUnavailable) -> tuple[dict[str, object], int, dict[str, str]]:
+    """Return the refusal of ``handle_bad_requests`` with the ``Retry-After`` of ``error``.
+
+    The namespace builds the response from the handler's return value, so a header reaches the client only when the
+    handler returns it.
+    """
+    body, status_code = handle_bad_requests(error)
+    return body, status_code, error.response_headers
 
 
 # PostgreSQL text/varchar columns cannot store NUL (0x00) bytes. When a
