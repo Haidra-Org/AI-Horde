@@ -1,0 +1,34 @@
+-- The narrow table that the paged worker list reads for its order, filters and
+-- totals. db.create_all() creates it on boot, so applying this file by hand is
+-- optional. It lets an operator create the table and its indexes before the
+-- deploy. Every statement can be run again safely.
+--
+-- The table starts empty. The refresh_worker_list_entries job on the quorum node
+-- fills it on its first run and afterwards writes only the entries that changed.
+-- The indexes live here and not on workers, because every check-in updates the
+-- counters in workers, and an index on them would stop heap-only tuple (HOT)
+-- updates of that table.
+
+CREATE TABLE IF NOT EXISTS worker_list_entries (
+    worker_id UUID NOT NULL,
+    worker_type VARCHAR(30) NOT NULL,
+    user_id INTEGER,
+    team_id UUID,
+    lower_name VARCHAR(200) NOT NULL,
+    uptime BIGINT NOT NULL,
+    fulfilments INTEGER NOT NULL,
+    kudos BIGINT NOT NULL,
+    PRIMARY KEY (worker_id),
+    FOREIGN KEY (worker_id) REFERENCES workers (id) ON DELETE CASCADE
+);
+
+-- One index per page order. The worker ID breaks ties, so a page continues from
+-- a cursor without reading the entries before it.
+CREATE INDEX IF NOT EXISTS ix_worker_list_entries_uptime ON worker_list_entries (uptime DESC, worker_id);
+CREATE INDEX IF NOT EXISTS ix_worker_list_entries_fulfilments ON worker_list_entries (fulfilments DESC, worker_id);
+CREATE INDEX IF NOT EXISTS ix_worker_list_entries_kudos ON worker_list_entries (kudos DESC, worker_id);
+CREATE INDEX IF NOT EXISTS ix_worker_list_entries_lower_name ON worker_list_entries (lower_name, worker_id);
+
+-- The owner and team filters.
+CREATE INDEX IF NOT EXISTS ix_worker_list_entries_user_id ON worker_list_entries (user_id);
+CREATE INDEX IF NOT EXISTS ix_worker_list_entries_team_id ON worker_list_entries (team_id);
