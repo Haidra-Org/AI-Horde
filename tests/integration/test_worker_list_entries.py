@@ -379,6 +379,43 @@ class TestRowStoreReconciliation:
 
         assert horde_redis.horde_r.sismember(WORKER_ROWS_DIRTY_KEY, worker_id)
 
+    def test_after_the_row_hashes_are_lost_one_refresh_marks_every_registered_worker_dirty_in_chunks(
+        self,
+        app: Flask,
+        make_api_user: MakeApiUser,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import horde.worker_rows as worker_rows_module
+        from horde.horde_redis import horde_redis
+        from horde.worker_rows import WORKER_ROWS_DIRTY_KEY, WorkerListView
+
+        chunk_size = 2
+        monkeypatch.setattr(worker_rows_module, "WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE", chunk_size)
+        monkeypatch.setattr(worker_rows_module, "WORKER_ROWS_RECONCILE_LIMIT", 1)
+        marked_batches: list[list[str]] = []
+        mark_worker_rows_dirty = worker_rows_module.mark_worker_rows_dirty
+
+        def _record_marks(worker_ids: Collection[str]) -> None:
+            marked_batches.append(list(worker_ids))
+            mark_worker_rows_dirty(worker_ids)
+
+        monkeypatch.setattr(worker_rows_module, "mark_worker_rows_dirty", _record_marks)
+        owner = make_api_user(trusted=True, kudos=100)
+        for _ in range(5):
+            _create_worker(app, owner, _unique_name("Rebuilt"))
+        for view in WorkerListView:
+            horde_redis.horde_r_delete(view.rows_key)
+        horde_redis.horde_r_delete(WORKER_ROWS_DIRTY_KEY)
+
+        _refresh()
+
+        registered_worker_ids = set(_registered_workers(app))
+        dirty_members = horde_redis.horde_r.smembers(WORKER_ROWS_DIRTY_KEY)
+        dirty_worker_ids = {member.decode() if isinstance(member, bytes) else member for member in dirty_members}
+        assert dirty_worker_ids == registered_worker_ids
+        assert all(len(batch) <= chunk_size for batch in marked_batches), marked_batches
+        assert sum(len(batch) for batch in marked_batches) == len(registered_worker_ids)
+
 
 class TestWalks:
     """A walk in any order lists every registered worker once, active or not, in the order of the list contract."""

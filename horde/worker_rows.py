@@ -134,12 +134,22 @@ twenty thousand registered workers and ``WORKER_ROWS_ROLLING_INTERVAL_SECONDS`` 
 twenty minutes, well inside ``WORKER_ROWS_LIFETIME``.
 """
 WORKER_ROWS_RECONCILE_LIMIT: int = 5000
-"""The most workers removed, and separately the most marked dirty, by one reconciliation.
+"""The most workers whose rows one reconciliation removes because they are no longer registered.
 
-The dirty drain rewrites ``WORKER_ROWS_DIRTY_CHUNK_SIZE`` workers every two seconds, so it clears this many in about
-twenty seconds, well inside the minute between two reconciliations, and the dirty set does not grow from run to run.
-After the row hashes are lost, every worker lacks rows and the backlog clears over a few runs, while the rolling pass
-rewrites the same workers in parallel.
+Deletions normally remove their rows at once, so only a few rows are left over between two reconciliations. The
+limit bounds the ``HDEL`` commands of one run when many are left over, and later runs remove the rest.
+"""
+WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE: int = 5000
+"""The most worker IDs sent in one ``SADD`` when a reconciliation marks workers without rows dirty.
+
+A reconciliation marks every registered worker without a public row in one run, in chunks of this size. When the row
+hashes are lost, because Redis restarted or failed over, the hashes expired, or the row store is new, every worker
+lacks rows and most pages cannot be served until the rows are back. Marking them all at once lets every following run
+of the worker list job restore up to ``WORKER_ROWS_DIRTY_CHUNK_SIZE`` workers, without waiting for later
+reconciliations. The reconciliation runs once a minute with the refresh of ``worker_list_entries``, so the workers can
+be marked up to a minute after the loss. Under a full backlog, a run of the worker list job lasts longer than its
+two-second interval, so the rebuild takes a few minutes. The dirty set is a set, so marking a worker that is already
+dirty does not grow it. In steady state only a few workers lack rows, and one command marks them.
 """
 WORKER_ROWS_ROLLING_INTERVAL_SECONDS: int = 30
 """The seconds between runs of the rolling pass.
@@ -264,8 +274,9 @@ def reconcile_worker_rows(registered_worker_ids: Collection[str]) -> None:
     """Remove the rows of workers that are no longer registered and mark dirty the workers without a public row.
 
     A worker deleted without a call to ``remove_worker_rows`` keeps its rows, and a row lost from Redis is otherwise
-    restored only by the rolling pass. Each of the two corrections is bounded by ``WORKER_ROWS_RECONCILE_LIMIT``. The
-    fields are read on the primary.
+    restored only by the rolling pass. The removal is bounded by ``WORKER_ROWS_RECONCILE_LIMIT``. Every registered
+    worker without a public row is marked dirty in the same run (see ``_mark_unstored_workers_dirty``), so lost hashes
+    are rebuilt at the rate of the dirty drain. The fields are read on the primary.
 
     A worker registered after ``registered_worker_ids`` was read may lose its new rows here. It is active, so the next
     run of the worker list job writes them again within seconds. A worker deleted after that read is marked dirty, and
@@ -279,7 +290,22 @@ def reconcile_worker_rows(registered_worker_ids: Collection[str]) -> None:
     departed_worker_ids = sorted(stored_worker_ids.difference(registered_worker_ids))[:WORKER_ROWS_RECONCILE_LIMIT]
     remove_worker_rows(departed_worker_ids)
     unstored_worker_ids = sorted(set(registered_worker_ids).difference(stored_worker_ids_by_view[WorkerListView.PUBLIC]))
-    mark_worker_rows_dirty(unstored_worker_ids[:WORKER_ROWS_RECONCILE_LIMIT])
+    _mark_unstored_workers_dirty(unstored_worker_ids)
+
+
+def _mark_unstored_workers_dirty(unstored_worker_ids: Sequence[str]) -> None:
+    """Mark dirty every worker in ``unstored_worker_ids``, with at most ``WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE`` IDs per command.
+
+    More than one chunk of workers without rows means the row hashes were lost as a whole, and most pages of the paged
+    lists are refused until the drain has restored the rows. The rebuild is logged so the refusals can be explained.
+
+    Args:
+        unstored_worker_ids: The IDs of the registered workers without a public row.
+    """
+    if len(unstored_worker_ids) > WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE:
+        logger.warning(f"The row store lacks the rows of {len(unstored_worker_ids)} registered workers. Marking all of them dirty.")
+    for chunk_start in range(0, len(unstored_worker_ids), WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE):
+        mark_worker_rows_dirty(unstored_worker_ids[chunk_start : chunk_start + WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE])
 
 
 def read_rolling_position() -> str | None:

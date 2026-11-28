@@ -244,4 +244,4 @@ The errors returned by the AI horde are always in this json format
 | ChatProgressUnavailable | A chat job's progress post could not be stored because Redis could not be reached (HTTP 503) |
 | ChatJobAborted | A chat job's progress post named a generation without a lease that is faulted, as after its lease lapsed or its request was cancelled, or not stored, as after its request expired (HTTP 404); the worker stops generating and does not submit |
 | UserNotDeleted | The user is not deleted and cannot be undeleted |
-| WorkerListUnavailable | A worker page could not be read because Redis could not be reached or the stored worker rows were missing (HTTP 503); retry after the number of seconds in the `Retry-After` header |
+| WorkerListUnavailable | A worker page could not be read because Redis could not be reached, or the stored rows of all or many of the page's workers were missing (HTTP 503); retry after the number of seconds in the `Retry-After` header. The horde logs each refusal as one warning and counts it in `horde.workers.list.unavailable` |

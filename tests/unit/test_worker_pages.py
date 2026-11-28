@@ -24,6 +24,7 @@ from horde.worker_pages import (
     WorkerPageCursor,
     WorkerPageFilters,
     WorkerPageLimits,
+    page_is_missing_too_many_rows,
 )
 
 WALK_KEY: str = WorkerPageFilters().walk_key("public", None)
@@ -153,3 +154,40 @@ def test_the_same_filters_give_the_same_walk_key_and_the_key_hides_the_search_te
 
     assert first_key == second_key
     assert search_text not in decoded
+
+
+# The cases below assume MAX_MISSING_ROW_SHARE of a tenth and TOLERATED_MISSING_ROWS of two.
+@pytest.mark.parametrize(
+    ("page_worker_count", "missing_row_count"),
+    [
+        (0, 0),
+        (100, 0),
+        (100, 2),
+        (100, 10),
+        (30, 3),
+        (10, 2),
+        (3, 2),
+        (2, 1),
+    ],
+)
+def test_a_page_with_a_few_missing_rows_is_served(page_worker_count: int, missing_row_count: int) -> None:
+    assert not page_is_missing_too_many_rows(page_worker_count, missing_row_count)
+
+
+@pytest.mark.parametrize(
+    ("page_worker_count", "missing_row_count"),
+    [
+        (100, 11),
+        (100, 95),
+        (25, 3),
+        (4, 3),
+    ],
+)
+def test_a_page_missing_more_than_the_tolerated_rows_and_share_is_refused(page_worker_count: int, missing_row_count: int) -> None:
+    assert page_is_missing_too_many_rows(page_worker_count, missing_row_count)
+
+
+# A small page is still refused when every row is missing, because an empty page with a cursor looks like an empty list.
+@pytest.mark.parametrize("page_worker_count", [1, 2, 3])
+def test_a_small_page_without_any_stored_row_is_refused(page_worker_count: int) -> None:
+    assert page_is_missing_too_many_rows(page_worker_count, page_worker_count)

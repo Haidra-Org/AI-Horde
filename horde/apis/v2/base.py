@@ -114,6 +114,7 @@ from horde.worker_pages import (
     WorkerPageCursor,
     WorkerPageFilters,
     WorkerPageLimits,
+    page_is_missing_too_many_rows,
 )
 from horde.worker_rows import WorkerListView, mark_worker_rows_dirty, read_active_worker_ids, read_worker_rows
 
@@ -217,7 +218,6 @@ handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_reques
 handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 handle_service_unavailable = api.errorhandler(e.ServiceUnavailable)(e.handle_bad_requests)
-handle_worker_list_unavailable = api.errorhandler(e.WorkerListUnavailable)(e.handle_worker_list_unavailable)
 handle_not_found = api.errorhandler(e.NotFound)(e.handle_bad_requests)
 locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 
@@ -1924,6 +1924,32 @@ def _record_worker_list_read(
     metrics.worker_list_rows.record(row_count, {"horde.workers.list.endpoint": endpoint.value})
 
 
+def _worker_list_unavailable_response(
+    *,
+    endpoint: WorkerListEndpoint,
+    view: WorkerListView,
+    reason: metrics.WorkerListUnavailableReason,
+    detail: str,
+) -> Response:
+    """Count one refused worker page, log it as one warning, and return its 503 response with a ``Retry-After``.
+
+    The refusal is returned instead of raised, so Flask-RESTX does not log it as an exception with a traceback (see
+    ``e.WorkerListUnavailable``).
+
+    Args:
+        endpoint: The endpoint that refused the page.
+        view: The caller's view, for the warning.
+        reason: Why the page was refused.
+        detail: What failed, for the warning.
+    """
+    metrics.worker_list_unavailable.add(
+        1,
+        {"horde.workers.list.endpoint": endpoint.value, "horde.workers.list.reason": reason.value},
+    )
+    refusal = e.WorkerListUnavailable(f"{reason.value} on the {endpoint.value} worker list in the {view.value} view: {detail}")
+    return e.worker_list_unavailable_response(refusal)
+
+
 PRIVATE_WORKER_LIST_CACHE_CONTROL: str = "private, no-store"
 """The ``Cache-Control`` of moderator and owner worker lists.
 
@@ -2212,7 +2238,10 @@ class WorkerPageResource(Resource):
         """Return the response of one page of registered workers in ``view`` and count the read.
 
         A worker ID returned by the page query without a stored row is left out of the page, and ``total`` still
-        counts it.
+        counts it. A page missing too many of its rows is refused instead (see ``page_is_missing_too_many_rows``).
+
+        When Redis cannot be reached or the row store lacks too many of the page's rows, the response is the 503
+        refusal of ``_worker_list_unavailable_response``.
 
         Args:
             endpoint: The endpoint that serves the page, for the metric label.
@@ -2223,17 +2252,26 @@ class WorkerPageResource(Resource):
 
         Raises:
             e.BadRequest: The cursor is malformed, or was issued for another sort order or another walk.
-            e.WorkerListUnavailable: Redis cannot be reached, or the row store does not hold any of the page's rows.
         """
         after = self._parse_cursor(sort, filters.walk_key(view.value, account_id))
         if hr.horde_r is None:
             # Without Redis the online filter would not read any active worker IDs and the page would not read any
             # rows, so the page would be wrong rather than incomplete.
-            raise e.WorkerListUnavailable("The worker row store is unavailable because Redis is not connected.")
+            return _worker_list_unavailable_response(
+                endpoint=endpoint,
+                view=view,
+                reason=metrics.WorkerListUnavailableReason.REDIS_NOT_CONNECTED,
+                detail="The worker row store is unavailable because Redis is not connected.",
+            )
         try:
             active_worker_ids = read_active_worker_ids() if filters.online is not None else None
         except redis.RedisError as err:
-            raise e.WorkerListUnavailable(f"Reading the active worker IDs failed: {err}") from err
+            return _worker_list_unavailable_response(
+                endpoint=endpoint,
+                view=view,
+                reason=metrics.WorkerListUnavailableReason.ACTIVE_WORKER_IDS_UNREADABLE,
+                detail=f"Reading the active worker IDs failed: {err}",
+            )
         registered_page = database.page_registered_workers(
             filters=filters,
             sort=sort,
@@ -2249,17 +2287,26 @@ class WorkerPageResource(Resource):
         try:
             stored_rows = read_worker_rows(view, registered_page.worker_ids)
         except redis.RedisError as err:
-            raise e.WorkerListUnavailable(f"Reading the worker rows failed: {err}") from err
+            return _worker_list_unavailable_response(
+                endpoint=endpoint,
+                view=view,
+                reason=metrics.WorkerListUnavailableReason.ROWS_UNREADABLE,
+                detail=f"Reading the worker rows failed: {err}",
+            )
         page_rows = [stored_row for stored_row in stored_rows if stored_row is not None]
         # A row can be missing for a short time while the rest are stored, for a worker registered after the last
         # write of the row store or deleted since the last refresh of worker_list_entries. That worker is left out and
-        # the rest of the page is served. When the query returned IDs but the row store does not hold a row for any of
-        # them, the row hash is missing as a whole, because Redis lost it or the worker list job stopped and the hash
-        # expired. An empty page with a cursor would then read as a list without workers, so the request is refused
-        # for a retry instead.
-        if registered_page.worker_ids and not page_rows:
-            raise e.WorkerListUnavailable(
-                f"The row store does not hold any of the {len(registered_page.worker_ids)} rows of a {view} worker page.",
+        # the rest of the page is served. When many of the page's rows are missing, the row hash was lost as a whole
+        # and is being rebuilt, or the worker list job stopped and the hash expired. A near-empty page would then read
+        # as a list with few workers, so the request is refused for a retry instead (see
+        # page_is_missing_too_many_rows).
+        missing_row_count = len(registered_page.worker_ids) - len(page_rows)
+        if page_is_missing_too_many_rows(len(registered_page.worker_ids), missing_row_count):
+            return _worker_list_unavailable_response(
+                endpoint=endpoint,
+                view=view,
+                reason=metrics.WorkerListUnavailableReason.TOO_MANY_ROWS_MISSING,
+                detail=f"The row store lacks {missing_row_count} of the {len(registered_page.worker_ids)} rows of the page.",
             )
         _record_worker_list_read(
             endpoint=endpoint,
