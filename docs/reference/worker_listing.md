@@ -302,7 +302,11 @@ Every label value comes from a fixed set. Filter values, such as a model name, a
 used as labels. `test_reads_are_counted_by_endpoint_and_walk_position_with_bounded_labels` and
 `test_reads_are_counted_under_their_own_endpoint_and_view` cover the labels. The row store's metrics,
 `horde.worker_rows.written` and `horde.worker_rows.rolling_pass_duration`, show how many rows each refresh writes and
-how long a rolling pass takes.
+how long a rolling pass takes. `horde.worker_rows.written` counts the rows by the `horde.worker_rows.tier` attribute
+(`active`, `dirty`, `rolling`). The attribute is not named `horde.tier`, because a deployment can promote the
+`horde.tier` resource attribute to a metric label, and a data point attribute of the same name would be merged into
+that label
+(`test_written_rows_are_counted_under_an_attribute_apart_from_the_promoted_resource_labels`).
 
 ## Sharp edges
 

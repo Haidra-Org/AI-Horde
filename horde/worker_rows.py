@@ -199,7 +199,7 @@ def store_worker_rows(workers: Sequence[WorkerTemplate], tier: WorkerRowsTier) -
         return
     for view, rows in build_worker_rows(workers).items():
         hr.horde_r_hset_many(view.rows_key, rows, WORKER_ROWS_LIFETIME)
-        worker_rows_written.add(len(rows), {"horde.tier": tier.value})
+        worker_rows_written.add(len(rows), {"horde.worker_rows.tier": tier.value})
 
 
 def remove_worker_rows(worker_ids: Collection[str]) -> None:

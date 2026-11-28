@@ -670,6 +670,42 @@ class TestActiveTier:
             assert stored_row["online"] is False
 
 
+class TestWrittenRowCount:
+    """Each write of rows is counted once per view under the tier of the refresh that wrote it."""
+
+    def test_written_rows_are_counted_under_an_attribute_apart_from_the_promoted_resource_labels(
+        self,
+        client: FlaskClient,
+        app: Flask,
+        make_api_user: MakeApiUser,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The deployment promotes the ``horde.tier`` resource attribute to a label, so the tier needs its own name."""
+        import horde.worker_rows as worker_rows_module
+        from horde.database.threads import store_worker_list
+        from horde.metrics import WorkerRowsTier
+        from horde.worker_rows import WorkerListView
+
+        promoted_resource_attributes = {"deployment.environment.name", "host.name", "service.namespace", "horde.host", "horde.tier"}
+        additions: list[tuple[int, dict[str, str]]] = []
+
+        class _RecordingCounter:
+            def add(self, amount: int, attributes: dict[str, str]) -> None:
+                additions.append((amount, attributes))
+
+        owner = make_api_user(trusted=True, kudos=100)
+        _register_worker(client, app, owner)
+        monkeypatch.setattr(worker_rows_module, "worker_rows_written", _RecordingCounter())
+
+        store_worker_list()
+
+        active_attributes = {"horde.worker_rows.tier": WorkerRowsTier.ACTIVE.value}
+        active_additions = [amount for amount, attributes in additions if attributes == active_attributes]
+        assert len(active_additions) == len(WorkerListView), additions
+        assert all(amount >= 1 for amount in active_additions), additions
+        assert all(promoted_resource_attributes.isdisjoint(attributes) for _, attributes in additions), additions
+
+
 class TestDeletion:
     """Deleting a worker removes its rows."""
 
