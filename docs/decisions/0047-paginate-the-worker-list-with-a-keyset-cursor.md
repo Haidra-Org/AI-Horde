@@ -142,7 +142,7 @@ account is refused with a 401, so a moderator with a mistyped key does not mista
 The full list ignores such a key.
 
 **Rate limits.** Each paged list allows 90 requests a minute per client IP address. Both lists also count against one
-limit of 3,000 requests a minute shared by every client IP address, so requests from many addresses cannot push the
+limit of 2,000 requests a minute shared by every client IP address, so requests from many addresses cannot push the
 page traffic past that.
 
 **Caching.** Public pages are sent with `Cache-Control: public, max-age=15`, because their rows and order are already

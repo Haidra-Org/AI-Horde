@@ -2055,13 +2055,13 @@ class Workers(Resource):
         return workers_list
 
 
-WORKER_PAGE_FLEET_RATE_LIMIT: str = "3000/minute"
+WORKER_PAGE_FLEET_RATE_LIMIT: str = "2000/minute"
 """The most requests that ``GET /v2/workers/page`` and ``GET /v2/workers/mine`` serve together each minute, from all
 addresses.
 
 Each page runs one statement against the database and one read of the row store in Redis. The per-address limit does
 not bound the total when many addresses send requests, so this limit caps the load that the paged lists can put on the
-database and Redis, at 50 pages a second.
+database and Redis, at about 33 pages a second.
 """
 WORKER_PAGE_FLEET_RATE_LIMIT_SCOPE: str = "worker_pages"
 """The scope of the fleet-wide limit, which both paged lists count against."""

@@ -312,7 +312,7 @@ the status, `rc`, `Retry-After`, the counted reason, the warning limit and the a
 | Limit | Applies to | Value |
 | --- | --- | --- |
 | Per client IP address | each of `GET /v2/workers/page` and `GET /v2/workers/mine` | 90 requests a minute |
-| Fleet-wide | both endpoints together, from every client IP address | 3,000 requests a minute (`WORKER_PAGE_FLEET_RATE_LIMIT`) |
+| Fleet-wide | both endpoints together, from every client IP address | 2,000 requests a minute (`WORKER_PAGE_FLEET_RATE_LIMIT`) |
 
 The fleet-wide limit is a [flask-limiter](https://flask-limiter.readthedocs.io/en/stable/) shared limit (`Limiter.shared_limit`)
 with one key for every caller, so total page traffic has a ceiling however many client IP addresses send it. A request
