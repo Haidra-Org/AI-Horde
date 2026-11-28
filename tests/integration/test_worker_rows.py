@@ -680,12 +680,13 @@ class TestWrittenRowCount:
         make_api_user: MakeApiUser,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The deployment promotes the ``horde.tier`` resource attribute to a label, so the tier needs its own name."""
+        """A deployment can promote the ``horde.tier`` resource attribute to a label, so the tier needs its own name."""
         import horde.worker_rows as worker_rows_module
         from horde.database.threads import store_worker_list
         from horde.metrics import WorkerRowsTier
         from horde.worker_rows import WorkerListView
 
+        # The resource attributes commonly promoted to metric labels.
         promoted_resource_attributes = {"deployment.environment.name", "host.name", "service.namespace", "horde.host", "horde.tier"}
         additions: list[tuple[int, dict[str, str]]] = []
 

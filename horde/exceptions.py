@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 import json
+import threading
+import time
+from collections.abc import Callable
 
 from flask import Response, has_request_context, request
 from werkzeug import exceptions as wze
@@ -267,10 +270,11 @@ class ServiceUnavailable(wze.ServiceUnavailable):
 class WorkerListUnavailable(wze.ServiceUnavailable):
     """A worker page that cannot be read from the worker row store, refused with 503 and a ``Retry-After``.
 
-    The paged worker lists build this refusal and pass it to ``worker_list_unavailable_response`` instead of raising
-    it. Flask-RESTX logs every raised error with a status of 500 or more as an exception with a traceback, even when an
-    error handler builds the response. While the row store is rebuilt, most list requests are refused, and each one
-    would log a traceback.
+    The paged worker lists return this refusal through ``worker_list_unavailable_response`` instead of raising it,
+    because Flask-RESTX logs a traceback for every raised error with a status of 500 or more, even when an error handler
+    builds the response. While the row store is rebuilt, most list requests are refused, and each one would log a
+    traceback. The API still registers ``handle_worker_list_unavailable`` for this class, so a raised refusal gets the
+    same body and ``Retry-After`` as a returned one.
     """
 
     RETRY_AFTER_SECONDS: int = 10
@@ -281,12 +285,16 @@ class WorkerListUnavailable(wze.ServiceUnavailable):
     and a client keeps retrying until then.
     """
 
-    response_headers: dict[str, str]
-    """Headers that ``worker_list_unavailable_response`` adds to the refusal."""
+    reason: metrics.WorkerListUnavailableReason
+    """Why the page was refused. The warnings about refused pages are limited per reason."""
 
-    def __init__(self, log: str, rc: str = "WorkerListUnavailable") -> None:
+    response_headers: dict[str, str]
+    """Headers that ``handle_worker_list_unavailable`` adds to the refusal."""
+
+    def __init__(self, log: str, *, reason: metrics.WorkerListUnavailableReason, rc: str = "WorkerListUnavailable") -> None:
         self.specific = f"The worker list is temporarily unavailable. Retry after {self.RETRY_AFTER_SECONDS} seconds."
         self.log = log
+        self.reason = reason
         self.rc = rc
         self.response_headers = {"Retry-After": str(self.RETRY_AFTER_SECONDS)}
 
@@ -838,6 +846,11 @@ def handle_bad_requests(error):
     else:
         # The counter carries the volume; the line is for following one refusal while debugging.
         logger.debug(f"{error.rc}: {error.specific}")
+    return _rejection_body(error)
+
+
+def _rejection_body(error: wze.HTTPException) -> tuple[dict[str, object], int]:
+    """Return the JSON body and the HTTP status of a refusal."""
     return (
         {
             "message": error.specific,
@@ -848,17 +861,98 @@ def handle_bad_requests(error):
     )
 
 
-def worker_list_unavailable_response(refusal: WorkerListUnavailable) -> Response:
-    """Return the response of ``refusal`` with the body of ``handle_bad_requests`` and the ``Retry-After`` header.
+WORKER_LIST_REFUSAL_WARNING_INTERVAL_SECONDS: float = 60
+"""The shortest time between two warnings about worker page refusals of the same reason in one process.
 
-    ``handle_bad_requests`` counts the refusal in ``horde.api.rejections`` and logs ``refusal.log`` as one warning
-    without a traceback, as for a raised refusal.
+While the row store is rebuilt, most paged list requests are refused, up to the fleet limit of the paged lists. One
+warning per refusal would then fill the logs. Each refusal is logged at debug level and counted in
+``horde.api.rejections`` and ``horde.workers.list.unavailable``. One warning per reason and interval is enough to show
+that refusals of a reason are happening and how many there are.
+"""
+
+
+class WorkerListRefusalWarningThrottle:
+    """Count worker page refusals by reason and allow one warning per reason in each interval.
+
+    Thread Safety:
+        The app serves requests on threads, so the counts and warning times are read and changed under one lock.
+    """
+
+    def __init__(self, *, interval_seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
+        """Create a throttle without any counted refusal.
+
+        Args:
+            interval_seconds: The shortest time between two warnings of the same reason.
+            clock: The source of the current time in seconds, which must not go backwards.
+        """
+        self._interval_seconds = interval_seconds
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._last_warning_times: dict[metrics.WorkerListUnavailableReason, float] = {}
+        self._refusals_since_warning: dict[metrics.WorkerListUnavailableReason, int] = {}
+
+    def count_refusal(self, reason: metrics.WorkerListUnavailableReason) -> int | None:
+        """Count one refusal of ``reason`` and, when a warning is due, return the number of refusals to report.
+
+        A warning is due for the first refusal of a reason, and for the first refusal after ``interval_seconds`` have
+        passed since the previous warning of that reason. The returned count then includes this refusal and every
+        refusal of the reason since the previous warning, and the count starts again from zero.
+
+        Args:
+            reason: Why the page was refused.
+
+        Returns:
+            The number of refusals of ``reason`` since the previous warning, or None when a warning is not due.
+        """
+        now = self._clock()
+        with self._lock:
+            refusal_count = self._refusals_since_warning.get(reason, 0) + 1
+            last_warning_time = self._last_warning_times.get(reason)
+            if last_warning_time is not None and now - last_warning_time < self._interval_seconds:
+                self._refusals_since_warning[reason] = refusal_count
+                return None
+            self._last_warning_times[reason] = now
+            self._refusals_since_warning[reason] = 0
+            return refusal_count
+
+
+worker_list_refusal_warnings: WorkerListRefusalWarningThrottle = WorkerListRefusalWarningThrottle(
+    interval_seconds=WORKER_LIST_REFUSAL_WARNING_INTERVAL_SECONDS,
+)
+"""The throttle of this process for warnings about refused worker pages."""
+
+
+def handle_worker_list_unavailable(refusal: WorkerListUnavailable) -> tuple[dict[str, object], int, dict[str, str]]:
+    """Count and log a refused worker page, and return its body, status and ``Retry-After`` header.
+
+    The refusal is counted in ``horde.api.rejections`` and logged at debug level. At most one warning per reason is
+    logged in each ``WORKER_LIST_REFUSAL_WARNING_INTERVAL_SECONDS``, with the number of refusals of that reason since
+    the previous warning. The API registers this function as the handler of a raised ``WorkerListUnavailable`` and
+    builds the response from the returned tuple.
 
     Args:
-        refusal: The refusal of a worker page, which is not raised.
+        refusal: The refusal of a worker page.
     """
-    body, status_code = handle_bad_requests(refusal)
-    return Response(json.dumps(body), status=status_code, mimetype="application/json", headers=refusal.response_headers)
+    metrics.api_rejections.add(1, rejection_attributes(refusal))
+    logger.debug(f"{refusal.rc}: {refusal.log}")
+    refusals_since_warning = worker_list_refusal_warnings.count_refusal(refusal.reason)
+    if refusals_since_warning is not None:
+        logger.warning(
+            f"{refusal.rc}: {refusals_since_warning} worker pages refused for {refusal.reason.value} since the previous "
+            f"warning about this reason. Latest refusal: {refusal.log}",
+        )
+    body, status_code = _rejection_body(refusal)
+    return body, status_code, refusal.response_headers
+
+
+def worker_list_unavailable_response(refusal: WorkerListUnavailable) -> Response:
+    """Return the 503 response of ``refusal``, counted and logged by ``handle_worker_list_unavailable``.
+
+    Args:
+        refusal: The refusal of a worker page, which is returned by the route instead of raised.
+    """
+    body, status_code, headers = handle_worker_list_unavailable(refusal)
+    return Response(json.dumps(body), status=status_code, mimetype="application/json", headers=headers)
 
 
 # PostgreSQL text/varchar columns cannot store NUL (0x00) bytes. When a

@@ -679,8 +679,8 @@ worker_availability_cache_lookups = logfire.metric_counter(
 class WorkerRowsTier(enum.StrEnum):
     """The background refresh that wrote a worker's stored details rows, as the ``horde.worker_rows.tier`` attribute.
 
-    The attribute is not named ``horde.tier``, because the deployment promotes the ``horde.tier`` resource attribute to
-    a metric label, and a data point attribute of the same name would be merged into that label.
+    The attribute is not named ``horde.tier``, because a deployment can promote the ``horde.tier`` resource attribute
+    to a metric label, and a data point attribute of the same name would be merged into that label.
     """
 
     ACTIVE = "active"

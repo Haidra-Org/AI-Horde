@@ -77,10 +77,11 @@ in each view (public, moderator and owner), marshalled as `GET /v2/workers/{id}`
 rows current. The worker list job rewrites every active worker every 2 seconds. A write site is a code path that
 changes a worker's details, such as posting a message or changing a team, and it marks the worker dirty. The same job
 rewrites the dirty workers. A rolling pass rewrites every registered worker in ID order, which bounds how stale a row
-can be when a write site did not mark it. Each refresh of `worker_list_entries` also marks dirty every registered
-worker without a stored row. When Redis loses the row hashes, one reconciliation marks every worker, up to a minute
-after the loss. The dirty refresh then restores up to 500 workers on each run of the worker list job. Under a full
-backlog, a run lasts longer than its 2 second interval, and the rebuild takes a few minutes.
+can be when a write site did not mark it. Each refresh of `worker_list_entries` also compares the row store with the
+registered workers and marks dirty every worker that lacks a row in any view. When Redis loses the row hashes, the next
+refresh, at most a minute later, marks every worker dirty. The worker list job then restores up to 500 dirty workers on
+each cycle. The job sleeps for its 2 second interval after each run, so a cycle lasts the run time plus 2 seconds, and
+the rebuild takes a few minutes.
 
 **One statement and one read per page.** A page request runs one SQL statement. It selects at most `limit + 1` worker
 IDs after the cursor from the index of the sort column and counts the entries that pass the filters in a scalar
@@ -88,14 +89,18 @@ subquery, so the response can report whether another page follows and how many w
 a cursor was deleted or left the filters since the previous page, the statement does not return a row to hold the
 count, so a second statement counts `total`. The handler then
 reads the stored rows of those IDs with one `HMGET` and joins the bytes into the response body without parsing them.
-An ID without a stored row is left out of the page. The request is refused with a 503 and a `Retry-After` when Redis
-cannot be reached, when the row store does not hold a row for any of the IDs, or when more than 2 rows and more than a
-tenth of the page's rows are missing. Many missing rows mean the row store is being rebuilt, and a near-empty page
-would read as a short list. A few missing rows are normal, for a worker registered after the last write or deleted
-since the last refresh of the entries, so such a page is served without them. With the floor of 2 rows, a small page
-with one or two missing rows is still served with its other rows. The handler returns the refusal instead of raising
-it, because Flask-RESTX logs every raised error with a status of 500 or more with a traceback, even when an error
-handler builds the response. A refusal logs one warning without a traceback.
+An ID without a stored row is left out of the page.
+
+**Refusals.** A page is refused with a 503 and a `Retry-After` when Redis cannot be reached, or when too many of its
+rows are missing: all of them, or more than 2 and more than a tenth of the page. Many missing rows mean the row store
+is being rebuilt, and a near-empty page would look like a short list. In normal operation a row is missing only
+briefly. A worker can be listed before the worker list job writes its rows, which happens within about one run of the
+job. A failed write can also leave a row missing until a later refresh writes it. A page with a few missing rows is
+therefore served without them, and the floor of 2 rows lets a small page with one or two missing rows be served too.
+The route returns the refusal instead of raising it, because Flask-RESTX logs a traceback for every raised error with a
+status of 500 or more, even when an error handler builds the response. Each refusal is logged at debug level. A warning
+without a traceback is logged at most once a minute per process and refusal reason, with the number of refusals of that
+reason since the previous warning.
 
 **A keyset cursor.** The cursor is base64url JSON holding a format version, the sort, the last row's sort value and its
 worker ID. Every order breaks ties by ascending worker ID, so the position is exact. A page starts at the first row
@@ -183,11 +188,11 @@ sort or walk, and it checks the walk key and the filter names used as metric lab
 and statement count of the page query.
 `tests/integration/test_worker_rows.py` checks that each stored row equals the single-worker route and that each
 refresh rewrites the rows it is responsible for. `tests/integration/test_worker_pages.py` drives both endpoints after
-running the production jobs. It checks that a page body holds the stored bytes verbatim, that an anonymous page runs
-one statement and does not load any worker, the views and cache headers, the 503 and its `Retry-After` for a page
-missing all or many of its rows, that a refusal is counted by reason and does not log an exception, the shared
-rate limit, the refusals and the metric labels. The locust `MetaBrowser` walks the list under load, and `MisuseUser`
-probes the refusals.
+running the production jobs. It checks that a page body holds the stored bytes verbatim and that an anonymous page
+runs one statement without loading any worker. It also checks the views and cache headers, the 503 and its
+`Retry-After` for a page with all or many rows missing, the count of refusals by reason without a logged exception, the
+limit of one warning per reason in each interval, the shared rate limit, the refusals of bad requests and the metric
+labels. The locust `MetaBrowser` walks the list under load, and `MisuseUser` probes the refusals of bad requests.
 
 ## Pros and Cons of the Options
 

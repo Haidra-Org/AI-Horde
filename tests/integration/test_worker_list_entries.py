@@ -207,6 +207,33 @@ def _registered_workers(app: Flask) -> dict[str, StoredEntry]:
         }
 
 
+def _store_rows_and_reconcile(monkeypatch: pytest.MonkeyPatch, *, registered_worker_count: int, unstored_worker_count: int) -> list[str]:
+    """Reconcile made-up registered worker IDs, ``unstored_worker_count`` of them without rows, and return the logged warnings.
+
+    The other IDs get a row in every view. Because the IDs are made up, the number of registered workers is exact.
+    """
+    import horde.worker_rows as worker_rows_module
+    from horde.horde_redis import horde_redis
+    from horde.worker_rows import WORKER_ROWS_LIFETIME, WorkerListView, reconcile_worker_rows
+
+    warnings: list[str] = []
+
+    class _RecordingLogger:
+        def warning(self, message: str) -> None:
+            warnings.append(message)
+
+    monkeypatch.setattr(worker_rows_module, "logger", _RecordingLogger())
+    registered_worker_ids = [str(uuid.uuid4()) for _ in range(registered_worker_count)]
+    stored_rows = {worker_id: b"{}" for worker_id in registered_worker_ids[unstored_worker_count:]}
+    for view in WorkerListView:
+        horde_redis.horde_r_delete(view.rows_key)
+        horde_redis.horde_r_hset_many(view.rows_key, stored_rows, WORKER_ROWS_LIFETIME)
+
+    reconcile_worker_rows(registered_worker_ids)
+
+    return warnings
+
+
 def _page(
     app: Flask,
     *,
@@ -378,6 +405,41 @@ class TestRowStoreReconciliation:
         _refresh()
 
         assert horde_redis.horde_r.sismember(WORKER_ROWS_DIRTY_KEY, worker_id)
+
+    def test_a_registered_worker_with_only_a_public_row_is_marked_dirty(self, app: Flask, make_api_user: MakeApiUser) -> None:
+        """A failed partial write can leave the public row without the moderator and owner rows."""
+        from horde.horde_redis import horde_redis
+        from horde.worker_rows import WORKER_ROWS_DIRTY_KEY, WORKER_ROWS_LIFETIME, WorkerListView, remove_worker_rows
+
+        owner = make_api_user(trusted=True, kudos=100)
+        worker_id = _create_worker(app, owner, _unique_name("Half Stored"))
+        remove_worker_rows([worker_id])
+        horde_redis.horde_r_hset_many(WorkerListView.PUBLIC.rows_key, {worker_id: b"{}"}, WORKER_ROWS_LIFETIME)
+        horde_redis.horde_r_delete(WORKER_ROWS_DIRTY_KEY)
+
+        _refresh()
+
+        assert horde_redis.horde_r.sismember(WORKER_ROWS_DIRTY_KEY, worker_id)
+
+    def test_a_reconciliation_warns_when_more_than_a_tenth_of_the_registered_workers_lack_rows(
+        self,
+        app: Flask,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A horde with fewer workers than one marking chunk still logs why its pages are refused."""
+        warnings = _store_rows_and_reconcile(monkeypatch, registered_worker_count=20, unstored_worker_count=3)
+
+        assert len(warnings) == 1, warnings
+        assert "3 of 20 registered workers" in warnings[0]
+
+    def test_a_reconciliation_does_not_warn_about_a_few_workers_without_rows(
+        self,
+        app: Flask,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        warnings = _store_rows_and_reconcile(monkeypatch, registered_worker_count=20, unstored_worker_count=2)
+
+        assert warnings == []
 
     def test_after_the_row_hashes_are_lost_one_refresh_marks_every_registered_worker_dirty_in_chunks(
         self,
