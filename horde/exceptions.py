@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-from flask import has_request_context, request
+import json
+
+from flask import Response, has_request_context, request
 from werkzeug import exceptions as wze
 
 from horde import metrics
@@ -265,19 +267,22 @@ class ServiceUnavailable(wze.ServiceUnavailable):
 class WorkerListUnavailable(wze.ServiceUnavailable):
     """A worker page that cannot be read from the worker row store, refused with 503 and a ``Retry-After``.
 
-    It does not subclass ``ServiceUnavailable``, because the namespace runs the first registered handler that matches
-    a refusal, and the handler of ``ServiceUnavailable`` does not send the header.
+    The paged worker lists build this refusal and pass it to ``worker_list_unavailable_response`` instead of raising
+    it. Flask-RESTX logs every raised error with a status of 500 or more as an exception with a traceback, even when an
+    error handler builds the response. While the row store is rebuilt, most list requests are refused, and each one
+    would log a traceback.
     """
 
     RETRY_AFTER_SECONDS: int = 10
     """The seconds a client waits before retrying.
 
-    The worker list job rewrites the rows of every active worker every 2 seconds and restores lost rows of inactive
-    workers over the following runs, so a page is usually readable again within a few runs once Redis is reachable.
+    The worker list job rewrites the rows of every active worker every 2 seconds, so a page is usually readable again
+    within a few runs once Redis is reachable. After the row hashes are lost, the rows are rebuilt over a few minutes,
+    and a client keeps retrying until then.
     """
 
     response_headers: dict[str, str]
-    """Headers that ``handle_worker_list_unavailable`` adds to the refusal."""
+    """Headers that ``worker_list_unavailable_response`` adds to the refusal."""
 
     def __init__(self, log: str, rc: str = "WorkerListUnavailable") -> None:
         self.specific = f"The worker list is temporarily unavailable. Retry after {self.RETRY_AFTER_SECONDS} seconds."
@@ -843,14 +848,17 @@ def handle_bad_requests(error):
     )
 
 
-def handle_worker_list_unavailable(error: WorkerListUnavailable) -> tuple[dict[str, object], int, dict[str, str]]:
-    """Return the refusal of ``handle_bad_requests`` with the ``Retry-After`` of ``error``.
+def worker_list_unavailable_response(refusal: WorkerListUnavailable) -> Response:
+    """Return the response of ``refusal`` with the body of ``handle_bad_requests`` and the ``Retry-After`` header.
 
-    The namespace builds the response from the handler's return value, so a header reaches the client only when the
-    handler returns it.
+    ``handle_bad_requests`` counts the refusal in ``horde.api.rejections`` and logs ``refusal.log`` as one warning
+    without a traceback, as for a raised refusal.
+
+    Args:
+        refusal: The refusal of a worker page, which is not raised.
     """
-    body, status_code = handle_bad_requests(error)
-    return body, status_code, error.response_headers
+    body, status_code = handle_bad_requests(refusal)
+    return Response(json.dumps(body), status=status_code, mimetype="application/json", headers=refusal.response_headers)
 
 
 # PostgreSQL text/varchar columns cannot store NUL (0x00) bytes. When a

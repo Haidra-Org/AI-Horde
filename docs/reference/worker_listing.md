@@ -126,6 +126,17 @@ details and marks the worker dirty. Three refreshes write the row store:
 | Dirty | workers marked by a write site after a change to their details, such as a message, a team change or an owner's setting | the next run of `store_worker_list`, up to 500 workers a run |
 | Rolling | every registered worker in ID order | 500 workers every 30 seconds |
 
+After each refresh of `worker_list_entries`, `reconcile_worker_rows` compares the row store with the registered
+workers. It removes the rows of up to 5,000 workers that are no longer registered (`WORKER_ROWS_RECONCILE_LIMIT`). It
+marks dirty every registered worker without a public row, in `SADD` commands of up to 5,000 IDs
+(`WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE`). When the row hashes are lost, because Redis restarted or failed over, the hashes
+expired, or the row store is new, one reconciliation marks every worker dirty. Reconciliation runs once a minute, so
+that can be up to a minute after the loss. The dirty refresh then restores up to 500 workers on each run of
+`store_worker_list` (`WORKER_ROWS_DIRTY_CHUNK_SIZE`). Under a full backlog, a run lasts longer than its 2 second
+interval, so the rows of all workers are back after a few minutes. A reconciliation that marks more than one chunk
+logs a warning.
+`test_after_the_row_hashes_are_lost_one_refresh_marks_every_registered_worker_dirty_in_chunks` covers the rebuild.
+
 The same job keeps the IDs of the active workers in Redis, and the `online` filter reads them. The model filter reads
 each worker's advertised models from `worker_models`, and the public owner filter reads `users.public_workers`. The
 page query checks both with `EXISTS` subqueries, so both filters are applied in the same statement.
@@ -179,7 +190,8 @@ The filters combine freely. A blank `model`, `team_id` or `name_contains` does n
 
 The response body is built from the stored rows without parsing them. The rows are joined into `workers`, and
 `next_cursor` and `total` follow. A worker returned by the query without a stored row is left out of the page, and
-`total` still counts it (`test_a_worker_without_a_stored_row_is_left_out_and_still_counted`).
+`total` still counts it (`test_a_worker_without_a_stored_row_is_left_out_and_still_counted`). A page missing too many
+rows is refused instead, as described under [Availability](#availability).
 
 The paged list refuses a key that does not match an account with a 401, while the full list accepts it. A moderator who
 mistypes a key gets an error on the paged list. On the full list, the same moderator gets the public view and may take
@@ -259,11 +271,28 @@ add their own counter updates in the limiter's storage.
 The paged lists return 503 `WorkerListUnavailable` with `Retry-After: 10` when:
 
 - Redis is not connected, or a read of the row store or of the active worker IDs fails.
-- The query returned worker IDs but the row store does not hold a row for any of them. The row hash is then missing as
-  a whole. This happens when Redis loses its data, or when the jobs stop for an hour and the row hashes expire.
+- The query returned worker IDs but the row store does not hold a row for any of them.
+- More than 2 of the page's rows are missing (`TOLERATED_MISSING_ROWS`), and they are more than a tenth of the worker
+  IDs returned by the query (`MAX_MISSING_ROW_SHARE`). With a limit of 100, a page is refused when 11 or more rows are
+  missing.
 
-A page with some rows missing is served without them, because a single row can be missing for a short time while the
-rest are stored. `TestAvailability` covers both sides.
+Both row conditions are decided by `page_is_missing_too_many_rows` in `horde/worker_pages.py`. Many missing rows mean
+the row hashes were lost and are being rebuilt (see [Read model](#read-model)), or the jobs stopped for an hour and
+the hashes expired. A page served then would show a few workers while `total` counts all of them.
+
+A page with a few rows missing is served without them. A row is missing for a short time in normal operation, for a
+worker registered after the last write of the row store or deleted since the last refresh of `worker_list_entries`. A
+page with up to 2 missing rows is not refused for their share. A small page, such as a page with a limit of 1 to 3 or
+a last page with a few workers, is therefore served with the rows that remain. A page is still refused when all of its
+rows are missing, even a page of 1 or 2 workers. `TestAvailability` and the `page_is_missing_too_many_rows` tests in
+`tests/unit/test_worker_pages.py` cover both sides.
+
+`page_response` returns the refusal instead of raising it. Flask-RESTX logs every raised error with a status of 500 or
+more as an exception with a traceback, even when an error handler builds the response. While the row store is
+rebuilt, most list requests are refused, and each would log a traceback. A refusal logs one warning without a
+traceback, which names the reason, the endpoint and the view. It is counted in `horde.workers.list.unavailable` (see
+[Metrics](#metrics)) and in `horde.api.rejections`. `TestAvailability` checks the status, `rc`, `Retry-After`, the
+counted reason and that a refusal does not log an exception.
 
 ## Rate limits
 
@@ -297,6 +326,7 @@ over either limit gets the limiter's 429 (`test_page_and_mine_requests_share_one
 | `horde.workers.list.reads` | counter | `horde.workers.list.endpoint` (`full`, `page`, `mine`), `.view` (`public`, `moderator`, `owner`), `.sort` (an order above, or `none` on the full list), `.filters` (the filter names in use, comma separated, or `none`), `.continued` (`true` when the read followed a cursor) | How many requests read each list, and how many walks go past the first page. |
 | `horde.workers.list.rows` | histogram | `horde.workers.list.endpoint` | Rows per response. The full list's rows grow with the number of active workers, and the paged lists' rows stay at or under the limit. |
 | `horde.workers.list.snapshot_misses` | counter | `horde.workers.list.view` | Full-list reads that rebuilt the list from the database. Any steady rate means the snapshot job on the quorum node has stopped. |
+| `horde.workers.list.unavailable` | counter | `horde.workers.list.endpoint` (`page`, `mine`), `horde.workers.list.reason` (`redis_not_connected`, `active_worker_ids_unreadable`, `rows_unreadable`, `too_many_rows_missing`) | Pages refused with 503 `WorkerListUnavailable`. A burst of `too_many_rows_missing` follows a loss of the row store and lasts while the rows are rebuilt. |
 
 Every label value comes from a fixed set. Filter values, such as a model name, a name search or an owner ID, are not
 used as labels. `test_reads_are_counted_by_endpoint_and_walk_position_with_bounded_labels` and

@@ -1071,6 +1071,32 @@ worker_list_snapshot_misses = logfire.metric_counter(
     ),
 )
 
+
+class WorkerListUnavailableReason(enum.StrEnum):
+    """Why a page of a paged worker list was refused with 503, as the ``horde.workers.list.reason`` attribute."""
+
+    REDIS_NOT_CONNECTED = "redis_not_connected"
+    """Redis is not connected, so neither the active worker IDs nor the rows can be read."""
+
+    ACTIVE_WORKER_IDS_UNREADABLE = "active_worker_ids_unreadable"
+    """Reading the active worker IDs for the ``online`` filter failed."""
+
+    ROWS_UNREADABLE = "rows_unreadable"
+    """Reading the page's rows from the row store failed."""
+
+    TOO_MANY_ROWS_MISSING = "too_many_rows_missing"
+    """The row store lacks too many of the page's rows, according to ``page_is_missing_too_many_rows``."""
+
+
+worker_list_unavailable = logfire.metric_counter(
+    "horde.workers.list.unavailable",
+    unit="1",
+    description=(
+        "Paged worker list requests refused with 503 WorkerListUnavailable, split by endpoint (page or mine) and reason. "
+        "A burst of too_many_rows_missing follows a loss of the row store and lasts while the rows are rebuilt"
+    ),
+)
+
 # --- /generate/check & /generate/status --------------------------------------
 check_duration = _seconds_histogram(
     "horde.generate.check.duration",

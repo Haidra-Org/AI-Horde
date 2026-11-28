@@ -75,6 +75,7 @@ Check a walk against these rules, which are described in full under
 - The walk ends with `next_cursor` set to null.
 - `total` can change between pages, because it is counted again for each page.
 - A page can hold fewer rows than `limit` before the last page, because a worker without a stored row is left out.
+  Only a few rows are left out this way. When many are missing, the horde returns 503 instead of a near-empty page.
 - A worker whose uptime, jobs or kudos change during the walk can be skipped or appear twice. These values change
   mostly for online workers.
 
@@ -126,7 +127,7 @@ Branch on the `rc` field of the error body, not on the message text.
 | 400 `InvalidWorkerListFilter` | Show the filter as invalid. `team_id` must be a UUID and `name_contains` at most 100 characters. |
 | 401 `InvalidAPIKey` | Ask the user to check the API key. The paged lists refuse a key that does not match an account. |
 | 429 | Wait and retry. Each paged list allows 90 requests a minute per client IP address, and both together allow 3,000 requests a minute from all addresses. |
-| 503 `WorkerListUnavailable` | Wait for the seconds in the `Retry-After` header, then repeat the same request. The horde could not read the page. |
+| 503 `WorkerListUnavailable` | Wait for the seconds in the `Retry-After` header, then repeat the same request. The horde could not read the page, or the stored rows of many of its workers were missing, as they are for a few minutes while the horde rebuilds them. Keep the rows already shown. The horde logs each refusal as one warning and counts it in `horde.workers.list.unavailable`, so retries after `Retry-After` do not flood its logs. |
 
 To test the handling, request a page with `limit=0` and with `cursor=abc`. The front end shows the limit error for the
 first request and starts again from the first page for the second.

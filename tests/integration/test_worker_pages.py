@@ -259,6 +259,38 @@ class _RecordingCounter:
         self.additions.append((amount, attributes))
 
 
+class _RefusalRecords:
+    """Keep the counts, warnings and logged exceptions of refused worker pages."""
+
+    def __init__(self) -> None:
+        self.unavailable = _RecordingCounter()
+        self.warnings: list[str] = []
+        self.logged_exceptions: list[object] = []
+
+    def warning(self, message: str) -> None:
+        self.warnings.append(message)
+
+    def debug(self, message: str) -> None:
+        """Accept a debug line, which ``handle_bad_requests`` writes only for a refusal without a log message."""
+
+    def log_exception(self, exc_info: object) -> None:
+        self.logged_exceptions.append(exc_info)
+
+    def assert_refused_for_a_retry(self, response: TestResponse, *, endpoint: str, reason: str) -> None:
+        """Assert one 503 refusal with its ``rc`` and ``Retry-After``, counted under ``reason`` and logged as one warning."""
+        from horde.exceptions import WorkerListUnavailable
+
+        assert response.status_code == 503
+        assert response.get_json()["rc"] == "WorkerListUnavailable"
+        assert response.headers["Retry-After"] == str(WorkerListUnavailable.RETRY_AFTER_SECONDS)
+        assert self.unavailable.additions == [
+            (1, {"horde.workers.list.endpoint": endpoint, "horde.workers.list.reason": reason}),
+        ]
+        assert len(self.warnings) == 1
+        assert reason in self.warnings[0]
+        assert self.logged_exceptions == [], "a refused page was logged as an exception with a traceback"
+
+
 class TestResponseBody:
     """A page is the stored rows joined as they are, so each row is the object that the single-worker route returns."""
 
@@ -645,12 +677,25 @@ class TestPageCost:
 
 
 class TestAvailability:
-    """A page with some rows missing is served without them. A page that cannot be read at all is refused for a retry."""
+    """A page with a few missing rows is served without them. A page with most rows missing, or with unreadable rows, is refused."""
+
+    @pytest.fixture
+    def refusals(self, client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> _RefusalRecords:
+        """Record the refusal counter, the warnings of ``handle_bad_requests`` and the exceptions logged by the app."""
+        import horde.exceptions as exceptions_module
+        import horde.metrics as metrics_module
+
+        records = _RefusalRecords()
+        monkeypatch.setattr(metrics_module, "worker_list_unavailable", records.unavailable)
+        monkeypatch.setattr(exceptions_module, "logger", records)
+        monkeypatch.setattr(client.application, "log_exception", records.log_exception)
+        return records
 
     def test_a_worker_without_a_stored_row_is_left_out_and_still_counted(
         self,
         client: FlaskClient,
         make_api_user: MakeApiUser,
+        refusals: _RefusalRecords,
     ) -> None:
         owner = make_api_user(trusted=True, kudos=100)
         token = uuid.uuid4().hex[:8]
@@ -664,14 +709,14 @@ class TestAvailability:
         body = response.get_json()
         assert sorted(row["id"] for row in body["workers"]) == sorted(worker_ids[1:])
         assert body["total"] == 3
+        assert refusals.unavailable.additions == []
 
     def test_a_page_without_any_stored_row_is_refused_with_a_retry_after(
         self,
         client: FlaskClient,
         make_api_user: MakeApiUser,
+        refusals: _RefusalRecords,
     ) -> None:
-        from horde.exceptions import WorkerListUnavailable
-
         owner = make_api_user(trusted=True, kudos=100)
         token = uuid.uuid4().hex[:8]
         worker_ids = [_register_text_worker(client, owner.api_key, _unique_name(f"Lost {token} Scribe")) for _ in range(2)]
@@ -680,9 +725,43 @@ class TestAvailability:
 
         response = _get_page(client, name_contains=token)
 
-        assert response.status_code == 503
-        assert response.get_json()["rc"] == "WorkerListUnavailable"
-        assert response.headers["Retry-After"] == str(WorkerListUnavailable.RETRY_AFTER_SECONDS)
+        refusals.assert_refused_for_a_retry(response, endpoint="page", reason="too_many_rows_missing")
+
+    def test_a_page_missing_most_of_its_rows_is_refused_with_a_retry_after(
+        self,
+        client: FlaskClient,
+        make_api_user: MakeApiUser,
+        refusals: _RefusalRecords,
+    ) -> None:
+        """A row store that is being rebuilt holds only some rows, and a near-empty page would look like a short list."""
+        owner = make_api_user(trusted=True, kudos=100)
+        token = uuid.uuid4().hex[:8]
+        worker_ids = [_register_text_worker(client, owner.api_key, _unique_name(f"Rebuilding {token} Scribe")) for _ in range(4)]
+        _run_list_jobs()
+        _remove_public_rows(worker_ids[:3])
+
+        response = _get_page(client, name_contains=token)
+
+        refusals.assert_refused_for_a_retry(response, endpoint="page", reason="too_many_rows_missing")
+
+    def test_a_small_page_with_one_stored_row_left_is_served_with_it(
+        self,
+        client: FlaskClient,
+        make_api_user: MakeApiUser,
+    ) -> None:
+        """A page with two missing rows is not refused by the share rule, so a walk with a small limit can continue."""
+        owner = make_api_user(trusted=True, kudos=100)
+        token = uuid.uuid4().hex[:8]
+        worker_ids = [_register_text_worker(client, owner.api_key, _unique_name(f"Sparse {token} Scribe")) for _ in range(3)]
+        _run_list_jobs()
+        _remove_public_rows(worker_ids[:2])
+
+        response = _get_page(client, name_contains=token, limit=3)
+
+        assert response.status_code == 200
+        body = response.get_json()
+        assert [row["id"] for row in body["workers"]] == [worker_ids[2]]
+        assert body["total"] == 3
 
     def test_an_empty_filtered_list_is_served_without_rows(self, client: FlaskClient) -> None:
         response = _get_page(client, name_contains=uuid.uuid4().hex)
@@ -690,22 +769,45 @@ class TestAvailability:
         assert response.status_code == 200
         assert response.get_json() == {"workers": [], "next_cursor": None, "total": 0}
 
-    def test_a_page_without_redis_is_refused_with_a_retry_after(self, client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_a_page_without_redis_is_refused_with_a_retry_after(
+        self,
+        client: FlaskClient,
+        monkeypatch: pytest.MonkeyPatch,
+        refusals: _RefusalRecords,
+    ) -> None:
         from horde.horde_redis import horde_redis
 
         monkeypatch.setattr(horde_redis, "horde_r", None)
 
         response = _get_page(client)
 
-        assert response.status_code == 503
-        assert response.get_json()["rc"] == "WorkerListUnavailable"
-        assert "Retry-After" in response.headers
+        refusals.assert_refused_for_a_retry(response, endpoint="page", reason="redis_not_connected")
+
+    def test_a_failed_read_of_the_active_worker_ids_is_refused_with_a_retry_after(
+        self,
+        client: FlaskClient,
+        monkeypatch: pytest.MonkeyPatch,
+        refusals: _RefusalRecords,
+    ) -> None:
+        import redis
+
+        import horde.apis.v2.base as base_module
+
+        def _refuse_connection() -> set[str]:
+            raise redis.ConnectionError("connection refused")
+
+        monkeypatch.setattr(base_module, "read_active_worker_ids", _refuse_connection)
+
+        response = _get_page(client, online="true")
+
+        refusals.assert_refused_for_a_retry(response, endpoint="page", reason="active_worker_ids_unreadable")
 
     def test_a_failed_row_read_is_refused_with_a_retry_after(
         self,
         client: FlaskClient,
         make_api_user: MakeApiUser,
         monkeypatch: pytest.MonkeyPatch,
+        refusals: _RefusalRecords,
     ) -> None:
         import redis
 
@@ -723,9 +825,31 @@ class TestAvailability:
 
         response = _get_page(client, name_contains=token)
 
-        assert response.status_code == 503
-        assert response.get_json()["rc"] == "WorkerListUnavailable"
-        assert "Retry-After" in response.headers
+        refusals.assert_refused_for_a_retry(response, endpoint="page", reason="rows_unreadable")
+
+    def test_a_refused_owners_page_is_counted_under_its_own_endpoint(
+        self,
+        client: FlaskClient,
+        make_api_user: MakeApiUser,
+        monkeypatch: pytest.MonkeyPatch,
+        refusals: _RefusalRecords,
+    ) -> None:
+        import redis
+
+        import horde.apis.v2.base as base_module
+
+        owner = make_api_user(trusted=True, kudos=100)
+        _register_text_worker(client, owner.api_key, _unique_name("Unreachable Owned Scribe"))
+        _run_list_jobs()
+
+        def _refuse_connection(*_: object) -> list[bytes | None]:
+            raise redis.ConnectionError("connection refused")
+
+        monkeypatch.setattr(base_module, "read_worker_rows", _refuse_connection)
+
+        response = _get_mine(client, owner.api_key)
+
+        refusals.assert_refused_for_a_retry(response, endpoint="mine", reason="rows_unreadable")
 
 
 class TestFleetRateLimit:

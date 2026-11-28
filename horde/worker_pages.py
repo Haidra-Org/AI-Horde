@@ -29,6 +29,8 @@ Public members:
   set one.
 - [`WorkerPageFilters`][horde.worker_pages.WorkerPageFilters]: the filters in a request.
 - [`WorkerPageCursor`][horde.worker_pages.WorkerPageCursor]: the encoded position between two pages.
+- [`page_is_missing_too_many_rows`][horde.worker_pages.page_is_missing_too_many_rows]: whether a page with rows
+  missing from the row store is refused instead of served.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ __all__ = [
     "WorkerPageCursor",
     "WorkerPageFilters",
     "WorkerPageLimits",
+    "page_is_missing_too_many_rows",
 ]
 
 
@@ -114,6 +117,45 @@ The key tells walks apart. It does not protect anything, because a crafted curso
 chosen by the caller. 64 bits keep an accidental match between two different walks out of reach and keep the cursor
 short.
 """
+
+MAX_MISSING_ROW_SHARE: float = 0.1
+"""The largest share of a page's workers that can lack a stored row while the page is still served.
+
+A few rows are missing in normal operation: a worker registered after the last write of the row store, or deleted
+since the last refresh of ``worker_list_entries``. Both are rare against the workers of one page, and the missing
+workers are left out of it. More than a tenth missing means the row hashes were lost and the row store is being
+rebuilt. Such a page would show a near-empty list while ``total`` still counts every worker, so the request is refused
+with a ``Retry-After`` instead. A tenth keeps a full page of ``WorkerPageLimits.MAX_LIMIT`` rows close to full and
+leaves room for several deletions between two refreshes of the entries.
+"""
+
+TOLERATED_MISSING_ROWS: int = 2
+"""The number of missing rows up to which a page is not refused by the ``MAX_MISSING_ROW_SHARE`` rule.
+
+On a small page, such as one requested with a limit of 1 to 3 or a last page with a few workers, a single missing row
+is already more than ``MAX_MISSING_ROW_SHARE``. Refusing it would block a walk with a small limit for as long as the
+row stays missing, which can be until the next refresh of the entries. A page whose rows are all missing is still
+refused, because it would be served empty with a cursor.
+"""
+
+
+def page_is_missing_too_many_rows(page_worker_count: int, missing_row_count: int) -> bool:
+    """Return whether a page with rows missing from the row store is refused instead of served without them.
+
+    A page is refused when every one of its rows is missing, or when more than ``TOLERATED_MISSING_ROWS`` rows and more
+    than ``MAX_MISSING_ROW_SHARE`` of its workers are missing.
+
+    Args:
+        page_worker_count: The number of worker IDs returned by the page query.
+        missing_row_count: The number of those workers without a stored row.
+    """
+    if page_worker_count == 0:
+        return False
+    if missing_row_count == page_worker_count:
+        return True
+    if missing_row_count <= TOLERATED_MISSING_ROWS:
+        return False
+    return missing_row_count > page_worker_count * MAX_MISSING_ROW_SHARE
 
 
 class InvalidWorkerCursorError(ValueError):
