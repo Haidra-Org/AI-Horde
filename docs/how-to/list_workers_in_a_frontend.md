@@ -127,7 +127,7 @@ Branch on the `rc` field of the error body, not on the message text.
 | 400 `InvalidWorkerListFilter` | Show the filter as invalid. `team_id` must be a UUID and `name_contains` at most 100 characters. |
 | 401 `InvalidAPIKey` | Ask the user to check the API key. The paged lists refuse a key that does not match an account. |
 | 429 | Wait and retry. Each paged list allows 90 requests a minute per client IP address, and both together allow 3,000 requests a minute from all addresses. |
-| 503 `WorkerListUnavailable` | Wait for the seconds in the `Retry-After` header, then repeat the same request. The horde could not read the page, or the stored rows of many of its workers were missing, as they are for a few minutes while the horde rebuilds them. Keep the rows already shown. The horde logs each refusal as one warning and counts it in `horde.workers.list.unavailable`, so retries after `Retry-After` do not flood its logs. |
+| 503 `WorkerListUnavailable` | Wait for the seconds in the `Retry-After` header, then repeat the same request. Keep the rows already shown. The horde could not read the page, or many of the page's stored worker rows were missing. Rows are missing for a few minutes while the horde rebuilds them. |
 
 To test the handling, request a page with `limit=0` and with `cursor=abc`. The front end shows the limit error for the
 first request and starts again from the first page for the second.

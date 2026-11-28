@@ -140,16 +140,29 @@ Deletions normally remove their rows at once, so only a few rows are left over b
 limit bounds the ``HDEL`` commands of one run when many are left over, and later runs remove the rest.
 """
 WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE: int = 5000
-"""The most worker IDs sent in one ``SADD`` when a reconciliation marks workers without rows dirty.
+"""The most worker IDs in one ``SADD`` when a reconciliation marks workers dirty.
 
-A reconciliation marks every registered worker without a public row in one run, in chunks of this size. When the row
-hashes are lost, because Redis restarted or failed over, the hashes expired, or the row store is new, every worker
-lacks rows and most pages cannot be served until the rows are back. Marking them all at once lets every following run
-of the worker list job restore up to ``WORKER_ROWS_DIRTY_CHUNK_SIZE`` workers, without waiting for later
-reconciliations. The reconciliation runs once a minute with the refresh of ``worker_list_entries``, so the workers can
-be marked up to a minute after the loss. Under a full backlog, a run of the worker list job lasts longer than its
-two-second interval, so the rebuild takes a few minutes. The dirty set is a set, so marking a worker that is already
-dirty does not grow it. In steady state only a few workers lack rows, and one command marks them.
+A reconciliation marks every registered worker that lacks a row in any view, in chunks of this size. In steady state
+only a few workers lack rows, and one command marks them. When the row hashes are missing, for example after a Redis
+restart, every worker lacks rows and most pages are refused until the rows are back. Marking all of them in one
+reconciliation lets each later run of the worker list job restore up to ``WORKER_ROWS_DIRTY_CHUNK_SIZE`` workers.
+``WORKER_ROWS_DIRTY_KEY`` is a Redis set, so marking a worker that is already dirty does not add it twice.
+
+Reconciliation runs once a minute, with the refresh of ``worker_list_entries``, so the workers can be marked up to a
+minute after the loss. The worker list job sleeps for its two-second interval after each run, so one cycle of the job
+lasts the run time plus two seconds, and a full rebuild takes a few minutes.
+
+The drain takes dirty workers in random order (``SRANDMEMBER``). During a full rebuild, a worker marked by a write
+site, or a worker that stopped being active, can keep its old row until the drain rewrites it, at most until the
+rebuild ends.
+"""
+WORKER_ROWS_REBUILD_WARNING_SHARE: float = 0.1
+"""The share of the registered workers without rows above which a reconciliation logs a warning about the rebuild.
+
+In normal operation a worker lacks rows only briefly, until the worker list job writes them or a later refresh repairs
+a failed write, so only a few workers are marked at a time. More than a tenth without rows means the row hashes were
+lost, and most pages of the paged lists are refused until the drain has restored the rows. The share matches
+``horde.worker_pages.MAX_MISSING_ROW_SHARE``, above which a page is refused.
 """
 WORKER_ROWS_ROLLING_INTERVAL_SECONDS: int = 30
 """The seconds between runs of the rolling pass.
@@ -271,12 +284,13 @@ def read_active_worker_ids() -> set[str]:
 
 
 def reconcile_worker_rows(registered_worker_ids: Collection[str]) -> None:
-    """Remove the rows of workers that are no longer registered and mark dirty the workers without a public row.
+    """Remove the rows of workers that are no longer registered and mark dirty the workers that lack a row in any view.
 
     A worker deleted without a call to ``remove_worker_rows`` keeps its rows, and a row lost from Redis is otherwise
     restored only by the rolling pass. The removal is bounded by ``WORKER_ROWS_RECONCILE_LIMIT``. Every registered
-    worker without a public row is marked dirty in the same run (see ``_mark_unstored_workers_dirty``), so lost hashes
-    are rebuilt at the rate of the dirty drain. The fields are read on the primary.
+    worker that lacks a row in one or more views is marked dirty in the same run (see ``_mark_unstored_workers_dirty``),
+    so lost hashes are rebuilt at the rate of the dirty drain. A worker with a public row but without its moderator or
+    owner row, as after a failed partial write, is marked as well. The fields are read on the primary.
 
     A worker registered after ``registered_worker_ids`` was read may lose its new rows here. It is active, so the next
     run of the worker list job writes them again within seconds. A worker deleted after that read is marked dirty, and
@@ -289,21 +303,27 @@ def reconcile_worker_rows(registered_worker_ids: Collection[str]) -> None:
     stored_worker_ids = set().union(*stored_worker_ids_by_view.values())
     departed_worker_ids = sorted(stored_worker_ids.difference(registered_worker_ids))[:WORKER_ROWS_RECONCILE_LIMIT]
     remove_worker_rows(departed_worker_ids)
-    unstored_worker_ids = sorted(set(registered_worker_ids).difference(stored_worker_ids_by_view[WorkerListView.PUBLIC]))
-    _mark_unstored_workers_dirty(unstored_worker_ids)
+    worker_ids_stored_in_every_view = set.intersection(*stored_worker_ids_by_view.values())
+    unstored_worker_ids = sorted(set(registered_worker_ids).difference(worker_ids_stored_in_every_view))
+    _mark_unstored_workers_dirty(unstored_worker_ids, registered_worker_count=len(registered_worker_ids))
 
 
-def _mark_unstored_workers_dirty(unstored_worker_ids: Sequence[str]) -> None:
+def _mark_unstored_workers_dirty(unstored_worker_ids: Sequence[str], *, registered_worker_count: int) -> None:
     """Mark dirty every worker in ``unstored_worker_ids``, with at most ``WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE`` IDs per command.
 
-    More than one chunk of workers without rows means the row hashes were lost as a whole, and most pages of the paged
-    lists are refused until the drain has restored the rows. The rebuild is logged so the refusals can be explained.
+    When the unstored workers are more than ``WORKER_ROWS_REBUILD_WARNING_SHARE`` of the registered workers, the row
+    hashes were lost, and most pages of the paged lists are refused until the drain has restored the rows. The rebuild
+    is then logged as a warning, so the refusals can be explained.
 
     Args:
-        unstored_worker_ids: The IDs of the registered workers without a public row.
+        unstored_worker_ids: The IDs of the registered workers without a row in one or more views.
+        registered_worker_count: The number of registered workers read in the same run.
     """
-    if len(unstored_worker_ids) > WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE:
-        logger.warning(f"The row store lacks the rows of {len(unstored_worker_ids)} registered workers. Marking all of them dirty.")
+    if len(unstored_worker_ids) > registered_worker_count * WORKER_ROWS_REBUILD_WARNING_SHARE:
+        logger.warning(
+            f"The row store lacks the rows of {len(unstored_worker_ids)} of {registered_worker_count} registered workers. "
+            "Marking those workers dirty.",
+        )
     for chunk_start in range(0, len(unstored_worker_ids), WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE):
         mark_worker_rows_dirty(unstored_worker_ids[chunk_start : chunk_start + WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE])
 

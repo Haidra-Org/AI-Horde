@@ -260,35 +260,49 @@ class _RecordingCounter:
 
 
 class _RefusalRecords:
-    """Keep the counts, warnings and logged exceptions of refused worker pages."""
+    """Keep the counts, log lines and logged exceptions of refused worker pages, and the time of the warning throttle."""
 
     def __init__(self) -> None:
         self.unavailable = _RecordingCounter()
+        self.rejections = _RecordingCounter()
         self.warnings: list[str] = []
+        self.debug_lines: list[str] = []
         self.logged_exceptions: list[object] = []
+        self.now: float = 1000.0
+
+    def clock(self) -> float:
+        return self.now
 
     def warning(self, message: str) -> None:
         self.warnings.append(message)
 
     def debug(self, message: str) -> None:
-        """Accept a debug line, which ``handle_bad_requests`` writes only for a refusal without a log message."""
+        self.debug_lines.append(message)
 
     def log_exception(self, exc_info: object) -> None:
         self.logged_exceptions.append(exc_info)
 
     def assert_refused_for_a_retry(self, response: TestResponse, *, endpoint: str, reason: str) -> None:
-        """Assert one 503 refusal with its ``rc`` and ``Retry-After``, counted under ``reason`` and logged as one warning."""
-        from horde.exceptions import WorkerListUnavailable
-
-        assert response.status_code == 503
-        assert response.get_json()["rc"] == "WorkerListUnavailable"
-        assert response.headers["Retry-After"] == str(WorkerListUnavailable.RETRY_AFTER_SECONDS)
+        """Assert one 503 refusal with its ``rc`` and ``Retry-After``, counted under ``reason`` and logged once at each level."""
+        _assert_worker_list_unavailable_response(response)
         assert self.unavailable.additions == [
             (1, {"horde.workers.list.endpoint": endpoint, "horde.workers.list.reason": reason}),
         ]
+        assert len(self.rejections.additions) == 1
+        assert len(self.debug_lines) == 1
+        assert reason in self.debug_lines[0]
         assert len(self.warnings) == 1
         assert reason in self.warnings[0]
         assert self.logged_exceptions == [], "a refused page was logged as an exception with a traceback"
+
+
+def _assert_worker_list_unavailable_response(response: TestResponse) -> None:
+    """Assert a 503 response with the ``WorkerListUnavailable`` return code and its ``Retry-After`` header."""
+    from horde.exceptions import WorkerListUnavailable
+
+    assert response.status_code == 503
+    assert response.get_json()["rc"] == "WorkerListUnavailable"
+    assert response.headers["Retry-After"] == str(WorkerListUnavailable.RETRY_AFTER_SECONDS)
 
 
 class TestResponseBody:
@@ -681,13 +695,25 @@ class TestAvailability:
 
     @pytest.fixture
     def refusals(self, client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> _RefusalRecords:
-        """Record the refusal counter, the warnings of ``handle_bad_requests`` and the exceptions logged by the app."""
+        """Record the refusal counters, the log lines of the refusals and the exceptions logged by the app.
+
+        Each test gets its own warning throttle, driven by the records' clock.
+        """
         import horde.exceptions as exceptions_module
         import horde.metrics as metrics_module
 
         records = _RefusalRecords()
         monkeypatch.setattr(metrics_module, "worker_list_unavailable", records.unavailable)
+        monkeypatch.setattr(metrics_module, "api_rejections", records.rejections)
         monkeypatch.setattr(exceptions_module, "logger", records)
+        monkeypatch.setattr(
+            exceptions_module,
+            "worker_list_refusal_warnings",
+            exceptions_module.WorkerListRefusalWarningThrottle(
+                interval_seconds=exceptions_module.WORKER_LIST_REFUSAL_WARNING_INTERVAL_SECONDS,
+                clock=records.clock,
+            ),
+        )
         monkeypatch.setattr(client.application, "log_exception", records.log_exception)
         return records
 
@@ -850,6 +876,74 @@ class TestAvailability:
         response = _get_mine(client, owner.api_key)
 
         refusals.assert_refused_for_a_retry(response, endpoint="mine", reason="rows_unreadable")
+
+    def test_repeated_refusals_log_one_warning_per_reason_in_each_interval_and_count_every_refusal(
+        self,
+        client: FlaskClient,
+        make_api_user: MakeApiUser,
+        monkeypatch: pytest.MonkeyPatch,
+        refusals: _RefusalRecords,
+    ) -> None:
+        """While the row store is rebuilt, most requests are refused, and one warning per refusal would fill the logs."""
+        import redis
+
+        import horde.apis.v2.base as base_module
+        from horde.exceptions import WORKER_LIST_REFUSAL_WARNING_INTERVAL_SECONDS
+
+        owner = make_api_user(trusted=True, kudos=100)
+        _register_text_worker(client, owner.api_key, _unique_name("Throttled Scribe"))
+        _run_list_jobs()
+
+        def _refuse_active_worker_ids() -> set[str]:
+            raise redis.ConnectionError("connection refused")
+
+        def _refuse_rows(*_: object) -> list[bytes | None]:
+            raise redis.ConnectionError("connection refused")
+
+        monkeypatch.setattr(base_module, "read_active_worker_ids", _refuse_active_worker_ids)
+        monkeypatch.setattr(base_module, "read_worker_rows", _refuse_rows)
+        responses = [_get_page(client, online="true") for _ in range(3)]
+        responses.append(_get_page(client))
+        refusals.now += WORKER_LIST_REFUSAL_WARNING_INTERVAL_SECONDS - 1
+        responses.append(_get_page(client, online="true"))
+        refusals.now += 1
+        responses.append(_get_page(client, online="true"))
+
+        for response in responses:
+            _assert_worker_list_unavailable_response(response)
+        assert len(refusals.warnings) == 3, refusals.warnings
+        assert ": 1 worker pages refused for active_worker_ids_unreadable since the previous warning" in refusals.warnings[0]
+        assert ": 1 worker pages refused for rows_unreadable since the previous warning" in refusals.warnings[1]
+        assert ": 4 worker pages refused for active_worker_ids_unreadable since the previous warning" in refusals.warnings[2]
+        assert len(refusals.debug_lines) == len(responses)
+        assert len(refusals.rejections.additions) == len(responses)
+        counted_reasons = [attributes["horde.workers.list.reason"] for _, attributes in refusals.unavailable.additions]
+        assert counted_reasons == ["active_worker_ids_unreadable"] * 3 + ["rows_unreadable"] + ["active_worker_ids_unreadable"] * 2
+
+    def test_a_raised_refusal_gets_the_same_status_rc_and_retry_after(
+        self,
+        client: FlaskClient,
+        make_api_user: MakeApiUser,
+        monkeypatch: pytest.MonkeyPatch,
+        refusals: _RefusalRecords,
+    ) -> None:
+        import horde.apis.v2.base as base_module
+        from horde import metrics
+        from horde.exceptions import WorkerListUnavailable
+
+        owner = make_api_user(trusted=True, kudos=100)
+        _register_text_worker(client, owner.api_key, _unique_name("Raising Scribe"))
+        _run_list_jobs()
+
+        def _raise_refusal(*_: object) -> list[bytes | None]:
+            raise WorkerListUnavailable("A raised refusal.", reason=metrics.WorkerListUnavailableReason.ROWS_UNREADABLE)
+
+        monkeypatch.setattr(base_module, "read_worker_rows", _raise_refusal)
+
+        response = _get_page(client)
+
+        _assert_worker_list_unavailable_response(response)
+        assert len(refusals.rejections.additions) == 1
 
 
 class TestFleetRateLimit:

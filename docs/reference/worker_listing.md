@@ -113,8 +113,10 @@ The paged lists read two stores, both written by jobs on the quorum node.
 **`worker_list_entries`** holds one narrow row per registered worker of the image, text and interrogation types: its
 type, owner, team, lower-cased name, uptime, completed jobs and kudos. Each order has an index on its column and the
 worker ID. `refresh_worker_list_entries` copies the changed values from `workers` every 60 seconds
-(`WORKER_LIST_ENTRIES_REFRESH_INTERVAL_SECONDS`) and deletes the entries of deleted workers. The page query reads the
-order, the list membership, `total` and the type, owner, team and name filters from this table.
+(`WORKER_LIST_ENTRIES_REFRESH_INTERVAL_SECONDS`). On Postgres, the foreign key deletes a worker's entry together with
+the worker (`ON DELETE CASCADE`). The refresh also deletes entries of workers that no longer exist, which can remain on
+SQLite, where foreign keys are enforced only when switched on. The page query reads the order, the list membership,
+`total` and the type, owner, team and name filters from this table.
 
 **The row store** is one Redis hash per view (`worker_rows:public`, `worker_rows:moderator`, `worker_rows:owner`).
 Each hash holds the finished JSON row of every registered worker. A write site is a code path that changes a worker's
@@ -128,16 +130,20 @@ details and marks the worker dirty. Three refreshes write the row store:
 
 After each refresh of `worker_list_entries`, `reconcile_worker_rows` compares the row store with the registered
 workers. It removes the rows of up to 5,000 workers that are no longer registered (`WORKER_ROWS_RECONCILE_LIMIT`). It
-marks dirty every registered worker without a public row, in `SADD` commands of up to 5,000 IDs
-(`WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE`). When the row hashes are lost, because Redis restarted or failed over, the hashes
-expired, or the row store is new, one reconciliation marks every worker dirty. Reconciliation runs once a minute, so
-that can be up to a minute after the loss. The dirty refresh then restores up to 500 workers on each run of
-`store_worker_list` (`WORKER_ROWS_DIRTY_CHUNK_SIZE`). Under a full backlog, a run lasts longer than its 2 second
-interval, so the rows of all workers are back after a few minutes. A reconciliation that marks more than one chunk
-logs a warning.
-`test_after_the_row_hashes_are_lost_one_refresh_marks_every_registered_worker_dirty_in_chunks` covers the rebuild.
+marks dirty every registered worker that lacks a row in any of the three views, in `SADD` commands of up to 5,000 IDs
+(`WORKER_ROWS_DIRTY_MARK_CHUNK_SIZE`). A reconciliation logs a warning when more than a tenth of the registered
+workers lack rows (`WORKER_ROWS_REBUILD_WARNING_SHARE`).
+`test_after_the_row_hashes_are_lost_one_refresh_marks_every_registered_worker_dirty_in_chunks` covers the marking.
 
-The same job keeps the IDs of the active workers in Redis, and the `online` filter reads them. The model filter reads
+When the row hashes are missing, for example after a Redis restart, the next reconciliation marks every worker dirty.
+Reconciliation runs once a minute, so this happens up to a minute after the loss. The dirty refresh then restores up to
+500 workers on each cycle of `store_worker_list` (`WORKER_ROWS_DIRTY_CHUNK_SIZE`). The job sleeps for its 2 second
+interval after each run, so a cycle lasts the run time plus 2 seconds, and the rows of all workers are back after a few
+minutes. The dirty refresh takes the dirty workers in random order (`SRANDMEMBER`). During a full rebuild, a worker
+marked by a write site, or a worker that stopped being active, can keep its old row until the dirty refresh rewrites
+it, at most until the rebuild ends.
+
+`store_worker_list` also keeps the IDs of the active workers in Redis, and the `online` filter reads them. The model filter reads
 each worker's advertised models from `worker_models`, and the public owner filter reads `users.public_workers`. The
 page query checks both with `EXISTS` subqueries, so both filters are applied in the same statement.
 
@@ -150,8 +156,9 @@ page query checks both with `EXISTS` subqueries, so both filters are applied in 
 | Order, membership, `total`, and the `type`, `owner_id`, `team_id` and `name_contains` filters | up to 60 seconds |
 | A row whose change was not marked by a write site | up to one rolling pass over every registered worker |
 
-A new worker appears in the paged lists after the next refresh of `worker_list_entries`. A deleted worker can stay in
-the order and `total` for up to 60 seconds. Deleting a worker removes its stored rows, so pages leave it out.
+A new worker appears in the paged lists after the next refresh of `worker_list_entries`. A deleted worker leaves the
+order and `total` at once, because its entry is deleted with it (`ON DELETE CASCADE`). Deleting a worker also removes
+its stored rows.
 
 ## Full list
 
@@ -276,23 +283,29 @@ The paged lists return 503 `WorkerListUnavailable` with `Retry-After: 10` when:
   IDs returned by the query (`MAX_MISSING_ROW_SHARE`). With a limit of 100, a page is refused when 11 or more rows are
   missing.
 
-Both row conditions are decided by `page_is_missing_too_many_rows` in `horde/worker_pages.py`. Many missing rows mean
-the row hashes were lost and are being rebuilt (see [Read model](#read-model)), or the jobs stopped for an hour and
-the hashes expired. A page served then would show a few workers while `total` counts all of them.
+The response always sets `Retry-After` to at least 10 seconds. flask-limiter can raise it to the end of the caller's
+rate limit window, because the limiter sets `Retry-After` on every response.
 
-A page with a few rows missing is served without them. A row is missing for a short time in normal operation, for a
-worker registered after the last write of the row store or deleted since the last refresh of `worker_list_entries`. A
-page with up to 2 missing rows is not refused for their share. A small page, such as a page with a limit of 1 to 3 or
-a last page with a few workers, is therefore served with the rows that remain. A page is still refused when all of its
-rows are missing, even a page of 1 or 2 workers. `TestAvailability` and the `page_is_missing_too_many_rows` tests in
-`tests/unit/test_worker_pages.py` cover both sides.
+`page_is_missing_too_many_rows` in `horde/worker_pages.py` checks both row conditions. Many missing rows mean the row
+hashes were lost and are being rebuilt (see [Read model](#read-model)), or the jobs stopped for an hour and the hashes
+expired. A page served then would show a few workers while `total` counts all of them.
 
-`page_response` returns the refusal instead of raising it. Flask-RESTX logs every raised error with a status of 500 or
-more as an exception with a traceback, even when an error handler builds the response. While the row store is
-rebuilt, most list requests are refused, and each would log a traceback. A refusal logs one warning without a
-traceback, which names the reason, the endpoint and the view. It is counted in `horde.workers.list.unavailable` (see
-[Metrics](#metrics)) and in `horde.api.rejections`. `TestAvailability` checks the status, `rc`, `Retry-After`, the
-counted reason and that a refusal does not log an exception.
+A page with a few missing rows is served without them. In normal operation a row is missing only briefly. A worker can
+be listed before the worker list job writes its rows, which happens within about one run of the job. A failed write
+can also leave a row missing until a later refresh writes it. A page with up to 2 missing rows is not refused by the
+share rule, so a small page, such as a page with a limit of 1 to 3 or a last page with a few workers, is served with
+the remaining rows. A page is still refused when all of its rows are missing, even a page of 1 or 2 workers.
+`TestAvailability` and the `page_is_missing_too_many_rows` tests in `tests/unit/test_worker_pages.py` cover both cases.
+
+`page_response` returns the refusal instead of raising it, because Flask-RESTX logs a traceback for every raised error
+with a status of 500 or more, even when an error handler builds the response. While the row store is rebuilt, most
+list requests are refused, and each raised refusal would log a traceback. Each refusal is counted in
+`horde.workers.list.unavailable` (see [Metrics](#metrics)) and in `horde.api.rejections`, and logged at debug level
+with its reason, endpoint and view. A warning without a traceback is logged at most once a minute per process and
+reason (`WORKER_LIST_REFUSAL_WARNING_INTERVAL_SECONDS` in `horde/exceptions.py`). The warning includes the number of
+refusals of that reason since the previous warning and the details of the latest refusal. `TestAvailability` checks
+the status, `rc`, `Retry-After`, the counted reason, the warning limit and the absence of a logged exception. A raised
+`WorkerListUnavailable` gets the same response from `handle_worker_list_unavailable`.
 
 ## Rate limits
 

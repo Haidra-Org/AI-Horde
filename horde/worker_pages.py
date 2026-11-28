@@ -121,12 +121,13 @@ short.
 MAX_MISSING_ROW_SHARE: float = 0.1
 """The largest share of a page's workers that can lack a stored row while the page is still served.
 
-A few rows are missing in normal operation: a worker registered after the last write of the row store, or deleted
-since the last refresh of ``worker_list_entries``. Both are rare against the workers of one page, and the missing
-workers are left out of it. More than a tenth missing means the row hashes were lost and the row store is being
-rebuilt. Such a page would show a near-empty list while ``total`` still counts every worker, so the request is refused
-with a ``Retry-After`` instead. A tenth keeps a full page of ``WorkerPageLimits.MAX_LIMIT`` rows close to full and
-leaves room for several deletions between two refreshes of the entries.
+More than a tenth missing means the row hashes were lost and the row store is being rebuilt. Such a page would show a
+near-empty list while ``total`` still counts every worker, so the request is refused with a ``Retry-After`` instead.
+
+In normal operation a row is missing only briefly. A worker can be listed before the worker list job has written its
+rows, which happens within about one run of the job. A failed write can also leave a row missing until a later refresh
+writes it. Few workers on any one page are affected, and they are left out of the page. A tenth keeps a full page of
+``WorkerPageLimits.MAX_LIMIT`` rows close to full and still allows several such workers on one page.
 """
 
 TOLERATED_MISSING_ROWS: int = 2
@@ -134,8 +135,8 @@ TOLERATED_MISSING_ROWS: int = 2
 
 On a small page, such as one requested with a limit of 1 to 3 or a last page with a few workers, a single missing row
 is already more than ``MAX_MISSING_ROW_SHARE``. Refusing it would block a walk with a small limit for as long as the
-row stays missing, which can be until the next refresh of the entries. A page whose rows are all missing is still
-refused, because it would be served empty with a cursor.
+row stays missing, which can be until a later refresh writes it. A page whose rows are all missing is still refused,
+because it would be served empty with a cursor.
 """
 
 

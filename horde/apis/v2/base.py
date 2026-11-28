@@ -218,6 +218,7 @@ handle_no_valid_workers = api.errorhandler(e.NoValidWorkers)(e.handle_bad_reques
 handle_no_valid_actions = api.errorhandler(e.NoValidActions)(e.handle_bad_requests)
 handle_maintenance_mode = api.errorhandler(e.MaintenanceMode)(e.handle_bad_requests)
 handle_service_unavailable = api.errorhandler(e.ServiceUnavailable)(e.handle_bad_requests)
+handle_worker_list_unavailable = api.errorhandler(e.WorkerListUnavailable)(e.handle_worker_list_unavailable)
 handle_not_found = api.errorhandler(e.NotFound)(e.handle_bad_requests)
 locked = api.errorhandler(e.Locked)(e.handle_bad_requests)
 
@@ -1931,22 +1932,26 @@ def _worker_list_unavailable_response(
     reason: metrics.WorkerListUnavailableReason,
     detail: str,
 ) -> Response:
-    """Count one refused worker page, log it as one warning, and return its 503 response with a ``Retry-After``.
+    """Count one refused worker page by endpoint and reason, log it, and return its 503 response with a ``Retry-After``.
 
     The refusal is returned instead of raised, so Flask-RESTX does not log it as an exception with a traceback (see
-    ``e.WorkerListUnavailable``).
+    ``e.WorkerListUnavailable``). ``e.handle_worker_list_unavailable`` logs it at debug level and limits the warnings
+    to one per reason in each interval.
 
     Args:
         endpoint: The endpoint that refused the page.
-        view: The caller's view, for the warning.
+        view: The caller's view, for the log line.
         reason: Why the page was refused.
-        detail: What failed, for the warning.
+        detail: What failed, for the log line.
     """
     metrics.worker_list_unavailable.add(
         1,
         {"horde.workers.list.endpoint": endpoint.value, "horde.workers.list.reason": reason.value},
     )
-    refusal = e.WorkerListUnavailable(f"{reason.value} on the {endpoint.value} worker list in the {view.value} view: {detail}")
+    refusal = e.WorkerListUnavailable(
+        f"{reason.value} on the {endpoint.value} worker list in the {view.value} view: {detail}",
+        reason=reason,
+    )
     return e.worker_list_unavailable_response(refusal)
 
 
@@ -2294,12 +2299,11 @@ class WorkerPageResource(Resource):
                 detail=f"Reading the worker rows failed: {err}",
             )
         page_rows = [stored_row for stored_row in stored_rows if stored_row is not None]
-        # A row can be missing for a short time while the rest are stored, for a worker registered after the last
-        # write of the row store or deleted since the last refresh of worker_list_entries. That worker is left out and
-        # the rest of the page is served. When many of the page's rows are missing, the row hash was lost as a whole
-        # and is being rebuilt, or the worker list job stopped and the hash expired. A near-empty page would then read
-        # as a list with few workers, so the request is refused for a retry instead (see
-        # page_is_missing_too_many_rows).
+        # A worker without a stored row is left out, and the rest of the page is served. A row is missing for a short
+        # time when the worker was listed before the worker list job wrote its rows, or after a failed write. When many
+        # of the page's rows are missing, the row hash was lost as a whole and is being rebuilt, or the worker list job
+        # stopped and the hash expired. A near-empty page would then look like a list with few workers, so the request
+        # is refused for a retry (see page_is_missing_too_many_rows).
         missing_row_count = len(registered_page.worker_ids) - len(page_rows)
         if page_is_missing_too_many_rows(len(registered_page.worker_ids), missing_row_count):
             return _worker_list_unavailable_response(
