@@ -677,7 +677,11 @@ worker_availability_cache_lookups = logfire.metric_counter(
 
 
 class WorkerRowsTier(enum.StrEnum):
-    """The background refresh that wrote a worker's stored details rows."""
+    """The background refresh that wrote a worker's stored details rows, as the ``horde.worker_rows.tier`` attribute.
+
+    The attribute is not named ``horde.tier``, because the deployment promotes the ``horde.tier`` resource attribute to
+    a metric label, and a data point attribute of the same name would be merged into that label.
+    """
 
     ACTIVE = "active"
     """The worker list job, which rewrites every active worker on each run."""
@@ -692,7 +696,7 @@ class WorkerRowsTier(enum.StrEnum):
 worker_rows_written = logfire.metric_counter(
     "horde.worker_rows.written",
     unit="1",
-    description="Worker details rows written to the row store, one per worker and view, split by tier",
+    description="Worker details rows written to the row store, one per worker and view, split by horde.worker_rows.tier",
 )
 worker_rows_rolling_pass_duration = _worker_rows_pass_histogram(
     "horde.worker_rows.rolling_pass_duration",
